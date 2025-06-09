@@ -1,16 +1,33 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
-# dependencies
+# Environment files
+.env
+.env.local
+.env.backup
+
+# Dependencies
 node_modules/
+.npm-global/
+
+# Development files
+dev-files/
+%USERPROFILE%/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
 # Expo
 .expo/
-dist/
 web-build/
-expo-env.d.ts
+dist/
 
 # Native
-.kotlin/
 *.orig.*
 *.jks
 *.p8
@@ -21,19 +38,28 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
-# debug
+# Debug
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# Backup files
+app-backup/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
-*.pem
-
-# local env files
-.env*.local
-
-# typescript
-*.tsbuildinfo
-
-app-example
+Thumbs.db
