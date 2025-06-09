@@ -11,6 +11,7 @@ import {
     TextInput,
     View,
 } from 'react-native';
+import { apiService } from '../../services/api';
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');
@@ -27,18 +28,10 @@ export default function ForgotPasswordScreen() {
       setLoading(true);
       setError('');
       
-      // Call the forgot password API
-      const response = await fetch('http://localhost:5000/api/forgot-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email }),
-      });
-
-      const data = await response.json();
+      // Call the forgot password API using our API service
+      const response = await apiService.forgotPassword(email);
       
-      if (data.success) {
+      if (response.success) {
         Alert.alert(
           'Reset Link Sent',
           'If an account exists with this email, you will receive password reset instructions.',
@@ -46,10 +39,12 @@ export default function ForgotPasswordScreen() {
         );
         setEmail('');
       } else {
-        setError(data.message || 'Failed to send reset link');
+        setError(response.message || 'Failed to send reset link');
       }
-    } catch (error) {
-      setError('Failed to process request. Please try again later.');
+    } catch (error: any) {
+      console.error('Forgot password error:', error);
+      const errorMessage = error?.response?.data?.message || error.message || 'Failed to process request. Please try again later.';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

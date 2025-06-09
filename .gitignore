@@ -12,6 +12,7 @@ node_modules/
 # Development files
 dev-files/
 %USERPROFILE%/
+manager-francis/
 
 # OS generated files
 .DS_Store

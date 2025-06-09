@@ -1,13 +1,25 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function ProcessScanScreen() {
   const { imageUri } = useLocalSearchParams();
   const [processing, setProcessing] = useState(false);
   const [currentImage, setCurrentImage] = useState(imageUri);
   const [enhancementLevel, setEnhancementLevel] = useState('auto');
+
+  const handleClose = () => {
+    if (processing) {
+      Alert.alert('Processing', 'Image is being processed. Are you sure you want to cancel?', [
+        { text: 'Continue', style: 'cancel' },
+        { text: 'Cancel', style: 'destructive', onPress: () => router.back() }
+      ]);
+    } else {
+      router.back();
+    }
+  };
 
   const applyEnhancement = async (level: string) => {
     if (processing || level === enhancementLevel) return;
@@ -27,38 +39,70 @@ export default function ProcessScanScreen() {
       setCurrentImage(imageUri as string);
     } catch (error) {
       console.error('Error processing image:', error);
+      Alert.alert('Error', 'Failed to process image. Please try again.');
     } finally {
       setProcessing(false);
     }
   };
 
   const saveDocument = async () => {
+    if (processing) return;
+    
     setProcessing(true);
     try {
-      // Here you would typically:
-      // 1. Upload the processed image to your backend
-      // 2. Perform OCR if needed
-      // 3. Save metadata
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate processing
+      console.log('Saving document with image:', currentImage);
       
-      // Navigate back to documents screen
-      router.push('/documents');
+      // Create FormData for file upload
+      const formData = new FormData();
+      
+      // Generate a filename based on timestamp
+      const timestamp = Date.now();
+      const filename = `scanned_document_${timestamp}.jpg`;
+      
+      // Add file to form data
+      formData.append('files', {
+        uri: currentImage as string,
+        type: 'image/jpeg',
+        name: filename,
+      } as any);
+
+      // Import API client and upload the file
+      const { apiClient } = await import('../../services/api');
+      
+      console.log('Uploading scanned document...');
+      const uploadResult = await apiClient.uploadFile(formData, (progress) => {
+        console.log('Upload progress:', progress);
+      });
+
+      console.log('Scanned document upload successful:', uploadResult);
+      
+      Alert.alert('Success', 'Document saved successfully!', [
+        { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
+      ]);
     } catch (error) {
       console.error('Error saving document:', error);
-    } finally {
+      Alert.alert('Error', 'Failed to save document. Please try again.');
       setProcessing(false);
     }
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.headerButton}>
-          <MaterialIcons name="close" size={24} color="#007AFF" />
+        <Pressable 
+          onPress={handleClose} 
+          style={[styles.headerButton, processing && styles.disabledButton]}
+          disabled={processing}
+        >
+          <MaterialIcons name="close" size={24} color={processing ? "#ccc" : "#007AFF"} />
         </Pressable>
         <Text style={styles.title}>Process Document</Text>
-        <Pressable onPress={saveDocument} style={styles.headerButton}>
-          <MaterialIcons name="check" size={24} color="#007AFF" />
+        <Pressable 
+          onPress={saveDocument} 
+          style={[styles.headerButton, processing && styles.disabledButton]}
+          disabled={processing}
+        >
+          <MaterialIcons name="check" size={24} color={processing ? "#ccc" : "#007AFF"} />
         </Pressable>
       </View>
 
@@ -73,6 +117,10 @@ export default function ProcessScanScreen() {
           source={{ uri: currentImage as string }}
           style={styles.image}
           resizeMode="contain"
+          onError={(error) => {
+            console.error('Image load error:', error);
+            Alert.alert('Error', 'Failed to load image');
+          }}
         />
       </View>
 
@@ -83,18 +131,21 @@ export default function ProcessScanScreen() {
             style={[
               styles.enhancementButton,
               enhancementLevel === 'auto' && styles.enhancementButtonActive,
+              processing && styles.enhancementButtonDisabled,
             ]}
             onPress={() => applyEnhancement('auto')}
+            disabled={processing}
           >
             <MaterialIcons
               name="auto-fix-high"
               size={24}
-              color={enhancementLevel === 'auto' ? '#fff' : '#333'}
+              color={processing ? '#ccc' : (enhancementLevel === 'auto' ? '#fff' : '#333')}
             />
             <Text
               style={[
                 styles.enhancementText,
                 enhancementLevel === 'auto' && styles.enhancementTextActive,
+                processing && styles.enhancementTextDisabled,
               ]}
             >
               Auto
@@ -105,18 +156,21 @@ export default function ProcessScanScreen() {
             style={[
               styles.enhancementButton,
               enhancementLevel === 'high_contrast' && styles.enhancementButtonActive,
+              processing && styles.enhancementButtonDisabled,
             ]}
             onPress={() => applyEnhancement('high_contrast')}
+            disabled={processing}
           >
             <MaterialIcons
               name="contrast"
               size={24}
-              color={enhancementLevel === 'high_contrast' ? '#fff' : '#333'}
+              color={processing ? '#ccc' : (enhancementLevel === 'high_contrast' ? '#fff' : '#333')}
             />
             <Text
               style={[
                 styles.enhancementText,
                 enhancementLevel === 'high_contrast' && styles.enhancementTextActive,
+                processing && styles.enhancementTextDisabled,
               ]}
             >
               High Contrast
@@ -127,18 +181,21 @@ export default function ProcessScanScreen() {
             style={[
               styles.enhancementButton,
               enhancementLevel === 'black_white' && styles.enhancementButtonActive,
+              processing && styles.enhancementButtonDisabled,
             ]}
             onPress={() => applyEnhancement('black_white')}
+            disabled={processing}
           >
             <MaterialIcons
               name="filter-b-and-w"
               size={24}
-              color={enhancementLevel === 'black_white' ? '#fff' : '#333'}
+              color={processing ? '#ccc' : (enhancementLevel === 'black_white' ? '#fff' : '#333')}
             />
             <Text
               style={[
                 styles.enhancementText,
                 enhancementLevel === 'black_white' && styles.enhancementTextActive,
+                processing && styles.enhancementTextDisabled,
               ]}
             >
               B&W
@@ -146,7 +203,7 @@ export default function ProcessScanScreen() {
           </Pressable>
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -217,6 +274,9 @@ const styles = StyleSheet.create({
   enhancementButtonActive: {
     backgroundColor: '#007AFF',
   },
+  enhancementButtonDisabled: {
+    backgroundColor: '#ccc',
+  },
   enhancementText: {
     marginTop: 4,
     fontSize: 12,
@@ -224,5 +284,11 @@ const styles = StyleSheet.create({
   },
   enhancementTextActive: {
     color: '#fff',
+  },
+  enhancementTextDisabled: {
+    color: '#ccc',
+  },
+  disabledButton: {
+    backgroundColor: '#ccc',
   },
 }); 

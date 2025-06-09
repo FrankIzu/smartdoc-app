@@ -191,6 +191,7 @@ export default function DashboardScreen() {
               value={stats.recentUploads}
               icon="cloud-upload"
               color="#FF9500"
+              onPress={() => router.push('/(tabs)/documents')}
             />
             <StatCard
               title="Form Responses"

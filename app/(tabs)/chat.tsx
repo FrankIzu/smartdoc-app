@@ -193,8 +193,7 @@ export default function ChatScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Ionicons name="sparkles" size={24} color="#007AFF" />
-        <Text style={styles.headerTitle}>AI Chat Assistant</Text>
+        <Text style={styles.headerTitle}>Ask GD</Text>
       </View>
 
       <FlatList

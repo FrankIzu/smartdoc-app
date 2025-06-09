@@ -216,6 +216,16 @@ class ApiService {
     }
   }
 
+  async forgotPassword(email: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post('/api/forgot-password', { email });
+      return response.data;
+    } catch (error: any) {
+      console.error('Forgot password error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to send reset link');
+    }
+  }
+
   // Files/Documents
   async getFiles(page = 1, perPage = 20, search?: string, category?: string): Promise<ApiResponse> {
     try {
@@ -254,10 +264,36 @@ class ApiService {
 
   async deleteFile(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.delete(API_ENDPOINTS.FILES_BY_ID(id));
+      const response = await this.client.delete(`/api/files/${id}`);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Delete failed');
+    }
+  }
+
+  async downloadFile(id: number): Promise<{ url: string; filename: string; blob?: Blob }> {
+    try {
+      console.log('🔄 Downloading file with ID:', id);
+      
+      // First get the file info
+      const infoResponse = await this.client.get(`/api/files`);
+      const fileInfo = infoResponse.data?.files?.find((f: any) => f.id === id);
+      const filename = fileInfo?.original_filename || `document_${id}`;
+      
+      // Get the download URL - we'll return it for external opening
+      const downloadUrl = `${API_BASE_URL}/api/files/${id}/download`;
+      
+      console.log('📁 File download URL:', downloadUrl);
+      console.log('📁 File name:', filename);
+      
+      return {
+        url: downloadUrl,
+        filename: filename
+      };
+      
+    } catch (error: any) {
+      console.error('❌ Download file error:', error);
+      throw new Error(error.response?.data?.message || 'Download failed');
     }
   }
 

@@ -12,10 +12,11 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, remember?: boolean) => Promise<void>;
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
   forceReset: () => Promise<void>;
+  loadRememberedCredentials: () => Promise<{ email: string; password: string; remember: boolean } | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -104,7 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, remember: boolean = false) => {
     try {
       setLoading(true);
       
@@ -120,6 +121,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('🔍 Response session_info:', response.session_info);
       
       if (response.success) {
+        // Store credentials if remember is enabled
+        if (remember) {
+          console.log('💾 Storing login credentials for remember functionality');
+          await secureStorage.setItem('remembered_email', email);
+          await secureStorage.setItem('remembered_password', password);
+          await secureStorage.setItem('remember_enabled', 'true');
+        } else {
+          // Clear remembered credentials if remember is disabled
+          await secureStorage.removeItem('remembered_email');
+          await secureStorage.removeItem('remembered_password');
+          await secureStorage.removeItem('remember_enabled');
+        }
+        
         // Case 1: Direct user data in response (older API format)
         if (response.user) {
           console.log('✅ Using direct user data from response');
@@ -246,8 +260,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const loadRememberedCredentials = async () => {
+    try {
+      const rememberEnabled = await secureStorage.getItem('remember_enabled');
+      if (rememberEnabled === 'true') {
+        const email = await secureStorage.getItem('remembered_email');
+        const password = await secureStorage.getItem('remembered_password');
+        
+        if (email && password) {
+          console.log('🔐 Loaded remembered credentials for:', email);
+          return { email, password, remember: true };
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error('Error loading remembered credentials:', error);
+      return null;
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, forceReset }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, forceReset, loadRememberedCredentials }}>
       {children}
     </AuthContext.Provider>
   );

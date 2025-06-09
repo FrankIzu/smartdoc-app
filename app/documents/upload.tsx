@@ -1,13 +1,24 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function UploadScreen() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  const handleClose = () => {
+    if (uploading) {
+      Alert.alert('Upload in Progress', 'Upload is in progress. Are you sure you want to cancel?', [
+        { text: 'Continue Upload', style: 'cancel' },
+        { text: 'Cancel Upload', style: 'destructive', onPress: () => router.back() }
+      ]);
+    } else {
+      router.back();
+    }
+  };
 
   const handleUpload = async () => {
     try {
@@ -26,27 +37,40 @@ export default function UploadScreen() {
       // Process each selected file
       for (const file of result.assets) {
         try {
-          // Here you would typically upload to your backend
-          // For now, we'll simulate an upload with a delay
-          const fileInfo = await FileSystem.getInfoAsync(file.uri);
-          console.log('File info:', fileInfo);
+          console.log('Uploading file:', file.name, file.uri);
+          
+          // Create FormData for file upload
+          const formData = new FormData();
+          
+          // Add file to form data
+          formData.append('files', {
+            uri: file.uri,
+            type: file.mimeType || 'application/octet-stream',
+            name: file.name || 'unnamed_file',
+          } as any);
 
-          // Simulate upload progress
-          for (let i = 0; i <= 100; i += 10) {
-            setProgress(i);
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
+          // Import API client
+          const { apiClient } = await import('../../services/api');
+          
+          // Upload file using API client
+          const uploadResult = await apiClient.uploadFile(formData, (progress) => {
+            setProgress(progress);
+          });
 
-          console.log('Uploaded:', file.name);
+          console.log('Upload successful:', uploadResult);
+
         } catch (error) {
-          console.error('Error processing file:', error);
+          console.error('Error uploading file:', file.name, error);
+          Alert.alert('Upload Error', `Failed to upload ${file.name}. Please try again.`);
         }
       }
 
-      // Navigate back to documents screen
-      router.push('/documents');
+      Alert.alert('Success', 'Documents uploaded successfully!', [
+        { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
+      ]);
     } catch (error) {
       console.error('Error picking document:', error);
+      Alert.alert('Error', 'Failed to upload documents. Please try again.');
     } finally {
       setUploading(false);
       setProgress(0);
@@ -54,12 +78,13 @@ export default function UploadScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <MaterialIcons name="arrow-back" size={24} color="#007AFF" />
+        <Pressable onPress={handleClose} style={styles.closeButton}>
+          <MaterialIcons name="close" size={24} color="#007AFF" />
         </Pressable>
         <Text style={styles.title}>Upload Documents</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
       <View style={styles.content}>
@@ -72,19 +97,29 @@ export default function UploadScreen() {
             <View style={styles.uploadingContainer}>
               <ActivityIndicator size="large" color="#007AFF" />
               <Text style={styles.uploadingText}>Uploading... {progress}%</Text>
+              <Text style={styles.uploadSubtext}>Please don't close this screen</Text>
             </View>
           ) : (
             <>
-              <MaterialIcons name="cloud-upload" size={48} color="#007AFF" />
+              <MaterialIcons name="cloud-upload" size={64} color="#007AFF" />
               <Text style={styles.uploadText}>Tap to select documents</Text>
               <Text style={styles.supportedFormats}>
                 Supported formats: PDF, Images, Word documents
               </Text>
+              <Text style={styles.hint}>
+                You can select multiple files at once
+              </Text>
             </>
           )}
         </Pressable>
+        
+        {!uploading && (
+          <Pressable style={styles.cancelButton} onPress={handleClose}>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </Pressable>
+        )}
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -101,13 +136,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
-  backButton: {
+  closeButton: {
     marginRight: 16,
   },
   title: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#333',
+  },
+  headerSpacer: {
+    flex: 1,
   },
   content: {
     flex: 1,
@@ -146,5 +184,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     marginTop: 16,
+  },
+  uploadSubtext: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  hint: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#007AFF',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  cancelButtonText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
   },
 }); 

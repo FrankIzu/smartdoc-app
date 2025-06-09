@@ -70,7 +70,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="chat"
         options={{
-          title: 'Chat',
+          title: 'Ask GD',
           tabBarIcon: ({ color, focused }) => (
             <TabBarIcon name={focused ? 'chatbubbles' : 'chatbubbles-outline'} color={color} />
           ),

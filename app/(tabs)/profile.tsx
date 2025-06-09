@@ -78,17 +78,6 @@ export default function ProfileScreen() {
         ))}
       </View>
 
-      {/* Test button to verify touch works */}
-      <TouchableOpacity 
-        style={styles.testButton}
-        onPress={() => {
-          console.log('🟢 TEST BUTTON WORKS!');
-          alert('Test button works! Main logout should work now.');
-        }}
-      >
-        <Text style={styles.testButtonText}>TEST BUTTON - Click Me First</Text>
-      </TouchableOpacity>
-
       <TouchableOpacity 
         style={styles.logoutButton}
         onPress={() => {
@@ -207,19 +196,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#fff',
     marginLeft: 8,
-    fontWeight: 'bold',
-  },
-  testButton: {
-    backgroundColor: '#007AFF',
-    padding: 15,
-    marginHorizontal: 16,
-    marginBottom: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  testButtonText: {
-    color: '#fff',
-    fontSize: 16,
     fontWeight: 'bold',
   },
 }); 

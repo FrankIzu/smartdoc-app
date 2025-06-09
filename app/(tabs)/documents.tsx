@@ -1,5 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
@@ -14,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { API_BASE_URL } from '../../constants/Config';
 import { apiClient } from '../../services/api';
 import { useAuth } from '../context/auth';
 
@@ -42,7 +46,7 @@ interface ApiDocument {
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
-type FilterOption = 'all' | 'documents' | 'receipts' | 'forms';
+type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'unknown';
 
 export default function DocumentsScreen() {
   const { user } = useAuth();
@@ -57,53 +61,93 @@ export default function DocumentsScreen() {
   const [showOptionsModal, setShowOptionsModal] = useState(false);
 
   const getFileIcon = (type: string, status: string, category?: string) => {
-    if (status === 'processing') return 'sync';
+    if (status === 'processing') return 'time-outline';
+    if (status === 'error') return 'alert-circle-outline';
     
-    // First check category (file_kind) for specific icons
+    // Use category-specific icons when available
     if (category) {
-      switch (category) {
-        case 'receipts': return 'receipt-outline';
-        case 'forms': return 'list-outline';
-        case 'documents': return 'document-text-outline';
-        default: break;
+      switch (category.toLowerCase()) {
+        case 'receipt':
+        case 'receipts':
+          return 'receipt-outline'; // Receipt-specific icon
+        case 'form':
+        case 'forms':
+          return 'document-text-outline'; // Form-specific icon
+        case 'document':
+        case 'documents':
+          return 'document-outline';
+        case 'unknown':
+          return 'help-circle-outline';
       }
     }
     
-    // Fallback to type-based icons
+    // Fallback to file type icons
     switch (type) {
-      case 'pdf': return 'document-text';
-      case 'doc': return 'document';
-      case 'image': return 'image';
+      case 'pdf': return 'document-outline';
+      case 'doc': return 'document-text-outline';
+      case 'image': return 'image-outline';
       default: return 'document-outline';
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'processed': return '#34C759';
-      case 'processing': return '#FF9500';
-      case 'error': return '#FF3B30';
-      default: return '#8E8E93';
+      case 'processed': return '#22c55e'; // Green for processed
+      case 'processing': return '#f59e0b'; // Orange for processing
+      case 'error': return '#ef4444'; // Red for error
+      default: return '#64748b'; // Gray for unknown
     }
   };
 
   const getTypeColor = (type: string, category?: string) => {
-    // First check category (file_kind) for specific colors
+    // Use category-specific colors when available
     if (category) {
-      switch (category) {
-        case 'receipts': return '#FF9500'; // Orange for receipts
-        case 'forms': return '#34C759'; // Green for forms
-        case 'documents': return '#007AFF'; // Blue for documents
-        default: break;
+      switch (category.toLowerCase()) {
+        case 'receipt':
+        case 'receipts':
+          return '#10b981'; // Emerald green for receipts
+        case 'form':
+        case 'forms':
+          return '#3b82f6'; // Blue for forms
+        case 'document':
+        case 'documents':
+          return '#6366f1'; // Indigo for documents
+        case 'unknown':
+          return '#64748b'; // Gray for unknown
       }
     }
     
-    // Fallback to type-based colors
+    // Fallback to file type colors
     switch (type) {
-      case 'pdf': return '#FF3B30';
-      case 'doc': return '#007AFF';
-      case 'image': return '#34C759';
-      default: return '#8E8E93';
+      case 'pdf': return '#ef4444'; // Red for PDF
+      case 'doc': return '#2563eb'; // Blue for documents
+      case 'image': return '#059669'; // Green for images
+      default: return '#64748b'; // Gray for others
+    }
+  };
+
+  const normalizeCategory = (fileKind: string | null | undefined): string => {
+    if (!fileKind) return 'unknown';
+    
+    const kind = fileKind.toLowerCase().trim();
+    
+    // Map backend file_kind values to frontend categories
+    switch (kind) {
+      case 'receipt':
+      case 'receipts':
+        return 'receipts';
+      case 'form':
+      case 'forms':
+        return 'forms';
+      case 'document':
+      case 'documents':
+        return 'documents';
+      case 'unknown':
+      case '':
+        return 'unknown';
+      default:
+        // If it's not a recognized category, default to documents
+        return 'documents';
     }
   };
 
@@ -114,24 +158,26 @@ export default function DocumentsScreen() {
                            doc.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
                            (doc.category?.toLowerCase().includes(searchQuery.toLowerCase()) || false);
       
-      // File kind filter - handle mobile app filter names to backend category mapping
-      let matchesFilter = filterBy === 'all';
-      
-      if (!matchesFilter && doc.category) {
-        const categoryLower = doc.category.toLowerCase();
+      // File kind filter with proper category mapping
+      let matchesFilter = true;
+      if (filterBy !== 'all') {
         switch (filterBy) {
-          case 'documents':
-            matchesFilter = categoryLower === 'document' || categoryLower === 'documents';
-            break;
           case 'receipts':
-            matchesFilter = categoryLower === 'receipt' || categoryLower === 'receipts';
+            matchesFilter = doc.category?.toLowerCase() === 'receipt' || doc.category?.toLowerCase() === 'receipts';
             break;
           case 'forms':
-            matchesFilter = categoryLower === 'form' || categoryLower === 'forms';
+            matchesFilter = doc.category?.toLowerCase() === 'form' || doc.category?.toLowerCase() === 'forms';
+            break;
+          case 'documents':
+            matchesFilter = doc.category?.toLowerCase() === 'document' || doc.category?.toLowerCase() === 'documents';
+            break;
+          case 'unknown':
+            matchesFilter = !doc.category || 
+                          doc.category === '' ||
+                          doc.category.toLowerCase() === 'unknown';
             break;
           default:
-            // Direct match for any other filter values
-            matchesFilter = doc.category === filterBy;
+            matchesFilter = true;
         }
       }
       
@@ -162,7 +208,7 @@ export default function DocumentsScreen() {
       console.log('📂 Sending category filter:', categoryFilter);
       
       const response = await apiClient.getFiles(1, 50, searchQuery || undefined, categoryFilter);
-      console.log('📂 Documents API response:', response);
+      //console.log('📂 Documents API response:', response);
       
       if (response.success) {
         // Handle different response structures
@@ -188,7 +234,7 @@ export default function DocumentsScreen() {
           uploadDate: new Date(file.created_at),
           status: 'processed', // Assume processed for now
           tags: file.receipt_category ? [file.receipt_category] : [],
-          category: file.file_kind || 'documents', // Use file_kind with fallback
+          category: normalizeCategory(file.file_kind), // Normalize category for consistent display
         }));
         
         console.log('📂 Sample transformed document:', transformedDocs[0]);
@@ -243,7 +289,7 @@ export default function DocumentsScreen() {
 
   const handleDocumentPress = (document: Document) => {
     if (document.status === 'processing') {
-      Alert.alert('Processing', 'This document is still being processed. Please try again later.');
+      Alert.alert('Document Processing', `"${document.name}" is still being processed. Please wait a few moments and try again.`);
       return;
     }
     
@@ -251,22 +297,310 @@ export default function DocumentsScreen() {
     setShowOptionsModal(true);
   };
 
-  const handleViewDocument = () => {
+  const handleViewDocument = async () => {
     setShowOptionsModal(false);
-    Alert.alert('View Document', `Opening ${selectedDocument?.name}...`);
+    if (!selectedDocument) return;
+    
+    try {
+      console.log('📄 Starting document view process...');
+      console.log('📄 Selected document:', JSON.stringify(selectedDocument, null, 2));
+      console.log('📄 User:', user ? 'authenticated' : 'not authenticated');
+      console.log('📄 API_BASE_URL:', API_BASE_URL);
+      
+      // Check if user is authenticated
+      if (!user) {
+        console.log('📄 User not authenticated, showing alert');
+        Alert.alert('Error', 'Please log in to view documents');
+        return;
+      }
+      
+      // Use the API service to get the download info with proper authentication
+      try {
+        console.log('📄 Getting download info via API service...');
+        const downloadInfo = await apiClient.downloadFile(parseInt(selectedDocument.id));
+        const downloadUrl = downloadInfo.url;
+        
+        console.log('📄 Got download URL from API:', downloadUrl);
+        console.log('📄 File name:', downloadInfo.filename);
+        
+        // Try WebBrowser first
+        console.log('📄 Attempting to open with WebBrowser...');
+        const result = await WebBrowser.openBrowserAsync(downloadUrl, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.AUTOMATIC,
+        });
+        
+        console.log('📄 WebBrowser result received:', JSON.stringify(result, null, 2));
+        
+        // Handle different result types
+        if (result.type === 'opened') {
+          console.log('📄 Document opened successfully in WebBrowser');
+          return; // Success, exit function
+        } else if (result.type === 'locked') {
+          console.log('📄 WebBrowser locked, trying alternative methods...');
+          
+          // Try using Linking API as fallback
+          try {
+            console.log('📄 Attempting to open with Linking API...');
+            const canOpen = await Linking.canOpenURL(downloadUrl);
+            console.log('📄 Linking can open URL:', canOpen);
+            
+            if (canOpen) {
+              await Linking.openURL(downloadUrl);
+              console.log('📄 Document opened successfully with Linking');
+              Alert.alert('Success', 'Document opened in external app');
+              return; // Success, exit function
+            } else {
+              console.log('📄 Linking cannot open URL, showing share option');
+              Alert.alert(
+                'Cannot View Document', 
+                'Unable to open document viewer. Would you like to share the document instead?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Share Document',
+                    onPress: () => {
+                      setSelectedDocument(selectedDocument);
+                      handleShareDocument();
+                    }
+                  }
+                ]
+              );
+              return;
+            }
+          } catch (linkingError) {
+            console.error('📄 Linking API failed:', linkingError);
+            Alert.alert(
+              'Cannot View Document',
+              'Unable to open document. The document URL has been copied to your clipboard.',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    // Copy URL to clipboard as last resort
+                    Clipboard.setStringAsync(downloadUrl).then(() => {
+                      console.log('📄 URL copied to clipboard as fallback');
+                    }).catch(() => {
+                      console.error('📄 Failed to copy URL to clipboard');
+                    });
+                  }
+                }
+              ]
+            );
+            return;
+          }
+        } else {
+          console.log('📄 Unexpected WebBrowser result type:', result.type);
+          // For other result types, show share option
+          Alert.alert(
+            'Document Viewer Issue',
+            'There was an issue opening the document. Would you like to share it instead?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Share Document', 
+                onPress: () => {
+                  setSelectedDocument(selectedDocument);
+                  handleShareDocument();
+                }
+              }
+            ]
+          );
+        }
+        
+      } catch (apiError: any) {
+        console.error('📄 API download error:', apiError);
+        
+        // Handle specific API errors
+        if (apiError.message?.includes('401') || apiError.message?.includes('authentication') || apiError.message?.includes('Not authenticated')) {
+          Alert.alert(
+            'Authentication Required',
+            'Your session has expired. Please log in again to view documents.',
+            [
+              { text: 'OK', style: 'default' },
+              {
+                text: 'Go to Login',
+                onPress: () => {
+                  router.push('/(auth)/sign-in');
+                }
+              }
+            ]
+          );
+          return;
+        } else if (apiError.message?.includes('404') || apiError.message?.includes('not found')) {
+          Alert.alert(
+            'File Not Found',
+            'This document is no longer available. It may have been deleted.',
+            [
+              { text: 'OK', style: 'default' },
+              {
+                text: 'Refresh List',
+                onPress: () => {
+                  loadDocuments();
+                }
+              }
+            ]
+          );
+          return;
+        } else {
+          // Generic API error - fallback to direct URL
+          console.log('📄 API error, trying direct URL approach...');
+          const directUrl = `${API_BASE_URL}/api/files/${selectedDocument.id}/download`;
+          
+          try {
+            const result = await WebBrowser.openBrowserAsync(directUrl);
+            if (result.type === 'opened') {
+              console.log('📄 Direct URL opened successfully');
+              return;
+            }
+          } catch (directError) {
+            console.error('📄 Direct URL also failed:', directError);
+          }
+          
+          Alert.alert(
+            'Cannot View Document',
+            'There was an error accessing the document. Please try again later.',
+            [{ text: 'OK', style: 'default' }]
+          );
+        }
+      }
+      
+    } catch (error: any) {
+      console.error('📄 Complete error object:', error);
+      console.error('📄 Error message:', error.message);
+      console.error('📄 Error code:', error.code);
+      console.error('📄 Error stack:', error.stack);
+      
+      // Provide more specific error messages based on error type
+      let errorMessage = 'Failed to open document. Please try again.';
+      
+      if (error.code === 'ERR_NETWORK' || error.message?.includes('Network request failed')) {
+        errorMessage = 'Network error. Please check your internet connection and try again.';
+      } else if (error.message?.includes('WebBrowser')) {
+        errorMessage = 'Unable to open document viewer. Please try downloading the document instead.';
+      } else if (error.status === 401 || error.message?.includes('401')) {
+        errorMessage = 'Authentication error. Please log in again.';
+      } else if (error.status === 404 || error.message?.includes('404')) {
+        errorMessage = 'Document not found. It may have been deleted.';
+      } else if (error.status === 500) {
+        errorMessage = 'Server error. Please try again later.';
+      } else {
+        errorMessage = `Error: ${error.message || 'Unknown error occurred'}`;
+      }
+      
+      console.log('📄 Showing error alert:', errorMessage);
+      
+      Alert.alert('Document View Error', errorMessage, [
+        { text: 'OK', style: 'default' },
+        {
+          text: 'Try Share',
+          style: 'default',
+          onPress: () => {
+            console.log('📄 User chose to try share instead');
+            setSelectedDocument(selectedDocument);
+            handleShareDocument();
+          }
+        }
+      ]);
+    }
   };
 
   const handleShareDocument = async () => {
     setShowOptionsModal(false);
     if (!selectedDocument) return;
     
+    // Create download URL for the document (moved to top for scope)
+    const downloadUrl = `${API_BASE_URL}/api/files/${selectedDocument.id}/download`;
+    
     try {
-      await Share.share({
-        message: `Check out this document: ${selectedDocument.name}`,
+      console.log('📤 Starting share process...');
+      console.log('📤 Selected document:', JSON.stringify(selectedDocument, null, 2));
+      console.log('📤 User:', user ? 'authenticated' : 'not authenticated');
+      console.log('📤 API_BASE_URL:', API_BASE_URL);
+      
+      // Check if user is authenticated
+      if (!user) {
+        console.log('📤 User not authenticated, showing alert');
+        Alert.alert('Error', 'Please log in to share documents');
+        return;
+      }
+      
+      console.log('📤 Final share URL:', downloadUrl);
+      
+      // Test Share API availability
+      console.log('📤 Testing Share API...');
+      try {
+        // Test if Share is available by checking if the module exists
+        console.log('📤 Share module available:', !!Share);
+        console.log('📤 Share.share function:', typeof Share.share);
+      } catch (shareTestError) {
+        console.error('📤 Share API test failed:', shareTestError);
+      }
+      
+      console.log('📤 Attempting to share...');
+      
+      // Use simple share without timeout - timeout was causing issues
+      const shareResult = await Share.share({
+        message: `Check out this document: ${selectedDocument.name}\n\nDownload: ${downloadUrl}`,
         title: selectedDocument.name,
       });
-    } catch (error) {
-      Alert.alert('Error', 'Failed to share document');
+      
+      console.log('📤 Share result received:', JSON.stringify(shareResult, null, 2));
+      
+      // Handle share result
+      if (shareResult && shareResult.action === Share.sharedAction) {
+        console.log('📤 Document shared successfully');
+        if (shareResult.activityType) {
+          console.log('📤 Shared via:', shareResult.activityType);
+        } else {
+          console.log('📤 Share completed without specific activity type');
+        }
+        // Show success message
+        Alert.alert('Success', 'Document shared successfully!');
+      } else if (shareResult && shareResult.action === Share.dismissedAction) {
+        console.log('📤 Share dismissed by user');
+      } else {
+        console.log('📤 Unexpected share result:', shareResult);
+      }
+      
+    } catch (error: any) {
+      console.error('📤 Complete share error object:', error);
+      console.error('📤 Error message:', error.message);
+      console.error('📤 Error code:', error.code);
+      console.error('📤 Error stack:', error.stack);
+      
+      // Provide specific error messages
+      let errorMessage = 'Failed to share document';
+      
+      if (error.code === 'E_SHARING_UNAVAILABLE') {
+        errorMessage = 'Sharing is not available on this device';
+      } else if (error.message?.includes('network') || error.message?.includes('Network')) {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (error.message?.includes('permission')) {
+        errorMessage = 'Permission denied. Please check your device settings.';
+      } else {
+        errorMessage = `Failed to share document: ${error.message || 'Unknown error'}`;
+      }
+      
+      console.log('📤 Showing share error alert:', errorMessage);
+      
+      Alert.alert('Share Error', errorMessage, [
+        { text: 'OK', style: 'default' },
+        {
+          text: 'Copy Link',
+          style: 'default',
+          onPress: () => {
+            console.log('📤 User chose to copy link instead');
+            // Fallback: copy link to clipboard
+            Clipboard.setStringAsync(downloadUrl).then(() => {
+              console.log('📤 Link copied to clipboard successfully');
+              Alert.alert('Success', 'Download link copied to clipboard');
+            }).catch((clipError) => {
+              console.error('📤 Clipboard copy failed:', clipError);
+              Alert.alert('Error', 'Failed to copy link to clipboard');
+            });
+          }
+        }
+      ]);
     }
   };
 
@@ -282,8 +616,18 @@ export default function DocumentsScreen() {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            try {
+              // Call API to delete the file
+              await apiClient.deleteFile(parseInt(selectedDocument.id));
+              
+              // Remove from local state
             setDocuments(docs => docs.filter(d => d.id !== selectedDocument.id));
+              Alert.alert('Success', 'Document deleted successfully');
+            } catch (error) {
+              console.error('Error deleting document:', error);
+              Alert.alert('Error', 'Failed to delete document. Please try again.');
+            }
           },
         },
       ]
@@ -304,7 +648,13 @@ export default function DocumentsScreen() {
           />
         </View>
         <View style={styles.documentInfo}>
-          <Text style={styles.documentName} numberOfLines={1}>
+          <Text 
+            style={[
+              styles.documentName, 
+              item.status === 'processing' && { color: '#ef4444' } // Red color for processing files
+            ]} 
+            numberOfLines={1}
+          >
             {item.name}
           </Text>
           <View style={styles.documentMeta}>
@@ -312,12 +662,12 @@ export default function DocumentsScreen() {
             <Text style={styles.documentDate}>
               {item.uploadDate.toLocaleDateString()}
             </Text>
-          </View>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-          <Text style={styles.statusText}>
-            {item.status === 'processing' ? 'Processing' : 'Ready'}
+            {item.status === 'processing' && (
+              <Text style={[styles.documentDate, { color: '#ef4444', fontWeight: '600' }]}>
+                Processing...
           </Text>
+            )}
+          </View>
         </View>
       </View>
       
@@ -397,6 +747,7 @@ export default function DocumentsScreen() {
             { option: 'documents' as FilterOption, label: 'Documents' },
             { option: 'receipts' as FilterOption, label: 'Receipts' },
             { option: 'forms' as FilterOption, label: 'Forms' },
+            { option: 'unknown' as FilterOption, label: 'Unknown' },
           ]}
           renderItem={({ item }) => (
             <FilterButton option={item.option} label={item.label} />

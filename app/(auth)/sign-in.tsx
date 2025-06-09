@@ -1,5 +1,5 @@
 import { Link } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -18,20 +18,25 @@ export default function SignInScreen() {
   const [password, setPassword] = useState(''); // No default values
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
-  const { signIn, loading } = useAuth();
+  const { signIn, loading, loadRememberedCredentials } = useAuth();
 
-  // Only reset on initial load if needed, commented out for testing
-  // useEffect(() => {
-  //   const resetAuth = async () => {
-  //     try {
-  //       await forceReset();
-  //       console.log('🔄 Forced auth reset on sign-in screen load');
-  //     } catch (error) {
-  //       console.warn('⚠️ Force reset failed:', error);
-  //     }
-  //   };
-  //   resetAuth();
-  // }, []);
+  // Load remembered credentials on component mount
+  useEffect(() => {
+    const loadRemembered = async () => {
+      try {
+        const remembered = await loadRememberedCredentials();
+        if (remembered) {
+          setEmail(remembered.email);
+          setPassword(remembered.password);
+          setRememberMe(remembered.remember);
+          console.log('✅ Loaded remembered credentials');
+        }
+      } catch (error) {
+        console.error('Failed to load remembered credentials:', error);
+      }
+    };
+    loadRemembered();
+  }, []);
 
   const handleSignIn = async () => {
     try {
@@ -41,7 +46,7 @@ export default function SignInScreen() {
         return;
       }
       
-      await signIn(email, password);
+      await signIn(email, password, rememberMe); // Pass remember parameter
       console.log('✅ Sign in completed successfully');
       
     } catch (error: any) {
@@ -51,8 +56,6 @@ export default function SignInScreen() {
       setError(errorMessage);
     }
   };
-
-
 
   return (
     <KeyboardAvoidingView
@@ -149,10 +152,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   title: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: 'bold',
     color: '#333',
     textAlign: 'center',
+    fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
+    marginBottom: 48,
   },
   subtitle: {
     fontSize: 16,
