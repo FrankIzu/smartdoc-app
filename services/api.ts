@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import { Platform } from 'react-native';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
 
@@ -32,16 +33,70 @@ interface AuthResponse {
   };
 }
 
+// Mobile API endpoints with v1/mobile prefix
+const MOBILE_ENDPOINTS = {
+  // Authentication
+  AUTH_CHECK: '/api/v1/mobile/auth-check',
+  LOGIN: '/api/v1/mobile/login',
+  LOGOUT: '/api/v1/mobile/logout',
+  SIGNUP: '/api/v1/mobile/signup',
+  FORGOT_PASSWORD: '/api/v1/mobile/forgot-password',
+  
+  // User
+  USER: '/api/v1/mobile/user',
+  
+  // Files
+  FILES: '/api/v1/mobile/files',
+  UPLOAD: '/api/v1/mobile/upload',
+  FILE_BY_ID: (id: number) => `/api/v1/mobile/file/${id}`,
+  FILE_DOWNLOAD: (id: number) => `/api/v1/mobile/file/${id}/download`,
+  
+  // Chat
+  CHAT_HISTORY: '/api/v1/mobile/chat/history',
+  CHAT_SEND: '/api/v1/mobile/chat/send',
+  
+  // Forms
+  FORMS: '/api/v1/mobile/forms',
+  
+  // Analysis
+  DASHBOARD: '/api/v1/mobile/analysis/dashboard',
+  ANALYTICS: '/api/v1/mobile/analysis/analytics',
+  ACTIVITY: '/api/v1/mobile/analysis/activity',
+  
+  // Documents
+  DOCUMENTS: '/api/v1/mobile/documents',
+  DOCUMENT_BY_ID: (id: number) => `/api/v1/mobile/document/${id}`,
+  
+  // Templates
+  TEMPLATES: '/api/v1/mobile/templates',
+} as const;
+
 // Main API Service Class
 class ApiService {
   private client: AxiosInstance;
 
   constructor() {
+    // Determine the actual platform for the X-Platform header
+    // For development, use 'android' to bypass iOS HTTPS requirements
+    const isDevelopment = __DEV__ || process.env.NODE_ENV === 'development';
+    const platformHeader = isDevelopment ? 'android' : // Use android in dev to avoid HTTPS issues
+                          Platform.OS === 'ios' ? 'ios' : 
+                          Platform.OS === 'android' ? 'android' : 
+                          'mobile'; // fallback for web or other platforms
+    
+    console.log('🔧 API Service Platform Config:', {
+      platformOS: Platform.OS,
+      isDevelopment,
+      platformHeader,
+      baseURL: API_BASE_URL
+    });
+    
     this.client = axios.create({
       baseURL: API_BASE_URL,
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
+        'X-Platform': platformHeader, // Send platform optimized for environment
       },
       withCredentials: true,
     });
@@ -85,85 +140,42 @@ class ApiService {
     }
   }
 
-  // Authentication
+  // ==================== MOBILE AUTHENTICATION ====================
+
   async login(credentials: { username: string; password: string }): Promise<AuthResponse> {
     try {
-      console.log('🔄 Attempting login with:', { username: credentials.username });
-      console.log('📡 API URL:', `${API_BASE_URL}${API_ENDPOINTS.LOGIN}`);
+      console.log('🔄 Attempting mobile login with:', { username: credentials.username });
+      console.log('📡 Mobile API URL:', `${API_BASE_URL}${MOBILE_ENDPOINTS.LOGIN}`);
+      console.log('🔧 Platform header:', this.client.defaults.headers['X-Platform']);
+      console.log('📱 Actual Platform.OS:', Platform.OS);
       
-      const response = await this.client.post(API_ENDPOINTS.LOGIN, credentials);
-      console.log('✅ Login response:', response.status, response.data);
-      console.log('🔍 Response structure:', JSON.stringify(response.data, null, 2));
+      const response = await this.client.post(MOBILE_ENDPOINTS.LOGIN, credentials);
+      console.log('✅ Mobile login response:', response.status, response.data);
       
       const result = response.data;
       
       if (result.success) {
-        // Check for user data in response
         if (result.user) {
           await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
-          console.log('💾 Stored user data');
-          
-          return {
-            success: true,
-            message: 'Login successful',
-            user: result.user,
-            token: result.token,
-          };
+          console.log('💾 Stored mobile user data');
         }
         
-        // Handle session_info response format (newer backend)
-        if (result.session_info && result.session_info.user_id) {
-          console.log('🔍 Backend returned session_info format, fetching user data...');
-          
-          // Try to fetch user data from /api/user endpoint
-          try {
-            const userResponse = await this.client.get('/api/user');
-            if (userResponse.data && userResponse.data.success && userResponse.data.user) {
-              const userData = userResponse.data.user;
-              await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
-              console.log('💾 Stored user data from /api/user');
-              
-              return {
-                success: true,
-                message: 'Login successful',
-                user: userData,
-                token: result.token,
-              };
-            }
-          } catch (userError) {
-            console.warn('⚠️ Failed to fetch user data from /api/user:', userError);
-          }
-          
-          // Fallback: create minimal user from session_info
-          console.log('🔄 Using session_info fallback for user data');
-          const minimalUser = {
-            id: result.session_info.user_id,
-            username: credentials.username, // Use the username they logged in with
-            email: '', // Will be empty until we can fetch it
-            first_name: '',
-            last_name: '',
-          };
-          
-          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(minimalUser));
-          console.log('💾 Stored minimal user data from session_info');
-          
-          return {
-            success: true,
-            message: 'Login successful',
-            user: minimalUser,
-            token: result.token,
-          };
-        }
+        return {
+          success: true,
+          message: 'Login successful',
+          user: result.user,
+          token: result.token,
+          session_info: result.session_info,
+        };
       }
       
       return {
         success: false,
         message: result.message || 'Login failed',
-        user: null,
       };
       
     } catch (error: any) {
-      console.error('❌ Login error:', error);
+      console.error('❌ Mobile login error:', error);
       
       if (error.response) {
         console.error('❌ Error response:', error.response.data);
@@ -190,7 +202,7 @@ class ApiService {
 
   async logout(): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(API_ENDPOINTS.LOGOUT);
+      const response = await this.client.post(MOBILE_ENDPOINTS.LOGOUT);
       await this.clearAuthData();
       return response.data;
     } catch (error: any) {
@@ -200,7 +212,7 @@ class ApiService {
 
   async checkAuth(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(API_ENDPOINTS.AUTH_CHECK);
+      const response = await this.client.get(MOBILE_ENDPOINTS.AUTH_CHECK);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Auth check failed');
@@ -209,7 +221,7 @@ class ApiService {
 
   async signup(data: any): Promise<AuthResponse> {
     try {
-      const response = await this.client.post(API_ENDPOINTS.SIGNUP, data);
+      const response = await this.client.post(MOBILE_ENDPOINTS.SIGNUP, data);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Signup failed');
@@ -218,25 +230,44 @@ class ApiService {
 
   async forgotPassword(email: string): Promise<ApiResponse> {
     try {
-      const response = await this.client.post('/api/forgot-password', { email });
+      const response = await this.client.post(MOBILE_ENDPOINTS.FORGOT_PASSWORD, { email });
       return response.data;
     } catch (error: any) {
-      console.error('Forgot password error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to send reset link');
+      throw new Error(error.response?.data?.message || 'Password reset failed');
     }
   }
 
-  // Files/Documents
+  // ==================== MOBILE USER MANAGEMENT ====================
+
+  async getUserProfile(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.USER);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch user profile');
+    }
+  }
+
+  async updateUserProfile(data: any): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.USER, data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to update user profile');
+    }
+  }
+
+  // ==================== MOBILE FILE MANAGEMENT ====================
+
   async getFiles(page = 1, perPage = 20, search?: string, category?: string): Promise<ApiResponse> {
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        per_page: perPage.toString(),
-        ...(search && { search }),
-        ...(category && { category }),
-      });
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('perPage', perPage.toString());
+      if (search) params.append('search', search);
+      if (category) params.append('category', category);
       
-      const response = await this.client.get(`${API_ENDPOINTS.FILES}?${params}`);
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.FILES}?${params}`);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch files');
@@ -245,7 +276,7 @@ class ApiService {
 
   async uploadFile(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(API_ENDPOINTS.UPLOAD, file, {
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD, file, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -264,7 +295,7 @@ class ApiService {
 
   async deleteFile(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.delete(`/api/files/${id}`);
+      const response = await this.client.delete(MOBILE_ENDPOINTS.FILE_BY_ID(id));
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Delete failed');
@@ -276,12 +307,12 @@ class ApiService {
       console.log('🔄 Downloading file with ID:', id);
       
       // First get the file info
-      const infoResponse = await this.client.get(`/api/files`);
-      const fileInfo = infoResponse.data?.files?.find((f: any) => f.id === id);
-      const filename = fileInfo?.original_filename || `document_${id}`;
+      const infoResponse = await this.client.get(MOBILE_ENDPOINTS.FILE_BY_ID(id));
+      const fileInfo = infoResponse.data?.file;
+      const filename = fileInfo?.name || `document_${id}`;
       
       // Get the download URL - we'll return it for external opening
-      const downloadUrl = `${API_BASE_URL}/api/files/${id}/download`;
+      const downloadUrl = `${API_BASE_URL}${MOBILE_ENDPOINTS.FILE_DOWNLOAD(id)}`;
       
       console.log('📁 File download URL:', downloadUrl);
       console.log('📁 File name:', filename);
@@ -297,13 +328,11 @@ class ApiService {
     }
   }
 
-  // Chat
+  // ==================== MOBILE CHAT ====================
+
   async sendChatMessage(message: string): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(API_ENDPOINTS.SMART_CHAT, { 
-        message,
-        include_citations: true 
-      });
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, { message });
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Chat failed');
@@ -312,17 +341,18 @@ class ApiService {
 
   async getChatHistory(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(API_ENDPOINTS.CHAT_HISTORY);
+      const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_HISTORY);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch chat history');
     }
   }
 
-  // Forms
+  // ==================== MOBILE FORMS ====================
+
   async getForms(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(API_ENDPOINTS.FORMS);
+      const response = await this.client.get(MOBILE_ENDPOINTS.FORMS);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch forms');
@@ -331,7 +361,7 @@ class ApiService {
 
   async createForm(form: any): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(API_ENDPOINTS.FORMS, form);
+      const response = await this.client.post(MOBILE_ENDPOINTS.FORMS, form);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to create form');
@@ -340,7 +370,7 @@ class ApiService {
 
   async updateForm(id: number, form: any): Promise<ApiResponse> {
     try {
-      const response = await this.client.put(API_ENDPOINTS.FORMS_BY_ID(id), form);
+      const response = await this.client.put(`${MOBILE_ENDPOINTS.FORMS}/${id}`, form);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to update form');
@@ -349,7 +379,7 @@ class ApiService {
 
   async deleteForm(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.delete(API_ENDPOINTS.FORMS_BY_ID(id));
+      const response = await this.client.delete(`${MOBILE_ENDPOINTS.FORMS}/${id}`);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to delete form');
@@ -358,69 +388,75 @@ class ApiService {
 
   async getFormResponses(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(API_ENDPOINTS.FORM_RESPONSES(id));
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.FORMS}/${id}/responses`);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch form responses');
     }
   }
 
-  // Documents (alias for files for consistency with web app)
-  async getDocuments(page = 1, perPage = 20, search?: string, category?: string): Promise<ApiResponse> {
-    return this.getFiles(page, perPage, search, category);
-  }
+  // ==================== MOBILE ANALYTICS ====================
 
-  // Dashboard Stats
   async getDashboardStats(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(API_ENDPOINTS.DASHBOARD_ANALYTICS);
+      const response = await this.client.get(MOBILE_ENDPOINTS.DASHBOARD);
       return response.data;
     } catch (error: any) {
       // Return mock data on failure for development
       return {
         success: true,
         data: {
-          totalDocuments: 0,
-          totalForms: 0,
-          recentUploads: 0,
-          formResponses: 0,
-          chatSessions: 0,
-          processingFiles: 0,
+          stats: {
+            totalDocuments: 0,
+            totalForms: 0,
+            totalFiles: 0,
+            totalChats: 0,
+          },
+          recentActivity: []
         }
       };
     }
   }
 
-  // User Profile
-  async getUserProfile(): Promise<ApiResponse> {
-    try {
-      const response = await this.client.get(API_ENDPOINTS.USER);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch user profile');
-    }
-  }
-
-  async updateUserProfile(data: any): Promise<ApiResponse> {
-    try {
-      const response = await this.client.put(API_ENDPOINTS.USER_UPDATE, data);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to update user profile');
-    }
-  }
-
-  // Analytics
   async getAnalytics(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(API_ENDPOINTS.ANALYTICS);
+      const response = await this.client.get(MOBILE_ENDPOINTS.ANALYTICS);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch analytics');
     }
   }
 
-  // Workspaces
+  // ==================== MOBILE DOCUMENTS ====================
+
+  async getDocuments(page = 1, perPage = 20, search?: string, category?: string): Promise<ApiResponse> {
+    try {
+      const params = new URLSearchParams();
+      if (search) params.append('search', search);
+      if (category) params.append('category', category);
+      
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.DOCUMENTS}?${params}`);
+      return response.data;
+    } catch (error: any) {
+      // For backward compatibility, return files if documents endpoint fails
+      return this.getFiles(page, perPage, search, category);
+    }
+  }
+
+  // ==================== MOBILE TEMPLATES ====================
+
+  async getTemplates(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.TEMPLATES);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch templates');
+    }
+  }
+
+  // ==================== LEGACY WEB COMPATIBILITY ====================
+  
+  // Keep existing methods for backward compatibility with web endpoints
   async getWorkspaces(): Promise<ApiResponse> {
     try {
       const response = await this.client.get(API_ENDPOINTS.WORKSPACES);
@@ -430,7 +466,6 @@ class ApiService {
     }
   }
 
-  // Health check
   async healthCheck(): Promise<ApiResponse> {
     try {
       const response = await this.client.get(API_ENDPOINTS.HEALTH);
