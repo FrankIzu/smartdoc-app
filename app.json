@@ -3,10 +3,28 @@
     "name": "GrabDocs",
     "slug": "grabdocs",
     "version": "1.0.0",
-    "platforms": ["web"],
-    "web": {
-      "bundler": "metro"
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
     },
-    "plugins": ["expo-router"]
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }

@@ -4,7 +4,8 @@
   
   Project Specifics
   - The main project file is Graddocs not manager-francis. Manager-francis is only for backend relatated code. DO NOT DO ANYTHINGS ELSE THERE
-  - I have a web app that run on port 3000, that web app and this mobile app will use the same Flask backend running on port 5000. 
+  - I have a web app that run on port 3000, that web app and this mobile app will use the same Flask backend running on port 5000. Do not make any changes that will affect the web application.
+  - Do not modify any files or endpoint anywhere except in mobile_route.py. You can create addition mobile only files and folders.
   - I have created a mobile blueprint that should contains all the end points for this mobile app. So, if you need to modift or create an endpoint, use this file manager-francis\backend\routes\mobile_routes.py
 
   - Always activate a vitual enviroment in manager-francis before you start the backend server.
@@ -14,6 +15,8 @@
   - each endoint you create must use the mobile blueprint versioning v1/mobile system
   - Always show a list of all modified files after any edits to the project
   - Always test the app with username: francis, password: password123
+  - Always keep a simple design.
+  - Do not make any database changes
   
 
   Code Style and Structure

@@ -5,16 +5,16 @@ import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useState } from 'react';
 import {
-  Alert,
-  FlatList,
-  Modal,
-  RefreshControl,
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    FlatList,
+    Modal,
+    RefreshControl,
+    Share,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '../../constants/Config';
@@ -604,6 +604,53 @@ export default function DocumentsScreen() {
     }
   };
 
+  const handleAutoCategorizFile = async () => {
+    setShowOptionsModal(false);
+    if (!selectedDocument) return;
+
+    try {
+      setLoading(true);
+      const response = await apiClient.post(`/file/${selectedDocument.id}/auto-categorize`);
+      
+      if (response.data.success) {
+        const categorization = response.data.categorization;
+        Alert.alert(
+          'File Categorized',
+          `File categorized as "${categorization.subcategory}" with ${Math.round(categorization.confidence * 100)}% confidence`,
+          [{ 
+            text: 'OK', 
+            onPress: () => {
+              // Refresh the documents list to show updated category
+              onRefresh();
+            }
+          }]
+        );
+      }
+    } catch (error) {
+      console.error('Auto-categorization failed:', error);
+      Alert.alert('Error', 'Failed to categorize file. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddToBookmark = () => {
+    setShowOptionsModal(false);
+    if (!selectedDocument) return;
+    
+    Alert.alert(
+      'Add to Bookmark',
+      'This feature allows you to organize files into bookmark collections. Navigate to the Bookmarks tab to create collections and manage your file organization.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Go to Bookmarks', 
+          onPress: () => router.push('/(tabs)/bookmarks')
+        }
+      ]
+    );
+  };
+
   const handleDeleteDocument = () => {
     setShowOptionsModal(false);
     if (!selectedDocument) return;
@@ -828,10 +875,20 @@ export default function DocumentsScreen() {
             
             <TouchableOpacity style={styles.modalOption} onPress={() => {
               setShowOptionsModal(false);
-              router.push('/(tabs)/chat');
+              router.push('/(tabs)/chats');
             }}>
               <Ionicons name="chatbubble-ellipses" size={24} color="#34C759" />
               <Text style={styles.modalOptionText}>Ask AI about this document</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.modalOption} onPress={handleAutoCategorizFile}>
+              <Ionicons name="pricetag" size={24} color="#FF9500" />
+              <Text style={styles.modalOptionText}>Auto-Categorize</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.modalOption} onPress={handleAddToBookmark}>
+              <Ionicons name="bookmark" size={24} color="#007AFF" />
+              <Text style={styles.modalOptionText}>Add to Bookmark</Text>
             </TouchableOpacity>
             
             <TouchableOpacity style={[styles.modalOption, styles.modalOptionDanger]} onPress={handleDeleteDocument}>

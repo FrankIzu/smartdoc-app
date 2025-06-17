@@ -1,6 +1,6 @@
 
-// API Configuration
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
+// API Configuration - Force correct IP address
+export const API_BASE_URL = 'http://192.168.1.7:5000';
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
 
 // App Configuration
