@@ -17,7 +17,6 @@ import { useAuth } from '../context/auth';
 interface DashboardStats {
   totalDocuments: number;
   totalForms: number;
-  recentUploads: number;
   formResponses: number;
   chatSessions: number;
   processingFiles: number;
@@ -39,7 +38,6 @@ function DashboardScreen() {
   const [stats, setStats] = useState({
     totalDocuments: 0,
     totalForms: 0,
-    recentUploads: 0,
     formResponses: 0,
     chatSessions: 0,
     processingFiles: 0,
@@ -53,42 +51,34 @@ function DashboardScreen() {
   const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.getDashboardStats();
       
-      if (response.success && response.data) {
-        setStats(response.data);
+      // Load dashboard stats
+      const dashboardResponse = await apiClient.getDashboardStats();
+      if (dashboardResponse.success && dashboardResponse.data) {
+        setStats(dashboardResponse.data);
       }
       
-      // Mock some recent activities for demonstration
-      setRecentActivities([
-        {
-          id: '1',
-          type: 'upload',
-          title: 'Document uploaded',
-          subtitle: 'New PDF added to Documents',
-          timestamp: new Date(Date.now() - 1000 * 60 * 30), // 30 min ago
-          icon: 'cloud-upload'
-        },
-        {
-          id: '2',
-          type: 'chat',
-          title: 'AI chat session',
-          subtitle: 'Asked about quarterly reports',
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 hours ago
-          icon: 'chatbubbles'
-        },
-        {
-          id: '3',
-          type: 'form',
-          title: 'New form response',
-          subtitle: 'Customer feedback received',
-          timestamp: new Date(Date.now() - 1000 * 60 * 60 * 4), // 4 hours ago
-          icon: 'list'
-        }
-      ]);
+      // Load recent activities from API
+      const activitiesResponse = await apiClient.getRecentActivities(7, 10);
+      if (activitiesResponse.success && activitiesResponse.activities) {
+        const formattedActivities = activitiesResponse.activities.map((activity: any) => ({
+          id: activity.id,
+          type: activity.type,
+          title: activity.title,
+          subtitle: activity.subtitle,
+          timestamp: new Date(activity.timestamp),
+          icon: activity.icon
+        }));
+        setRecentActivities(formattedActivities);
+      } else {
+        // Fallback to empty array if API fails
+        setRecentActivities([]);
+      }
+      
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
-      // Keep default stats on error
+      // Keep default stats and empty activities on error
+      setRecentActivities([]);
     } finally {
       setLoading(false);
     }
@@ -138,7 +128,6 @@ function DashboardScreen() {
               </View>
             ) : null}
           </View>
-          <Text style={styles.statValue}>{value}</Text>
         </View>
         <Text style={styles.statTitle}>{title}</Text>
       </View>
@@ -201,11 +190,17 @@ function DashboardScreen() {
         router.push('/(tabs)/chats');
         break;
       case 'form':
+        router.push('/forms/create');
+        break;
       case 'workspaces':
-      case 'templates':
+        router.push('/workspaces');
+        break;
       case 'notifications':
       case 'analytics':
         router.push('/(tabs)/settings');
+        break;
+      case 'upload-links':
+        router.push('/upload-links');
         break;
       default:
         break;
@@ -270,31 +265,35 @@ function DashboardScreen() {
         <View style={styles.statsContainer}>
           <View style={styles.statsRow}>
             <StatCard
-              title="Total Documents"
+              key="stat-files"
+              title="Quick Files"
               value={stats.totalDocuments}
               icon="folder"
               color="#007AFF"
               onPress={() => router.push('/(tabs)/documents')}
             />
             <StatCard
-              title="Total Forms"
+              key="stat-forms"
+              title="Quick Forms"
               value={stats.totalForms}
-              icon="list"
+              icon="document-text"
               color="#34C759"
-              onPress={() => router.push('/(tabs)/settings')}
+              onPress={() => router.push('/forms/create')}
               badge={stats.formResponses}
             />
           </View>
           <View style={styles.statsRow}>
             <StatCard
-              title="Recent Uploads"
-              value={stats.recentUploads}
-              icon="cloud-upload"
+              key="stat-analytics"
+              title="Analytics"
+              value={stats.recentAnalytics || 0}
+              icon="analytics"
               color="#FF9500"
-              onPress={() => router.push('/(tabs)/documents')}
+              onPress={() => router.push('/(tabs)/settings')}
             />
             <StatCard
-              title="AI Chats"
+              key="stat-chats"
+              title="Quick Chats"
               value={stats.chatSessions}
               icon="chatbubbles"
               color="#AF52DE"
@@ -308,20 +307,15 @@ function DashboardScreen() {
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.quickActionsContainer}>
             <QuickActionCard
-              title="Scan Document"
-              subtitle="Capture and process documents"
-              icon="camera"
-              color="#007AFF"
-              onPress={() => handleQuickAction('scan')}
-            />
-            <QuickActionCard
-              title="Upload Files"
+              key="action-upload"
+              title="Upload Document"
               subtitle="Add documents to your library"
               icon="cloud-upload"
               color="#34C759"
               onPress={() => handleQuickAction('upload')}
             />
             <QuickActionCard
+              key="action-chat"
               title="Start AI Chat"
               subtitle="Ask questions about your documents"
               icon="chatbubbles"
@@ -329,26 +323,20 @@ function DashboardScreen() {
               onPress={() => handleQuickAction('chat')}
             />
             <QuickActionCard
-              title="Create Form"
-              subtitle="Build custom forms"
-              icon="create"
-              color="#AF52DE"
-              onPress={() => handleQuickAction('form')}
+              key="action-upload-links"
+              title="Quick Links"
+              subtitle="Create links to receive files"
+              icon="link"
+              color="#8E44AD"
+              onPress={() => handleQuickAction('upload-links')}
             />
             <QuickActionCard
-              title="Team Workspaces"
+              key="action-workspaces"
+              title="Team Workspace"
               subtitle="Collaborate with your team"
               icon="people"
               color="#5856D6"
               onPress={() => handleQuickAction('workspaces')}
-              isNew={true}
-            />
-            <QuickActionCard
-              title="Document Templates"
-              subtitle="Create from templates"
-              icon="document-text"
-              color="#FF3B30"
-              onPress={() => handleQuickAction('templates')}
               isNew={true}
             />
           </View>
@@ -364,9 +352,9 @@ function DashboardScreen() {
           </View>
           <View style={styles.activityContainer}>
             {recentActivities.length > 0 ? (
-              recentActivities.map((activity) => (
+              recentActivities.map((activity, index) => (
                 <ActivityItem 
-                  key={activity.id} 
+                  key={`activity-${activity.id}-${index}`} 
                   activity={activity} 
                   onPress={() => handleActivityPress(activity)}
                 />
@@ -375,7 +363,7 @@ function DashboardScreen() {
               <View style={styles.emptyState}>
                 <Ionicons name="document-text-outline" size={48} color="#ccc" />
                 <Text style={styles.emptyStateText}>No recent activity</Text>
-                <Text style={styles.emptyStateSubtext}>Start by uploading or scanning documents</Text>
+                <Text style={styles.emptyStateSubtext}>Start by uploading documents</Text>
               </View>
             )}
           </View>
@@ -385,7 +373,7 @@ function DashboardScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>AI Insights</Text>
           <View style={styles.insightsContainer}>
-            <TouchableOpacity style={styles.insightCard} onPress={() => router.push('/(tabs)/settings')}>
+            <TouchableOpacity key="insight-suggestions" style={styles.insightCard} onPress={() => router.push('/(tabs)/settings')}>
               <View style={styles.insightIcon}>
                 <Ionicons name="bulb" size={24} color="#FF9500" />
               </View>
@@ -401,7 +389,7 @@ function DashboardScreen() {
               <Ionicons name="chevron-forward" size={16} color="#ccc" />
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
+            <TouchableOpacity key="insight-trends" style={styles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
               <View style={styles.insightIcon}>
                 <Ionicons name="trending-up" size={24} color="#34C759" />
               </View>
@@ -431,9 +419,9 @@ function DashboardScreen() {
             'Quick Actions',
             'Choose an action',
             [
-              { text: 'Scan Document', onPress: () => handleQuickAction('scan') },
-              { text: 'Upload Files', onPress: () => handleQuickAction('upload') },
+              { text: 'Upload Document', onPress: () => handleQuickAction('upload') },
               { text: 'Start AI Chat', onPress: () => handleQuickAction('chat') },
+              { text: 'Quick Links', onPress: () => handleQuickAction('upload-links') },
               { text: 'Cancel', style: 'cancel' },
             ]
           );

@@ -12,7 +12,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { api } from '../services/api';
+import { apiService as api } from '../services/api';
 
 interface UploadLinkInfo {
   name: string;
@@ -143,7 +143,7 @@ export default function PublicUploadScreen() {
             headers: {
               'Content-Type': 'multipart/form-data',
             },
-            onUploadProgress: (progressEvent) => {
+            onUploadProgress: (progressEvent: any) => {
               if (progressEvent.total) {
                 const progress = Math.round(
                   (progressEvent.loaded * 100) / progressEvent.total

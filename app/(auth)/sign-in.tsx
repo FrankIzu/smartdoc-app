@@ -1,23 +1,24 @@
 import { Link } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View
+    ActivityIndicator,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    View
 } from 'react-native';
 import { useAuth } from '../context/auth';
 
 export default function SignInScreen() {
-  const [email, setEmail] = useState(''); // No default values
-  const [password, setPassword] = useState(''); // No default values
+  const [email, setEmail] = useState('francis'); // Default username for testing
+  const [password, setPassword] = useState('password123'); // Default password for testing
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
+
   const { signIn, loading, loadRememberedCredentials } = useAuth();
 
   // Load remembered credentials on component mount
@@ -46,13 +47,26 @@ export default function SignInScreen() {
         return;
       }
       
-      await signIn(email, password, rememberMe); // Pass remember parameter
-      console.log('✅ Sign in completed successfully');
+      await signIn(email, password, rememberMe);
       
     } catch (error: any) {
       console.error('❌ Sign in error:', error);
-      // Show the actual error message from the server if available
-      const errorMessage = error?.response?.data?.message || error.message || 'An unexpected error occurred';
+      
+      // Show user-friendly error messages
+      let errorMessage = 'An unexpected error occurred';
+      
+      if (error.code === 'NETWORK_ERROR' || error.message.includes('Network Error')) {
+        errorMessage = 'Network connection failed. Please check your internet connection.';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Invalid username or password. Please try again.';
+      } else if (error.response?.status === 500) {
+        errorMessage = 'Server error. Please try again later.';
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       setError(errorMessage);
     }
   };

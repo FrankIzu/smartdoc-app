@@ -57,6 +57,8 @@ const MOBILE_ENDPOINTS = {
   
   // Forms
   FORMS: '/api/v1/mobile/forms',
+  FORM_BY_ID: (id: number) => `/api/v1/mobile/forms/${id}`,
+  FORM_RESPONSES: (id: number) => `/api/v1/mobile/forms/${id}/responses`,
   
   // Analysis
   DASHBOARD: '/api/v1/mobile/analysis/dashboard',
@@ -69,6 +71,25 @@ const MOBILE_ENDPOINTS = {
   
   // Templates
   TEMPLATES: '/api/v1/mobile/templates',
+  FORM_TEMPLATES: '/api/v1/mobile/form-templates',
+  
+  // Chat system
+  CHATS: '/api/v1/mobile/chats',
+  CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/chats/${chatId}/messages`,
+  CHAT_SEND_MESSAGE: '/api/v1/mobile/chat/send',
+  
+  // Bookmarks
+  BOOKMARKS: '/api/v1/mobile/bookmarks',
+  
+  // Workspaces
+  WORKSPACES: '/api/v1/mobile/workspaces',
+  WORKSPACE_USERS: '/api/v1/mobile/workspace-users',
+  
+  // Upload Links
+  UPLOAD_LINKS: '/api/v1/mobile/upload-links',
+  UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/mobile/upload-links/${id}`,
+  UPLOAD_LINK_SHARE: (id: number) => `/api/v1/mobile/upload-links/${id}/share`,
+  UPLOAD_LINK_FILES: (id: number) => `/api/v1/mobile/upload-links/${id}/files`,
 } as const;
 
 // Main API Service Class
@@ -144,10 +165,7 @@ class ApiService {
 
   async login(credentials: { username: string; password: string }): Promise<AuthResponse> {
     try {
-      console.log('🔄 Attempting mobile login with:', { username: credentials.username });
-      console.log('📡 Mobile API URL:', `${API_BASE_URL}${MOBILE_ENDPOINTS.LOGIN}`);
-      console.log('🔧 Platform header:', this.client.defaults.headers['X-Platform']);
-      console.log('📱 Actual Platform.OS:', Platform.OS);
+              console.log('🔄 Attempting mobile login with:', { username: credentials.username });
       
       const response = await this.client.post(MOBILE_ENDPOINTS.LOGIN, credentials);
       console.log('✅ Mobile login response:', response.status, response.data);
@@ -276,6 +294,7 @@ class ApiService {
 
   async uploadFile(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
     try {
+      console.log('🔄 Attempting file upload...');
       const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD, file, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -287,8 +306,10 @@ class ApiService {
           }
         },
       });
+      console.log('✅ Upload successful');
       return response.data;
     } catch (error: any) {
+      console.error('❌ Upload failed:', error);
       throw new Error(error.response?.data?.message || 'Upload failed');
     }
   }
@@ -330,11 +351,20 @@ class ApiService {
 
   // ==================== MOBILE CHAT ====================
 
-  async sendChatMessage(message: string): Promise<ApiResponse> {
+  async sendChatMessage(message: string, filters?: any, signal?: AbortSignal): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, { message });
+      const payload: any = { message };
+      if (filters) {
+        payload.filters = filters;
+      }
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, payload, {
+        signal
+      });
       return response.data;
     } catch (error: any) {
+      if (error.name === 'AbortError') {
+        throw error; // Re-throw abort errors to be handled by caller
+      }
       throw new Error(error.response?.data?.message || 'Chat failed');
     }
   }
@@ -352,6 +382,7 @@ class ApiService {
 
   async getForms(): Promise<ApiResponse> {
     try {
+      // Use proper mobile endpoint
       const response = await this.client.get(MOBILE_ENDPOINTS.FORMS);
       return response.data;
     } catch (error: any) {
@@ -361,16 +392,19 @@ class ApiService {
 
   async createForm(form: any): Promise<ApiResponse> {
     try {
+      // Use proper mobile endpoint
       const response = await this.client.post(MOBILE_ENDPOINTS.FORMS, form);
       return response.data;
     } catch (error: any) {
+      console.error('Create form error:', error);
       throw new Error(error.response?.data?.message || 'Failed to create form');
     }
   }
 
   async updateForm(id: number, form: any): Promise<ApiResponse> {
     try {
-      const response = await this.client.put(`${MOBILE_ENDPOINTS.FORMS}/${id}`, form);
+      // Use proper mobile endpoint
+      const response = await this.client.put(MOBILE_ENDPOINTS.FORM_BY_ID(id), form);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to update form');
@@ -379,7 +413,8 @@ class ApiService {
 
   async deleteForm(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.delete(`${MOBILE_ENDPOINTS.FORMS}/${id}`);
+      // Use proper mobile endpoint
+      const response = await this.client.delete(MOBILE_ENDPOINTS.FORM_BY_ID(id));
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to delete form');
@@ -388,7 +423,8 @@ class ApiService {
 
   async getFormResponses(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(`${MOBILE_ENDPOINTS.FORMS}/${id}/responses`);
+      // Use proper mobile endpoint
+      const response = await this.client.get(MOBILE_ENDPOINTS.FORM_RESPONSES(id));
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch form responses');
@@ -427,6 +463,21 @@ class ApiService {
     }
   }
 
+  async getRecentActivities(days = 7, limit = 10): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.ACTIVITY, {
+        params: { days, limit }
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Recent activities error:', error);
+      throw new Error(
+        error.response?.data?.message || 
+        'Failed to get recent activities'
+      );
+    }
+  }
+
   // ==================== MOBILE DOCUMENTS ====================
 
   async getDocuments(page = 1, perPage = 20, search?: string, category?: string): Promise<ApiResponse> {
@@ -451,6 +502,275 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch templates');
+    }
+  }
+
+  async getFormTemplates(): Promise<ApiResponse> {
+    try {
+      console.log('🔄 Attempting to fetch form templates...');
+      
+      // Use proper mobile endpoint that exists in backend
+      const response = await this.client.get(MOBILE_ENDPOINTS.FORM_TEMPLATES);
+      console.log('✅ Form templates loaded from mobile endpoint');
+      return response.data;
+      
+    } catch (error: any) {
+      console.error('Get form templates error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch form templates');
+    }
+  }
+
+  // ==================== MOBILE CHAT SYSTEM ====================
+  
+  async getChats(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.CHATS);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get chats error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch chats');
+    }
+  }
+
+  async getChatMessages(chatId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_MESSAGES(chatId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get chat messages error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch chat messages');
+    }
+  }
+
+  async sendChatMessageToChat(message: string, chatId?: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND_MESSAGE, {
+        message,
+        chat_id: chatId
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Send chat message error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to send chat message');
+    }
+  }
+
+  // ==================== MOBILE BOOKMARKS ====================
+  
+  async getBookmarks(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.BOOKMARKS);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get bookmarks error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch bookmarks');
+    }
+  }
+
+  // ==================== MOBILE WORKSPACES ====================
+  
+  async getMobileWorkspaces(): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACES);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get mobile workspaces error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch workspaces');
+    }
+  }
+
+  async createWorkspace(data: {
+    name: string;
+    description?: string;
+    slug?: string;
+  }): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.post(MOBILE_ENDPOINTS.WORKSPACES, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Create workspace error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to create workspace');
+    }
+  }
+
+  async getWorkspace(id: number): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get workspace error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch workspace');
+    }
+  }
+
+  async updateWorkspace(id: number, data: {
+    name?: string;
+    description?: string;
+    is_active?: boolean;
+  }): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.put(MOBILE_ENDPOINTS.WORKSPACE_BY_ID(id), data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Update workspace error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update workspace');
+    }
+  }
+
+  async deleteWorkspace(id: number): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.delete(MOBILE_ENDPOINTS.WORKSPACE_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete workspace error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to delete workspace');
+    }
+  }
+
+  async getWorkspaceMembers(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.WORKSPACES}/${id}/members`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get workspace members error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch workspace members');
+    }
+  }
+
+  async addWorkspaceMember(workspaceId: number, data: {
+    email: string;
+    role: 'admin' | 'member' | 'viewer';
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`${MOBILE_ENDPOINTS.WORKSPACES}/${workspaceId}/members`, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Add workspace member error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to add workspace member');
+    }
+  }
+
+  async updateWorkspaceMember(workspaceId: number, memberId: number, data: {
+    role: 'admin' | 'member' | 'viewer';
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(`${MOBILE_ENDPOINTS.WORKSPACES}/${workspaceId}/members/${memberId}`, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Update workspace member error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update workspace member');
+    }
+  }
+
+  async removeWorkspaceMember(workspaceId: number, memberId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(`${MOBILE_ENDPOINTS.WORKSPACES}/${workspaceId}/members/${memberId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Remove workspace member error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to remove workspace member');
+    }
+  }
+
+  async getWorkspaceUsers(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_USERS);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get workspace users error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch workspace users');
+    }
+  }
+
+  // ==================== MOBILE UPLOAD LINKS ====================
+
+  async getUploadLinks(): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINKS);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get upload links error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch upload links');
+    }
+  }
+
+  async createUploadLink(data: {
+    name: string;
+    description?: string;
+    expires_in_days?: number;
+    max_uploads?: number;
+  }): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_LINKS, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Create upload link error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to create upload link');
+    }
+  }
+
+  async getUploadLink(id: number): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get upload link error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch upload link');
+    }
+  }
+
+  async updateUploadLink(id: number, data: any): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.put(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id), data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Update upload link error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update upload link');
+    }
+  }
+
+  async deleteUploadLink(id: number): Promise<ApiResponse> {
+    try {
+      // Use proper mobile endpoint
+      const response = await this.client.delete(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete upload link error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to delete upload link');
+    }
+  }
+
+  async shareUploadLink(id: number, data: {
+    emails: string[];
+    message?: string;
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_LINK_SHARE(id), data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Share upload link error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to share upload link');
+    }
+  }
+
+  async getUploadLinkFiles(id: number, page = 1, perPage = 20): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_FILES(id), {
+        params: { page, perPage }
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Get upload link files error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch upload link files');
     }
   }
 

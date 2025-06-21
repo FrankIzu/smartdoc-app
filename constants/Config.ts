@@ -1,7 +1,9 @@
-
-// API Configuration - Force correct IP address
+// API Configuration
 export const API_BASE_URL = 'http://192.168.1.7:5000';
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
+
+// Expo Development Server URL
+export const EXPO_DEV_URL = 'http://192.168.1.7:8081';
 
 // App Configuration
 export const APP_NAME = process.env.EXPO_PUBLIC_APP_NAME || 'GrabDocs Mobile';

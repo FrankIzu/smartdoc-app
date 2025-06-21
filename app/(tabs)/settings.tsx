@@ -130,7 +130,7 @@ export default function SettingsScreen() {
       updatedPreferences = {
         ...preferences,
         [parent]: {
-          ...preferences[parent as keyof UserPreferences],
+          ...(preferences[parent as keyof UserPreferences] as any),
           [child]: value,
         },
       };

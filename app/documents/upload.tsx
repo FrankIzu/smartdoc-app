@@ -43,7 +43,7 @@ export default function UploadScreen() {
           const formData = new FormData();
           
           // Add file to form data
-          formData.append('files', {
+          formData.append('file', {
             uri: file.uri,
             type: file.mimeType || 'application/octet-stream',
             name: file.name || 'unnamed_file',
