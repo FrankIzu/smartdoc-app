@@ -83,6 +83,9 @@ const MOBILE_ENDPOINTS = {
   
   // Workspaces
   WORKSPACES: '/api/v1/mobile/workspaces',
+  WORKSPACE_BY_ID: (id: number) => `/api/v1/mobile/workspaces/${id}`,
+  WORKSPACE_MEMBERS: (id: number) => `/api/v1/mobile/workspaces/${id}/members`,
+  WORKSPACE_MEMBER_BY_ID: (workspaceId: number, memberId: number) => `/api/v1/mobile/workspaces/${workspaceId}/members/${memberId}`,
   WORKSPACE_USERS: '/api/v1/mobile/workspace-users',
   
   // Upload Links
@@ -634,7 +637,7 @@ class ApiService {
 
   async getWorkspaceMembers(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(`${MOBILE_ENDPOINTS.WORKSPACES}/${id}/members`);
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_MEMBERS(id));
       return response.data;
     } catch (error: any) {
       console.error('Get workspace members error:', error);
@@ -647,7 +650,7 @@ class ApiService {
     role: 'admin' | 'member' | 'viewer';
   }): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(`${MOBILE_ENDPOINTS.WORKSPACES}/${workspaceId}/members`, data);
+      const response = await this.client.post(MOBILE_ENDPOINTS.WORKSPACE_MEMBERS(workspaceId), data);
       return response.data;
     } catch (error: any) {
       console.error('Add workspace member error:', error);
@@ -659,7 +662,7 @@ class ApiService {
     role: 'admin' | 'member' | 'viewer';
   }): Promise<ApiResponse> {
     try {
-      const response = await this.client.put(`${MOBILE_ENDPOINTS.WORKSPACES}/${workspaceId}/members/${memberId}`, data);
+      const response = await this.client.put(MOBILE_ENDPOINTS.WORKSPACE_MEMBER_BY_ID(workspaceId, memberId), data);
       return response.data;
     } catch (error: any) {
       console.error('Update workspace member error:', error);
@@ -669,7 +672,7 @@ class ApiService {
 
   async removeWorkspaceMember(workspaceId: number, memberId: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.delete(`${MOBILE_ENDPOINTS.WORKSPACES}/${workspaceId}/members/${memberId}`);
+      const response = await this.client.delete(MOBILE_ENDPOINTS.WORKSPACE_MEMBER_BY_ID(workspaceId, memberId));
       return response.data;
     } catch (error: any) {
       console.error('Remove workspace member error:', error);
