@@ -60,7 +60,7 @@ export default function ProcessScanScreen() {
       const filename = `scanned_document_${timestamp}.jpg`;
       
       // Add file to form data
-      formData.append('files', {
+      formData.append('file', {
         uri: currentImage as string,
         type: 'image/jpeg',
         name: filename,

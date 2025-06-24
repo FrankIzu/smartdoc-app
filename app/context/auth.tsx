@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Check for existing session
     checkSession();
-  }, []);
+  }, []); // Empty dependency array ensures this only runs once
 
   const checkSession = async () => {
     try {

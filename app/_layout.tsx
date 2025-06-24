@@ -1,3 +1,17 @@
+// Import polyfills for mobile compatibility
+import 'react-native-url-polyfill/auto';
+
+// Import polyfills for mobile compatibility
+import { LogBox } from 'react-native';
+
+// Only suppress specific development warnings that are known and non-critical
+LogBox.ignoreLogs([
+  'expo-notifications: Android Push notifications',
+  'expo-notifications functionality is not fully supported',
+  'Linking requires a build-time setting',
+  'Warning: Text strings must be rendered within a <Text> component',
+]);
+
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { SplashScreen, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -27,13 +41,51 @@ function RootLayoutNav() {
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false }}>
         {user ? (
-          <>
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="documents" />
-          </>
+          <Stack.Screen 
+            name="(tabs)" 
+            options={{ 
+              headerShown: false,
+              title: 'Main'
+            }} 
+          />
         ) : (
-          <Stack.Screen name="(auth)" />
+          <Stack.Screen 
+            name="(auth)" 
+            options={{ 
+              headerShown: false,
+              title: 'Auth' 
+            }} 
+          />
         )}
+
+        <Stack.Screen 
+          name="public-upload" 
+          options={{ 
+            headerShown: false,
+            title: 'Upload' 
+          }} 
+        />
+        <Stack.Screen 
+          name="forms" 
+          options={{ 
+            headerShown: false,
+            title: 'Forms' 
+          }} 
+        />
+        <Stack.Screen 
+          name="upload-links" 
+          options={{ 
+            headerShown: false,
+            title: 'Upload Links' 
+          }} 
+        />
+        <Stack.Screen 
+          name="workspaces" 
+          options={{ 
+            headerShown: false,
+            title: 'Workspaces' 
+          }} 
+        />
       </Stack>
     </ThemeProvider>
   );

@@ -3,6 +3,18 @@ const path = require('path');
 
 const config = getDefaultConfig(__dirname);
 
+// Suppress Metro bundler warnings
+config.reporter = {
+  update: (event) => {
+    // Only log errors and important events, suppress warnings
+    if (event.type === 'bundle_build_failed' || 
+        event.type === 'global_cache_error' ||
+        event.type === 'bundle_build_done') {
+      console.log(event);
+    }
+  }
+};
+
 // Configure resolver for @ path mapping
 config.resolver = {
   ...config.resolver,

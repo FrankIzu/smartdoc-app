@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+    Alert,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -16,62 +17,84 @@ import { useAuth } from '../context/auth';
 interface DashboardStats {
   totalDocuments: number;
   totalForms: number;
-  recentUploads: number;
   formResponses: number;
   chatSessions: number;
   processingFiles: number;
+  unreadNotifications?: number;
+  recentAnalytics?: number;
 }
 
 interface RecentActivity {
   id: string;
-  type: 'upload' | 'chat' | 'scan' | 'process';
+  type: 'upload' | 'chat' | 'scan' | 'process' | 'form' | 'analytics';
   title: string;
   subtitle: string;
   timestamp: Date;
   icon: string;
 }
 
-export default function DashboardScreen() {
+function DashboardScreen() {
   const { user, signOut } = useAuth();
   const [stats, setStats] = useState({
     totalDocuments: 0,
     totalForms: 0,
-    recentUploads: 0,
     formResponses: 0,
     chatSessions: 0,
     processingFiles: 0,
+    unreadNotifications: 0,
+    recentAnalytics: 0,
   });
   const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.getDashboardStats();
       
-      if (response.success && response.data) {
-        setStats(response.data);
+      // Load dashboard stats
+      const dashboardResponse = await apiClient.getDashboardStats();
+      if (dashboardResponse.success && dashboardResponse.data) {
+        setStats(dashboardResponse.data);
       }
+      
+      // Load recent activities from API
+      const activitiesResponse = await apiClient.getRecentActivities(7, 10);
+      if (activitiesResponse.success && activitiesResponse.activities) {
+        const formattedActivities = activitiesResponse.activities.map((activity: any) => ({
+          id: activity.id,
+          type: activity.type,
+          title: activity.title,
+          subtitle: activity.subtitle,
+          timestamp: new Date(activity.timestamp),
+          icon: activity.icon
+        }));
+        setRecentActivities(formattedActivities);
+      } else {
+        // Fallback to empty array if API fails
+        setRecentActivities([]);
+      }
+      
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
-      // Keep default stats on error
+      // Keep default stats and empty activities on error
+      setRecentActivities([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, []); // Memoize to prevent unnecessary recreations
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadDashboardData();
     setRefreshing(false);
-  };
+  }, [loadDashboardData]);
 
   useEffect(() => {
     if (user) {
       loadDashboardData();
     }
-  }, [user]);
+  }, [user, loadDashboardData]);
 
   const formatTimeAgo = (date: Date) => {
     const now = new Date();
@@ -86,34 +109,43 @@ export default function DashboardScreen() {
     return `${days}d ago`;
   };
 
-  const StatCard = ({ title, value, icon, color, onPress }: {
+  const StatCard = ({ title, value, icon, color, onPress, badge }: {
     title: string;
     value: number;
     icon: string;
     color: string;
     onPress?: () => void;
+    badge?: number;
   }) => (
     <TouchableOpacity style={[styles.statCard, { borderLeftColor: color }]} onPress={onPress}>
       <View style={styles.statContent}>
         <View style={styles.statHeader}>
-          <Ionicons name={icon as any} size={24} color={color} />
-          <Text style={styles.statValue}>{value}</Text>
+          <View style={{ position: 'relative' }}>
+            <Ionicons name={icon as any} size={24} color={color} />
+            {badge != null && badge > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{badge > 99 ? '99+' : String(badge)}</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
         <Text style={styles.statTitle}>{title}</Text>
       </View>
     </TouchableOpacity>
   );
 
-  const QuickActionCard = ({ title, subtitle, icon, color, onPress }: {
+  const QuickActionCard = ({ title, subtitle, icon, color, onPress, isNew }: {
     title: string;
     subtitle: string;
     icon: string;
     color: string;
     onPress: () => void;
+    isNew?: boolean;
   }) => (
     <TouchableOpacity style={styles.quickActionCard} onPress={onPress}>
       <View style={[styles.quickActionIcon, { backgroundColor: color }]}>
         <Ionicons name={icon as any} size={28} color="#fff" />
+        {isNew ? <View style={styles.newBadge}><Text style={styles.newBadgeText}>NEW</Text></View> : null}
       </View>
       <View style={styles.quickActionContent}>
         <Text style={styles.quickActionTitle}>{title}</Text>
@@ -123,8 +155,8 @@ export default function DashboardScreen() {
     </TouchableOpacity>
   );
 
-  const ActivityItem = ({ activity }: { activity: RecentActivity }) => (
-    <View style={styles.activityItem}>
+  const ActivityItem = ({ activity, onPress }: { activity: RecentActivity; onPress?: () => void }) => (
+    <TouchableOpacity style={styles.activityItem} onPress={onPress}>
       <View style={[styles.activityIcon, { backgroundColor: getActivityColor(activity.type) }]}>
         <Ionicons name={activity.icon as any} size={16} color="#fff" />
       </View>
@@ -133,7 +165,7 @@ export default function DashboardScreen() {
         <Text style={styles.activitySubtitle}>{activity.subtitle}</Text>
       </View>
       <Text style={styles.activityTime}>{formatTimeAgo(activity.timestamp)}</Text>
-    </View>
+    </TouchableOpacity>
   );
 
   const getActivityColor = (type: string) => {
@@ -142,7 +174,54 @@ export default function DashboardScreen() {
       case 'chat': return '#34C759';
       case 'scan': return '#FF9500';
       case 'process': return '#AF52DE';
+      case 'form': return '#FF3B30';
+      case 'analytics': return '#5856D6';
       default: return '#8E8E93';
+    }
+  };
+
+  const handleQuickAction = (action: string) => {
+    switch (action) {
+      case 'scan':
+      case 'upload':
+        router.push('/(tabs)/documents');
+        break;
+      case 'chat':
+        router.push('/(tabs)/chats');
+        break;
+      case 'form':
+        router.push('/forms/create');
+        break;
+      case 'workspaces':
+        router.push('/workspaces');
+        break;
+      case 'notifications':
+      case 'analytics':
+        router.push('/(tabs)/settings');
+        break;
+      case 'upload-links':
+        router.push('/upload-links');
+        break;
+      default:
+        break;
+    }
+  };
+
+  const handleActivityPress = (activity: RecentActivity) => {
+    switch (activity.type) {
+      case 'upload':
+      case 'scan':
+        router.push('/(tabs)/documents');
+        break;
+      case 'chat':
+        router.push('/(tabs)/chats');
+        break;
+      case 'form':
+      case 'analytics':
+        router.push('/(tabs)/settings');
+        break;
+      default:
+        break;
     }
   };
 
@@ -159,45 +238,66 @@ export default function DashboardScreen() {
             <Text style={styles.welcomeText}>Welcome back,</Text>
             <Text style={styles.userNameText}>{user?.name || user?.email || 'User'}</Text>
           </View>
-          <TouchableOpacity
-            style={styles.profileButton}
-            onPress={() => router.push('/(tabs)/profile')}
-          >
-            <Ionicons name="person-circle" size={32} color="#007AFF" />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.headerButton}
+              onPress={() => router.push('/(tabs)/settings')}
+            >
+              <View style={{ position: 'relative' }}>
+                <Ionicons name="notifications-outline" size={24} color="#007AFF" />
+                {stats.unreadNotifications > 0 ? (
+                  <View style={styles.headerBadge}>
+                    <Text style={styles.headerBadgeText}>{String(stats.unreadNotifications)}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.profileButton}
+              onPress={() => router.push('/(tabs)/settings')}
+            >
+              <Ionicons name="person-circle" size={32} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Stats Cards */}
         <View style={styles.statsContainer}>
           <View style={styles.statsRow}>
             <StatCard
-              title="Total Documents"
+              key="stat-files"
+              title="Quick Files"
               value={stats.totalDocuments}
               icon="folder"
               color="#007AFF"
               onPress={() => router.push('/(tabs)/documents')}
             />
             <StatCard
-              title="Total Forms"
+              key="stat-forms"
+              title="Quick Forms"
               value={stats.totalForms}
-              icon="list"
+              icon="document-text"
               color="#34C759"
-              onPress={() => router.push('/(tabs)/forms')}
+              onPress={() => router.push('/forms/create')}
+              badge={stats.formResponses}
             />
           </View>
           <View style={styles.statsRow}>
             <StatCard
-              title="Recent Uploads"
-              value={stats.recentUploads}
-              icon="cloud-upload"
+              key="stat-analytics"
+              title="Analytics"
+              value={stats.recentAnalytics || 0}
+              icon="analytics"
               color="#FF9500"
-              onPress={() => router.push('/(tabs)/documents')}
+              onPress={() => router.push('/(tabs)/settings')}
             />
             <StatCard
-              title="Form Responses"
-              value={stats.formResponses}
+              key="stat-chats"
+              title="Quick Chats"
+              value={stats.chatSessions}
               icon="chatbubbles"
               color="#AF52DE"
+              onPress={() => router.push('/(tabs)/chats')}
             />
           </View>
         </View>
@@ -207,32 +307,37 @@ export default function DashboardScreen() {
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.quickActionsContainer}>
             <QuickActionCard
-              title="Scan Document"
-              subtitle="Capture and process documents"
-              icon="camera"
-              color="#007AFF"
-              onPress={() => router.push('/(tabs)/scanner')}
-            />
-            <QuickActionCard
-              title="Upload Files"
+              key="action-upload"
+              title="Upload Document"
               subtitle="Add documents to your library"
               icon="cloud-upload"
               color="#34C759"
-              onPress={() => router.push('/(tabs)/documents')}
+              onPress={() => handleQuickAction('upload')}
             />
             <QuickActionCard
+              key="action-chat"
               title="Start AI Chat"
               subtitle="Ask questions about your documents"
               icon="chatbubbles"
               color="#FF9500"
-              onPress={() => router.push('/(tabs)/chat')}
+              onPress={() => handleQuickAction('chat')}
             />
             <QuickActionCard
-              title="Create Form"
-              subtitle="Build custom forms"
-              icon="create"
-              color="#AF52DE"
-              onPress={() => router.push('/(tabs)/forms')}
+              key="action-upload-links"
+              title="Quick Links"
+              subtitle="Create links to receive files"
+              icon="link"
+              color="#8E44AD"
+              onPress={() => handleQuickAction('upload-links')}
+            />
+            <QuickActionCard
+              key="action-workspaces"
+              title="Team Workspace"
+              subtitle="Collaborate with your team"
+              icon="people"
+              color="#5856D6"
+              onPress={() => handleQuickAction('workspaces')}
+              isNew={true}
             />
           </View>
         </View>
@@ -241,20 +346,24 @@ export default function DashboardScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent Activity</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/documents')}>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/settings')}>
               <Text style={styles.seeAllText}>See All</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.activityContainer}>
             {recentActivities.length > 0 ? (
-              recentActivities.map((activity) => (
-                <ActivityItem key={activity.id} activity={activity} />
+              recentActivities.map((activity, index) => (
+                <ActivityItem 
+                  key={`activity-${activity.id}-${index}`} 
+                  activity={activity} 
+                  onPress={() => handleActivityPress(activity)}
+                />
               ))
             ) : (
               <View style={styles.emptyState}>
                 <Ionicons name="document-text-outline" size={48} color="#ccc" />
                 <Text style={styles.emptyStateText}>No recent activity</Text>
-                <Text style={styles.emptyStateSubtext}>Start by uploading or scanning documents</Text>
+                <Text style={styles.emptyStateSubtext}>Start by uploading documents</Text>
               </View>
             )}
           </View>
@@ -264,7 +373,7 @@ export default function DashboardScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>AI Insights</Text>
           <View style={styles.insightsContainer}>
-            <View style={styles.insightCard}>
+            <TouchableOpacity key="insight-suggestions" style={styles.insightCard} onPress={() => router.push('/(tabs)/settings')}>
               <View style={styles.insightIcon}>
                 <Ionicons name="bulb" size={24} color="#FF9500" />
               </View>
@@ -277,9 +386,10 @@ export default function DashboardScreen() {
                   }
                 </Text>
               </View>
-            </View>
+              <Ionicons name="chevron-forward" size={16} color="#ccc" />
+            </TouchableOpacity>
             
-            <View style={styles.insightCard}>
+            <TouchableOpacity key="insight-trends" style={styles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
               <View style={styles.insightIcon}>
                 <Ionicons name="trending-up" size={24} color="#34C759" />
               </View>
@@ -292,10 +402,33 @@ export default function DashboardScreen() {
                   }
                 </Text>
               </View>
-            </View>
+              <Ionicons name="chevron-forward" size={16} color="#ccc" />
+            </TouchableOpacity>
           </View>
         </View>
+
+        {/* Add some padding at the bottom for better scrolling */}
+        <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity 
+        style={styles.fab}
+        onPress={() => {
+          Alert.alert(
+            'Quick Actions',
+            'Choose an action',
+            [
+              { text: 'Upload Document', onPress: () => handleQuickAction('upload') },
+              { text: 'Start AI Chat', onPress: () => handleQuickAction('chat') },
+              { text: 'Quick Links', onPress: () => handleQuickAction('upload-links') },
+              { text: 'Cancel', style: 'cancel' },
+            ]
+          );
+        }}
+      >
+        <Ionicons name="add" size={28} color="#fff" />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -514,4 +647,74 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
-}); 
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerButton: {
+    padding: 4,
+  },
+  headerBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    padding: 2,
+  },
+  headerBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    backgroundColor: '#007AFF',
+    borderRadius: 32,
+    width: 64,
+    height: 64,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  newBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#FF3B30',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  newBadgeText: {
+    color: 'white',
+    fontSize: 8,
+    fontWeight: 'bold',
+  },
+});
+
+// Export memoized component to prevent unnecessary re-renders
+export default React.memo(DashboardScreen); 

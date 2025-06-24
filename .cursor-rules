@@ -1,12 +1,24 @@
 
   You are an expert in TypeScript, React Native, Expo, and Mobile UI development.
 
-  This line is only for the grabdocs app:
-  ***
-  - I have created a web application and the code is in manager-francis, I want you to create a mobile replica of this web app. Ensure that the functionalities are similar. Both the web and mobile will use the same Flask backend running on port 5000.
-  - I have neondb credentials in .env file
-  - do not create sqlite db
-  **
+  
+  Project Specifics
+  - The main project file is Graddocs not manager-francis. Manager-francis is only for backend relatated code. DO NOT DO ANYTHINGS ELSE THERE
+  - I have a virtual enviroment in manager-francis directory, activate it to start the backend. Pls do not setup another virtual enviroment.
+  - I have a web app that run on port 3000, that web app and this mobile app will use the same Flask backend running on port 5000. Do not make any changes that will affect the web application.
+  - Do not modify any files or endpoint anywhere except in mobile_route.py. You can create addition mobile only files and folders.
+  - I have created a mobile blueprint that should contains all the end points for this mobile app. So, if you need to modift or create an endpoint, use this file manager-francis\backend\routes\mobile_routes.py
+
+  - Always activate a vitual enviroment in manager-francis before you start the backend server.
+  - I have neondb credentials in .env file but DO NOT MAKE ANY DATABASE CHANGES.
+  - If you need to make database changes, write the script and place it in the db_scripts directory. 
+  - do not create sqlite db, use neon db instead. DB details and other enviromental variables are there in .env file.
+  - each endoint you create must use the mobile blueprint versioning v1/mobile system
+  - Always show a list of all modified files after any edits to the project
+  - Always test the app with username: francis, password: password123
+  - Always keep a simple design.
+  - Do not make any database changes
+  
 
   Code Style and Structure
   - Write concise, technical TypeScript code with accurate examples.
