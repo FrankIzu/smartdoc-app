@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,12 +19,18 @@ export default function SignUpScreen() {
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [agreeToTerms, setAgreeToTerms] = useState(false);
   const [error, setError] = useState('');
   const { signUp, loading } = useAuth();
 
   const handleSignUp = async () => {
     if (!username || !firstName || !lastName || !email || !password) {
       setError('Please fill in all fields');
+      return;
+    }
+
+    if (!agreeToTerms) {
+      setError('Please agree to the Terms of Service and Privacy Policy');
       return;
     }
 
@@ -34,6 +41,14 @@ export default function SignUpScreen() {
     } catch (error) {
       setError('Error creating account. Please try again.');
     }
+  };
+
+  const openTermsOfService = () => {
+    Linking.openURL('https://grabdocs.com/terms-of-service');
+  };
+
+  const openPrivacyPolicy = () => {
+    Linking.openURL('https://grabdocs.com/privacy-policy');
   };
 
   return (
@@ -102,10 +117,32 @@ export default function SignUpScreen() {
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
+          {/* Terms and Privacy Agreement */}
+          <View style={styles.agreementContainer}>
+            <Pressable
+              style={[styles.checkbox, agreeToTerms && styles.checkboxChecked]}
+              onPress={() => setAgreeToTerms(!agreeToTerms)}
+            >
+              {agreeToTerms && <Text style={styles.checkmark}>✓</Text>}
+            </Pressable>
+            <View style={styles.agreementText}>
+              <Text style={styles.agreementLabel}>
+                By creating an account, you agree to our{' '}
+                <Text style={styles.linkText} onPress={openTermsOfService}>
+                  Terms of Service
+                </Text>
+                {' '}and{' '}
+                <Text style={styles.linkText} onPress={openPrivacyPolicy}>
+                  Privacy Policy
+                </Text>
+              </Text>
+            </View>
+          </View>
+
           <Pressable
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[styles.button, (loading || !agreeToTerms) && styles.buttonDisabled]}
             onPress={handleSignUp}
-            disabled={loading}
+            disabled={loading || !agreeToTerms}
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
@@ -194,5 +231,38 @@ const styles = StyleSheet.create({
   linkText: {
     color: '#007AFF',
     fontSize: 14,
+  },
+  agreementContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    marginTop: 2,
+  },
+  checkboxChecked: {
+    backgroundColor: '#007AFF',
+  },
+  checkmark: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  agreementText: {
+    flex: 1,
+  },
+  agreementLabel: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
   },
 }); 
