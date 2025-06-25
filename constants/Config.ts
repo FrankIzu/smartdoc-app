@@ -1,3 +1,5 @@
+import Constants from 'expo-constants';
+
 // API Configuration
 export const API_BASE_URL = 'http://192.168.1.7:5000';
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
@@ -229,4 +231,36 @@ export const ANIMATION = {
   FAST: 150,
   NORMAL: 300,
   SLOW: 500,
-} as const; 
+} as const;
+
+const ENV = {
+  dev: {
+    apiUrl: 'http://localhost:5000',
+    stripePublishableKey: 'pk_test_your-stripe-test-publishable-key-here', // Replace with your test key
+  },
+  staging: {
+    apiUrl: 'https://your-staging-api.com',
+    stripePublishableKey: 'pk_test_your-stripe-test-publishable-key-here', // Replace with your test key
+  },
+  prod: {
+    apiUrl: 'https://your-production-api.com',
+    stripePublishableKey: 'pk_live_your-stripe-live-publishable-key-here', // Replace with your live key
+  },
+};
+
+function getEnvVars(env = Constants.expoConfig?.extra?.releaseChannel) {
+  // What is __DEV__ ?
+  // This variable is set to true when react-native is running in Dev mode.
+  // __DEV__ is true when run locally, but false when published.
+  if (process.env.NODE_ENV === 'development') {
+    return ENV.dev;
+  } else if (env === 'staging') {
+    return ENV.staging;
+  } else if (env === 'production') {
+    return ENV.prod;
+  } else {
+    return ENV.dev;
+  }
+}
+
+export default getEnvVars; 
