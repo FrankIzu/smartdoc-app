@@ -4,29 +4,98 @@
     "slug": "grabdocs",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "grabdocs",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.grabdocs.mobile",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "GrabDocs needs access to your camera to scan documents and take photos.",
+        "NSPhotoLibraryUsageDescription": "GrabDocs needs access to your photo library to upload existing documents and photos.",
+        "NSPhotoLibraryAddUsageDescription": "GrabDocs needs access to save scanned documents to your photo library.",
+        "NSMicrophoneUsageDescription": "GrabDocs needs access to your microphone for voice notes and audio features.",
+        "NSFaceIDUsageDescription": "GrabDocs uses Face ID for secure and convenient authentication to access your account and documents.",
+        "NSBiometricUsageDescription": "GrabDocs uses biometric authentication (Face ID or Touch ID) for secure and convenient access to your account and documents.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.grabdocs.mobile",
+      "versionCode": 1,
       "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "api.grabdocs.com",
+              "pathPrefix": "/auth"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "bundler": "metro",
-      "output": "static"
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "expo-dev-client",
       "expo-router",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "GrabDocs needs access to your photos to let you share them with your workspaces.",
+          "cameraPermission": "GrabDocs needs access to your camera to let you take photos of documents."
+        }
+      ],
+      [
+        "expo-document-picker",
+        {
+          "iCloudContainerEnvironment": "Production"
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "GrabDocs uses Face ID for secure and convenient authentication to access your account and documents."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "341d1cdf-5759-41ef-8ae3-36e4cf7fab00"
+      }
     }
   }
 }

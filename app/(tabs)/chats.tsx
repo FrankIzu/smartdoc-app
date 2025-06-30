@@ -1272,7 +1272,7 @@ export default function ChatsScreen() {
               const isLastItem = index === array.length - 1;
               return (
                 <TouchableOpacity
-                  key={type}
+                  key={`quick-chat-${type}`}
                   style={[
                     styles.quickChatTypeItem,
                     isLastItem && { borderBottomWidth: 0 }

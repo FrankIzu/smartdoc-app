@@ -1,6 +1,7 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
+/** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
 
 // Suppress Metro bundler warnings
@@ -20,6 +21,20 @@ config.resolver = {
   ...config.resolver,
   alias: {
     '@': path.resolve(__dirname, '.'),
+  },
+  unstable_enablePackageExports: true,
+  sourceExts: [...config.resolver.sourceExts, 'mjs', 'cjs'],
+};
+
+// Configure transformer to handle environment variables properly
+config.transformer = {
+  ...config.transformer,
+  minifierConfig: {
+    ...config.transformer.minifierConfig,
+    keep_fnames: true,
+    mangle: {
+      keep_fnames: true,
+    },
   },
 };
 

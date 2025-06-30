@@ -1,128 +1,111 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { apiClient } from '../services/api';
+import axios from 'axios';
+import { createContext, useContext, useEffect, useState } from 'react';
+import { API_BASE_URL } from '../constants/Config';
 
-interface User {
-  id: string;
-  username: string;
-  email: string;
-}
+// Create an API client instance
+const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Platform': 'mobile',
+  },
+  withCredentials: true,
+});
 
+// Define the shape of our context
 interface AuthContextType {
-  user: User | null;
-  loading: boolean;
-  login: (username: string, password: string) => Promise<boolean>;
-  signup: (username: string, email: string, password: string) => Promise<boolean>;
+  isAuthenticated: boolean;
+  user: any | null;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  signup: (username: string, email: string, password: string) => Promise<void>;
 }
 
+// Create the context
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Provider component
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<any | null>(null);
 
+  // Check authentication status on mount
   useEffect(() => {
-    checkAuthStatus();
+    const checkAuth = async () => {
+      try {
+        const response = await apiClient.get('/api/v1/mobile/auth-check');
+        if (response.data.success) {
+          setIsAuthenticated(true);
+          setUser(response.data.user);
+        }
+      } catch (error) {
+        console.error('Auth check failed:', error);
+        setIsAuthenticated(false);
+        setUser(null);
+      }
+    };
+
+    checkAuth();
   }, []);
 
-  const checkAuthStatus = async () => {
+  const login = async (username: string, password: string) => {
     try {
-      // Check if user data exists in storage
-      const userData = await AsyncStorage.getItem('user');
-      if (userData) {
-        setUser(JSON.parse(userData));
-      }
-
-      // Verify with backend
-      const response = await apiClient.get('/api/auth-check');
-      if (response.data.authenticated) {
-        const currentUser = response.data.user;
-        setUser(currentUser);
-        await AsyncStorage.setItem('user', JSON.stringify(currentUser));
-      } else {
-        // Clear stored user data if not authenticated
-        setUser(null);
-        await AsyncStorage.removeItem('user');
-      }
-    } catch (error) {
-      console.error('Auth check failed:', error);
-      // Clear user data on error
-      setUser(null);
-      await AsyncStorage.removeItem('user');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const login = async (username: string, password: string): Promise<boolean> => {
-    try {
-      const response = await apiClient.post('/api/login', {
+      const response = await apiClient.post('/api/v1/mobile/login', {
         username,
         password,
       });
 
       if (response.data.success) {
-        const userData = response.data.user;
-        setUser(userData);
-        await AsyncStorage.setItem('user', JSON.stringify(userData));
-        return true;
+        setIsAuthenticated(true);
+        setUser(response.data.user);
+      } else {
+        throw new Error(response.data.message || 'Login failed');
       }
-      return false;
     } catch (error) {
-      console.error('Login failed:', error);
-      return false;
+      console.error('Login error:', error);
+      throw error;
     }
   };
 
-  const signup = async (username: string, email: string, password: string): Promise<boolean> => {
+  const signup = async (username: string, email: string, password: string) => {
     try {
-      const response = await apiClient.post('/api/signup', {
+      const response = await apiClient.post('/api/v1/mobile/signup', {
         username,
         email,
         password,
       });
 
       if (response.data.success) {
-        const userData = response.data.user;
-        setUser(userData);
-        await AsyncStorage.setItem('user', JSON.stringify(userData));
-        return true;
+        setIsAuthenticated(true);
+        setUser(response.data.user);
+      } else {
+        throw new Error(response.data.message || 'Signup failed');
       }
-      return false;
     } catch (error) {
-      console.error('Signup failed:', error);
-      return false;
+      console.error('Signup error:', error);
+      throw error;
     }
   };
 
-  const logout = async (): Promise<void> => {
+  const logout = async () => {
     try {
-      await apiClient.post('/api/logout');
-    } catch (error) {
-      console.error('Logout request failed:', error);
-    } finally {
-      // Clear user data regardless of API response
+      await apiClient.post('/api/v1/mobile/logout');
+      setIsAuthenticated(false);
       setUser(null);
-      await AsyncStorage.removeItem('user');
+    } catch (error) {
+      console.error('Logout error:', error);
+      throw error;
     }
-  };
-
-  const value = {
-    user,
-    loading,
-    login,
-    signup,
-    logout,
   };
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{ isAuthenticated, user, login, logout, signup }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
+// Custom hook to use the auth context
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {

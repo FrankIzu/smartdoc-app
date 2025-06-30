@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -36,7 +36,8 @@ interface UploadFile {
 
 export default function PublicUploadScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
-  const router = useRouter();
+  // Temporarily commented out until expo-router is fully working
+  // const router = useRouter();
   const [uploadInfo, setUploadInfo] = useState<UploadLinkInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -56,7 +57,7 @@ export default function PublicUploadScreen() {
         setUploadInfo(response.data.upload_link);
       } else {
         Alert.alert('Error', 'Invalid or expired upload link');
-        router.back();
+        // router.back(); // Temporarily disabled
       }
     } catch (error: any) {
       console.error('Failed to load upload info:', error);
@@ -69,7 +70,7 @@ export default function PublicUploadScreen() {
         : 'Failed to load upload information';
       
       Alert.alert('Error', message, [
-        { text: 'OK', onPress: () => router.back() }
+        { text: 'OK', onPress: () => {/* router.back(); // Temporarily disabled */} }
       ]);
     } finally {
       setLoading(false);
@@ -262,7 +263,7 @@ export default function PublicUploadScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+                  <TouchableOpacity onPress={() => {/* router.back(); // Temporarily disabled */}}>
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Upload Files</Text>
@@ -325,7 +326,7 @@ export default function PublicUploadScreen() {
               const progress = uploadProgress[fileKey] || 0;
               
               return (
-                <View key={index} style={styles.fileItem}>
+                <View key={`file-${file.name}-${index}`} style={styles.fileItem}>
                   <View style={styles.fileIcon}>
                     <Ionicons name={getFileIcon(file.name)} size={20} color="#007AFF" />
                   </View>

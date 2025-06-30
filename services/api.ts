@@ -42,6 +42,12 @@ const MOBILE_ENDPOINTS = {
   SIGNUP: '/api/v1/mobile/signup',
   FORGOT_PASSWORD: '/api/v1/mobile/forgot-password',
   
+  // 2FA Authentication
+  REQUEST_OTP: '/api/v1/mobile/auth/request-otp',
+  VERIFY_OTP: '/api/v1/mobile/auth/verify-otp',
+  LOGIN_WITH_PHONE: '/api/v1/mobile/auth/login-with-phone',
+  CHECK_PHONE: '/api/v1/mobile/auth/check-phone',
+  
   // User
   USER: '/api/v1/mobile/user',
   
@@ -64,6 +70,7 @@ const MOBILE_ENDPOINTS = {
   DASHBOARD: '/api/v1/mobile/analysis/dashboard',
   ANALYTICS: '/api/v1/mobile/analysis/analytics',
   ACTIVITY: '/api/v1/mobile/analysis/activity',
+  COMPREHENSIVE: '/api/v1/mobile/analysis/comprehensive',
   
   // Documents
   DOCUMENTS: '/api/v1/mobile/documents',
@@ -97,7 +104,7 @@ const MOBILE_ENDPOINTS = {
 
 // Main API Service Class
 class ApiService {
-  private client: AxiosInstance;
+  public client: AxiosInstance;
 
   constructor() {
     // Determine the actual platform for the X-Platform header
@@ -123,6 +130,9 @@ class ApiService {
         'X-Platform': platformHeader, // Send platform optimized for environment
       },
       withCredentials: true,
+      // Enable cookie handling for session-based auth
+      xsrfCookieName: 'XSRF-TOKEN',
+      xsrfHeaderName: 'X-XSRF-TOKEN',
     });
 
     this.setupInterceptors();
@@ -255,6 +265,99 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Password reset failed');
+    }
+  }
+
+  // ==================== MOBILE 2FA AUTHENTICATION ====================
+
+  async requestOtp(phoneNumber: string, countryCode: string = 'US', purpose: string = 'verification'): Promise<ApiResponse> {
+    try {
+      console.log('🔄 Requesting OTP for:', { phoneNumber, countryCode, purpose });
+      
+      const response = await this.client.post(MOBILE_ENDPOINTS.REQUEST_OTP, {
+        phoneNumber,
+        countryCode,
+        purpose
+      });
+      
+      console.log('✅ OTP request response:', response.status, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ OTP request error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to send verification code');
+    }
+  }
+
+  async verifyOtp(phoneNumber: string, otpCode: string): Promise<ApiResponse> {
+    try {
+      console.log('🔄 Verifying OTP for:', { phoneNumber, otpCode });
+      
+      const response = await this.client.post(MOBILE_ENDPOINTS.VERIFY_OTP, {
+        phoneNumber,
+        otpCode
+      });
+      
+      console.log('✅ OTP verification response:', response.status, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ OTP verification error:', error);
+      throw new Error(error.response?.data?.message || 'Invalid verification code');
+    }
+  }
+
+  async loginWithPhone(phoneNumber: string, password: string): Promise<AuthResponse> {
+    try {
+      console.log('🔄 Attempting phone login for:', { phoneNumber });
+      
+      const response = await this.client.post(MOBILE_ENDPOINTS.LOGIN_WITH_PHONE, {
+        phoneNumber,
+        password
+      });
+      
+      console.log('✅ Phone login response:', response.status, response.data);
+      
+      const result = response.data;
+      
+      if (result.success) {
+        if (result.user) {
+          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+          console.log('💾 Stored phone login user data');
+        }
+        
+        return {
+          success: true,
+          message: 'Login successful',
+          user: result.user,
+          token: result.token,
+          session_info: result.session_info,
+        };
+      }
+      
+      return {
+        success: false,
+        message: result.message || 'Phone login failed',
+      };
+      
+    } catch (error: any) {
+      console.error('❌ Phone login error:', error);
+      throw new Error(error.response?.data?.message || 'Phone login failed');
+    }
+  }
+
+  async checkPhone(phoneNumber: string, countryCode: string = 'US'): Promise<ApiResponse> {
+    try {
+      console.log('🔄 Checking phone number:', { phoneNumber, countryCode });
+      
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHECK_PHONE, {
+        phoneNumber,
+        countryCode
+      });
+      
+      console.log('✅ Phone check response:', response.status, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Phone check error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to check phone number');
     }
   }
 
@@ -468,16 +571,29 @@ class ApiService {
 
   async getRecentActivities(days = 7, limit = 10): Promise<ApiResponse> {
     try {
+      console.log(`📊 Getting recent activities (${days} days, ${limit} limit)`);
       const response = await this.client.get(MOBILE_ENDPOINTS.ACTIVITY, {
         params: { days, limit }
       });
+      console.log('✅ Recent activities loaded');
       return response.data;
     } catch (error: any) {
-      console.error('❌ Recent activities error:', error);
-      throw new Error(
-        error.response?.data?.message || 
-        'Failed to get recent activities'
-      );
+      console.error('❌ Failed to get recent activities:', error);
+      throw new Error(error.response?.data?.message || 'Failed to get recent activities');
+    }
+  }
+
+  async getComprehensiveAnalytics(days = 30): Promise<ApiResponse> {
+    try {
+      console.log(`📊 Getting comprehensive analytics (${days} days)`);
+      const response = await this.client.get(MOBILE_ENDPOINTS.COMPREHENSIVE, {
+        params: { days }
+      });
+      console.log('✅ Comprehensive analytics loaded');
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get comprehensive analytics:', error);
+      throw new Error(error.response?.data?.message || 'Failed to get comprehensive analytics');
     }
   }
 
@@ -795,6 +911,38 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Health check failed');
+    }
+  }
+
+  // ==================== DEVICE MANAGEMENT ====================
+
+  async getRegisteredDevices(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get('/api/v1/mobile/devices');
+      return response.data;
+    } catch (error: any) {
+      console.error('Get devices failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch devices');
+    }
+  }
+
+  async revokeDevice(deviceId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(`/api/v1/mobile/devices/${deviceId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Revoke device failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to revoke device');
+    }
+  }
+
+  async revokeAllDevices(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post('/api/v1/mobile/devices/revoke-all');
+      return response.data;
+    } catch (error: any) {
+      console.error('Revoke all devices failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to revoke all devices');
     }
   }
 }

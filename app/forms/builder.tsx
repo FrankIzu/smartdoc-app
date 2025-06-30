@@ -271,7 +271,7 @@ export default function FormBuilderScreen() {
       ) : item.type === 'radio' ? (
         <View style={styles.previewOptionsContainer}>
           {item.options?.map((option, index) => (
-            <View key={index} style={styles.previewOption}>
+            <View key={`radio-${item.id}-${index}-${option}`} style={styles.previewOption}>
               <Ionicons name="radio-button-off" size={20} color="#666" />
               <Text style={styles.previewOptionText}>{option}</Text>
             </View>
@@ -280,7 +280,7 @@ export default function FormBuilderScreen() {
       ) : item.type === 'checkbox' ? (
         <View style={styles.previewOptionsContainer}>
           {item.options?.map((option, index) => (
-            <View key={index} style={styles.previewOption}>
+            <View key={`checkbox-${item.id}-${index}-${option}`} style={styles.previewOption}>
               <Ionicons name="square-outline" size={20} color="#666" />
               <Text style={styles.previewOptionText}>{option}</Text>
             </View>
@@ -562,7 +562,7 @@ function FieldEditorModal({ field, visible, onSave, onCancel }: FieldEditorModal
                 </View>
                 
                 {(editingField.options || []).map((option, index) => (
-                  <View key={index} style={styles.optionRow}>
+                  <View key={`option-${editingField.id}-${index}`} style={styles.optionRow}>
                     <TextInput
                       style={styles.optionInput}
                       value={option}

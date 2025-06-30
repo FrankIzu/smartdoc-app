@@ -6,13 +6,13 @@ import {
     FlatList,
     Platform,
     RefreshControl,
-    SafeAreaView,
     Share,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
 

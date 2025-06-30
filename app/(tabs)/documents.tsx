@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     FlatList,
@@ -17,8 +17,10 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ExternalFilePicker } from '../../components/ExternalFilePicker';
 import { API_BASE_URL } from '../../constants/Config';
 import { apiClient } from '../../services/api';
+import { ExternalFile } from '../../services/externalFileServices';
 import { useAuth } from '../context/auth';
 
 interface Document {
@@ -59,6 +61,7 @@ export default function DocumentsScreen() {
   const [loading, setLoading] = useState(true);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
+  const [showExternalFilePicker, setShowExternalFilePicker] = useState(false);
 
   const getFileIcon = (type: string, status: string, category?: string) => {
     if (status === 'processing') return 'time-outline';
@@ -72,7 +75,7 @@ export default function DocumentsScreen() {
           return 'receipt-outline'; // Receipt-specific icon
         case 'form':
         case 'forms':
-          return 'document-text-outline'; // Form-specific icon
+          return 'clipboard-outline'; // Form-specific icon (clipboard for forms)
         case 'document':
         case 'documents':
           return 'document-outline';
@@ -151,52 +154,54 @@ export default function DocumentsScreen() {
     }
   };
 
-  const filteredAndSortedDocuments = documents
-    .filter(doc => {
-      // Search filter
-      const matchesSearch = doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           doc.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
-                           (doc.category?.toLowerCase().includes(searchQuery.toLowerCase()) || false);
-      
-      // File kind filter with proper category mapping
-      let matchesFilter = true;
-      if (filterBy !== 'all') {
-        switch (filterBy) {
-          case 'receipts':
-            matchesFilter = doc.category?.toLowerCase() === 'receipt' || doc.category?.toLowerCase() === 'receipts';
-            break;
-          case 'forms':
-            matchesFilter = doc.category?.toLowerCase() === 'form' || doc.category?.toLowerCase() === 'forms';
-            break;
-          case 'documents':
-            matchesFilter = doc.category?.toLowerCase() === 'document' || doc.category?.toLowerCase() === 'documents';
-            break;
-          case 'unknown':
-            matchesFilter = !doc.category || 
-                          doc.category === '' ||
-                          doc.category.toLowerCase() === 'unknown';
-            break;
-          default:
-            matchesFilter = true;
+  const filteredAndSortedDocuments = useMemo(() => {
+    return documents
+      .filter(doc => {
+        // Search filter
+        const matchesSearch = doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                             doc.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                             (doc.category?.toLowerCase().includes(searchQuery.toLowerCase()) || false);
+        
+        // File kind filter with proper category mapping
+        let matchesFilter = true;
+        if (filterBy !== 'all') {
+          switch (filterBy) {
+            case 'receipts':
+              matchesFilter = doc.category?.toLowerCase() === 'receipt' || doc.category?.toLowerCase() === 'receipts';
+              break;
+            case 'forms':
+              matchesFilter = doc.category?.toLowerCase() === 'form' || doc.category?.toLowerCase() === 'forms';
+              break;
+            case 'documents':
+              matchesFilter = doc.category?.toLowerCase() === 'document' || doc.category?.toLowerCase() === 'documents';
+              break;
+            case 'unknown':
+              matchesFilter = !doc.category || 
+                            doc.category === '' ||
+                            doc.category.toLowerCase() === 'unknown';
+              break;
+            default:
+              matchesFilter = true;
+          }
         }
-      }
-      
-      return matchesSearch && matchesFilter;
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'name':
-          return a.name.localeCompare(b.name);
-        case 'date':
-          return b.uploadDate.getTime() - a.uploadDate.getTime();
-        case 'size':
-          return parseFloat(b.size) - parseFloat(a.size);
-        case 'type':
-          return a.type.localeCompare(b.type);
-        default:
-          return 0;
-      }
-    });
+        
+        return matchesSearch && matchesFilter;
+      })
+      .sort((a, b) => {
+        switch (sortBy) {
+          case 'name':
+            return a.name.localeCompare(b.name);
+          case 'date':
+            return b.uploadDate.getTime() - a.uploadDate.getTime();
+          case 'size':
+            return parseFloat(b.size) - parseFloat(a.size);
+          case 'type':
+            return a.type.localeCompare(b.type);
+          default:
+            return 0;
+        }
+      });
+  }, [documents, searchQuery, filterBy, sortBy]);
 
   const loadDocuments = async () => {
     try {
@@ -444,7 +449,7 @@ export default function DocumentsScreen() {
         } else {
           // Generic API error - fallback to direct URL
           console.log('📄 API error, trying direct URL approach...');
-          const directUrl = `${API_BASE_URL}/api/files/${selectedDocument.id}/download`;
+          const directUrl = `${API_BASE_URL}/api/v1/mobile/files/${selectedDocument.id}/download`;
           
           try {
             const result = await WebBrowser.openBrowserAsync(directUrl);
@@ -509,7 +514,7 @@ export default function DocumentsScreen() {
     if (!selectedDocument) return;
     
     // Create download URL for the document (moved to top for scope)
-    const downloadUrl = `${API_BASE_URL}/api/files/${selectedDocument.id}/download`;
+    const downloadUrl = `${API_BASE_URL}/api/v1/mobile/files/${selectedDocument.id}/download`;
     
     try {
       console.log('📤 Starting share process...');
@@ -681,6 +686,15 @@ export default function DocumentsScreen() {
     );
   };
 
+  const handleExternalFileImport = (file: ExternalFile) => {
+    console.log('File imported:', file);
+  };
+
+  const handleImportSuccess = () => {
+    setShowExternalFilePicker(false);
+    loadDocuments(); // Refresh the documents list
+  };
+
   const renderDocument = ({ item }: { item: Document }) => (
     <TouchableOpacity
       style={styles.documentCard}
@@ -727,7 +741,7 @@ export default function DocumentsScreen() {
       {item.tags.length > 0 && (
         <View style={styles.tagsContainer}>
           {item.tags.map((tag, index) => (
-            <View key={index} style={styles.tag}>
+            <View key={`${item.id}-tag-${index}-${tag}`} style={styles.tag}>
               <Text style={styles.tagText}>{tag}</Text>
             </View>
           ))}
@@ -758,6 +772,12 @@ export default function DocumentsScreen() {
             onPress={() => router.push('/documents/upload')}
           >
             <Ionicons name="cloud-upload" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => setShowExternalFilePicker(true)}
+          >
+            <Ionicons name="cloud-download" size={24} color="#10B981" />
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.headerButton}
@@ -898,6 +918,14 @@ export default function DocumentsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* External File Picker */}
+      <ExternalFilePicker
+        visible={showExternalFilePicker}
+        onClose={() => setShowExternalFilePicker(false)}
+        onFileImport={handleExternalFileImport}
+        onImportSuccess={handleImportSuccess}
+      />
     </SafeAreaView>
   );
 }

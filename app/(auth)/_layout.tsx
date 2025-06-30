@@ -1,8 +1,21 @@
+import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { Stack } from 'expo-router';
+import React from 'react';
+import { useColorScheme } from 'react-native';
 
 export default function AuthLayout() {
+  const colorScheme = useColorScheme();
+  const theme = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
+
   return (
-    <Stack>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: {
+          backgroundColor: theme.colors.background,
+        },
+      }}
+    >
       <Stack.Screen
         name="index"
         options={{
@@ -24,17 +37,18 @@ export default function AuthLayout() {
           headerShown: false,
         }}
       />
-      <Stack.Screen
-        name="signup"
-        options={{
-          title: 'Sign Up',
-          headerShown: false,
-        }}
-      />
+
       <Stack.Screen
         name="forgot-password"
         options={{
           title: 'Forgot Password',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="phone-login"
+        options={{
+          title: 'Phone Login',
           headerShown: false,
         }}
       />

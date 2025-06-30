@@ -1,9 +1,33 @@
 // API Configuration
-export const API_BASE_URL = 'http://192.168.1.7:5000';
+export const API_BASE_URL = 'http://192.168.1.4:5000'; // Updated to use correct IP address
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
 
+// OAuth Configuration - Platform-specific client IDs
+const GOOGLE_CLIENT_ID_WEB = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB || '';
+const GOOGLE_CLIENT_ID_ANDROID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID || '';
+const GOOGLE_CLIENT_ID_IOS = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS || '';
+
+// Select the appropriate client ID based on platform and environment
+export const GOOGLE_CLIENT_ID = (() => {
+  // For Expo Go development, always use web client ID
+  if (__DEV__) {
+    return GOOGLE_CLIENT_ID_WEB;
+  }
+  
+  // For production builds, use platform-specific client IDs
+  if (process.env.EXPO_OS === 'android') {
+    return GOOGLE_CLIENT_ID_ANDROID;
+  } else if (process.env.EXPO_OS === 'ios') {
+    return GOOGLE_CLIENT_ID_IOS;
+  }
+  
+  // Fallback to web client ID
+  return GOOGLE_CLIENT_ID_WEB;
+})();
+export const DROPBOX_CLIENT_ID = process.env.EXPO_PUBLIC_DROPBOX_APP_KEY || ''; // Dropbox App Key (same as Client ID)
+
 // Expo Development Server URL
-export const EXPO_DEV_URL = 'http://192.168.1.7:8081';
+export const EXPO_DEV_URL = 'http://192.168.62.18:8081';
 
 // App Configuration
 export const APP_NAME = process.env.EXPO_PUBLIC_APP_NAME || 'GrabDocs Mobile';
@@ -95,6 +119,16 @@ export const API_ENDPOINTS = {
   
   // Health
   HEALTH: '/health',
+  
+  // Mobile OAuth
+  MOBILE_GOOGLE_AUTH: '/api/v1/mobile/external-auth/googledrive',
+  MOBILE_DROPBOX_AUTH: '/api/v1/mobile/external-auth/dropbox',
+  MOBILE_DROPBOX_EXCHANGE: '/api/v1/mobile/external-auth/dropbox/exchange',
+  MOBILE_GOOGLE_EXCHANGE: '/api/v1/mobile/external-auth/googledrive/exchange',
+  
+  // External Files
+  EXTERNAL_DROPBOX_FILES: '/api/v1/mobile/external-files/dropbox',
+  EXTERNAL_GOOGLE_FILES: '/api/v1/mobile/external-files/googledrive',
 } as const;
 
 // Storage Keys

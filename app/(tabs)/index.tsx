@@ -60,8 +60,8 @@ function DashboardScreen() {
       
       // Load recent activities from API
       const activitiesResponse = await apiClient.getRecentActivities(7, 10);
-      if (activitiesResponse.success && activitiesResponse.activities) {
-        const formattedActivities = activitiesResponse.activities.map((activity: any) => ({
+      if (activitiesResponse.success && activitiesResponse.data?.activities) {
+        const formattedActivities = activitiesResponse.data.activities.map((activity: any) => ({
           id: activity.id,
           type: activity.type,
           title: activity.title,
@@ -225,6 +225,22 @@ function DashboardScreen() {
     }
   };
 
+  const handleNotificationPress = () => {
+    Alert.alert(
+      'Notifications',
+      `You have ${stats.unreadNotifications || 0} unread notifications`,
+      [
+        { 
+          text: 'View All', 
+          onPress: () => {
+            Alert.alert('Coming Soon', 'Notifications panel will be available in the next update!');
+          }
+        },
+        { text: 'Dismiss', style: 'cancel' },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -234,14 +250,11 @@ function DashboardScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.welcomeText}>Welcome back,</Text>
-            <Text style={styles.userNameText}>{user?.name || user?.email || 'User'}</Text>
-          </View>
+          <Text style={styles.appTitle}>GrabDocs</Text>
           <View style={styles.headerActions}>
             <TouchableOpacity
               style={styles.headerButton}
-              onPress={() => router.push('/(tabs)/settings')}
+              onPress={handleNotificationPress}
             >
               <View style={{ position: 'relative' }}>
                 <Ionicons name="notifications-outline" size={24} color="#007AFF" />
@@ -253,7 +266,7 @@ function DashboardScreen() {
               </View>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.profileButton}
+              style={styles.headerButton}
               onPress={() => router.push('/(tabs)/settings')}
             >
               <Ionicons name="person-circle" size={32} color="#007AFF" />
@@ -289,7 +302,7 @@ function DashboardScreen() {
               value={stats.recentAnalytics || 0}
               icon="analytics"
               color="#FF9500"
-              onPress={() => router.push('/(tabs)/settings')}
+              onPress={() => router.push('/analytics/dashboard')}
             />
             <StatCard
               key="stat-chats"
@@ -352,9 +365,9 @@ function DashboardScreen() {
           </View>
           <View style={styles.activityContainer}>
             {recentActivities.length > 0 ? (
-              recentActivities.map((activity, index) => (
+              recentActivities.map((activity) => (
                 <ActivityItem 
-                  key={`activity-${activity.id}-${index}`} 
+                  key={`activity-${activity.id}`} 
                   activity={activity} 
                   onPress={() => handleActivityPress(activity)}
                 />
@@ -445,10 +458,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  appTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000000',
   },
   welcomeText: {
     fontSize: 16,
@@ -460,9 +477,7 @@ const styles = StyleSheet.create({
     color: '#333',
     marginTop: 2,
   },
-  profileButton: {
-    padding: 4,
-  },
+
   statsContainer: {
     padding: 16,
   },
@@ -714,6 +729,7 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: 'bold',
   },
+
 });
 
 // Export memoized component to prevent unnecessary re-renders
