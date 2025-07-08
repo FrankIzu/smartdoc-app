@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
     Alert,
@@ -16,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function ScannerScreen() {
+  const router = useRouter();
   const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const [isCapturing, setIsCapturing] = useState(false);

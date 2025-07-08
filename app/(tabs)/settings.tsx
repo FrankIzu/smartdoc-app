@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -75,6 +75,7 @@ interface PreferencesResponse {
 }
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { signOut } = useAuth();
   const { user, logout } = useEnhanced2FAAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);

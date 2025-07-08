@@ -1,4 +1,4 @@
-import { Link, router } from 'expo-router';
+import { Link } from 'expo-router';
 import React, { useState } from 'react';
 import {
     ActivityIndicator,
@@ -19,6 +19,7 @@ import { useAuth } from '../context/auth';
 type PhoneLoginStep = 'phone' | 'verify' | 'password';
 
 export default function PhoneLoginScreen() {
+    const router = useRouter();
     const [step, setStep] = useState<PhoneLoginStep>('phone');
     const [phoneNumber, setPhoneNumber] = useState('');
     const [countryCode, setCountryCode] = useState('+1');

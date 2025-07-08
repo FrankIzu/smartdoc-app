@@ -1,11 +1,12 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { router } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function UploadScreen() {
+  const router = useRouter();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 

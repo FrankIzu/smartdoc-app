@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
     Alert,
@@ -32,6 +32,7 @@ interface Workspace {
 }
 
 export default function WorkspacesScreen() {
+  const router = useRouter();
   const { user } = useAuth();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);

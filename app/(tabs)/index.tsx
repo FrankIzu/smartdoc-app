@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
@@ -34,6 +34,7 @@ interface RecentActivity {
 }
 
 function DashboardScreen() {
+  const router = useRouter();
   const { user, signOut } = useAuth();
   const [stats, setStats] = useState({
     totalDocuments: 0,

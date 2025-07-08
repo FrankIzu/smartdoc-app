@@ -52,6 +52,13 @@ export default function AuthLayout() {
           headerShown: false,
         }}
       />
+      <Stack.Screen
+        name="otp-verification"
+        options={{
+          title: 'OTP Verification',
+          headerShown: false,
+        }}
+      />
     </Stack>
   );
 } 

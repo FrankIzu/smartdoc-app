@@ -1,10 +1,11 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function ProcessScanScreen() {
+  const router = useRouter();
   const { imageUri } = useLocalSearchParams();
   const [processing, setProcessing] = useState(false);
   const [currentImage, setCurrentImage] = useState(imageUri);

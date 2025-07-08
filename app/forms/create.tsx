@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -34,6 +33,7 @@ interface FormField {
 }
 
 export default function CreateFormScreen() {
+  const router = useRouter();
   const [templates, setTemplates] = useState<FormTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

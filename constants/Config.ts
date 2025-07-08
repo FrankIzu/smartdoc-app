@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 
 // API Configuration
-export const API_BASE_URL = 'http://192.168.1.4:5000'; // Updated to use correct IP address
+export const API_BASE_URL = 'http://192.168.1.3:5000'; // Updated to use correct IP address
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
 
 // OAuth Configuration - Platform-specific client IDs

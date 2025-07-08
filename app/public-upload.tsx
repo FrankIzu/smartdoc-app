@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -12,7 +12,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { apiService as api } from '../services/api';
+import { API_BASE_URL } from '../constants/Config';
 
 interface UploadLinkInfo {
   name: string;
@@ -34,10 +34,26 @@ interface UploadFile {
   type: string;
 }
 
+const api = {
+  get: async <T>(url: string): Promise<{ data: T }> => {
+    const response = await fetch(`${API_BASE_URL}${url}`);
+    const data = await response.json();
+    return { data };
+  },
+  post: async (url: string, data: FormData, options?: any): Promise<{ data: any }> => {
+    const response = await fetch(`${API_BASE_URL}${url}`, {
+      method: 'POST',
+      body: data,
+      ...options,
+    });
+    const responseData = await response.json();
+    return { data: responseData };
+  },
+};
+
 export default function PublicUploadScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
-  // Temporarily commented out until expo-router is fully working
-  // const router = useRouter();
+  const router = useRouter();
   const [uploadInfo, setUploadInfo] = useState<UploadLinkInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -57,7 +73,7 @@ export default function PublicUploadScreen() {
         setUploadInfo(response.data.upload_link);
       } else {
         Alert.alert('Error', 'Invalid or expired upload link');
-        // router.back(); // Temporarily disabled
+        router.back();
       }
     } catch (error: any) {
       console.error('Failed to load upload info:', error);
@@ -70,7 +86,7 @@ export default function PublicUploadScreen() {
         : 'Failed to load upload information';
       
       Alert.alert('Error', message, [
-        { text: 'OK', onPress: () => {/* router.back(); // Temporarily disabled */} }
+        { text: 'OK', onPress: () => router.back() }
       ]);
     } finally {
       setLoading(false);
@@ -263,7 +279,7 @@ export default function PublicUploadScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-                  <TouchableOpacity onPress={() => {/* router.back(); // Temporarily disabled */}}>
+                  <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Upload Files</Text>

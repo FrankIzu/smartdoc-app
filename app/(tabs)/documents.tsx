@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Linking from 'expo-linking';
-import { router } from 'expo-router';
+import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -51,6 +51,7 @@ type SortOption = 'name' | 'date' | 'size' | 'type';
 type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'unknown';
 
 export default function DocumentsScreen() {
+  const router = useRouter();
   const { user } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
 

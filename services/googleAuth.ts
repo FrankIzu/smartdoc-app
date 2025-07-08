@@ -43,9 +43,9 @@ class GoogleAuthService {
   private discovery: AuthSession.DiscoveryDocument | null = null;
 
   constructor() {
-    // Use secure App Links for production, Expo proxy for development
+    // Use Expo's auth proxy for development (provides HTTPS URL that Google accepts)
     const redirectUri = __DEV__ 
-      ? AuthSession.makeRedirectUri() // Expo proxy for development
+      ? 'https://auth.expo.io/@anonymous/grabdocs' // Expo auth proxy with HTTPS
       : 'https://api.grabdocs.com/auth/callback'; // Secure App Link for production
 
     // Initialize configuration

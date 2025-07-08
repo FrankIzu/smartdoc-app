@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
     Alert,
@@ -44,6 +44,7 @@ interface UploadedFile {
 }
 
 export default function UploadLinkDetailsScreen() {
+  const router = useRouter();
   const { user } = useAuth();
   const { id } = useLocalSearchParams();
   const [uploadLink, setUploadLink] = useState<UploadLink | null>(null);

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
     Alert,
@@ -15,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
 
 export default function CreateUploadLinkScreen() {
+  const router = useRouter();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('7');

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -49,6 +49,7 @@ const FIELD_TYPES = [
 ];
 
 export default function FormBuilderScreen() {
+  const router = useRouter();
   const params = useLocalSearchParams();
   const [formData, setFormData] = useState<FormData>({
     name: (params.templateName as string) || 'Untitled Form',

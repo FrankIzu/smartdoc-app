@@ -20,8 +20,7 @@ import { googleAuthService } from '../../services/googleAuth';
 import { useAuth } from '../context/auth';
 
 export default function SignInScreen() {
-  // Temporarily commented out until expo-router is fully working
-  // const router = useRouter();
+  const router = useRouter();
   const [username, setUsername] = useState('francis'); // Default username for testing
   const [password, setPassword] = useState('password123'); // Default password for testing
   const [rememberDevice, setRememberDevice] = useState(false);
@@ -29,6 +28,7 @@ export default function SignInScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricType, setBiometricType] = useState('Biometric');
+  const [needsOtp, setNeedsOtp] = useState(false);
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
   const { signIn, loading } = useAuth();
@@ -79,7 +79,7 @@ export default function SignInScreen() {
     }
   };
 
-  // Handle regular login using standard auth context
+  // Handle regular login with OTP verification
   const handleSignIn = async () => {
     try {
       setError('');
@@ -88,11 +88,88 @@ export default function SignInScreen() {
         return;
       }
 
-      await signIn(username, password, rememberDevice);
-      // Navigation handled by auth context if successful
+      // Step 1: Try regular login first
+      try {
+        await signIn(username, password, rememberDevice);
+        // If successful without OTP, navigation handled by auth context
+        return;
+      } catch (loginError: any) {
+        // If login fails due to enhanced security, check if user needs OTP
+        console.log('Initial login failed, checking if OTP verification is needed');
+      }
+
+      // Step 2: Check if user needs OTP verification
+      const shouldUseOtp = await checkUserForOtpVerification(username);
+      
+      if (shouldUseOtp) {
+        // Request OTP
+        await requestOtpForUser(username);
+      } else {
+        // If no OTP needed, show the login error
+        setError('Invalid username or password');
+      }
+
     } catch (error: any) {
-      console.error('Regular login error:', error);
+      console.error('Enhanced login error:', error);
       setError(error.message || 'Login failed');
+    }
+  };
+
+  // Check if user exists and needs OTP verification
+  const checkUserForOtpVerification = async (username: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/mobile/auth/check-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.exists && (data.hasPhone || data.hasEmail);
+      }
+      return false;
+    } catch (error) {
+      console.error('Error checking user for OTP:', error);
+      return false;
+    }
+  };
+
+  // Request OTP for the user
+  const requestOtpForUser = async (username: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/mobile/auth/request-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: username,
+          purpose: 'login'
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Navigate to OTP verification screen
+        router.push({
+          pathname: '/(auth)/otp-verification',
+          params: {
+            username: username,
+            method: data.method,
+            identifier: data.identifier,
+            expiresIn: data.expiresIn.toString(),
+          }
+        });
+      } else {
+        setError(data.message || 'Failed to send verification code');
+      }
+    } catch (error) {
+      console.error('Error requesting OTP:', error);
+      setError('Failed to send verification code. Please try again.');
     }
   };
 

@@ -1,15 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { googleAuthService } from '../../services/googleAuth';
 
 export default function SignUpScreen() {
-  // Temporarily commented out until expo-router is fully working
-  // const router = useRouter();
+  const router = useRouter();
   const { signup } = useEnhanced2FAAuth();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -54,7 +53,7 @@ export default function SignUpScreen() {
 
       if (result.success) {
         Alert.alert('Success', 'Account created successfully!');
-        // router.replace('/(tabs)'); // Temporarily disabled
+        router.replace('/(tabs)');
       } else {
         setError(result.message || 'An error occurred during sign up');
       }
@@ -80,14 +79,14 @@ export default function SignUpScreen() {
       
       if (result.success) {
         Alert.alert('Success', 'Account created with Google successfully!');
-        // router.replace('/(tabs)'); // Temporarily disabled
+        router.replace('/(tabs)');
       } else if (result.requires2FA) {
         Alert.alert(
           '2FA Required',
           result.message || 'Additional verification required. Please use phone verification.',
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Continue with Phone', onPress: () => {/* router.push('/phone-login'); // Temporarily disabled */} },
+            { text: 'Continue with Phone', onPress: () => router.push('/phone-login') },
           ]
         );
       } else {
