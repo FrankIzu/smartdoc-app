@@ -36,7 +36,7 @@ const getNetworkConfig = () => {
     const allUrls = [
       primaryUrl,
       'http://127.0.0.1:5000',     // localhost fallback
-      'http://192.168.1.7:5000',  // Machine IP fallback
+      'http://192.168.62.96:5000',  // Machine IP fallback
     ];
     
     return {
@@ -70,7 +70,7 @@ export const API_BASE_URL = (() => {
   
   // HARDCODED FOR DEVELOPMENT: Use the actual machine IP for mobile devices
   if (__DEV__ && Constants.appOwnership === 'expo') {
-    const hardcodedUrl = 'http://192.168.1.7:5000';
+    const hardcodedUrl = 'http://192.168.62.96:5000';
     console.log('🔧 FORCED API URL (hardcoded for development):', hardcodedUrl);
     console.log('🔧 This overrides all other detection logic');
     return hardcodedUrl;

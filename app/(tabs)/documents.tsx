@@ -17,7 +17,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import ExternalFilePicker from '../../components/ExternalFilePicker';
 import LoadingDots from '../../components/LoadingDots';
-import NetworkIndicator from '../../components/NetworkIndicator';
 import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
@@ -838,9 +837,6 @@ export default function QuickFilesScreen() {
         </View>
       )}
       
-      {/* Network Connection Indicator */}
-      <NetworkIndicator />
-
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTitleContainer}>

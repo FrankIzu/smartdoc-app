@@ -3,17 +3,16 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    Alert,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
-import NetworkIndicator from '../../components/NetworkIndicator';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useAuth } from '../context/auth';
@@ -629,8 +628,6 @@ function DashboardScreen() {
           </View>
         </View>
 
-        {/* Network Connection Indicator */}
-        <NetworkIndicator />
 
         {/* Stats Cards */}
         <View style={styles.statsContainer}>

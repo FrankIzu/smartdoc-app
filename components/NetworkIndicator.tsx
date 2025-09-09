@@ -10,7 +10,12 @@ interface NetworkStatus {
   error?: string;
 }
 
-export default function NetworkIndicator() {
+interface NetworkIndicatorProps {
+  compact?: boolean;
+  persistent?: boolean;
+}
+
+export default function NetworkIndicator({ compact = false, persistent = false }: NetworkIndicatorProps) {
   const [status, setStatus] = useState<NetworkStatus>({
     isConnected: false,
     isChecking: true,
@@ -71,9 +76,9 @@ export default function NetworkIndicator() {
   }, []);
 
   const getStatusColor = () => {
-    if (status.isChecking) return '#FFA500'; // Orange for checking
-    if (status.isConnected) return '#4CAF50'; // Green for connected
-    return '#F44336'; // Red for disconnected
+    if (status.isChecking) return '#FF6B35'; // Softer orange for checking
+    if (status.isConnected) return '#32CD32'; // Lime green for connected
+    return '#DC143C'; // Crimson red for disconnected
   };
 
   const getStatusText = () => {
@@ -83,13 +88,40 @@ export default function NetworkIndicator() {
   };
 
   const getIcon = () => {
-    if (status.isChecking) return 'sync';
-    if (status.isConnected) return 'checkmark-circle';
-    return 'close-circle';
+    if (status.isChecking) return 'wifi'; // Network icon for checking
+    if (status.isConnected) return 'wifi'; // Network icon for connected
+    return 'wifi-outline'; // Network icon for disconnected
   };
 
+  // Compact version for persistent display
+  if (compact) {
+    return (
+      <View style={styles.compactContainer}>
+        {!persistent && (
+          <Text style={styles.compactText}>{getStatusText()}</Text>
+        )}
+        <Animated.View 
+          style={[
+            styles.compactIndicator,
+            { 
+              opacity: pulseAnim 
+            }
+          ]}
+        >
+          <Ionicons 
+            name={getIcon() as any} 
+            size={16} 
+            color={getStatusColor()} 
+          />
+        </Animated.View>
+      </View>
+    );
+  }
+
+  // Full version (original)
   return (
     <View style={styles.container}>
+      <Text style={styles.text}>{getStatusText()}</Text>
       <Animated.View 
         style={[
           styles.indicator,
@@ -105,7 +137,6 @@ export default function NetworkIndicator() {
           color="white" 
         />
       </Animated.View>
-      <Text style={styles.text}>{getStatusText()}</Text>
       {status.error && !status.isChecking && (
         <Text style={styles.errorText} numberOfLines={1}>
           {status.error}
@@ -132,7 +163,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
+    marginLeft: 8,
   },
   text: {
     fontSize: 14,
@@ -144,5 +175,28 @@ const styles = StyleSheet.create({
     color: '#F44336',
     marginLeft: 8,
     flex: 1,
+  },
+  // Compact styles for persistent display
+  compactContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end', // Align to the right
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: 'transparent', // Remove background completely
+    borderRadius: 12,
+    marginHorizontal: 8,
+    marginTop: 0, // Remove top margin
+    marginBottom: 4,
+  },
+  compactIndicator: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 6,
+  },
+  compactText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
   },
 });

@@ -43,7 +43,7 @@ const getLocalNetworkIP = (): string | null => {
   // For iOS simulator, use localhost
   if (Platform.OS === 'ios') {
     // For iOS development with physical device, use machine IP
-    return '192.168.1.7';
+    return '192.168.62.96';
   }
   
   // For web, use localhost
@@ -67,7 +67,7 @@ export const getNetworkFallbacks = (): string[] => {
     const allIPs = [
       'localhost',       // Primary for local development
       '127.0.0.1',      // Alternative localhost
-      '192.168.1.7',    // Machine IP for mobile devices
+      '192.168.62.96',    // Machine IP for mobile devices
       '10.0.2.2',       // Android emulator
     ];
     

@@ -254,8 +254,8 @@ export default function ChatsScreen() {
           // Fetch document details using the fileId
           const response = await api.getFileById(parseInt(params.fileId as string));
           
-          if (response.success && response.file) {
-            const documentData = response.file;
+          if (response.success && response.files && response.files.length > 0) {
+            const documentData = response.files[0];
             const documentContext: Document = {
               id: documentData.id,
               name: documentData.original_filename || documentData.filename,

@@ -250,6 +250,15 @@ class ApiService {
     }
   }
 
+  async testConnectivity(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get('/api/v1/mobile/health');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Connectivity test failed');
+    }
+  }
+
   async signup(data: any): Promise<AuthResponse> {
     try {
       const response = await this.client.post(MOBILE_ENDPOINTS.SIGNUP, data);
@@ -962,6 +971,58 @@ class ApiService {
     } catch (error: any) {
       console.error('Revoke all devices failed:', error);
       throw new Error(error.response?.data?.message || 'Failed to revoke all devices');
+    }
+  }
+
+  // ==================== MEETING MANAGEMENT ====================
+
+  async getMeetings(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get('/api/v1/mobile/meetings');
+      return response.data;
+    } catch (error: any) {
+      console.error('Get meetings failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch meetings');
+    }
+  }
+
+  async joinMeeting(data: { meetingId: string; password?: string }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post('/api/v1/mobile/meetings/join', data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Join meeting failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to join meeting');
+    }
+  }
+
+  async endMeeting(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/api/v1/mobile/meetings/${meetingId}/end`);
+      return response.data;
+    } catch (error: any) {
+      console.error('End meeting failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to end meeting');
+    }
+  }
+
+  async deleteMeeting(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(`/api/v1/mobile/meetings/${meetingId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete meeting failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to delete meeting');
+    }
+  }
+
+  async sendMeetingInvite(meetingId: string, data: { email: string; message?: string }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/api/v1/mobile/meetings/${meetingId}/invite`, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Send meeting invite failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to send meeting invite');
     }
   }
 }

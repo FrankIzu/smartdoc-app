@@ -1,9 +1,7 @@
 // Import polyfills for mobile compatibility
 import React, { useEffect } from 'react';
+import { LogBox, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
-
-// Import polyfills for mobile compatibility
-import { LogBox } from 'react-native';
 
 // Only suppress specific development warnings that are known and non-critical
 LogBox.ignoreLogs([
@@ -14,9 +12,13 @@ LogBox.ignoreLogs([
 
 import { Slot, SplashScreen } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
+import GlobalProgressBar from '../components/GlobalProgressBar';
+import NetworkIndicator from '../components/NetworkIndicator';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
+import { useProgressStore } from '../services/progressService';
 import { AuthProvider, useAuth } from './context/auth';
 
 // Prevent the splash screen from auto-hiding
@@ -24,6 +26,7 @@ SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
   const { loading } = useAuth();
+  const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
 
   useEffect(() => {
     if (!loading) {
@@ -38,20 +41,46 @@ function RootLayoutNav() {
   return (
     <>
       <StatusBar style="auto" />
+      {/* Persistent Network Indicator */}
+      <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
+        <NetworkIndicator compact persistent />
+      </SafeAreaView>
       <Slot />
       <Toast />
+      <GlobalProgressBar
+        visible={visible}
+        minimized={minimized}
+        progressData={progressData}
+        onMinimize={minimizeProgress}
+        onClose={closeProgress}
+      />
     </>
   );
 }
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <Enhanced2FAAuthProvider>
-          <RootLayoutNav />
-        </Enhanced2FAAuthProvider>
-      </AuthProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <Enhanced2FAAuthProvider>
+            <RootLayoutNav />
+          </Enhanced2FAAuthProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
-} 
+}
+
+const styles = StyleSheet.create({
+  networkIndicatorContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    alignItems: 'flex-end', // Align to the right
+    paddingTop: 0, // Remove all top padding
+    paddingRight: 8, // Add some padding from the right edge
+  },
+}); 
