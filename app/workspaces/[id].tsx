@@ -3,15 +3,13 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
     Alert,
-    FlatList,
     Modal,
-    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    View,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
@@ -256,12 +254,30 @@ export default function WorkspaceDetailsScreen() {
 
             <TouchableOpacity 
               style={styles.actionButton} 
-              onPress={() => router.push('/(tabs)/chats')}
+              onPress={() => {
+                // Add workspace context to chat
+                router.push({
+                  pathname: '/(tabs)/chats',
+                  params: { 
+                    workspaceId: id, 
+                    workspaceName: workspace.name,
+                    workspaceDescription: workspace.description || '',
+                    workspaceSlug: workspace.slug,
+                    workspaceOwnerId: workspace.owner_id.toString(),
+                    workspaceIsPersonal: workspace.is_personal.toString(),
+                    workspaceMemberCount: workspace.member_count.toString(),
+                    workspaceUserRole: workspace.user_role,
+                    workspaceCanManage: workspace.can_manage.toString(),
+                    workspaceCanInvite: workspace.can_invite.toString(),
+                    workspaceCanEdit: workspace.can_edit.toString()
+                  }
+                });
+              }}
             >
               <View style={[styles.actionIcon, { backgroundColor: '#34C759' }]}>
                 <Ionicons name="chatbubbles" size={24} color="#fff" />
               </View>
-              <Text style={styles.actionText}>Message</Text>
+              <Text style={styles.actionText}>Start Chat</Text>
             </TouchableOpacity>
 
             {workspace.can_invite && (
@@ -284,6 +300,19 @@ export default function WorkspaceDetailsScreen() {
                 <Ionicons name="folder-open" size={24} color="#fff" />
               </View>
               <Text style={styles.actionText}>View Files</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.actionButton} 
+              onPress={() => {
+                // TODO: Navigate to invitations view
+                Alert.alert('Coming Soon', 'View Invitations feature will be available in the next update!');
+              }}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#FF6B6B' }]}>
+                <Ionicons name="mail" size={24} color="#fff" />
+              </View>
+              <Text style={styles.actionText}>View Invitations</Text>
             </TouchableOpacity>
           </View>
         </View>

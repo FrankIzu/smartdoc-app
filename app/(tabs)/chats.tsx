@@ -61,7 +61,16 @@ interface Workspace {
   name: string;
   description?: string;
   slug: string;
+  owner_id: number;
+  is_personal: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
   member_count: number;
+  user_role: 'owner' | 'admin' | 'member' | 'viewer';
+  can_manage: boolean;
+  can_invite: boolean;
+  can_edit: boolean;
 }
 
 interface Document {
@@ -447,6 +456,62 @@ export default function ChatsScreen() {
       router.setParams({});
     }
   }, [params.bookmark_id, params.bookmark_name, params.bookmark_description, params.bookmark_file_count]);
+
+  // Handle workspace context from navigation
+  useEffect(() => {
+    if (params.workspaceId && params.workspaceName) {
+      const workspaceContext: Workspace = {
+        id: parseInt(params.workspaceId as string),
+        name: params.workspaceName as string,
+        description: params.workspaceDescription as string || '',
+        slug: params.workspaceSlug as string || '',
+        owner_id: parseInt(params.workspaceOwnerId as string) || 0,
+        is_personal: params.workspaceIsPersonal === 'true',
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        member_count: parseInt(params.workspaceMemberCount as string) || 0,
+        user_role: (params.workspaceUserRole as any) || 'member',
+        can_manage: params.workspaceCanManage === 'true',
+        can_invite: params.workspaceCanInvite === 'true',
+        can_edit: params.workspaceCanEdit === 'true'
+      };
+      
+      // Create a workspace-focused chat
+      const workspaceChat: Chat = {
+        id: Date.now(),
+        title: `Chat in ${workspaceContext.name}`,
+        type: 'workspace',
+        participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+        last_message: `Ready to chat in ${workspaceContext.name} workspace`,
+        updated_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        unread_count: 0,
+        workspace: workspaceContext
+      };
+      
+      // Add the chat to the list and select it
+      setChats(prev => {
+        const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
+        const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
+        
+        if (chatAssistant) {
+          // Chat Assistant exists, add new chat after it
+          return [chatAssistant, workspaceChat, ...otherChats];
+        } else {
+          // No Chat Assistant found, add new chat at beginning
+          return [workspaceChat, ...prev];
+        }
+      });
+      setSelectedChat(workspaceChat);
+      
+      // Don't show welcome message - just show empty chat
+      setMessages([]);
+      
+      // Clear the params to prevent re-triggering
+      router.setParams({});
+    }
+  }, [params.workspaceId, params.workspaceName, params.workspaceDescription, params.workspaceSlug, params.workspaceOwnerId, params.workspaceIsPersonal, params.workspaceMemberCount, params.workspaceUserRole, params.workspaceCanManage, params.workspaceCanInvite, params.workspaceCanEdit]);
 
   const startBounceAnimation = () => {
     // Start bouncing balls animation with improved timing
@@ -1401,7 +1466,16 @@ export default function ChatsScreen() {
         name: 'Select a workspace',
         description: 'Choose a workspace to chat in',
         slug: '',
-        member_count: 0
+        owner_id: 0,
+        is_personal: false,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        member_count: 0,
+        user_role: 'member',
+        can_manage: false,
+        can_invite: false,
+        can_edit: false
       };
     }
     
