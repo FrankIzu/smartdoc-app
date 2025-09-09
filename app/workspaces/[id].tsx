@@ -6,6 +6,7 @@ import {
     FlatList,
     Modal,
     RefreshControl,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -131,10 +132,7 @@ export default function WorkspaceDetailsScreen() {
 
     setInviteLoading(true);
     try {
-      const response = await apiService.addWorkspaceMember(Number(id), {
-        email: inviteEmail.trim(),
-        role: inviteRole,
-      });
+      const response = await apiService.inviteToWorkspace(Number(id), inviteEmail.trim(), inviteRole);
 
       if (response.success) {
         Alert.alert('Success', 'Invitation sent successfully');
@@ -225,31 +223,120 @@ export default function WorkspaceDetailsScreen() {
         )}
       </View>
 
-      <FlatList
-        data={members}
-        renderItem={renderMemberItem}
-        keyExtractor={(item) => item.id.toString()}
-        contentContainerStyle={styles.listContainer}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
-        }
-        ListHeaderComponent={
-          <View style={styles.workspaceInfo}>
-            <Text style={styles.workspaceName}>{workspace.name}</Text>
-            {workspace.description && (
-              <Text style={styles.workspaceDescription}>{workspace.description}</Text>
-            )}
-            <View style={styles.workspaceMeta}>
-              <Text style={styles.memberCount}>
-                {workspace.member_count} member{workspace.member_count !== 1 ? 's' : ''}
-              </Text>
-              <Text style={styles.workspaceSlug}>/{workspace.slug}</Text>
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Workspace Info Card */}
+        <View style={styles.infoCard}>
+          <View style={styles.infoHeader}>
+            <View style={styles.workspaceIcon}>
+              <Ionicons name="business" size={24} color="#007AFF" />
             </View>
-            <Text style={styles.sectionTitle}>Members</Text>
+            <View style={styles.workspaceInfo}>
+              <Text style={styles.workspaceName}>{workspace.name}</Text>
+              <Text style={styles.workspaceDescription}>{workspace.description || 'No description'}</Text>
+              <Text style={styles.workspaceMeta}>
+                {workspace.member_count} member{workspace.member_count !== 1 ? 's' : ''} • {workspace.user_role}
+              </Text>
+            </View>
           </View>
-        }
-        showsVerticalScrollIndicator={false}
-      />
+        </View>
+
+        {/* Action Buttons */}
+        <View style={styles.actionsSection}>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <View style={styles.actionsGrid}>
+            <TouchableOpacity 
+              style={styles.actionButton} 
+              onPress={() => router.push('/quick-reach/meeting-call')}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#007AFF' }]}>
+                <Ionicons name="videocam" size={24} color="#fff" />
+              </View>
+              <Text style={styles.actionText}>Start Call</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.actionButton} 
+              onPress={() => router.push('/(tabs)/chats')}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#34C759' }]}>
+                <Ionicons name="chatbubbles" size={24} color="#fff" />
+              </View>
+              <Text style={styles.actionText}>Message</Text>
+            </TouchableOpacity>
+
+            {workspace.can_invite && (
+              <TouchableOpacity 
+                style={styles.actionButton} 
+                onPress={() => setInviteModalVisible(true)}
+              >
+                <View style={[styles.actionIcon, { backgroundColor: '#FF9500' }]}>
+                  <Ionicons name="person-add" size={24} color="#fff" />
+                </View>
+                <Text style={styles.actionText}>Send Invite</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity 
+              style={styles.actionButton} 
+              onPress={() => router.push('/(tabs)/documents')}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#AF52DE' }]}>
+                <Ionicons name="folder-open" size={24} color="#fff" />
+              </View>
+              <Text style={styles.actionText}>View Files</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Members Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Members ({workspace.member_count})</Text>
+            {workspace.can_invite && (
+              <TouchableOpacity onPress={() => setInviteModalVisible(true)}>
+                <Text style={styles.sectionAction}>Invite</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          
+          {members.length > 0 ? (
+            <View style={styles.membersList}>
+              {members.map((member) => (
+                <View key={member.id} style={styles.memberItem}>
+                  <View style={styles.memberAvatar}>
+                    <Ionicons name="person" size={20} color="#666" />
+                  </View>
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName}>{member.user?.name || member.user?.email || 'Unknown User'}</Text>
+                    <Text style={styles.memberRole}>{member.role}</Text>
+                  </View>
+                  {member.user_id === user?.id && (
+                    <View style={styles.youBadge}>
+                      <Text style={styles.youBadgeText}>You</Text>
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Ionicons name="people-outline" size={48} color="#ccc" />
+              <Text style={styles.emptyStateText}>No members found</Text>
+              <Text style={styles.emptyStateSubtext}>Invite users to collaborate</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Recent Activity Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Recent Activity</Text>
+          <View style={styles.emptyState}>
+            <Ionicons name="time-outline" size={48} color="#ccc" />
+            <Text style={styles.emptyStateText}>No recent activity</Text>
+            <Text style={styles.emptyStateSubtext}>Activity will appear here</Text>
+          </View>
+        </View>
+      </ScrollView>
 
       {/* Invite Member Modal */}
       <Modal
@@ -326,22 +413,57 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
   headerTitle: { fontSize: 18, fontWeight: '600', color: '#333', flex: 1, textAlign: 'center' },
   loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  scrollView: { flex: 1 },
   listContainer: { padding: 16 },
-  workspaceInfo: { backgroundColor: '#fff', borderRadius: 12, padding: 20, marginBottom: 20 },
-  workspaceName: { fontSize: 24, fontWeight: '700', color: '#333', marginBottom: 8 },
-  workspaceDescription: { fontSize: 16, color: '#666', lineHeight: 22, marginBottom: 16 },
-  workspaceMeta: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
-  memberCount: { fontSize: 14, color: '#666' },
-  workspaceSlug: { fontSize: 14, color: '#007AFF', fontFamily: 'monospace' },
-  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#333' },
-  memberCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12 },
+  
+  // Workspace Info Card
+  infoCard: { backgroundColor: '#fff', borderRadius: 12, padding: 20, margin: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
+  infoHeader: { flexDirection: 'row', alignItems: 'center' },
+  workspaceIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#E3F2FD', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+  workspaceInfo: { flex: 1 },
+  workspaceName: { fontSize: 20, fontWeight: '700', color: '#333', marginBottom: 4 },
+  workspaceDescription: { fontSize: 14, color: '#666', lineHeight: 20, marginBottom: 8 },
+  workspaceMeta: { fontSize: 12, color: '#999' },
+  
+  // Actions Section
+  actionsSection: { paddingHorizontal: 16, marginBottom: 24 },
+  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#333', marginBottom: 16 },
+  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  actionButton: { width: '47%', backgroundColor: '#fff', borderRadius: 12, padding: 16, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+  actionIcon: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  actionText: { fontSize: 14, fontWeight: '600', color: '#333', textAlign: 'center' },
+  
+  // Section
+  section: { paddingHorizontal: 16, marginBottom: 24 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  sectionAction: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
+  
+  // Members
+  membersList: { backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden' },
+  memberItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  memberAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   memberInfo: { flex: 1 },
+  memberName: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 2 },
+  memberRole: { fontSize: 14, color: '#666', textTransform: 'capitalize' },
+  youBadge: { backgroundColor: '#E3F2FD', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+  youBadgeText: { fontSize: 12, color: '#007AFF', fontWeight: '600' },
+  
+  // Empty State
+  emptyState: { alignItems: 'center', padding: 40 },
+  emptyStateText: { fontSize: 16, fontWeight: '600', color: '#333', marginTop: 12, marginBottom: 4 },
+  emptyStateSubtext: { fontSize: 14, color: '#666', textAlign: 'center' },
+  
+  // Legacy styles (keeping for compatibility)
+  memberCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12 },
   memberHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  memberName: { fontSize: 16, fontWeight: '600', color: '#333', flex: 1 },
   roleContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f0f0', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
   roleText: { fontSize: 12, color: '#666', marginLeft: 4, textTransform: 'capitalize' },
   memberEmail: { fontSize: 14, color: '#666', marginBottom: 4 },
   joinedDate: { fontSize: 12, color: '#999' },
+  memberCount: { fontSize: 14, color: '#666' },
+  workspaceSlug: { fontSize: 14, color: '#007AFF', fontFamily: 'monospace' },
+  
+  // Modal styles
   modalContainer: { flex: 1, backgroundColor: '#f8f9fa' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
   modalTitle: { fontSize: 18, fontWeight: '600', color: '#333' },

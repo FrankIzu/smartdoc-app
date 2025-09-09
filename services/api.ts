@@ -856,6 +856,29 @@ class ApiService {
     }
   }
 
+  async inviteToWorkspace(workspaceId: number, email: string, role: string = 'member'): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/api/v1/mobile/workspaces/${workspaceId}/invite`, {
+        email,
+        role
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Invite to workspace error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to invite user to workspace');
+    }
+  }
+
+  async getWorkspaceFiles(workspaceId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(`/api/v1/mobile/workspaces/${workspaceId}/files`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get workspace files error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch workspace files');
+    }
+  }
+
   // ==================== MOBILE UPLOAD LINKS ====================
 
   async getUploadLinks(): Promise<ApiResponse> {
