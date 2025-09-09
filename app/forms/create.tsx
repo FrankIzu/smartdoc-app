@@ -2,17 +2,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    FlatList,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
+import { Form } from '../../types/form';
 
 interface FormTemplate {
   id: number;
@@ -36,16 +37,44 @@ interface FormField {
 export default function CreateFormScreen() {
   const router = useRouter();
   const [templates, setTemplates] = useState<FormTemplate[]>([]);
+  const [userForms, setUserForms] = useState<Form[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'recent' | 'templates'>('templates');
 
   useEffect(() => {
-    loadFormTemplates();
+    loadData();
   }, []);
+
+  const loadData = async () => {
+    await Promise.all([
+      loadFormTemplates(),
+      loadUserForms()
+    ]);
+  };
+
+  const loadUserForms = async () => {
+    try {
+      console.log('🔄 Loading user forms...');
+      const response = await apiService.getForms();
+      console.log('📋 API Response:', JSON.stringify(response, null, 2));
+      
+      if (response.success && response.forms) {
+        console.log('✅ Loaded user forms:', response.forms.length);
+        console.log('📝 Forms data:', response.forms);
+        setUserForms(response.forms);
+      } else {
+        console.log('❌ No user forms found:', response);
+        setUserForms([]);
+      }
+    } catch (error) {
+      console.error('❌ Failed to load user forms:', error);
+      setUserForms([]);
+    }
+  };
 
   const loadFormTemplates = async () => {
     try {
-      setLoading(true);
       const response = await apiService.getFormTemplates();
       
       if (response.success && (response as any).templates) {
@@ -133,7 +162,7 @@ export default function CreateFormScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    loadFormTemplates();
+    loadData();
   };
 
   const createBlankForm = () => {
@@ -155,6 +184,19 @@ export default function CreateFormScreen() {
         templateName: template.name,
         templateDescription: template.description,
         fields: JSON.stringify(template.fields)
+      }
+    });
+  };
+
+  const selectUserForm = (form: Form) => {
+    router.push({
+      pathname: '/forms/builder',
+      params: {
+        templateId: 'user-form',
+        templateName: form.title,
+        templateDescription: form.description,
+        fields: JSON.stringify(form.json_fields),
+        formId: form.id.toString()
       }
     });
   };
@@ -233,6 +275,31 @@ export default function CreateFormScreen() {
     </TouchableOpacity>
   );
 
+  const renderUserFormItem = ({ item }: { item: Form }) => (
+    <TouchableOpacity style={styles.templateCard} onPress={() => selectUserForm(item)}>
+      <View style={[styles.templateIcon, { backgroundColor: '#007AFF20' }]}>
+        <Ionicons 
+          name="document-text" 
+          size={24} 
+          color="#007AFF" 
+        />
+      </View>
+      <View style={styles.templateContent}>
+        <Text style={styles.templateName}>{item.title}</Text>
+        <Text style={styles.templateDescription}>{item.description || 'No description'}</Text>
+        <View style={styles.templateMeta}>
+          <View style={[styles.categoryBadge, { backgroundColor: '#007AFF' }]}>
+            <Text style={styles.categoryText}>My Form</Text>
+          </View>
+          <Text style={styles.fieldsCount}>
+            {item.json_fields?.length || 0} fields • {item.response_count || 0} responses
+          </Text>
+        </View>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+    </TouchableOpacity>
+  );
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -261,42 +328,90 @@ export default function CreateFormScreen() {
         <View style={{ width: 24 }} />
       </View>
 
+      {/* Blank Form Option */}
+      <View style={styles.blankFormSection}>
+        <Text style={styles.sectionTitle}>Start Fresh</Text>
+        <TouchableOpacity style={styles.blankFormCard} onPress={createBlankForm}>
+          <View style={styles.blankFormIcon}>
+            <Ionicons name="add" size={32} color="#007AFF" />
+          </View>
+          <View style={styles.blankFormContent}>
+            <Text style={styles.blankFormTitle}>Create Blank Form</Text>
+            <Text style={styles.blankFormDescription}>
+              Start with an empty form and add your own fields
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Tab Navigation */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'templates' && styles.activeTab]} 
+          onPress={() => setActiveTab('templates')}
+        >
+          <Text style={[styles.tabText, activeTab === 'templates' && styles.activeTabText]}>
+            Templates
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'recent' && styles.activeTab]} 
+          onPress={() => setActiveTab('recent')}
+        >
+          <Text style={[styles.tabText, activeTab === 'recent' && styles.activeTabText]}>
+            Recent Forms
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Tab Content */}
       <ScrollView 
         style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Blank Form Option */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Start Fresh</Text>
-          <TouchableOpacity style={styles.blankFormCard} onPress={createBlankForm}>
-            <View style={styles.blankFormIcon}>
-              <Ionicons name="add" size={32} color="#007AFF" />
-            </View>
-            <View style={styles.blankFormContent}>
-              <Text style={styles.blankFormTitle}>Create Blank Form</Text>
-              <Text style={styles.blankFormDescription}>
-                Start with an empty form and add your own fields
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Templates Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Choose Template</Text>
-          <Text style={styles.sectionSubtitle}>
-            Select a pre-built template to get started quickly
-          </Text>
-          
-          <FlatList
-            data={templates}
-            renderItem={renderTemplateItem}
-            keyExtractor={(item) => item.id.toString()}
-            scrollEnabled={false}
-            showsVerticalScrollIndicator={false}
-          />
-        </View>
+        {activeTab === 'templates' ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Choose Template</Text>
+            <Text style={styles.sectionSubtitle}>
+              Select a pre-built template to get started quickly
+            </Text>
+            
+            <FlatList
+              data={templates}
+              renderItem={renderTemplateItem}
+              keyExtractor={(item) => item.id.toString()}
+              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+            />
+          </View>
+        ) : (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Your Recent Forms</Text>
+            <Text style={styles.sectionSubtitle}>
+              Continue working on your existing forms or create new ones based on them
+              {userForms.length > 0 && ` (${userForms.length} found)`}
+            </Text>
+            
+            {userForms.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="document-outline" size={48} color="#C7C7CC" />
+                <Text style={styles.emptyStateTitle}>No forms yet</Text>
+                <Text style={styles.emptyStateDescription}>
+                  Create your first form using a template or start with a blank form
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={userForms}
+                renderItem={renderUserFormItem}
+                keyExtractor={(item) => item.id.toString()}
+                scrollEnabled={false}
+                showsVerticalScrollIndicator={false}
+              />
+            )}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -334,9 +449,59 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  blankFormSection: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
   section: {
     marginTop: 24,
     paddingHorizontal: 16,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTab: {
+    borderBottomColor: '#007AFF',
+  },
+  tabText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#666',
+  },
+  activeTabText: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 32,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateDescription: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   sectionTitle: {
     fontSize: 20,
