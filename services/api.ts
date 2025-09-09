@@ -100,6 +100,14 @@ const MOBILE_ENDPOINTS = {
   UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/mobile/upload-links/${id}`,
   UPLOAD_LINK_SHARE: (id: number) => `/api/v1/mobile/upload-links/${id}/share`,
   UPLOAD_LINK_FILES: (id: number) => `/api/v1/mobile/upload-links/${id}/files`,
+  
+  // Meeting Assets & Webhooks (using existing web endpoints)
+  MEETING_ASSETS: '/api/meeting-assets',
+  MEETING_TRANSCRIPT: (meetingId: string) => `/api/meetings/${meetingId}/transcript`,
+  MEETING_SUMMARY: (meetingId: string) => `/api/meetings/${meetingId}/summary`,
+  MEETING_CHAT: (meetingId: string) => `/api/meetings/${meetingId}/chat`,
+  MEETING_REPORT: (meetingId: string) => `/api/meetings/${meetingId}/report`,
+  MEETING_DOWNLOAD: (meetingId: string, assetType: string) => `/api/meetings/${meetingId}/download/${assetType}`,
 } as const;
 
 // Main API Service Class
@@ -954,6 +962,28 @@ class ApiService {
     }
   }
 
+  async shareFile(fileId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/api/v1/mobile/file/${fileId}/share`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Share file error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to share file');
+    }
+  }
+
+  async downloadFormResponsesCSV(formId: number): Promise<string> {
+    try {
+      const response = await this.client.get(`/api/v1/mobile/forms/${formId}/responses/download`, {
+        responseType: 'text' // Changed from 'blob' to 'text' to get string directly
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Download form responses CSV error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to download CSV');
+    }
+  }
+
   async getUploadLinkFiles(id: number, page = 1, perPage = 20): Promise<ApiResponse> {
     try {
       const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_FILES(id), {
@@ -1068,6 +1098,71 @@ class ApiService {
     } catch (error: any) {
       console.error('Send meeting invite failed:', error);
       throw new Error(error.response?.data?.message || 'Failed to send meeting invite');
+    }
+  }
+
+  // ==================== MEETING ASSETS & WEBHOOKS ====================
+
+  async getMeetingAssets(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_ASSETS);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get meeting assets failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch meeting assets');
+    }
+  }
+
+  async getMeetingTranscript(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_TRANSCRIPT(meetingId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get meeting transcript failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch meeting transcript');
+    }
+  }
+
+  async getMeetingSummary(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_SUMMARY(meetingId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get meeting summary failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch meeting summary');
+    }
+  }
+
+  async getMeetingChat(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_CHAT(meetingId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get meeting chat failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch meeting chat');
+    }
+  }
+
+  async getMeetingReport(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_REPORT(meetingId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get meeting report failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch meeting report');
+    }
+  }
+
+  async downloadMeetingAsset(meetingId: string, assetType: string): Promise<{ url: string; filename: string }> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_DOWNLOAD(meetingId, assetType));
+      return {
+        url: response.data.downloadUrl || response.data.url,
+        filename: response.data.filename || `${meetingId}_${assetType}`
+      };
+    } catch (error: any) {
+      console.error('Download meeting asset failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to download meeting asset');
     }
   }
 }

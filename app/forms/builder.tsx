@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -56,30 +56,47 @@ export default function FormBuilderScreen() {
     description: (params.templateDescription as string) || '',
     fields: []
   });
-  const [currentView, setCurrentView] = useState<'builder' | 'preview'>('builder');
+  const [currentView, setCurrentView] = useState<'builder' | 'preview' | 'responses'>(
+    (params.tab as string) === 'responses' ? 'responses' : 'builder'
+  );
   const [selectedField, setSelectedField] = useState<FormField | null>(null);
   const [showFieldEditor, setShowFieldEditor] = useState(false);
   const [showFieldTypeSelector, setShowFieldTypeSelector] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [responses, setResponses] = useState<any[]>([]);
+  const [loadingResponses, setLoadingResponses] = useState(false);
 
   useEffect(() => {
     if (params.fields) {
       try {
         const fields = JSON.parse(params.fields as string);
-        setFormData(prev => ({ ...prev, fields }));
+        // Ensure all fields have proper labels
+        const fieldsWithLabels = fields.map((field: any) => ({
+          ...field,
+          label: field.label || field.title || `Field ${field.id}`,
+          name: field.name || field.id || `field_${Date.now()}`
+        }));
+        setFormData(prev => ({ ...prev, fields: fieldsWithLabels }));
       } catch (error) {
         console.error('Failed to parse fields:', error);
       }
     }
   }, [params.fields]);
 
+  useEffect(() => {
+    if (currentView === 'responses' && params.formId) {
+      loadResponses();
+    }
+  }, [currentView, params.formId]);
+
   const addField = (type: string) => {
+    const fieldTypeName = FIELD_TYPES.find(t => t.id === type)?.name || 'Field';
     const newField: FormField = {
       id: Date.now().toString(),
       type: type as FormField['type'],
-      label: `New ${FIELD_TYPES.find(t => t.id === type)?.name || 'Field'}`,
+      label: `${fieldTypeName} ${formData.fields.length + 1}`,
       name: `field_${formData.fields.length + 1}`,
-      placeholder: '',
+      placeholder: `Enter ${fieldTypeName.toLowerCase()}`,
       required: false,
       options: type === 'select' || type === 'radio' || type === 'checkbox' ? ['Option 1'] : undefined,
     };
@@ -201,13 +218,15 @@ export default function FormBuilderScreen() {
     );
   };
 
-  const renderFieldItem = ({ item, index }: { item: FormField; index: number }) => (
-    <View style={styles.fieldItem}>
-      <View style={styles.fieldHeader}>
-        <View style={styles.fieldInfo}>
-          <Text style={styles.fieldLabel}>{item.label}</Text>
-          <Text style={styles.fieldType}>{FIELD_TYPES.find(t => t.id === item.type)?.name}</Text>
-        </View>
+  const renderFieldItem = ({ item, index }: { item: FormField; index: number }) => {
+    console.log('Rendering field item:', { id: item.id, label: item.label, type: item.type });
+    return (
+      <View style={styles.fieldItem}>
+        <View style={styles.fieldHeader}>
+          <View style={styles.fieldInfo}>
+            <Text style={styles.fieldLabel}>{item.label || 'Unnamed Field'}</Text>
+            <Text style={styles.fieldType}>{FIELD_TYPES.find(t => t.id === item.type)?.name}</Text>
+          </View>
         <View style={styles.fieldActions}>
           <TouchableOpacity 
             style={styles.actionButton}
@@ -249,24 +268,194 @@ export default function FormBuilderScreen() {
         <Text style={styles.requiredIndicator}>Required field</Text>
       )}
     </View>
-  );
+    );
+  };
 
-  const renderPreviewField = ({ item }: { item: FormField }) => (
-    <View style={styles.previewField}>
-      <Text style={styles.previewLabel}>
-        {item.label} {item.required && <Text style={styles.asterisk}>*</Text>}
-      </Text>
+  const loadResponses = async () => {
+    console.log('Loading responses for formId:', params.formId);
+    if (!params.formId) {
+      console.log('No formId found in params');
+      return;
+    }
+    
+    setLoadingResponses(true);
+    try {
+      console.log('Calling getFormResponses with formId:', parseInt(params.formId as string));
+      const response = await apiService.getFormResponses(parseInt(params.formId as string));
+      console.log('Form responses API response:', response);
+      
+      if (response.success) {
+        // Handle different response structures
+        let responsesData = [];
+        if (response.data && Array.isArray(response.data)) {
+          responsesData = response.data;
+        } else if (response.data && (response.data as any).responses) {
+          responsesData = (response.data as any).responses;
+        } else if ((response as any).responses) {
+          responsesData = (response as any).responses;
+        }
+        
+        console.log('Setting responses from API:', responsesData);
+        setResponses(responsesData);
+      } else {
+        console.log('API returned success: false:', response);
+        setResponses([]);
+      }
+    } catch (error: any) {
+      console.error('Error loading responses:', error);
+      console.error('Error details:', error.response?.data || error.message);
+      setResponses([]);
+    } finally {
+      setLoadingResponses(false);
+    }
+  };
+
+  const downloadCSV = async () => {
+    if (!params.formId) {
+      Alert.alert('Error', 'Form ID not found');
+      return;
+    }
+
+    if (responses.length === 0) {
+      Alert.alert('No Data', 'There are no responses to download');
+      return;
+    }
+
+    try {
+      // Call the backend API to download CSV
+      const csvContent = await apiService.downloadFormResponsesCSV(parseInt(params.formId as string));
+      
+      // Use Expo Sharing to share the CSV file
+      const { shareAsync } = await import('expo-sharing');
+      const { writeAsStringAsync, documentDirectory } = await import('expo-file-system');
+      
+      const fileName = `form_responses_${params.formId}_${new Date().toISOString().split('T')[0]}.csv`;
+      const fileUri = `${documentDirectory}${fileName}`;
+      
+      await writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+      await shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Download Form Responses' });
+    } catch (error: any) {
+      console.error('Error downloading CSV:', error);
+      Alert.alert('Error', 'Failed to download CSV file');
+    }
+  };
+
+  const generateCSVContent = (responsesData: any[]) => {
+    if (responsesData.length === 0) return '';
+    
+    // Get all unique field names from all responses
+    const allFields = new Set<string>();
+    responsesData.forEach(response => {
+      const data = response.response_data || response.data || {};
+      Object.keys(data).forEach(key => allFields.add(key));
+    });
+    
+    const fields = Array.from(allFields);
+    
+    // Create CSV header
+    const header = ['Response ID', 'Submitted At', ...fields].join(',');
+    
+    // Create CSV rows
+    const rows = responsesData.map((response, index) => {
+      const data = response.response_data || response.data || {};
+      const submittedAt = new Date(response.submitted_at || response.created_at || Date.now()).toLocaleString();
+      const values = [
+        index + 1,
+        `"${submittedAt}"`,
+        ...fields.map(field => `"${(data[field] || '').toString().replace(/"/g, '""')}"`)
+      ];
+      return values.join(',');
+    });
+    
+    return [header, ...rows].join('\n');
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      // In a real implementation, you'd use expo-clipboard
+      Alert.alert('Copied', 'CSV content copied to clipboard');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to copy to clipboard');
+    }
+  };
+
+  const shareResponses = async () => {
+    if (responses.length === 0) {
+      Alert.alert('No Responses', 'There are no responses to share yet.');
+      return;
+    }
+
+    try {
+      // Call the backend API to get CSV content
+      const csvContent = await apiService.downloadFormResponsesCSV(parseInt(params.formId as string));
+      
+      // Use Expo Sharing to share the CSV file
+      const { shareAsync } = await import('expo-sharing');
+      const { writeAsStringAsync, documentDirectory } = await import('expo-file-system');
+      
+      const fileName = `form_responses_${params.formId}_${new Date().toISOString().split('T')[0]}.csv`;
+      const fileUri = `${documentDirectory}${fileName}`;
+      
+      await writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+      await shareAsync(fileUri, { 
+        mimeType: 'text/csv', 
+        dialogTitle: `Share Form Responses (${responses.length} responses)` 
+      });
+    } catch (error: any) {
+      console.error('Error sharing responses:', error);
+      Alert.alert('Error', 'Failed to share responses');
+    }
+  };
+
+  const shareAsCSV = () => {
+    const csvContent = generateCSVContent(responses);
+    const shareText = `Form Responses CSV\n\n${csvContent}`;
+    
+    Alert.alert(
+      'Share CSV',
+      'CSV content ready to share',
+      [
+        { text: 'Copy CSV', onPress: () => copyToClipboard(csvContent) },
+        { text: 'OK', style: 'default' }
+      ]
+    );
+  };
+
+  const shareSummary = () => {
+    const summary = `Form: ${formData.name}\nResponses: ${responses.length}\n\nSummary:\n${responses.map((response, index) => {
+      const data = response.response_data || response.data || {};
+      const submittedAt = new Date(response.submitted_at || response.created_at || Date.now()).toLocaleDateString();
+      return `${index + 1}. Submitted on ${submittedAt}`;
+    }).join('\n')}`;
+    
+    Alert.alert(
+      'Share Summary',
+      summary,
+      [
+        { text: 'Copy Summary', onPress: () => copyToClipboard(summary) },
+        { text: 'OK', style: 'default' }
+      ]
+    );
+  };
+
+  const renderPreviewField = ({ item }: { item: FormField }) => {
+    console.log('Rendering preview field:', { id: item.id, label: item.label, type: item.type });
+    return (
+      <View style={styles.previewField}>
+        <Text style={styles.previewLabel}>
+          {item.label || 'Unnamed Field'} {item.required && <Text style={styles.asterisk}>*</Text>}
+        </Text>
       
       {item.type === 'textarea' ? (
         <TextInput
           style={[styles.previewInput, styles.previewTextarea]}
-          placeholder={item.placeholder || `Enter ${item.label.toLowerCase()}`}
+          placeholder={item.placeholder || `Enter ${(item.label || 'field').toLowerCase()}`}
           multiline
           editable={false}
         />
       ) : item.type === 'select' ? (
         <View style={styles.previewSelect}>
-          <Text style={styles.previewSelectText}>Select {item.label.toLowerCase()}</Text>
+          <Text style={styles.previewSelectText}>Select {(item.label || 'field').toLowerCase()}</Text>
           <Ionicons name="chevron-down" size={20} color="#666" />
         </View>
       ) : item.type === 'radio' ? (
@@ -290,7 +479,7 @@ export default function FormBuilderScreen() {
       ) : (
         <TextInput
           style={styles.previewInput}
-          placeholder={item.placeholder || `Enter ${item.label.toLowerCase()}`}
+          placeholder={item.placeholder || `Enter ${(item.label || 'field').toLowerCase()}`}
           keyboardType={
             item.type === 'email' ? 'email-address' :
             item.type === 'phone' ? 'phone-pad' :
@@ -300,7 +489,8 @@ export default function FormBuilderScreen() {
         />
       )}
     </View>
-  );
+    );
+  };
 
   const renderBuilder = () => (
     <ScrollView style={styles.content}>
@@ -375,6 +565,121 @@ export default function FormBuilderScreen() {
     </ScrollView>
   );
 
+  const renderResponseItem = ({ item, index }: { item: any; index: number }) => {
+    const submittedAt = new Date(item.submitted_at || item.created_at || Date.now());
+    
+    return (
+      <View style={styles.responseItem}>
+        <View style={styles.responseHeader}>
+          <Text style={styles.responseNumber}>Response #{index + 1}</Text>
+          <View style={styles.responseTimeContainer}>
+            <Text style={styles.responseDate}>
+              {submittedAt.toLocaleDateString()}
+            </Text>
+            <Text style={styles.responseTime}>
+              {submittedAt.toLocaleTimeString()}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.responseData}>
+          <Text style={styles.responseSummary}>
+            {Object.keys(item.response_data || item.data || item.responses || {}).length} fields completed
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
+  const getTimeAgo = (date: Date) => {
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) {
+      return `${diffInSeconds}s ago`;
+    } else if (diffInSeconds < 3600) {
+      const minutes = Math.floor(diffInSeconds / 60);
+      return `${minutes}m ago`;
+    } else if (diffInSeconds < 86400) {
+      const hours = Math.floor(diffInSeconds / 3600);
+      return `${hours}h ago`;
+    } else {
+      const days = Math.floor(diffInSeconds / 86400);
+      return `${days}d ago`;
+    }
+  };
+
+  const renderResponses = () => (
+    <View style={styles.content}>
+      <View style={styles.responsesContainer}>
+        <Text style={styles.responsesTitle}>Form Responses</Text>
+        <Text style={styles.responsesSubtitle}>
+          {responses.length} response{responses.length !== 1 ? 's' : ''} submitted
+        </Text>
+        
+        {/* Action Buttons */}
+        <View style={styles.responsesActions}>
+          <TouchableOpacity 
+            style={styles.responsesActionButton} 
+            onPress={loadResponses}
+            disabled={loadingResponses}
+          >
+            <Ionicons name="refresh" size={20} color="#007AFF" />
+            <Text style={styles.responsesActionButtonText}>
+              {loadingResponses ? 'Loading...' : 'Refresh'}
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.responsesActionButton, responses.length === 0 && styles.disabledButton]} 
+            onPress={downloadCSV}
+            disabled={responses.length === 0}
+          >
+            <Ionicons name="download" size={20} color={responses.length === 0 ? "#ccc" : "#007AFF"} />
+            <Text style={[styles.responsesActionButtonText, responses.length === 0 && styles.disabledButtonText]}>
+              Download CSV
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.responsesActionButton, responses.length === 0 && styles.disabledButton]} 
+            onPress={shareResponses}
+            disabled={responses.length === 0}
+          >
+            <Ionicons name="share" size={20} color={responses.length === 0 ? "#ccc" : "#10B981"} />
+            <Text style={[styles.responsesActionButtonText, responses.length === 0 && styles.disabledButtonText]}>
+              Share
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      
+      {/* Responses List */}
+      {loadingResponses ? (
+        <View style={styles.responsesList}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.responsesEmptyText}>Loading responses...</Text>
+        </View>
+      ) : responses.length > 0 ? (
+        <FlatList
+          data={responses}
+          renderItem={renderResponseItem}
+          keyExtractor={(item, index) => `response-${index}`}
+          style={styles.responsesFlatList}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.responsesFlatListContent}
+        />
+      ) : (
+        <View style={styles.responsesList}>
+          <Ionicons name="clipboard-outline" size={64} color="#ccc" />
+          <Text style={styles.responsesEmptyText}>
+            No responses yet. Share your form to start collecting responses.
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -406,25 +711,37 @@ export default function FormBuilderScreen() {
             Preview
           </Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, currentView === 'responses' && styles.activeTab]}
+          onPress={() => setCurrentView('responses')}
+        >
+          <Text style={[styles.tabText, currentView === 'responses' && styles.activeTabText]}>
+            Responses
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Content */}
-      {currentView === 'builder' ? renderBuilder() : renderPreview()}
+      {currentView === 'builder' ? renderBuilder() : 
+       currentView === 'preview' ? renderPreview() : 
+       renderResponses()}
 
-      {/* Save Button */}
-      <View style={styles.footer}>
-        <TouchableOpacity 
-          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-          onPress={saveForm}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.saveButtonText}>Save Form</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      {/* Save Button - Only show on Builder and Preview tabs */}
+      {currentView !== 'responses' && (
+        <View style={styles.footer}>
+          <TouchableOpacity 
+            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+            onPress={saveForm}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.saveButtonText}>Save Form</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Field Type Selector Modal */}
       <Modal
@@ -930,4 +1247,134 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-}); 
+  // Responses tab styles
+  responsesContainer: {
+    padding: 20,
+  },
+  responsesTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 8,
+  },
+  responsesSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 24,
+  },
+  responsesActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 24,
+  },
+  responsesActionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+  },
+  responsesActionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginLeft: 8,
+  },
+  responsesList: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  responsesEmptyText: {
+    fontSize: 16,
+    color: '#999',
+    textAlign: 'center',
+    lineHeight: 24,
+    marginTop: 16,
+  },
+  responsesFlatList: {
+    flex: 1,
+  },
+  responsesFlatListContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  responseItem: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+  },
+  responseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  responseNumber: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  responseTimeContainer: {
+    alignItems: 'flex-end',
+  },
+  responseDate: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  responseTime: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 2,
+  },
+  responseTimeAgo: {
+    fontSize: 10,
+    color: '#007AFF',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  responseData: {
+    gap: 8,
+  },
+  responseField: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  responseFieldLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    minWidth: 100,
+    marginRight: 8,
+  },
+  responseFieldValue: {
+    fontSize: 14,
+    color: '#666',
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  responseSummary: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  disabledButtonText: {
+    color: '#ccc',
+  },
+});

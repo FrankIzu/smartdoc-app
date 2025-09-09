@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 
 // API Configuration
-export const API_BASE_URL = 'http://192.168.62.96:5000'; // Updated to use correct IP address
+export const API_BASE_URL = 'http://192.168.1.7:5000'; // Updated to use correct IP address
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
 
 // OAuth Configuration - Platform-specific client IDs
@@ -29,7 +29,7 @@ export const GOOGLE_CLIENT_ID = (() => {
 export const DROPBOX_CLIENT_ID = process.env.EXPO_PUBLIC_DROPBOX_APP_KEY || ''; // Dropbox App Key (same as Client ID)
 
 // Expo Development Server URL
-export const EXPO_DEV_URL = 'http://192.168.62.18:8081';
+export const EXPO_DEV_URL = 'http://192.168.1.7:8081';
 
 // App Configuration
 export const APP_NAME = process.env.EXPO_PUBLIC_APP_NAME || 'GrabDocs Mobile';

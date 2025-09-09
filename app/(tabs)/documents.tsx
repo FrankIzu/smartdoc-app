@@ -607,8 +607,8 @@ export default function QuickFilesScreen() {
   const handleViewFormResponses = () => {
     if (!selectedDocumentForMenu) return;
     
-    // Navigate to form responses screen
-    router.push(`/forms/responses?formId=${selectedDocumentForMenu.id}&formName=${encodeURIComponent(selectedDocumentForMenu.name)}`);
+    // Navigate to form builder responses tab
+    router.push(`/forms/builder?formId=${selectedDocumentForMenu.id}&formName=${encodeURIComponent(selectedDocumentForMenu.name)}&tab=responses`);
     setShowKebabMenu(false);
   };
 

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     Alert,
     Dimensions,
@@ -52,6 +52,7 @@ export default function MeetingInterfaceScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [useHMSInterface, setUseHMSInterface] = useState(false);
 
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -138,6 +139,29 @@ export default function MeetingInterfaceScreen() {
       console.error('Failed to load chat history:', error);
       setChatMessages([]);
     }
+  };
+
+  const switchToHMSInterface = () => {
+    Alert.alert(
+      'Switch to GrabDocs Interface',
+      'This will switch to the GrabDocs prebuilt meeting interface. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Switch', 
+          onPress: () => {
+            router.push({
+              pathname: '/quick-reach/hms-meeting-interface',
+              params: {
+                meetingId: meetingId as string,
+                title: title as string,
+                userName: 'Mobile User' // You can get this from user context
+              }
+            });
+          }
+        }
+      ]
+    );
   };
 
   const sendChatMessage = async () => {
@@ -264,6 +288,13 @@ export default function MeetingInterfaceScreen() {
           <Text style={styles.meetingDuration}>{formatDuration(meetingDuration)}</Text>
         </View>
         <View style={styles.headerControls}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={switchToHMSInterface}
+          >
+            <Ionicons name="videocam" size={20} color="#007AFF" />
+            <Text style={styles.headerButtonText}>GrabDocs</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerButton}
             onPress={() => setShowParticipants(!showParticipants)}

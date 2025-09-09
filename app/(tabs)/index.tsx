@@ -3,13 +3,13 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Alert,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  Alert,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
@@ -508,20 +508,21 @@ function DashboardScreen() {
     const fileName = 'test-file.pdf';
     
     // Start progress
-    progressStore.startProgress(taskId, fileName);
+    const progressId = progressStore.addProgress({
+      title: fileName,
+      progress: 0,
+      status: 'pending'
+    });
     
     // Simulate progress updates
     let progress = 0;
     const progressInterval = setInterval(() => {
       progress += 20;
       
-      progressStore.updateProgress(taskId, {
+      progressStore.updateProgress(progressId, {
         progress: progress,
-        status: 'processing',
-        message: `Processing test file... ${progress}%`,
-        phase: progress < 50 ? 'validation' : progress < 80 ? 'processing' : 'finalizing',
-        category: 'File Processing',
-        subcategory: 'Test Upload'
+        status: 'in-progress',
+        message: `Processing test file... ${progress}%`
       });
       
       console.log(`📊 Test progress update: ${progress}%`);
@@ -529,7 +530,11 @@ function DashboardScreen() {
       if (progress >= 100) {
         clearInterval(progressInterval);
         setTimeout(() => {
-          progressStore.completeProgress();
+          progressStore.updateProgress(progressId, {
+            status: 'completed',
+            progress: 100,
+            message: 'Test file processing completed!'
+          });
           console.log('✅ Test progress completed');
         }, 1000);
       }

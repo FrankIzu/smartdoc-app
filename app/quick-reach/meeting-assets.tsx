@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -69,7 +69,7 @@ export default function MeetingAssetsScreen() {
     try {
       setLoading(true);
       
-      // Load meeting assets from API
+      // Load meeting assets from web webhook endpoint
       const response = await apiClient.getMeetingAssets();
       if (response.success && response.data) {
         setAssets(response.data.assets || []);
@@ -131,14 +131,41 @@ export default function MeetingAssetsScreen() {
     setShowAssetModal(true);
     
     try {
-      // Load detailed asset content from backend
-      const response = await apiClient.getMeetingAssetDetails(asset.id);
-      if (response.success && response.data?.details) {
-        setAssetDetails(response.data.details);
-      } else {
-        console.warn('No asset details returned');
-        setAssetDetails([]);
+      // Load detailed asset content using web webhook endpoints
+      let details: AssetDetail[] = [];
+      
+      switch (asset.type) {
+        case 'transcript':
+          const transcriptResponse = await apiClient.getMeetingTranscript(asset.meetingId || asset.id);
+          if (transcriptResponse.success && transcriptResponse.data) {
+            details = transcriptResponse.data.transcript || [];
+          }
+          break;
+        case 'chat_log':
+          const chatResponse = await apiClient.getMeetingChat(asset.meetingId || asset.id);
+          if (chatResponse.success && chatResponse.data) {
+            details = chatResponse.data.messages || [];
+          }
+          break;
+        case 'recording':
+          // For recordings, show basic info
+          details = [{
+            id: '1',
+            content: `Recording: ${asset.title}\nDuration: ${asset.duration || 'Unknown'}\nDate: ${asset.date}`,
+            timestamp: asset.date,
+            speaker: 'System'
+          }];
+          break;
+        default:
+          details = [{
+            id: '1',
+            content: `Asset: ${asset.title}\nType: ${asset.type}\nDate: ${asset.date}`,
+            timestamp: asset.date,
+            speaker: 'System'
+          }];
       }
+      
+      setAssetDetails(details);
     } catch (error) {
       console.error('Failed to load asset details:', error);
       setAssetDetails([]);
@@ -148,8 +175,20 @@ export default function MeetingAssetsScreen() {
   const downloadAsset = async (asset: MeetingAsset) => {
     try {
       Alert.alert('Download', `Downloading ${asset.title}...`);
-      // In a real implementation, this would handle the download
+      
+      // Use web webhook endpoint for downloading
+      const downloadInfo = await apiClient.downloadMeetingAsset(
+        asset.meetingId || asset.id, 
+        asset.type
+      );
+      
+      // Open download URL (this will work on mobile)
+      if (downloadInfo.url) {
+        // You can use Linking.openURL or a file download service here
+        Alert.alert('Download Ready', `Download URL: ${downloadInfo.url}`);
+      }
     } catch (error) {
+      console.error('Download failed:', error);
       Alert.alert('Error', 'Failed to download asset');
     }
   };

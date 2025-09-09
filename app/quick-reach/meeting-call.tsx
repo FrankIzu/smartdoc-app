@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -23,11 +23,12 @@ interface Meeting {
   participants: number;
   startTime: string;
   endTime?: string;
-  status: 'scheduled' | 'ongoing' | 'live' | 'ended';
+  status: 'scheduled' | 'ongoing' | 'live' | 'ended' | 'upcoming' | 'active';
   password?: string;
   roomUrl?: string;
   description?: string;
   duration?: number;
+  createdAt?: string;
 }
 
 export default function MeetingCallScreen() {
@@ -52,27 +53,48 @@ export default function MeetingCallScreen() {
   const loadMeetings = async () => {
     try {
       setLoading(true);
+      
+      // Load previous user meetings from database using mobile API
       const response = await apiClient.getMeetings();
       
       if (response.success && response.data) {
         const allMeetings = response.data.meetings || [];
-        setMeetings(allMeetings);
+        
+        // Sort meetings by date (most recent first)
+        const sortedMeetings = allMeetings.sort((a: Meeting, b: Meeting) => {
+          const dateA = new Date(a.startTime || a.createdAt || 0).getTime();
+          const dateB = new Date(b.startTime || b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+        
+        setMeetings(sortedMeetings);
         
         // Filter meetings by status
-        const upcoming = allMeetings.filter((m: Meeting) => m.status === 'scheduled');
-        const ongoing = allMeetings.filter((m: Meeting) => m.status === 'ongoing' || m.status === 'live');
+        const upcoming = sortedMeetings.filter((m: Meeting) => 
+          m.status === 'scheduled' || m.status === 'upcoming'
+        );
+        const ongoing = sortedMeetings.filter((m: Meeting) => 
+          m.status === 'ongoing' || m.status === 'live' || m.status === 'active'
+        );
         
         setUpcomingMeetings(upcoming);
         setOngoingMeetings(ongoing);
+        
+        console.log(`📱 Loaded ${sortedMeetings.length} meetings from database:`, {
+          total: sortedMeetings.length,
+          upcoming: upcoming.length,
+          ongoing: ongoing.length
+        });
       } else {
         // No meetings found - show empty state
         setMeetings([]);
         setUpcomingMeetings([]);
         setOngoingMeetings([]);
+        console.log('📱 No meetings found in database');
       }
     } catch (error) {
-      console.error('Failed to load meetings:', error);
-      // On error - show empty state, don't load sample data
+      console.error('Failed to load meetings from database:', error);
+      // On error - show empty state
       setMeetings([]);
       setUpcomingMeetings([]);
       setOngoingMeetings([]);
@@ -368,7 +390,11 @@ export default function MeetingCallScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          </TouchableOpacity>
           <Text style={styles.headerTitle}>Meeting Call</Text>
+          <View style={styles.headerSpacer} />
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
@@ -381,6 +407,9 @@ export default function MeetingCallScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Meeting Call</Text>
         <TouchableOpacity
           style={styles.refreshButton}
@@ -584,6 +613,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e9ecef',
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 8,
+  },
+  headerSpacer: {
+    width: 40, // Same width as back button to center title
   },
   headerTitle: {
     fontSize: 24,
