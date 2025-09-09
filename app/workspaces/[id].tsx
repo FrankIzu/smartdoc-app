@@ -68,46 +68,41 @@ export default function WorkspaceDetailsScreen() {
     if (!user) return;
     
     try {
-      const [workspaceResponse, membersResponse] = await Promise.all([
-        apiService.getWorkspace(Number(id)),
-        apiService.getWorkspaceMembers(Number(id)),
-      ]);
-
-      if (workspaceResponse.success) {
-        setWorkspace(workspaceResponse.workspace);
-      } else {
-        // Check if workspace is inactive
-        if (workspaceResponse.workspace_status === 'inactive') {
+      // Get all workspaces and find the one with matching ID
+      const workspacesResponse = await apiService.getMobileWorkspaces();
+      
+      if (workspacesResponse.success && workspacesResponse.data) {
+        const workspacesData = Array.isArray(workspacesResponse.data) 
+          ? workspacesResponse.data 
+          : (workspacesResponse.data.workspaces || []);
+        
+        // Find the workspace with matching ID
+        const targetWorkspace = workspacesData.find((ws: any) => ws.id === Number(id));
+        
+        if (targetWorkspace) {
+          console.log('✅ Found workspace:', targetWorkspace.name);
+          setWorkspace(targetWorkspace);
+          
+          // For now, set empty members array since we don't have a members endpoint
+          // TODO: Implement workspace members endpoint in backend
+          setMembers([]);
+        } else {
+          console.log('❌ Workspace not found with ID:', id);
           Alert.alert(
-            'Workspace Inactive',
-            workspaceResponse.message || 'This workspace has been paused and is not accessible at this time.',
+            'Workspace Not Found',
+            'This workspace could not be found or you may not have access to it.',
             [
               { text: 'OK', onPress: () => router.back() }
             ]
           );
-        } else {
-          Alert.alert('Error', workspaceResponse.message || 'Failed to load workspace');
         }
-      }
-
-      if (membersResponse.success) {
-        setMembers(membersResponse.members || []);
+      } else {
+        console.log('❌ Failed to load workspaces list');
+        Alert.alert('Error', 'Failed to load workspace details');
       }
     } catch (error: any) {
-      console.error('Failed to load workspace:', error);
-      
-      // Check if error response indicates inactive workspace
-      if (error.response?.data?.workspace_status === 'inactive') {
-        Alert.alert(
-          'Workspace Inactive', 
-          error.response.data.message || 'This workspace has been paused and is not accessible at this time.',
-          [
-            { text: 'OK', onPress: () => router.back() }
-          ]
-        );
-      } else {
-        Alert.alert('Error', error.message || 'Failed to load workspace details');
-      }
+      console.error('❌ Failed to load workspace:', error);
+      Alert.alert('Error', error.message || 'Failed to load workspace details');
     } finally {
       setLoading(false);
       setRefreshing(false);
