@@ -360,7 +360,7 @@ export default function CreateFormScreen() {
           onPress={() => setActiveTab('recent')}
         >
           <Text style={[styles.tabText, activeTab === 'recent' && styles.activeTabText]}>
-            Recent Forms
+            My Forms
           </Text>
         </TouchableOpacity>
       </View>
@@ -387,7 +387,7 @@ export default function CreateFormScreen() {
           </View>
         ) : (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Recent Forms</Text>
+            <Text style={styles.sectionTitle}>Your Forms</Text>
             <Text style={styles.sectionSubtitle}>
               Continue working on your existing forms or create new ones based on them
               {userForms.length > 0 && ` (${userForms.length} found)`}
