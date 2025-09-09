@@ -62,6 +62,8 @@ export default function WorkspaceDetailsScreen() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'admin' | 'member' | 'viewer'>('member');
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'members' | 'invitations'>('members');
+  const [invitations, setInvitations] = useState<any[]>([]);
 
   const loadWorkspaceDetails = async () => {
     if (!user) return;
@@ -301,26 +303,13 @@ export default function WorkspaceDetailsScreen() {
               </View>
               <Text style={styles.actionText}>View Files</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.actionButton} 
-              onPress={() => {
-                // TODO: Navigate to invitations view
-                Alert.alert('Coming Soon', 'View Invitations feature will be available in the next update!');
-              }}
-            >
-              <View style={[styles.actionIcon, { backgroundColor: '#FF6B6B' }]}>
-                <Ionicons name="mail" size={24} color="#fff" />
-              </View>
-              <Text style={styles.actionText}>View Invitations</Text>
-            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Members Section */}
+        {/* Members and Invitations Tabs */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Members ({workspace.member_count})</Text>
+            <Text style={styles.sectionTitle}>Team</Text>
             {workspace.can_invite && (
               <TouchableOpacity onPress={() => setInviteModalVisible(true)}>
                 <Text style={styles.sectionAction}>Invite</Text>
@@ -328,30 +317,59 @@ export default function WorkspaceDetailsScreen() {
             )}
           </View>
           
-          {members.length > 0 ? (
-            <View style={styles.membersList}>
-              {members.map((member) => (
-                <View key={member.id} style={styles.memberItem}>
-                  <View style={styles.memberAvatar}>
-                    <Ionicons name="person" size={20} color="#666" />
-                  </View>
-                  <View style={styles.memberInfo}>
-                    <Text style={styles.memberName}>{member.user?.name || member.user?.email || 'Unknown User'}</Text>
-                    <Text style={styles.memberRole}>{member.role}</Text>
-                  </View>
-                  {member.user_id === user?.id && (
-                    <View style={styles.youBadge}>
-                      <Text style={styles.youBadgeText}>You</Text>
+          {/* Tab Navigation */}
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'members' && styles.activeTab]}
+              onPress={() => setActiveTab('members')}
+            >
+              <Text style={[styles.tabText, activeTab === 'members' && styles.activeTabText]}>
+                Members ({workspace.member_count})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'invitations' && styles.activeTab]}
+              onPress={() => setActiveTab('invitations')}
+            >
+              <Text style={[styles.tabText, activeTab === 'invitations' && styles.activeTabText]}>
+                Invitations ({invitations.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+          
+          {/* Tab Content */}
+          {activeTab === 'members' ? (
+            members.length > 0 ? (
+              <View style={styles.membersList}>
+                {members.map((member) => (
+                  <View key={member.id} style={styles.memberItem}>
+                    <View style={styles.memberAvatar}>
+                      <Ionicons name="person" size={20} color="#666" />
                     </View>
-                  )}
-                </View>
-              ))}
-            </View>
+                    <View style={styles.memberInfo}>
+                      <Text style={styles.memberName}>{member.user?.name || member.user?.email || 'Unknown User'}</Text>
+                      <Text style={styles.memberRole}>{member.role}</Text>
+                    </View>
+                    {member.user_id === user?.id && (
+                      <View style={styles.youBadge}>
+                        <Text style={styles.youBadgeText}>You</Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <Ionicons name="people-outline" size={48} color="#ccc" />
+                <Text style={styles.emptyStateText}>No members found</Text>
+                <Text style={styles.emptyStateSubtext}>Invite users to collaborate</Text>
+              </View>
+            )
           ) : (
             <View style={styles.emptyState}>
-              <Ionicons name="people-outline" size={48} color="#ccc" />
-              <Text style={styles.emptyStateText}>No members found</Text>
-              <Text style={styles.emptyStateSubtext}>Invite users to collaborate</Text>
+              <Ionicons name="mail-outline" size={48} color="#ccc" />
+              <Text style={styles.emptyStateText}>No pending invitations</Text>
+              <Text style={styles.emptyStateSubtext}>Invitations will appear here</Text>
             </View>
           )}
         </View>
@@ -455,17 +473,24 @@ const styles = StyleSheet.create({
   workspaceMeta: { fontSize: 12, color: '#999' },
   
   // Actions Section
-  actionsSection: { paddingHorizontal: 16, marginBottom: 24 },
-  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#333', marginBottom: 16 },
-  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  actionButton: { width: '47%', backgroundColor: '#fff', borderRadius: 12, padding: 16, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
-  actionIcon: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
-  actionText: { fontSize: 14, fontWeight: '600', color: '#333', textAlign: 'center' },
+  actionsSection: { paddingHorizontal: 16, marginBottom: 20 },
+  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#333', marginBottom: 12 },
+  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  actionButton: { width: '47%', backgroundColor: '#fff', borderRadius: 8, padding: 12, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+  actionIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
+  actionText: { fontSize: 12, fontWeight: '600', color: '#333', textAlign: 'center' },
   
   // Section
   section: { paddingHorizontal: 16, marginBottom: 24 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   sectionAction: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
+  
+  // Tabs
+  tabContainer: { flexDirection: 'row', backgroundColor: '#f0f0f0', borderRadius: 8, padding: 4, marginBottom: 16 },
+  tab: { flex: 1, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 6, alignItems: 'center' },
+  activeTab: { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+  tabText: { fontSize: 14, fontWeight: '500', color: '#666' },
+  activeTabText: { color: '#007AFF', fontWeight: '600' },
   
   // Members
   membersList: { backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden' },
