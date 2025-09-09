@@ -429,6 +429,15 @@ class ApiService {
     }
   }
 
+  async getFileById(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.FILE_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to get file');
+    }
+  }
+
   async downloadFile(id: number): Promise<{ url: string; filename: string; blob?: Blob }> {
     try {
       console.log('🔄 Downloading file with ID:', id);
@@ -683,6 +692,16 @@ class ApiService {
     } catch (error: any) {
       console.error('Get bookmarks error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch bookmarks');
+    }
+  }
+
+  async addFileToBookmark(bookmarkId: number, fileId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files`, { file_id: fileId });
+      return response.data;
+    } catch (error: any) {
+      console.error('Add file to bookmark error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to add file to bookmark');
     }
   }
 

@@ -1,14 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
@@ -47,16 +48,83 @@ export default function CreateFormScreen() {
       setLoading(true);
       const response = await apiService.getFormTemplates();
       
-      if (response.success && response.data?.templates) {
-        console.log('✅ Loaded form templates from database:', response.data.templates.length);
-        setTemplates(response.data.templates);
+      if (response.success && (response as any).templates) {
+        console.log('✅ Loaded form templates from database:', (response as any).templates.length);
+        
+        // Map backend response to frontend format
+        const mappedTemplates = (response as any).templates.map((template: any) => ({
+          id: template.id,
+          name: template.name,
+          description: template.description,
+          category: template.category || template.type,
+          fields: template.json_fields || [], // Map json_fields to fields
+          preview_data: template.preview_data || null
+        }));
+        
+        setTemplates(mappedTemplates);
       } else {
         console.log('❌ No templates found in database response:', response);
-        setTemplates([]);
+        // Provide fallback templates if none exist in database
+        const fallbackTemplates: FormTemplate[] = [
+          {
+            id: 1,
+            name: 'Contact Form',
+            description: 'Basic contact form with name, email, and message fields',
+            category: 'contact',
+            fields: [
+              { id: '1', type: 'text' as const, label: 'Full Name', required: true },
+              { id: '2', type: 'email' as const, label: 'Email Address', required: true },
+              { id: '3', type: 'textarea' as const, label: 'Message', required: true }
+            ],
+            preview_data: null
+          },
+          {
+            id: 2,
+            name: 'Survey Form',
+            description: 'Multi-question survey with various field types',
+            category: 'survey',
+            fields: [
+              { id: '1', type: 'text' as const, label: 'Name', required: true },
+              { id: '2', type: 'radio' as const, label: 'How did you hear about us?', options: ['Social Media', 'Website', 'Referral', 'Other'], required: true },
+              { id: '3', type: 'select' as const, label: 'Age Range', options: ['18-25', '26-35', '36-45', '46+'], required: true },
+              { id: '4', type: 'textarea' as const, label: 'Additional Comments', required: false }
+            ],
+            preview_data: null
+          }
+        ];
+        setTemplates(fallbackTemplates);
       }
     } catch (error) {
       console.error('❌ Failed to load form templates from database:', error);
-      setTemplates([]);
+      // Provide fallback templates on error
+      const fallbackTemplates: FormTemplate[] = [
+        {
+          id: 1,
+          name: 'Contact Form',
+          description: 'Basic contact form with name, email, and message fields',
+          category: 'contact',
+          fields: [
+            { id: '1', type: 'text' as const, label: 'Full Name', required: true },
+            { id: '2', type: 'email' as const, label: 'Email Address', required: true },
+            { id: '3', type: 'textarea' as const, label: 'Message', required: true }
+          ],
+          preview_data: null
+        },
+        {
+          id: 2,
+          name: 'Survey Form',
+          description: 'Multi-question survey with various field types',
+          category: 'survey',
+          fields: [
+            { id: '1', type: 'text' as const, label: 'Name', required: true },
+            { id: '2', type: 'radio' as const, label: 'How did you hear about us?', options: ['Social Media', 'Website', 'Referral', 'Other'], required: true },
+            { id: '3', type: 'select' as const, label: 'Age Range', options: ['18-25', '26-35', '36-45', '46+'], required: true },
+            { id: '4', type: 'textarea' as const, label: 'Additional Comments', required: false }
+          ],
+          preview_data: null
+        }
+      ];
+      setTemplates(fallbackTemplates);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -158,7 +226,7 @@ export default function CreateFormScreen() {
           <View style={[styles.categoryBadge, { backgroundColor: getTemplateColor(item.category, item.name) }]}>
             <Text style={styles.categoryText}>{item.category}</Text>
           </View>
-          <Text style={styles.fieldsCount}>{item.fields.length} fields</Text>
+          <Text style={styles.fieldsCount}>{(item.fields || []).length} fields</Text>
         </View>
       </View>
       <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />

@@ -1,37 +1,40 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
-import * as Linking from 'expo-linking';
+import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    Alert,
-    FlatList,
-    Modal,
-    RefreshControl,
-    Share,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  FlatList,
+  Modal,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ExternalFilePicker } from '../../components/ExternalFilePicker';
-import { API_BASE_URL } from '../../constants/Config';
+import DocumentViewer from '../../components/DocumentViewer';
+import ExternalFilePicker from '../../components/ExternalFilePicker';
+import LoadingDots from '../../components/LoadingDots';
+import NetworkIndicator from '../../components/NetworkIndicator';
 import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
+import { useFileStore } from '../../stores/fileStore';
+import { removeFileExtension } from '../../utils/fileUtils';
 import { useAuth } from '../context/auth';
 
 interface Document {
   id: string;
   name: string;
-  type: 'pdf' | 'doc' | 'image' | 'other';
+  type: 'pdf' | 'doc' | 'image' | 'other' | 'form';
   size: string;
   uploadDate: Date;
   status: 'processed' | 'processing' | 'error';
   tags: string[];
   category?: string;
+  formData?: any; // Store original form data for form-specific actions
+  responseCount?: number; // Number of responses for forms
 }
 
 interface ApiDocument {
@@ -48,12 +51,15 @@ interface ApiDocument {
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
-type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'unknown';
+type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'unknown';
 
-export default function DocumentsScreen() {
+export default function QuickFilesScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const { uploadFromGallery } = useFileStore();
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [lastLoadTime, setLastLoadTime] = useState<number>(0);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('date');
@@ -61,12 +67,65 @@ export default function DocumentsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
-  const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showExternalFilePicker, setShowExternalFilePicker] = useState(false);
+  const [showDocumentViewer, setShowDocumentViewer] = useState(false);
+  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
+  
+  // Kebab menu state
+  const [showKebabMenu, setShowKebabMenu] = useState(false);
+  const [selectedDocumentForMenu, setSelectedDocumentForMenu] = useState<Document | null>(null);
+
+  // Bookmark state
+  const [bookmarks, setBookmarks] = useState<any[]>([]);
+  const [showBookmarkModal, setShowBookmarkModal] = useState(false);
+  const [selectedBookmark, setSelectedBookmark] = useState<any>(null);
+
+  // Status indicator state for recently completed files
+  const [recentlyCompletedFiles, setRecentlyCompletedFiles] = useState<Set<string>>(new Set());
+
+  // Cache for API responses to reduce loading time
+  const [apiCache, setApiCache] = useState<{
+    data: Document[];
+    timestamp: number;
+    searchQuery: string;
+    filterBy: FilterOption;
+  } | null>(null);
+
+  const CACHE_DURATION = 30000; // 30 seconds cache
+  const AUTO_REFRESH_INTERVAL = 60000; // Auto-refresh every 60 seconds
+
+  const handleGalleryUpload = async () => {
+    try {
+      console.log('🖼️ Starting gallery upload from quick files screen...');
+      
+      const success = await uploadFromGallery();
+      if (success) {
+        Alert.alert('Success', 'Photos uploaded successfully!');
+        // Refresh documents list
+        loadDocuments(true); // Force refresh
+      } else {
+        // Get the error from the file store
+        const fileStore = useFileStore.getState();
+        const errorMessage = fileStore.error || 'Failed to upload photos. Please try again.';
+        
+        Alert.alert('Upload Failed', errorMessage, [
+          { text: 'Try Again', onPress: () => handleGalleryUpload() },
+          { text: 'Cancel', style: 'cancel' }
+        ]);
+      }
+    } catch (error: any) {
+      console.error('Gallery upload error:', error);
+      Alert.alert('Error', error.message || 'Failed to upload photos. Please try again.');
+    }
+  };
 
   const getFileIcon = (type: string, status: string, category?: string) => {
     if (status === 'processing') return 'time-outline';
     if (status === 'error') return 'alert-circle-outline';
+    
+    // Handle form type specifically
+    if (type === 'form') return 'clipboard-outline';
     
     // Use category-specific icons when available
     if (category) {
@@ -80,6 +139,9 @@ export default function DocumentsScreen() {
         case 'document':
         case 'documents':
           return 'document-outline';
+        case 'transcript':
+        case 'transcripts':
+          return 'mic-outline'; // Microphone icon for transcripts
         case 'unknown':
           return 'help-circle-outline';
       }
@@ -104,6 +166,9 @@ export default function DocumentsScreen() {
   };
 
   const getTypeColor = (type: string, category?: string) => {
+    // Handle form type specifically
+    if (type === 'form') return '#3b82f6'; // Blue for forms
+    
     // Use category-specific colors when available
     if (category) {
       switch (category.toLowerCase()) {
@@ -116,6 +181,9 @@ export default function DocumentsScreen() {
         case 'document':
         case 'documents':
           return '#6366f1'; // Indigo for documents
+        case 'transcript':
+        case 'transcripts':
+          return '#8b5cf6'; // Purple for transcripts
         case 'unknown':
           return '#64748b'; // Gray for unknown
       }
@@ -146,120 +214,219 @@ export default function DocumentsScreen() {
       case 'document':
       case 'documents':
         return 'documents';
-      case 'unknown':
-      case '':
-        return 'unknown';
+      case 'transcript':
+      case 'transcripts':
+        return 'transcripts';
       default:
-        // If it's not a recognized category, default to documents
-        return 'documents';
+        return 'unknown';
     }
   };
 
+  // Memoized filtered and sorted documents for better performance
   const filteredAndSortedDocuments = useMemo(() => {
-    return documents
-      .filter(doc => {
-        // Search filter
-        const matchesSearch = doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                             doc.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
-                             (doc.category?.toLowerCase().includes(searchQuery.toLowerCase()) || false);
-        
-        // File kind filter with proper category mapping
-        let matchesFilter = true;
+    let filtered = documents;
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(doc => 
+        (doc.name?.toLowerCase() || '').includes(query) ||
+        (doc.category?.toLowerCase() || '').includes(query) ||
+        (doc.tags || []).some(tag => (tag?.toLowerCase() || '').includes(query))
+      );
+    }
+
+    // Apply category filter
         if (filterBy !== 'all') {
+      filtered = filtered.filter(doc => {
+        const category = doc.category?.toLowerCase() || 'unknown';
           switch (filterBy) {
+          case 'documents':
+            return category === 'documents';
             case 'receipts':
-              matchesFilter = doc.category?.toLowerCase() === 'receipt' || doc.category?.toLowerCase() === 'receipts';
-              break;
+            return category === 'receipts';
             case 'forms':
-              matchesFilter = doc.category?.toLowerCase() === 'form' || doc.category?.toLowerCase() === 'forms';
-              break;
-            case 'documents':
-              matchesFilter = doc.category?.toLowerCase() === 'document' || doc.category?.toLowerCase() === 'documents';
-              break;
+            return category === 'forms';
             case 'unknown':
-              matchesFilter = !doc.category || 
-                            doc.category === '' ||
-                            doc.category.toLowerCase() === 'unknown';
-              break;
+            return category === 'unknown';
             default:
-              matchesFilter = true;
+            return true;
           }
+      });
         }
         
-        return matchesSearch && matchesFilter;
-      })
-      .sort((a, b) => {
+    // Apply sorting
+    filtered.sort((a, b) => {
         switch (sortBy) {
           case 'name':
-            return a.name.localeCompare(b.name);
+            return (a.name || '').localeCompare(b.name || '');
           case 'date':
             return b.uploadDate.getTime() - a.uploadDate.getTime();
           case 'size':
-            return parseFloat(b.size) - parseFloat(a.size);
+          return parseInt(b.size) - parseInt(a.size);
           case 'type':
-            return a.type.localeCompare(b.type);
+            return (a.type || '').localeCompare(b.type || '');
           default:
             return 0;
         }
       });
+
+    return filtered;
   }, [documents, searchQuery, filterBy, sortBy]);
 
-  const loadDocuments = async () => {
+  // Optimized loadDocuments function with caching
+  const loadDocuments = useCallback(async (forceRefresh = false) => {
+    const now = Date.now();
+    
+    // Check cache first (unless force refresh)
+    if (!forceRefresh && apiCache && 
+        (now - apiCache.timestamp) < CACHE_DURATION &&
+        apiCache.searchQuery === searchQuery &&
+        apiCache.filterBy === filterBy) {
+      setDocuments(apiCache.data);
+      setLoading(false);
+      return;
+    }
+
+    setError(null);
+    setLoading(true);
+    
     try {
-      setLoading(true);
-      console.log('📂 Loading documents with filters:', { searchQuery, filterBy });
-      
-      // Map filter option to the expected backend parameter
-      const categoryFilter = filterBy === 'all' ? undefined : filterBy;
-      console.log('📂 Sending category filter:', categoryFilter);
-      
-      const response = await apiClient.getFiles(1, 50, searchQuery || undefined, categoryFilter);
-      //console.log('📂 Documents API response:', response);
-      
-      if (response.success) {
-        // Handle different response structures
-        let files: ApiDocument[] = [];
+      // Test backend connectivity with timeout
+      let connectivityTest;
+      try {
+        const connectivityPromise = apiClient.testConnectivity();
+        const connectivityTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connection timeout')), 5000)
+        );
         
-        if (response.files && Array.isArray(response.files)) {
-          files = response.files;
-        } else if (response.data && Array.isArray(response.data.files)) {
-          files = response.data.files;
-        } else if (response.data && Array.isArray(response.data)) {
-          files = response.data;
-        } else {
-          console.warn('📂 Unexpected response structure:', response);
-        }
-        
-        console.log('📂 Found files:', files.length);
-        
-        const transformedDocs: Document[] = files.map((file: ApiDocument) => ({
-          id: file.id.toString(),
-          name: file.original_filename || 'Unknown File',
-          type: getFileTypeFromExtension(file.original_filename || ''),
-          size: formatFileSize(file.file_size || 0),
-          uploadDate: new Date(file.created_at),
-          status: 'processed', // Assume processed for now
-          tags: file.receipt_category ? [file.receipt_category] : [],
-          category: normalizeCategory(file.file_kind), // Normalize category for consistent display
-        }));
-        
-        console.log('📂 Sample transformed document:', transformedDocs[0]);
-        console.log('📂 All categories found:', [...new Set(transformedDocs.map(d => d.category))]);
-        
-        console.log('📂 Transformed documents:', transformedDocs.length);
-        setDocuments(transformedDocs);
-      } else {
-        console.warn('📂 API call failed:', response);
-        setDocuments([]);
+        connectivityTest = await Promise.race([connectivityPromise, connectivityTimeout]);
+      } catch (error) {
+        console.warn('Connectivity test failed, proceeding with data load:', error);
+        connectivityTest = { success: false, message: 'Connection test failed' };
       }
-    } catch (error) {
-      console.error('📂 Failed to load documents:', error);
-      Alert.alert('Error', 'Failed to load documents. Please try again.');
+      
+      // Try to load data even if connectivity test fails
+      let response;
+      
+      // If forms filter is selected, load recent forms instead of documents
+      if (filterBy === 'forms') {
+        try {
+          console.log('📝 Loading recent forms for user...');
+          const formsPromise = apiClient.getForms();
+          const formsTimeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('API timeout')), 10000)
+          );
+          
+          response = await Promise.race([formsPromise, formsTimeout]);
+          console.log('✅ Forms response:', response);
+        } catch (err) {
+          console.error('Forms endpoint failed:', err);
+          throw err;
+        }
+      } else {
+        try {
+          // Try the new getDocuments method first with timeout
+          const documentsPromise = apiClient.getDocuments();
+          const documentsTimeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('API timeout')), 10000)
+          );
+          
+          response = await Promise.race([documentsPromise, documentsTimeout]);
+        } catch (err) {
+          console.warn('Documents endpoint failed, trying files endpoint:', err);
+          try {
+            const filesPromise = apiClient.getFiles(1, 50);
+            const filesTimeout = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('API timeout')), 10000)
+            );
+            
+            response = await Promise.race([filesPromise, filesTimeout]);
+          } catch (fallbackErr) {
+            console.error('Both endpoints failed:', fallbackErr);
+            throw fallbackErr;
+          }
+        }
+      }
+      
+      // Handle forms data differently from documents
+      if (filterBy === 'forms') {
+        const formsArray = (response as any).forms || (response as any).data || [];
+        if (Array.isArray(formsArray)) {
+          const mappedForms = formsArray.map((form: any) => {
+            return {
+              id: String(form.id),
+              name: form.name || form.title || 'Untitled Form',
+              type: 'form' as const,
+              size: `Form • ${form.response_count || 0} responses`,
+              uploadDate: new Date(form.created_at || form.updated_at),
+              status: 'processed' as const,
+              tags: [],
+              category: 'forms' as const,
+              formData: form, // Store original form data for form-specific actions
+              responseCount: form.response_count || 0,
+            };
+          });
+          
+          setDocuments(mappedForms);
+          setLastLoadTime(now);
+          
+          // Update cache
+          setApiCache({
+            data: mappedForms,
+            timestamp: now,
+            searchQuery,
+            filterBy,
+          });
+        } else {
+          setDocuments([]);
+          setError('No forms found or API returned unexpected format.');
+        }
+      } else {
+        // Handle documents data (non-forms)
+        const docsArray = (response as any).data || (response as any).files || (response as any).documents || [];
+        if (Array.isArray(docsArray)) {
+          const mappedDocs = docsArray.map((doc: ApiDocument) => {
+            const originalName = doc.original_filename || doc.filename || 'Untitled';
+            return {
+              id: String(doc.id),
+              name: removeFileExtension(originalName),
+              type: getFileTypeFromExtension(doc.original_filename || doc.filename),
+              size: formatFileSize(doc.file_size),
+              uploadDate: new Date(doc.created_at),
+              status: 'processed' as const,
+              tags: [],
+              category: normalizeCategory(doc.file_kind),
+            };
+          });
+          
+          setDocuments(mappedDocs);
+          setLastLoadTime(now);
+          
+          // Update cache
+          setApiCache({
+            data: mappedDocs,
+            timestamp: now,
+            searchQuery,
+            filterBy,
+          });
+        } else {
+          setDocuments([]);
+          setError('No documents found or API returned unexpected format.');
+        }
+      }
+    } catch (err: any) {
+      console.error('Unexpected error in loadDocuments:', err);
       setDocuments([]);
+      if (err.message?.includes('CORS') || err.message?.includes('Network error')) {
+        setError(`Connection Error: ${err.message}`);
+      } else {
+        setError(`Failed to load documents: ${err.message}`);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchQuery, filterBy]); // Add dependencies
 
   const getFileTypeFromExtension = (filename: string | null | undefined): 'pdf' | 'doc' | 'image' | 'other' => {
     if (!filename || typeof filename !== 'string') {
@@ -281,389 +448,134 @@ export default function DocumentsScreen() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadDocuments();
+    await loadDocuments(true); // Force refresh
     setRefreshing(false);
-  };
+  }, [loadDocuments]);
 
   useEffect(() => {
     if (user) {
       loadDocuments();
     }
-  }, [user, searchQuery, filterBy]);
+  }, [user, loadDocuments]);
 
-  const handleDocumentPress = (document: Document) => {
+  // Monitor document status changes to show completion indicators
+  useEffect(() => {
+    documents.forEach(doc => {
+      // If a document was previously processing and is now processed, mark it as recently completed
+      if (doc.status === 'processed') {
+        // For now, we'll assume all loaded documents are processed
+        // In a real implementation, you'd track the previous status
+        // This is a simplified version
+      }
+    });
+  }, [documents]);
+
+  // Auto-refresh documents periodically when user is authenticated
+  useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(async () => {
+      console.log('🔄 Auto-refreshing documents...');
+      setIsAutoRefreshing(true);
+      await loadDocuments(true); // Force refresh to bypass cache
+      setTimeout(() => setIsAutoRefreshing(false), 1000); // Show indicator for 1 second
+    }, AUTO_REFRESH_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [user, loadDocuments]);
+
+  const handleDocumentPress = async (document: Document) => {
     if (document.status === 'processing') {
       Alert.alert('Document Processing', `"${document.name}" is still being processed. Please wait a few moments and try again.`);
       return;
     }
-    
+
+    // Remove green dot if file was recently completed
+    if (document.status === 'processed' && recentlyCompletedFiles.has(document.id)) {
+      setRecentlyCompletedFiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(document.id);
+        return newSet;
+      });
+    }
+
+    // If the document is a form (either by type or category), open form builder
+    if (
+      document.type === 'form' ||
+      document.category?.toLowerCase() === 'form' ||
+      document.category?.toLowerCase() === 'forms'
+    ) {
+      // For recent forms, we have the form data, so we can open the form builder with the form ID
+      if (document.formData) {
+        router.push(`/forms/builder?formId=${document.id}&formName=${encodeURIComponent(document.name)}`);
+      } else {
+        // For legacy form files, use fileId
+        router.push(`/forms/builder?fileId=${document.id}`);
+      }
+      return;
+    }
+
+    // If the document is a transcript, show transcript viewer
+    if (
+      document.category?.toLowerCase() === 'transcript' ||
+      document.category?.toLowerCase() === 'transcripts'
+    ) {
+      // For now, open in document viewer - can be enhanced later with transcript-specific viewer
+      setSelectedDocument(document);
+      setShowDocumentViewer(true);
+      return;
+    }
+
     setSelectedDocument(document);
-    setShowOptionsModal(true);
+    setShowDocumentViewer(true);
   };
 
-  const handleViewDocument = async () => {
-    setShowOptionsModal(false);
-    if (!selectedDocument) return;
-    
-    try {
-      console.log('📄 Starting document view process...');
-      console.log('📄 Selected document:', JSON.stringify(selectedDocument, null, 2));
-      console.log('📄 User:', user ? 'authenticated' : 'not authenticated');
-      console.log('📄 API_BASE_URL:', API_BASE_URL);
-      
-      // Check if user is authenticated
-      if (!user) {
-        console.log('📄 User not authenticated, showing alert');
-        Alert.alert('Error', 'Please log in to view documents');
-        return;
-      }
-      
-      // Use the API service to get the download info with proper authentication
-      try {
-        console.log('📄 Getting download info via API service...');
-        const downloadInfo = await apiClient.downloadFile(parseInt(selectedDocument.id));
-        const downloadUrl = downloadInfo.url;
-        
-        console.log('📄 Got download URL from API:', downloadUrl);
-        console.log('📄 File name:', downloadInfo.filename);
-        
-        // Try WebBrowser first
-        console.log('📄 Attempting to open with WebBrowser...');
-        const result = await WebBrowser.openBrowserAsync(downloadUrl, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.AUTOMATIC,
-        });
-        
-        console.log('📄 WebBrowser result received:', JSON.stringify(result, null, 2));
-        
-        // Handle different result types
-        if (result.type === 'opened') {
-          console.log('📄 Document opened successfully in WebBrowser');
-          return; // Success, exit function
-        } else if (result.type === 'locked') {
-          console.log('📄 WebBrowser locked, trying alternative methods...');
-          
-          // Try using Linking API as fallback
-          try {
-            console.log('📄 Attempting to open with Linking API...');
-            const canOpen = await Linking.canOpenURL(downloadUrl);
-            console.log('📄 Linking can open URL:', canOpen);
-            
-            if (canOpen) {
-              await Linking.openURL(downloadUrl);
-              console.log('📄 Document opened successfully with Linking');
-              Alert.alert('Success', 'Document opened in external app');
-              return; // Success, exit function
-            } else {
-              console.log('📄 Linking cannot open URL, showing share option');
-              Alert.alert(
-                'Cannot View Document', 
-                'Unable to open document viewer. Would you like to share the document instead?',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Share Document',
-                    onPress: () => {
-                      setSelectedDocument(selectedDocument);
-                      handleShareDocument();
-                    }
-                  }
-                ]
-              );
-              return;
-            }
-          } catch (linkingError) {
-            console.error('📄 Linking API failed:', linkingError);
-            Alert.alert(
-              'Cannot View Document',
-              'Unable to open document. The document URL has been copied to your clipboard.',
-              [
-                {
-                  text: 'OK',
-                  onPress: () => {
-                    // Copy URL to clipboard as last resort
-                    Clipboard.setStringAsync(downloadUrl).then(() => {
-                      console.log('📄 URL copied to clipboard as fallback');
-                    }).catch(() => {
-                      console.error('📄 Failed to copy URL to clipboard');
-                    });
-                  }
-                }
-              ]
-            );
-            return;
-          }
-        } else {
-          console.log('📄 Unexpected WebBrowser result type:', result.type);
-          // For other result types, show share option
-          Alert.alert(
-            'Document Viewer Issue',
-            'There was an issue opening the document. Would you like to share it instead?',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Share Document', 
-                onPress: () => {
-                  setSelectedDocument(selectedDocument);
-                  handleShareDocument();
-                }
-              }
-            ]
-          );
-        }
-        
-      } catch (apiError: any) {
-        console.error('📄 API download error:', apiError);
-        
-        // Handle specific API errors
-        if (apiError.message?.includes('401') || apiError.message?.includes('authentication') || apiError.message?.includes('Not authenticated')) {
-          Alert.alert(
-            'Authentication Required',
-            'Your session has expired. Please log in again to view documents.',
-            [
-              { text: 'OK', style: 'default' },
-              {
-                text: 'Go to Login',
-                onPress: () => {
-                  router.push('/(auth)/sign-in');
-                }
-              }
-            ]
-          );
-          return;
-        } else if (apiError.message?.includes('404') || apiError.message?.includes('not found')) {
-          Alert.alert(
-            'File Not Found',
-            'This document is no longer available. It may have been deleted.',
-            [
-              { text: 'OK', style: 'default' },
-              {
-                text: 'Refresh List',
-                onPress: () => {
-                  loadDocuments();
-                }
-              }
-            ]
-          );
-          return;
-        } else {
-          // Generic API error - fallback to direct URL
-          console.log('📄 API error, trying direct URL approach...');
-          const directUrl = `${API_BASE_URL}/api/v1/mobile/files/${selectedDocument.id}/download`;
-          
-          try {
-            const result = await WebBrowser.openBrowserAsync(directUrl);
-            if (result.type === 'opened') {
-              console.log('📄 Direct URL opened successfully');
-              return;
-            }
-          } catch (directError) {
-            console.error('📄 Direct URL also failed:', directError);
-          }
-          
-          Alert.alert(
-            'Cannot View Document',
-            'There was an error accessing the document. Please try again later.',
-            [{ text: 'OK', style: 'default' }]
-          );
-        }
-      }
-      
-    } catch (error: any) {
-      console.error('📄 Complete error object:', error);
-      console.error('📄 Error message:', error.message);
-      console.error('📄 Error code:', error.code);
-      console.error('📄 Error stack:', error.stack);
-      
-      // Provide more specific error messages based on error type
-      let errorMessage = 'Failed to open document. Please try again.';
-      
-      if (error.code === 'ERR_NETWORK' || error.message?.includes('Network request failed')) {
-        errorMessage = 'Network error. Please check your internet connection and try again.';
-      } else if (error.message?.includes('WebBrowser')) {
-        errorMessage = 'Unable to open document viewer. Please try downloading the document instead.';
-      } else if (error.status === 401 || error.message?.includes('401')) {
-        errorMessage = 'Authentication error. Please log in again.';
-      } else if (error.status === 404 || error.message?.includes('404')) {
-        errorMessage = 'Document not found. It may have been deleted.';
-      } else if (error.status === 500) {
-        errorMessage = 'Server error. Please try again later.';
-      } else {
-        errorMessage = `Error: ${error.message || 'Unknown error occurred'}`;
-      }
-      
-      console.log('📄 Showing error alert:', errorMessage);
-      
-      Alert.alert('Document View Error', errorMessage, [
-        { text: 'OK', style: 'default' },
-        {
-          text: 'Try Share',
-          style: 'default',
-          onPress: () => {
-            console.log('📄 User chose to try share instead');
-            setSelectedDocument(selectedDocument);
-            handleShareDocument();
-          }
-        }
-      ]);
+  const handleKebabMenuPress = (document: Document, event: any) => {
+    // Remove green dot if file was recently completed
+    if (document.status === 'processed' && recentlyCompletedFiles.has(document.id)) {
+      setRecentlyCompletedFiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(document.id);
+        return newSet;
+      });
+    }
+
+    setSelectedDocumentForMenu(document);
+    setShowKebabMenu(true);
+  };
+
+  const handleViewDocument = () => {
+    if (selectedDocumentForMenu) {
+      setSelectedDocument(selectedDocumentForMenu);
+      setShowDocumentViewer(true);
+      setShowKebabMenu(false);
     }
   };
 
   const handleShareDocument = async () => {
-    setShowOptionsModal(false);
-    if (!selectedDocument) return;
-    
-    // Create download URL for the document (moved to top for scope)
-    const downloadUrl = `${API_BASE_URL}/api/v1/mobile/files/${selectedDocument.id}/download`;
-    
+    if (!selectedDocumentForMenu) return;
+
     try {
-      console.log('📤 Starting share process...');
-      console.log('📤 Selected document:', JSON.stringify(selectedDocument, null, 2));
-      console.log('📤 User:', user ? 'authenticated' : 'not authenticated');
-      console.log('📤 API_BASE_URL:', API_BASE_URL);
-      
-      // Check if user is authenticated
-      if (!user) {
-        console.log('📤 User not authenticated, showing alert');
-        Alert.alert('Error', 'Please log in to share documents');
-        return;
-      }
-      
-      console.log('📤 Final share URL:', downloadUrl);
-      
-      // Test Share API availability
-      console.log('📤 Testing Share API...');
-      try {
-        // Test if Share is available by checking if the module exists
-        console.log('📤 Share module available:', !!Share);
-        console.log('📤 Share.share function:', typeof Share.share);
-      } catch (shareTestError) {
-        console.error('📤 Share API test failed:', shareTestError);
-      }
-      
-      console.log('📤 Attempting to share...');
-      
-      // Use simple share without timeout - timeout was causing issues
-      const shareResult = await Share.share({
-        message: `Check out this document: ${selectedDocument.name}\n\nDownload: ${downloadUrl}`,
-        title: selectedDocument.name,
-      });
-      
-      console.log('📤 Share result received:', JSON.stringify(shareResult, null, 2));
-      
-      // Handle share result
-      if (shareResult && shareResult.action === Share.sharedAction) {
-        console.log('📤 Document shared successfully');
-        if (shareResult.activityType) {
-          console.log('📤 Shared via:', shareResult.activityType);
-        } else {
-          console.log('📤 Share completed without specific activity type');
-        }
-        // Show success message
+      const response = await apiClient.shareFile(parseInt(selectedDocumentForMenu.id));
+      if (response.success) {
         Alert.alert('Success', 'Document shared successfully!');
-      } else if (shareResult && shareResult.action === Share.dismissedAction) {
-        console.log('📤 Share dismissed by user');
       } else {
-        console.log('📤 Unexpected share result:', shareResult);
+        Alert.alert('Error', response.message || 'Failed to share document');
       }
-      
     } catch (error: any) {
-      console.error('📤 Complete share error object:', error);
-      console.error('📤 Error message:', error.message);
-      console.error('📤 Error code:', error.code);
-      console.error('📤 Error stack:', error.stack);
-      
-      // Provide specific error messages
-      let errorMessage = 'Failed to share document';
-      
-      if (error.code === 'E_SHARING_UNAVAILABLE') {
-        errorMessage = 'Sharing is not available on this device';
-      } else if (error.message?.includes('network') || error.message?.includes('Network')) {
-        errorMessage = 'Network error. Please check your connection and try again.';
-      } else if (error.message?.includes('permission')) {
-        errorMessage = 'Permission denied. Please check your device settings.';
-      } else {
-        errorMessage = `Failed to share document: ${error.message || 'Unknown error'}`;
-      }
-      
-      console.log('📤 Showing share error alert:', errorMessage);
-      
-      Alert.alert('Share Error', errorMessage, [
-        { text: 'OK', style: 'default' },
-        {
-          text: 'Copy Link',
-          style: 'default',
-          onPress: () => {
-            console.log('📤 User chose to copy link instead');
-            // Fallback: copy link to clipboard
-            Clipboard.setStringAsync(downloadUrl).then(() => {
-              console.log('📤 Link copied to clipboard successfully');
-              Alert.alert('Success', 'Download link copied to clipboard');
-            }).catch((clipError) => {
-              console.error('📤 Clipboard copy failed:', clipError);
-              Alert.alert('Error', 'Failed to copy link to clipboard');
-            });
-          }
-        }
-      ]);
+      Alert.alert('Error', error.message || 'Failed to share document');
     }
-  };
-
-  const handleAutoCategorizFile = async () => {
-    setShowOptionsModal(false);
-    if (!selectedDocument) return;
-
-    try {
-      setLoading(true);
-      const response = await apiClient.post(`/file/${selectedDocument.id}/auto-categorize`);
-      
-      if (response.data.success) {
-        const categorization = response.data.categorization;
-        Alert.alert(
-          'File Categorized',
-          `File categorized as "${categorization.subcategory}" with ${Math.round(categorization.confidence * 100)}% confidence`,
-          [{ 
-            text: 'OK', 
-            onPress: () => {
-              // Refresh the documents list to show updated category
-              onRefresh();
-            }
-          }]
-        );
-      }
-    } catch (error) {
-      console.error('Auto-categorization failed:', error);
-      Alert.alert('Error', 'Failed to categorize file. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddToBookmark = () => {
-    setShowOptionsModal(false);
-    if (!selectedDocument) return;
-    
-    Alert.alert(
-      'Add to Bookmark',
-      'This feature allows you to organize files into bookmark collections. Navigate to the Bookmarks tab to create collections and manage your file organization.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Go to Bookmarks', 
-          onPress: () => router.push('/(tabs)/bookmarks')
-        }
-      ]
-    );
+    setShowKebabMenu(false);
   };
 
   const handleDeleteDocument = () => {
-    setShowOptionsModal(false);
-    if (!selectedDocument) return;
-    
+    if (!selectedDocumentForMenu) return;
+
     Alert.alert(
       'Delete Document',
-      `Are you sure you want to delete "${selectedDocument.name}"?`,
+      `Are you sure you want to delete "${selectedDocumentForMenu.name}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -671,81 +583,205 @@ export default function DocumentsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Call API to delete the file
-              await apiClient.deleteFile(parseInt(selectedDocument.id));
-              
-              // Remove from local state
-            setDocuments(docs => docs.filter(d => d.id !== selectedDocument.id));
-              Alert.alert('Success', 'Document deleted successfully');
-            } catch (error) {
-              console.error('Error deleting document:', error);
-              Alert.alert('Error', 'Failed to delete document. Please try again.');
+              const response = await apiClient.deleteFile(parseInt(selectedDocumentForMenu.id));
+              if (response.success) {
+                setDocuments(prev => prev.filter(doc => doc.id !== selectedDocumentForMenu.id));
+                Alert.alert('Success', 'Document deleted successfully!');
+              } else {
+                Alert.alert('Error', response.message || 'Failed to delete document');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete document');
             }
+            setShowKebabMenu(false);
           },
         },
       ]
     );
   };
 
+  const handleCloseKebabMenu = () => {
+    setShowKebabMenu(false);
+    setSelectedDocumentForMenu(null);
+  };
+
+  const handleViewFormResponses = () => {
+    if (!selectedDocumentForMenu) return;
+    
+    // Navigate to form responses screen
+    router.push(`/forms/responses?formId=${selectedDocumentForMenu.id}&formName=${encodeURIComponent(selectedDocumentForMenu.name)}`);
+    setShowKebabMenu(false);
+  };
+
+  const handleChatDocument = () => {
+    if (!selectedDocumentForMenu) return;
+    
+    router.push(`/(tabs)/chats?fileId=${selectedDocumentForMenu.id}`);
+      setShowKebabMenu(false);
+  };
+
+  const loadBookmarks = async () => {
+    try {
+      const response = await apiClient.getBookmarks();
+      if (response.success && response.data) {
+        // Handle both response structures: data.bookmarks or data as array
+        const bookmarksData = Array.isArray(response.data) 
+          ? response.data 
+          : (response.data.bookmarks || []);
+        
+        console.log('Bookmarks loaded:', bookmarksData.length);
+        setBookmarks(bookmarksData);
+      } else {
+        console.log('Failed to load bookmarks:', response.message);
+        // No fallback data needed, only load real data from backend db
+        setBookmarks([]);
+      }
+    } catch (error) {
+      console.log('Error loading bookmarks:', error);
+      // No fallback data needed, only load real data from backend db
+      setBookmarks([]);
+    }
+  };
+
+  const handleAddToBookmark = async (bookmark: any) => {
+    if (!selectedDocumentForMenu) return;
+
+    try {
+      const response = await apiClient.addFileToBookmark(bookmark.id, parseInt(selectedDocumentForMenu.id));
+      if (response.success) {
+        Alert.alert('Success', `"${selectedDocumentForMenu.name}" added to "${bookmark.name}"`);
+        setShowBookmarkModal(false);
+        setShowKebabMenu(false);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to add file to bookmark');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to add file to bookmark');
+    }
+  };
+
+  const handleShowBookmarkModal = () => {
+    loadBookmarks();
+    setShowBookmarkModal(true);
+    setShowKebabMenu(false);
+  };
+
   const handleExternalFileImport = (file: ExternalFile) => {
-    console.log('File imported:', file);
+    console.log('External file import:', file);
+    // Handle external file import logic here
   };
 
   const handleImportSuccess = () => {
+    loadDocuments(true);
     setShowExternalFilePicker(false);
-    loadDocuments(); // Refresh the documents list
+  };
+
+  const markFileAsRecentlyCompleted = (fileId: string) => {
+    setRecentlyCompletedFiles(prev => new Set([...prev, fileId]));
+    
+    // Remove the green dot after 3 hours
+    setTimeout(() => {
+      setRecentlyCompletedFiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(fileId);
+        return newSet;
+      });
+    }, 3 * 60 * 60 * 1000); // 3 hours in milliseconds
+  };
+
+  const shouldShowStatusIndicator = (document: Document) => {
+    // Show for files that are currently processing
+    if (document.status === 'processing') {
+      return true;
+    }
+    
+    // Show for files that recently completed processing
+    if (document.status === 'processed' && recentlyCompletedFiles.has(document.id)) {
+      return true;
+    }
+    
+    return false;
+  };
+
+  const handleUploadFromFiles = () => {
+    setShowUploadOptions(false);
+    DocumentPicker.getDocumentAsync({
+      type: ['application/pdf', 'image/*', 'application/msword',
+             'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+      multiple: true,
+    }).then((result) => {
+      if (!result.canceled && result.assets) {
+        const fileStore = useFileStore.getState();
+        
+        const files = result.assets.map((asset) => ({
+          uri: asset.uri,
+          name: asset.name,
+          type: asset.mimeType || 'application/octet-stream',
+          size: asset.size,
+        }));
+        
+        fileStore.uploadFiles(files).then((success) => {
+          if (success) {
+            Alert.alert('Success', 'Files uploaded successfully!');
+            loadDocuments(true); // Refresh documents list
+          }
+        });
+      }
+    });
+  };
+
+  const handleUploadFromPhotos = () => {
+    setShowUploadOptions(false);
+    handleGalleryUpload();
+  };
+
+  const handleUploadFromDropbox = () => {
+    setShowUploadOptions(false);
+    setShowExternalFilePicker(true);
+  };
+
+  const handleUploadFromGoogleDrive = () => {
+    setShowUploadOptions(false);
+    setShowExternalFilePicker(true);
   };
 
   const renderDocument = ({ item }: { item: Document }) => (
     <TouchableOpacity
-      style={styles.documentCard}
+      style={styles.documentItem}
       onPress={() => handleDocumentPress(item)}
+      onLongPress={(event) => handleKebabMenuPress(item, event)}
     >
-      <View style={styles.documentHeader}>
-        <View style={[styles.fileIcon, { backgroundColor: getTypeColor(item.type, item.category) }]}>
+      <View style={styles.documentIcon}>
           <Ionicons 
             name={getFileIcon(item.type, item.status, item.category) as any} 
             size={24} 
-            color="#fff" 
+          color={getTypeColor(item.type, item.category)} 
           />
         </View>
+      
         <View style={styles.documentInfo}>
-          <Text 
-            style={[
-              styles.documentName, 
-              item.status === 'processing' && { color: '#ef4444' } // Red color for processing files
-            ]} 
-            numberOfLines={1}
-          >
+        <Text style={styles.documentName} numberOfLines={2}>
             {item.name}
           </Text>
-          <View style={styles.documentMeta}>
-            <Text style={styles.documentSize}>{item.size}</Text>
-            <Text style={styles.documentDate}>
-              {item.uploadDate.toLocaleDateString()}
+        <Text style={styles.documentMeta}>
+          {item.size} • {item.uploadDate.toLocaleDateString()}
             </Text>
-            {item.status === 'processing' && (
-              <Text style={[styles.documentDate, { color: '#ef4444', fontWeight: '600' }]}>
-                Processing...
-          </Text>
-            )}
-          </View>
         </View>
-      </View>
-      
-      {item.category && (
-        <View style={styles.categoryContainer}>
-          <Text style={styles.categoryText}>{item.category}</Text>
-        </View>
-      )}
-      
-      {item.tags.length > 0 && (
-        <View style={styles.tagsContainer}>
-          {item.tags.map((tag, index) => (
-            <View key={`${item.id}-tag-${index}-${tag}`} style={styles.tag}>
-              <Text style={styles.tagText}>{tag}</Text>
-            </View>
-          ))}
+        
+        {/* Kebab Menu Button */}
+        <TouchableOpacity
+          style={styles.kebabButton}
+          onPress={(event) => {
+            event.stopPropagation();
+            handleKebabMenuPress(item, event);
+          }}
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+        </TouchableOpacity>
+        
+      {shouldShowStatusIndicator(item) && (
+        <View style={styles.documentActions}>
+          <View style={[styles.statusIndicator, { backgroundColor: getStatusColor(item.status) }]} />
         </View>
       )}
     </TouchableOpacity>
@@ -762,15 +798,64 @@ export default function DocumentsScreen() {
     </TouchableOpacity>
   );
 
+  // Loading state with bouncing dots
+  if (loading && documents.length === 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Quick Files</Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.headerButton}>
+              <Ionicons name="cloud-upload" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerButton}>
+              <Ionicons name="cloud-download" size={24} color="#10B981" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerButton}>
+              <Ionicons name="camera" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerButton}>
+              <Ionicons name="images" size={24} color="#5856D6" />
+            </TouchableOpacity>
+          </View>
+        </View>
+        
+        <View style={styles.loadingContainer}>
+          <LoadingDots size={12} color="#007AFF" duration={800} />
+          <Text style={styles.loadingText}>Loading your quick files...</Text>
+          <Text style={styles.loadingSubtext}>This will only take a moment</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
+      {/* Error message display */}
+      {error && (
+        <View style={{ backgroundColor: '#fee2e2', padding: 12, margin: 12, borderRadius: 8 }}>
+          <Text style={{ color: '#b91c1c', fontWeight: 'bold' }}>{error}</Text>
+        </View>
+      )}
+      
+      {/* Network Connection Indicator */}
+      <NetworkIndicator />
+
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Documents</Text>
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>Quick Files</Text>
+          {isAutoRefreshing && (
+            <View style={styles.autoRefreshIndicator}>
+              <Ionicons name="sync" size={16} color="#007AFF" />
+              <Text style={styles.autoRefreshText}>Syncing...</Text>
+            </View>
+          )}
+        </View>
         <View style={styles.headerActions}>
           <TouchableOpacity 
             style={styles.headerButton}
-            onPress={() => router.push('/documents/upload')}
+            onPress={() => setShowUploadOptions(true)}
           >
             <Ionicons name="cloud-upload" size={24} color="#007AFF" />
           </TouchableOpacity>
@@ -782,9 +867,26 @@ export default function DocumentsScreen() {
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.headerButton}
-            onPress={() => router.push('/(tabs)/scanner')}
+            onPress={() => router.push('/scanner' as any)}
           >
             <Ionicons name="camera" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={handleGalleryUpload}
+          >
+            <Ionicons name="images" size={24} color="#5856D6" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.headerButton, refreshing && styles.refreshingButton]}
+            onPress={onRefresh}
+            disabled={refreshing}
+          >
+            <Ionicons 
+              name="refresh" 
+              size={24} 
+              color={refreshing ? "#999" : "#007AFF"} 
+            />
           </TouchableOpacity>
         </View>
       </View>
@@ -794,7 +896,7 @@ export default function DocumentsScreen() {
         <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search documents, tags, or categories..."
+          placeholder="Search quick files, tags, or categories..."
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -815,6 +917,7 @@ export default function DocumentsScreen() {
             { option: 'documents' as FilterOption, label: 'Documents' },
             { option: 'receipts' as FilterOption, label: 'Receipts' },
             { option: 'forms' as FilterOption, label: 'Forms' },
+            { option: 'transcripts' as FilterOption, label: 'Transcripts' },
             { option: 'unknown' as FilterOption, label: 'Unknown' },
           ]}
           renderItem={({ item }) => (
@@ -847,7 +950,7 @@ export default function DocumentsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Documents List */}
+      {/* Quick Files List */}
       <FlatList
         data={filteredAndSortedDocuments}
         renderItem={renderDocument}
@@ -858,67 +961,41 @@ export default function DocumentsScreen() {
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-            <Text style={styles.emptyText}>No documents found</Text>
-            <Text style={styles.emptySubtext}>
-              {searchQuery ? 'Try adjusting your search or filters' : 'Upload your first document to get started'}
+            <Text style={styles.emptyText}>
+              {searchQuery ? 'No quick files match your search' : 'No quick files yet'}
             </Text>
+            <Text style={styles.emptySubtext}>
+              {searchQuery 
+                ? 'Try adjusting your search terms or filters to find what you\'re looking for' 
+                : 'Start by uploading your first file using the upload button above'
+              }
+            </Text>
+            {!searchQuery && (
+              <TouchableOpacity 
+                style={styles.uploadButton}
+                onPress={() => setShowUploadOptions(true)}
+              >
+                <Ionicons name="cloud-upload" size={20} color="#fff" />
+                <Text style={styles.uploadButtonText}>Upload File</Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />
 
-      {/* Document Options Modal */}
-      <Modal
-        visible={showOptionsModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowOptionsModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle} numberOfLines={1}>
-                {selectedDocument?.name}
-              </Text>
-              <TouchableOpacity onPress={() => setShowOptionsModal(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-            
-            <TouchableOpacity style={styles.modalOption} onPress={handleViewDocument}>
-              <Ionicons name="eye" size={24} color="#007AFF" />
-              <Text style={styles.modalOptionText}>View Document</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.modalOption} onPress={handleShareDocument}>
-              <Ionicons name="share" size={24} color="#007AFF" />
-              <Text style={styles.modalOptionText}>Share</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.modalOption} onPress={() => {
-              setShowOptionsModal(false);
-              router.push('/(tabs)/chats');
-            }}>
-              <Ionicons name="chatbubble-ellipses" size={24} color="#34C759" />
-              <Text style={styles.modalOptionText}>Ask AI about this document</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.modalOption} onPress={handleAutoCategorizFile}>
-              <Ionicons name="pricetag" size={24} color="#FF9500" />
-              <Text style={styles.modalOptionText}>Auto-Categorize</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.modalOption} onPress={handleAddToBookmark}>
-              <Ionicons name="bookmark" size={24} color="#007AFF" />
-              <Text style={styles.modalOptionText}>Add to Bookmark</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={[styles.modalOption, styles.modalOptionDanger]} onPress={handleDeleteDocument}>
-              <Ionicons name="trash" size={24} color="#FF3B30" />
-              <Text style={[styles.modalOptionText, styles.modalOptionTextDanger]}>Delete</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* Document Viewer */}
+      {showDocumentViewer && selectedDocument && (
+        <DocumentViewer
+          fileId={selectedDocument.id}
+          fileName={selectedDocument.name}
+          fileType={selectedDocument.type}
+          fileCategory={selectedDocument.category}
+          onClose={() => {
+            setShowDocumentViewer(false);
+            setSelectedDocument(null);
+          }}
+        />
+      )}
 
       {/* External File Picker */}
       <ExternalFilePicker
@@ -927,6 +1004,196 @@ export default function DocumentsScreen() {
         onFileImport={handleExternalFileImport}
         onImportSuccess={handleImportSuccess}
       />
+
+      {/* Upload Options Modal */}
+      <Modal
+        visible={showUploadOptions}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowUploadOptions(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowUploadOptions(false)}
+        >
+          <View style={styles.uploadOptionsContainer}>
+            <View style={styles.uploadOptionsHeader}>
+              <Text style={styles.uploadOptionsTitle}>Upload Document</Text>
+              <TouchableOpacity onPress={() => setShowUploadOptions(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.uploadOptionsContent}>
+              <TouchableOpacity
+                style={styles.uploadOption}
+                onPress={handleUploadFromFiles}
+              >
+                <View style={[styles.uploadOptionIcon, { backgroundColor: '#007AFF' }]}>
+                  <Ionicons name="document" size={24} color="#fff" />
+                </View>
+                <View style={styles.uploadOptionText}>
+                  <Text style={styles.uploadOptionTitle}>Files</Text>
+                  <Text style={styles.uploadOptionSubtitle}>Upload from your device</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.uploadOption}
+                onPress={handleUploadFromPhotos}
+              >
+                <View style={[styles.uploadOptionIcon, { backgroundColor: '#5856D6' }]}>
+                  <Ionicons name="images" size={24} color="#fff" />
+                </View>
+                <View style={styles.uploadOptionText}>
+                  <Text style={styles.uploadOptionTitle}>Photos</Text>
+                  <Text style={styles.uploadOptionSubtitle}>Upload from your photo gallery</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.uploadOption}
+                onPress={handleUploadFromDropbox}
+              >
+                <View style={[styles.uploadOptionIcon, { backgroundColor: '#0061FF' }]}>
+                  <Ionicons name="logo-dropbox" size={24} color="#fff" />
+                </View>
+                <View style={styles.uploadOptionText}>
+                  <Text style={styles.uploadOptionTitle}>Dropbox</Text>
+                  <Text style={styles.uploadOptionSubtitle}>Import from Dropbox</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.uploadOption}
+                onPress={handleUploadFromGoogleDrive}
+              >
+                <View style={[styles.uploadOptionIcon, { backgroundColor: '#4285F4' }]}>
+                  <Ionicons name="logo-google" size={24} color="#fff" />
+                </View>
+                <View style={styles.uploadOptionText}>
+                  <Text style={styles.uploadOptionTitle}>Google Drive</Text>
+                  <Text style={styles.uploadOptionSubtitle}>Import from Google Drive</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Kebab Menu Modal */}
+      <Modal
+        visible={showKebabMenu}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCloseKebabMenu}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={handleCloseKebabMenu}
+        >
+          <View style={styles.kebabMenuContainer}>
+            <TouchableOpacity
+              style={styles.kebabMenuItem}
+              onPress={handleViewDocument}
+            >
+              <Ionicons name="eye-outline" size={20} color="#007AFF" />
+              <Text style={styles.kebabMenuText}>View</Text>
+            </TouchableOpacity>
+            
+            {/* Show View Responses option for forms */}
+            {selectedDocumentForMenu?.type === 'form' && (
+              <TouchableOpacity
+                style={styles.kebabMenuItem}
+                onPress={handleViewFormResponses}
+              >
+                <Ionicons name="clipboard-outline" size={20} color="#8B5CF6" />
+                <Text style={styles.kebabMenuText}>View Responses</Text>
+              </TouchableOpacity>
+            )}
+            
+            <TouchableOpacity
+              style={styles.kebabMenuItem}
+              onPress={handleShareDocument}
+            >
+              <Ionicons name="share-outline" size={20} color="#10B981" />
+              <Text style={styles.kebabMenuText}>Share</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.kebabMenuItem}
+              onPress={() => {
+                console.log('🗑️ Delete button pressed in kebab menu');
+                handleDeleteDocument();
+              }}
+            >
+              <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              <Text style={[styles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.kebabMenuItem}
+              onPress={handleChatDocument}
+            >
+              <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
+              <Text style={styles.kebabMenuText}>Chat</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.kebabMenuItem}
+              onPress={handleShowBookmarkModal}
+            >
+              <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
+              <Text style={styles.kebabMenuText}>Add to Bookmark</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Bookmark Selection Modal */}
+      <Modal
+        visible={showBookmarkModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowBookmarkModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowBookmarkModal(false)}
+        >
+          <View style={styles.bookmarkModalContainer}>
+            <View style={styles.bookmarkModalHeader}>
+              <Text style={styles.bookmarkModalTitle}>Add to Bookmark</Text>
+              <TouchableOpacity
+                onPress={() => setShowBookmarkModal(false)}
+              >
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.bookmarkList}>
+              {bookmarks.map((bookmark) => (
+                <TouchableOpacity
+                  key={bookmark.id}
+                  style={styles.bookmarkItem}
+                  onPress={() => handleAddToBookmark(bookmark)}
+                >
+                  <View style={[styles.bookmarkColor, { backgroundColor: bookmark.color }]} />
+                  <Text style={styles.bookmarkName}>{bookmark.name}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -945,10 +1212,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
   },
+  headerTitleContainer: {
+    flex: 1,
+  },
   headerTitle: {
     fontSize: 24,
     fontWeight: '700',
     color: '#333',
+  },
+  autoRefreshIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  autoRefreshText: {
+    fontSize: 12,
+    color: '#007AFF',
+    marginLeft: 4,
   },
   headerActions: {
     flexDirection: 'row',
@@ -956,6 +1236,9 @@ const styles = StyleSheet.create({
   },
   headerButton: {
     padding: 8,
+  },
+  refreshingButton: {
+    opacity: 0.5,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -1027,85 +1310,56 @@ const styles = StyleSheet.create({
   },
   documentsList: {
     flex: 1,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
   },
-  documentCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  documentHeader: {
+  documentItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 12,
     marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  fileIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  documentIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 10,
   },
   documentInfo: {
     flex: 1,
   },
   documentName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   documentMeta: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  documentSize: {
-    fontSize: 12,
-    color: '#666',
-  },
-  documentDate: {
-    fontSize: 12,
-    color: '#666',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  categoryContainer: {
-    marginBottom: 8,
-  },
-  categoryText: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
-  },
-  tagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  tag: {
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  tagText: {
     fontSize: 11,
     color: '#666',
+  },
+  documentActions: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 8,
+    marginRight: 8,
+  },
+  statusIndicator: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 5,
   },
   emptyContainer: {
     flex: 1,
@@ -1126,48 +1380,178 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 250,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 34,
-  },
-  modalHeader: {
+  uploadButton: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
   },
-  modalTitle: {
+  uploadButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 64,
+  },
+  loadingText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
-    flex: 1,
-    marginRight: 16,
+    marginTop: 16,
   },
-  modalOption: {
+  loadingSubtext: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 4,
+  },
+  // Kebab menu styles
+  kebabButton: {
+    padding: 6,
+    marginLeft: 6,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  kebabMenuContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 150,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  kebabMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  kebabMenuText: {
+    fontSize: 16,
+    color: '#333',
+    marginLeft: 12,
+    fontWeight: '500',
+  },
+  // Upload options modal styles
+  uploadOptionsContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    width: '90%',
+    maxWidth: 400,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  uploadOptionsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e5e5',
+  },
+  uploadOptionsTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+  },
+  uploadOptionsContent: {
+    padding: 16,
+  },
+  uploadOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  modalOptionDanger: {
-    borderBottomWidth: 0,
+  uploadOptionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
-  modalOptionText: {
+  uploadOptionText: {
+    flex: 1,
+    marginRight: 10,
+  },
+  uploadOptionTitle: {
     fontSize: 16,
+    fontWeight: '600',
     color: '#333',
-    marginLeft: 16,
   },
-  modalOptionTextDanger: {
-    color: '#FF3B30',
+  uploadOptionSubtitle: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  // Bookmark modal styles
+  bookmarkModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    width: '90%',
+    maxWidth: 400,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  bookmarkModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e5e5',
+  },
+  bookmarkModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+  },
+  bookmarkList: {
+    padding: 16,
+  },
+  bookmarkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  bookmarkColor: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginRight: 12,
+  },
+  bookmarkName: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
   },
 }); 

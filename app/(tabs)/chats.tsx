@@ -1,23 +1,26 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService as api } from '../../services/api';
+import { useChatStore } from '../../stores/chatStore';
+import { removeFileExtension } from '../../utils/fileUtils';
 
 interface ChatParticipant {
   id: number;
@@ -89,8 +92,23 @@ interface MessagesResponse {
   count: number;
 }
 
+// Create default Chat Assistant outside component to avoid recreation
+const DEFAULT_CHAT_ASSISTANT: Chat = {
+  id: -1,
+  title: 'Chat Assistant',
+  type: 'ai_assistant',
+  participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+  last_message: 'Ask me anything about your documents',
+  updated_at: new Date().toISOString(),
+  created_at: new Date().toISOString(),
+  unread_count: 0
+};
+
 export default function ChatsScreen() {
-  const [chats, setChats] = useState<Chat[]>([]);
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  
+  const [chats, setChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with Chat Assistant
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -98,6 +116,8 @@ export default function ChatsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  
+
   
   // Enhanced chat functionality state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -113,26 +133,30 @@ export default function ChatsScreen() {
   
   // Search functionality
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredChats, setFilteredChats] = useState<Chat[]>([]);
+  const [filteredChats, setFilteredChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with Chat Assistant
   const [filteredDocuments, setFilteredDocuments] = useState<Document[]>([]);
   const [filteredWorkspaces, setFilteredWorkspaces] = useState<Workspace[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<ChatParticipant[]>([]);
   const [filteredBookmarks, setFilteredBookmarks] = useState<Bookmark[]>([]);
   
+
+  
   // Quick chat type selector
   const [showQuickChatTypes, setShowQuickChatTypes] = useState(false);
   
-  // Mention functionality state
+  // Search type selector for AI Assistant
+  const [showSearchTypeMenu, setShowSearchTypeMenu] = useState(false);
+  const [selectedSearchType, setSelectedSearchType] = useState<'exact' | 'refined' | 'expanded'>('refined');
+
+  // Mention system state
   const [showMentionModal, setShowMentionModal] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
-
-  const [selectedMention, setSelectedMention] = useState<{
-    type: 'user' | 'bookmark' | 'file' | 'workspace';
-    id: number;
-    name: string;
-    data: any;
-  } | null>(null);
   const [mentionResults, setMentionResults] = useState<any[]>([]);
+  const [selectedMention, setSelectedMention] = useState<any>(null);
+  const [mentionStartIndex, setMentionStartIndex] = useState(-1);
+  
+  // Text input height state
+  const [textInputHeight, setTextInputHeight] = useState(36);
   
   // Animation and abort controller refs
   const bounceAnim = useRef(new Animated.Value(1)).current;
@@ -145,20 +169,299 @@ export default function ChatsScreen() {
   const ball2Anim = useRef(new Animated.Value(0)).current;
   const ball3Anim = useRef(new Animated.Value(0)).current;
 
+  // Progress tracking state
+  const [progressData, setProgressData] = useState<{
+    progress: number;
+    status: string;
+    message: string;
+    phase?: string;
+    category?: string;
+    subcategory?: string;
+  } | null>(null);
+  const [showProgress, setShowProgress] = useState(false);
+  const progressEventSourceRef = useRef<EventSource | null>(null);
+
+  // Handle document context from navigation
+  useEffect(() => {
+    if (params.documentId && params.documentName) {
+      const documentContext: Document = {
+        id: parseInt(params.documentId as string),
+        name: params.documentName as string,
+        type: params.documentType as string || 'other',
+        category: params.documentCategory as string,
+      };
+      
+      // Create a document-focused chat
+      const documentChat: Chat = {
+        id: Date.now(),
+        title: `Chat about ${documentContext.name}`,
+        type: 'document_focused',
+        participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+        last_message: `Ready to answer questions about ${documentContext.name}`,
+        updated_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        unread_count: 0,
+        document_context: documentContext
+      };
+      
+      // Add the chat to the list and select it
+      setChats(prev => {
+        const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
+        const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
+        
+        if (chatAssistant) {
+          // Chat Assistant exists, add new chat after it
+          return [chatAssistant, documentChat, ...otherChats];
+        } else {
+          // No Chat Assistant found, add new chat at beginning
+          return [documentChat, ...prev];
+        }
+      });
+      setSelectedChat(documentChat);
+      
+      // Don't show welcome message - just show empty chat
+      setMessages([]);
+      
+      // Clear the params to prevent re-triggering
+      router.setParams({});
+    }
+  }, [params.documentId, params.documentName, params.documentType, params.documentCategory]);
+
+  // Handle fileId parameter from documents screen
+  useEffect(() => {
+    const handleFileIdContext = async () => {
+      if (params.fileId && !loading) { // Only proceed if chats are loaded
+        try {
+          // Check if a document chat for this file already exists
+          const existingDocumentChat = chats.find(chat => 
+            chat.type === 'document_focused' && 
+            chat.document_context?.id === parseInt(params.fileId as string)
+          );
+          
+          if (existingDocumentChat) {
+            // If document chat already exists, just select it
+            setSelectedChat(existingDocumentChat);
+            setSelectedMention({
+              id: existingDocumentChat.document_context!.id,
+              type: 'file',
+              name: existingDocumentChat.document_context!.name,
+              data: existingDocumentChat.document_context!
+            });
+            router.setParams({});
+            return;
+          }
+          
+          // Fetch document details using the fileId
+          const response = await api.getFileById(parseInt(params.fileId as string));
+          
+          if (response.success && response.file) {
+            const documentData = response.file;
+            const documentContext: Document = {
+              id: documentData.id,
+              name: documentData.original_filename || documentData.filename,
+              type: documentData.file_type || 'other',
+              category: documentData.category,
+              size: documentData.file_size ? `${(documentData.file_size / 1024 / 1024).toFixed(2)} MB` : undefined,
+            };
+            
+            // Create a document-focused chat
+            const documentChat: Chat = {
+              id: Date.now(),
+              title: `Chat about ${documentContext.name}`,
+              type: 'document_focused',
+              participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+              last_message: `Ready to answer questions about ${documentContext.name}`,
+              updated_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              unread_count: 0,
+              document_context: documentContext
+            };
+            
+                      // Add the chat to the list and select it
+          setChats(prev => {
+            const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
+            const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
+            
+            if (chatAssistant) {
+              // Chat Assistant exists, add new chat after it, preserve all other chats
+              return [chatAssistant, documentChat, ...otherChats];
+            } else {
+              // No Chat Assistant found, add new chat at beginning, preserve all existing chats
+              return [documentChat, ...prev];
+            }
+          });
+            setSelectedChat(documentChat);
+            
+            // Set the document as the selected mention for the chat
+            setSelectedMention({
+              id: documentContext.id,
+              type: 'file',
+              name: documentContext.name,
+              data: documentContext
+            });
+            
+            // Don't show welcome message - just show empty chat
+            setMessages([]);
+            
+            // Clear the params to prevent re-triggering
+            router.setParams({});
+          } else {
+            console.error('Failed to fetch document details:', response.message);
+            // Fallback: create a generic chat
+            const fallbackChat: Chat = {
+              id: Date.now(),
+              title: 'Chat about Document',
+              type: 'document_focused',
+              participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+              last_message: 'Ready to answer questions about your document',
+              updated_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              unread_count: 0,
+            };
+            
+            setChats(prev => {
+              const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
+              const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
+              
+              if (chatAssistant) {
+                return [chatAssistant, fallbackChat, ...otherChats];
+              } else {
+                return [fallbackChat, ...prev];
+              }
+            });
+            setSelectedChat(fallbackChat);
+            
+            // Set a generic document mention for fallback
+            setSelectedMention({
+              id: parseInt(params.fileId as string),
+              type: 'file',
+              name: 'Document',
+              data: { id: parseInt(params.fileId as string), name: 'Document', type: 'other' }
+            });
+            
+            const welcomeMessage: ChatMessage = {
+              id: 1,
+              content: 'Hello! I\'m your Chat Assistant. I\'m ready to help you with questions about your document. The document has been automatically added to this chat. What would you like to know?',
+              sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+              is_own_message: false,
+              created_at: new Date().toISOString(),
+            };
+            setMessages([welcomeMessage]);
+            
+            router.setParams({});
+          }
+        } catch (error) {
+          console.error('Error fetching document details:', error);
+          // Fallback: create a generic chat
+          const fallbackChat: Chat = {
+            id: Date.now(),
+            title: 'Chat about Document',
+            type: 'document_focused',
+            participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+            last_message: 'Ready to answer questions about your document',
+            updated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            unread_count: 0,
+          };
+          
+          setChats(prev => {
+            const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
+            const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
+            
+            if (chatAssistant) {
+              return [chatAssistant, fallbackChat, ...otherChats];
+            } else {
+              return [fallbackChat, ...prev];
+            }
+          });
+          setSelectedChat(fallbackChat);
+          
+          // Set a generic document mention for fallback
+          setSelectedMention({
+            id: parseInt(params.fileId as string),
+            type: 'file',
+            name: 'Document',
+            data: { id: parseInt(params.fileId as string), name: 'Document', type: 'other' }
+          });
+          
+          const welcomeMessage: ChatMessage = {
+            id: 1,
+            content: 'Hello! I\'m your Chat Assistant. I\'m ready to help you with questions about your document. The document has been automatically added to this chat. What would you like to know?',
+            sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+            is_own_message: false,
+            created_at: new Date().toISOString(),
+          };
+          setMessages([welcomeMessage]);
+          
+          router.setParams({});
+        }
+      }
+    };
+
+    handleFileIdContext();
+  }, [params.fileId, loading]);
+
+  // Handle bookmark context from navigation
+  useEffect(() => {
+    if (params.bookmark_id && params.bookmark_name) {
+      const bookmarkContext: Bookmark = {
+        id: parseInt(params.bookmark_id as string),
+        name: params.bookmark_name as string,
+        description: params.bookmark_description as string,
+        file_count: parseInt(params.bookmark_file_count as string) || 0,
+        documents: []
+      };
+      
+      // Create a bookmark-focused chat
+      const bookmarkChat: Chat = {
+        id: Date.now(),
+        title: `Chat about ${bookmarkContext.name}`,
+        type: 'bookmark_focused',
+        participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+        last_message: `Ready to answer questions about ${bookmarkContext.name}`,
+        updated_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        unread_count: 0,
+        bookmark_context: bookmarkContext
+      };
+      
+      // Add the chat to the list and select it
+      setChats(prev => {
+        const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
+        const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
+        
+        if (chatAssistant) {
+          // Chat Assistant exists, add new chat after it
+          return [chatAssistant, bookmarkChat, ...otherChats];
+        } else {
+          // No Chat Assistant found, add new chat at beginning
+          return [bookmarkChat, ...prev];
+        }
+      });
+      setSelectedChat(bookmarkChat);
+      
+      // Don't show welcome message - just show empty chat
+      setMessages([]);
+      
+      // Clear the params to prevent re-triggering
+      router.setParams({});
+    }
+  }, [params.bookmark_id, params.bookmark_name, params.bookmark_description, params.bookmark_file_count]);
+
   const startBounceAnimation = () => {
-    // Start bouncing balls animation
+    // Start bouncing balls animation with improved timing
     const createBounceAnimation = (animValue: Animated.Value, delay: number) => {
       return Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
           Animated.timing(animValue, {
-            toValue: -10,
-            duration: 400,
+            toValue: -12,
+            duration: 600,
             useNativeDriver: true,
           }),
           Animated.timing(animValue, {
             toValue: 0,
-            duration: 400,
+            duration: 600,
             useNativeDriver: true,
           }),
         ])
@@ -168,8 +471,8 @@ export default function ChatsScreen() {
     // Start animations with different delays for each ball
     Animated.parallel([
       createBounceAnimation(ball1Anim, 0),
-      createBounceAnimation(ball2Anim, 133),
-      createBounceAnimation(ball3Anim, 266),
+      createBounceAnimation(ball2Anim, 200),
+      createBounceAnimation(ball3Anim, 400),
     ]).start();
 
     // Keep existing button bounce animation
@@ -213,6 +516,10 @@ export default function ChatsScreen() {
     stopBounceAnimation();
   };
 
+  // Progress tracking functions - removed, only using bouncing dots
+  // const startProgressTracking = (taskId: string) => { ... };
+  // const stopProgressTracking = () => { ... };
+
   useEffect(() => {
     loadChats();
     loadWorkspaces();
@@ -220,6 +527,14 @@ export default function ChatsScreen() {
     loadUsers();
     loadBookmarks();
   }, []);
+
+  // Refresh chat list when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      // Refresh chat list when screen comes into focus
+      loadChats();
+    }, [])
+  );
 
   // Cleanup effect to abort any ongoing requests when component unmounts
   useEffect(() => {
@@ -229,23 +544,61 @@ export default function ChatsScreen() {
         abortControllerRef.current = null;
       }
       stopBounceAnimation();
+      // stopProgressTracking(); // Removed - only using bouncing dots now
     };
   }, []);
 
   // Filter data based on search query
   useEffect(() => {
     if (!searchQuery.trim()) {
-      setFilteredChats(chats);
+      // Sort chats by date (most recent first) but keep Chat Assistant at the top
+      const validChats = chats.filter(chat => chat && typeof chat === 'object');
+      
+      // Separate Chat Assistant from other chats
+      const chatAssistant = validChats.find(chat => chat.id === -1);
+      const otherChats = validChats.filter(chat => chat.id !== -1);
+      
+      // Sort other chats by date (most recent first)
+      const sortedOtherChats = [...otherChats].sort((a, b) => {
+        const aDate = new Date(a.updated_at || new Date()).getTime();
+        const bDate = new Date(b.updated_at || new Date()).getTime();
+        return bDate - aDate;
+      });
+      
+      // Always put Chat Assistant first, then other chats
+      const finalChats = chatAssistant ? [chatAssistant, ...sortedOtherChats] : [DEFAULT_CHAT_ASSISTANT, ...sortedOtherChats];
+      
+      setFilteredChats(finalChats);
+      
       setFilteredDocuments(documents);
       setFilteredWorkspaces(workspaces);
       setFilteredUsers(users);
       setFilteredBookmarks(bookmarks);
     } else {
       const query = searchQuery.toLowerCase();
-      setFilteredChats(chats.filter(chat => 
-        chat.title.toLowerCase().includes(query) ||
-        chat.last_message.toLowerCase().includes(query)
-      ));
+      const filteredChatsList = chats.filter(chat => {
+        if (!chat || typeof chat !== 'object') return false;
+        const title = String(chat.title || '').toLowerCase();
+        const lastMessage = String(chat.last_message || '').toLowerCase();
+        return title.includes(query) || lastMessage.includes(query);
+      });
+      
+      // Separate Chat Assistant from filtered chats
+      const chatAssistant = filteredChatsList.find(chat => chat.id === -1);
+      const otherFilteredChats = filteredChatsList.filter(chat => chat.id !== -1);
+      
+      // Sort other filtered chats by date (most recent first)
+      const sortedOtherFilteredChats = [...otherFilteredChats].sort((a, b) => {
+        const aDate = new Date(a.updated_at || new Date()).getTime();
+        const bDate = new Date(b.updated_at || new Date()).getTime();
+        return bDate - aDate;
+      });
+      
+      // Always put Chat Assistant first, then other filtered chats
+      const finalFilteredChats = chatAssistant ? [chatAssistant, ...sortedOtherFilteredChats] : [DEFAULT_CHAT_ASSISTANT, ...sortedOtherFilteredChats];
+      
+      setFilteredChats(finalFilteredChats);
+      
       setFilteredDocuments(documents.filter(doc => 
         doc.name.toLowerCase().includes(query) ||
         (doc.category && doc.category.toLowerCase().includes(query))
@@ -346,7 +699,7 @@ export default function ChatsScreen() {
         data: doc
       }));
 
-      const recentUsers = users.slice(0, 2).map(user => ({
+      const recentUsers = (users || []).slice(0, 2).map(user => ({
         type: 'user',
         id: user.id,
         name: user.username,
@@ -354,7 +707,7 @@ export default function ChatsScreen() {
         data: user
       }));
 
-      const recentWorkspaces = workspaces.slice(0, 2).map(ws => ({
+      const recentWorkspaces = (workspaces || []).slice(0, 2).map(ws => ({
         type: 'workspace',
         id: ws.id,
         name: ws.name,
@@ -362,7 +715,7 @@ export default function ChatsScreen() {
         data: ws
       }));
 
-      const recentBookmarks = bookmarks.slice(0, 2).map(bookmark => ({
+      const recentBookmarks = (bookmarks || []).slice(0, 2).map(bookmark => ({
         type: 'bookmark',
         id: bookmark.id,
         name: bookmark.name,
@@ -380,53 +733,166 @@ export default function ChatsScreen() {
     try {
       setLoading(true);
       
-      // Create AI Assistant chat that will always be first
-      const aiAssistantChat: Chat = {
-        id: 1,
-        title: 'AI Assistant',
-        type: 'ai_assistant',
-        participants: [{ id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' }],
-        last_message: 'Ask me anything about your documents',
-        updated_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        unread_count: 0
-      };
+      // Try to load chat histories from backend
+      const { fetchChatHistories } = useChatStore.getState();
+      await fetchChatHistories();
       
-      // Try the mobile chats endpoint first
-      try {
-        const response = await api.getChats();
-        
-        if (response.success) {
-          const chatData = response.chats || [];
-          
-          // Filter out any existing AI Assistant chats to avoid duplicates
-          const otherChats = chatData.filter(chat => chat.type !== 'ai_assistant');
-          
-          // Always put AI Assistant first, followed by other chats
-          setChats([aiAssistantChat, ...otherChats]);
-          return;
-        }
-      } catch (chatError) {
-        console.log('Mobile chats endpoint not available, using AI Assistant only');
+      // Get the loaded histories from the store
+      const { histories, error } = useChatStore.getState();
+      
+      if (error) {
+        console.error('Chat store error:', error);
       }
       
-      // Fallback: just show AI Assistant
-      setChats([aiAssistantChat]);
+      // Convert chat histories to the expected format, excluding any existing "Chat Assistant" chats
+      let convertedChats: Chat[] = [];
+      
+      try {
+        if (Array.isArray(histories)) {
+          convertedChats = histories
+            .filter(history => history && history.id !== -1) // Only filter out the actual default chat (ID -1)
+            .map(history => {
+              try {
+                // Handle both new format (messages array) and existing format (conversation_data)
+                const messages = (history as any).messages || (history as any).conversation_data || [];
+                let lastMessage = 'No messages yet';
+                
+                if (Array.isArray(messages) && messages.length > 0) {
+                  const lastMsg = messages[messages.length - 1];
+                  if (lastMsg && typeof lastMsg === 'object') {
+                    lastMessage = String((lastMsg as any).content || (lastMsg as any).message || 'No messages yet');
+                  } else if (typeof lastMsg === 'string') {
+                    lastMessage = String(lastMsg);
+                  }
+                }
+                
+                // Determine chat type based on selected context
+                let chatType: 'ai_assistant' | 'document_focused' | 'bookmark_focused' | 'workspace' | 'user_direct' = 'ai_assistant';
+                
+                const historyData = history as any; // Type assertion for backend data
+                
+                // Debug: Log the first few chats to see what data we're getting
+                if (history.id <= 5) {
+                  console.log('🔍 Chat data for ID', history.id, ':', {
+                    title: history.title,
+                    selected_files: historyData.selected_files,
+                    selected_bookmarks: historyData.selected_bookmarks,
+                    selected_workspaces: historyData.selected_workspaces,
+                    selected_users: historyData.selected_users
+                  });
+                }
+                
+                // Determine chat type based on selected context
+                if (historyData.selected_files && historyData.selected_files.length > 0) {
+                  chatType = 'document_focused';
+                } else if (historyData.selected_bookmarks && historyData.selected_bookmarks.length > 0) {
+                  chatType = 'bookmark_focused';
+                } else if (historyData.selected_workspaces && historyData.selected_workspaces.length > 0) {
+                  chatType = 'workspace';
+                } else if (historyData.selected_users && historyData.selected_users.length > 0) {
+                  chatType = 'user_direct';
+                } else {
+                  // Fallback: Try to infer chat type from title or conversation data
+                  const title = String(history.title || '').toLowerCase();
+                  const messages = historyData.conversation_data || [];
+                  
+                  // Check if title contains keywords that might indicate chat type
+                  if (title.includes('document') || title.includes('file') || title.includes('pdf') || title.includes('doc')) {
+                    chatType = 'document_focused';
+                  } else if (title.includes('bookmark') || title.includes('collection')) {
+                    chatType = 'bookmark_focused';
+                  } else if (title.includes('workspace') || title.includes('team')) {
+                    chatType = 'workspace';
+                  } else if (title.includes('user') || title.includes('direct') || title.includes('message')) {
+                    chatType = 'user_direct';
+                  }
+                  // Default remains 'ai_assistant'
+                }
+                
+                // Debug: Log the determined chat type
+                if (history.id <= 5) {
+                  console.log('🎯 Chat type for ID', history.id, ':', chatType);
+                }
+                
+                // Handle timestamp formatting for chat timestamps
+                // Use last_message_at for chat listings (when last message was sent)
+                // Use created_at for chat creation time
+                let updatedAt = (history as any).last_message_at || history.updated_at || new Date().toISOString();
+                let createdAt = history.created_at || new Date().toISOString();
+                
+                // Don't add timezone indicators - treat as local time
+                // The backend timestamps are already in the correct format
+                
+                // Debug: Log the timestamps being used
+                if (__DEV__ && history.id <= 5) {
+                  console.log('🕐 Chat timestamp debug:', {
+                    id: history.id,
+                    title: history.title,
+                    lastMessageAt: (history as any).last_message_at,
+                    originalUpdatedAt: history.updated_at,
+                    originalCreatedAt: history.created_at,
+                    processedUpdatedAt: updatedAt,
+                    processedCreatedAt: createdAt
+                  });
+                }
+                
+                return {
+                  id: Number(history.id) || Math.random(),
+                  title: String(history.title || 'Untitled Chat'),
+                  type: chatType,
+                  participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+                  last_message: String(lastMessage || 'No messages yet'),
+                  updated_at: String(updatedAt),
+                  created_at: String(createdAt),
+                  unread_count: 0,
+                  // Store context data for future use
+                  document_context: historyData.selected_files && historyData.selected_files.length > 0 ? {
+                    id: historyData.selected_files[0],
+                    name: String(history.title || 'Document'),
+                    type: 'other'
+                  } : undefined,
+                  bookmark_context: historyData.selected_bookmarks && historyData.selected_bookmarks.length > 0 ? {
+                    id: historyData.selected_bookmarks[0],
+                    name: String(history.title || 'Bookmark'),
+                    file_count: 0
+                  } : undefined
+                };
+              } catch (itemError) {
+                console.error('Error processing chat history item:', itemError);
+                return null;
+              }
+            })
+            .filter(Boolean) as Chat[]; // Remove null items
+        }
+      } catch (conversionError) {
+        console.error('Error converting chat histories:', conversionError);
+        convertedChats = [];
+      }
+      
+      // Sort chats by updated_at date (most recent first), but keep Chat Assistant at top
+      const sortedChats = convertedChats.sort((a, b) => {
+        const dateA = new Date(a.updated_at).getTime();
+        const dateB = new Date(b.updated_at).getTime();
+        return dateB - dateA; // Most recent first
+      });
+      
+      // Always put default Chat Assistant first, followed by other chats sorted by date
+      const allChats = [DEFAULT_CHAT_ASSISTANT, ...sortedChats];
+      
+      console.log('📱 Loaded chats:', {
+        total: allChats.length,
+        defaultChat: DEFAULT_CHAT_ASSISTANT,
+        otherChats: sortedChats.length,
+        chatIds: sortedChats.map(c => c.id),
+        chatTitles: sortedChats.map(c => c.title),
+        chatTypes: allChats.slice(0, 5).map(c => ({ id: c.id, type: c.type, title: c.title }))
+      });
+      setChats(allChats);
+      
     } catch (error) {
       console.error('Failed to load chats:', error);
-      
-      // Fallback to AI Assistant only
-      const aiAssistantChat: Chat = {
-        id: 1,
-        title: 'AI Assistant',
-        type: 'ai_assistant',
-        participants: [{ id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' }],
-        last_message: 'Ask me anything about your documents',
-        updated_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        unread_count: 0
-      };
-      setChats([aiAssistantChat]);
+      // Fallback: just show default Chat Assistant
+      setChats([DEFAULT_CHAT_ASSISTANT]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -436,22 +902,21 @@ export default function ChatsScreen() {
   const loadWorkspaces = async () => {
     try {
       const response = await api.getMobileWorkspaces();
-      if (response.success) {
-        setWorkspaces(response.workspaces || []);
+      if (response.success && response.data) {
+        // Handle both response structures: data.workspaces or data as array
+        const workspacesData = Array.isArray(response.data) 
+          ? response.data 
+          : (response.data.workspaces || []);
+        
+        console.log('Workspaces loaded:', workspacesData.length);
+        setWorkspaces(workspacesData);
       } else {
-        // Add test data if API fails
-        setWorkspaces([
-          { id: 1, name: 'General', description: 'Main workspace', slug: 'general', member_count: 5 },
-          { id: 2, name: 'Development', description: 'Dev team workspace', slug: 'dev', member_count: 3 }
-        ]);
+        console.log('Workspaces API returned no data');
+        setWorkspaces([]);
       }
     } catch (error) {
       console.log('Failed to load workspaces:', error);
-      // Add test data if API fails
-      setWorkspaces([
-        { id: 1, name: 'General', description: 'Main workspace', slug: 'general', member_count: 5 },
-        { id: 2, name: 'Development', description: 'Dev team workspace', slug: 'dev', member_count: 3 }
-      ]);
+      setWorkspaces([]);
     }
   };
 
@@ -461,67 +926,54 @@ export default function ChatsScreen() {
       if (response.success) {
         const docs = response.files?.map((file: any) => ({
           id: file.id,
-          name: file.original_filename || file.filename,
+          name: removeFileExtension(file.original_filename || file.filename),
           type: file.file_type,
           category: file.file_kind || file.category,
           size: file.file_size
         })) || [];
         setDocuments(docs);
         console.log(`📄 Loaded ${docs.length} documents for mentions:`, docs.map(d => d.name));
+      } else {
+        setDocuments([]);
       }
     } catch (error) {
       console.log('Failed to load documents:', error);
-      // Add test data if API fails
-      setDocuments([
-        { id: 167, name: 'test_upload.txt', type: 'text/plain', category: 'Document', size: '43 bytes' },
-        { id: 166, name: 'FrancisOnodueze_22_resume_ML_3.pdf', type: 'application/pdf', category: 'Document', size: '1.2 MB' }
-      ]);
+      setDocuments([]);
     }
   };
 
   const loadUsers = async () => {
     try {
       const response = await api.getWorkspaceUsers();
-      if (response.success) {
-        setUsers(response.users || []);
+      if (response.success && response.data) {
+        setUsers(response.data.users || []);
       } else {
-        // Add test data if API fails
-        setUsers([
-          { id: 1, username: 'francis', email: 'francis@example.com' },
-          { id: 2, username: 'testuser', email: 'test@example.com' }
-        ]);
+        setUsers([]);
       }
     } catch (error) {
       console.log('Failed to load users:', error);
-      // Add test data if API fails
-      setUsers([
-        { id: 1, username: 'francis', email: 'francis@example.com' },
-        { id: 2, username: 'testuser', email: 'test@example.com' }
-      ]);
+      setUsers([]);
     }
   };
 
   const loadBookmarks = async () => {
     try {
       const response = await api.getBookmarks();
-      
-      if (response.success) {
-        setBookmarks(response.bookmarks || []);
+      if (response.success && response.data) {
+        // Handle both response structures: data.bookmarks or data as array
+        const bookmarksData = Array.isArray(response.data) 
+          ? response.data 
+          : (response.data.bookmarks || []);
+        
+        console.log('Bookmarks loaded:', bookmarksData.length);
+        setBookmarks(bookmarksData);
       } else {
-        console.log('Failed to load bookmarks:', response.message);
-        // Add test data if API fails
-        setBookmarks([
-          { id: 1, name: 'Important Docs', description: 'Key documents', file_count: 10, documents: [] },
-          { id: 2, name: 'Receipts', description: 'Expense receipts', file_count: 25, documents: [] }
-        ]);
+        console.log('Bookmarks API returned no data');
+        setBookmarks([]);
       }
     } catch (error) {
       console.log('Failed to load bookmarks:', error);
-      // Add test data if API fails
-      setBookmarks([
-        { id: 1, name: 'Important Docs', description: 'Key documents', file_count: 10, documents: [] },
-        { id: 2, name: 'Receipts', description: 'Expense receipts', file_count: 25, documents: [] }
-      ]);
+      setBookmarks([]);
     }
   };
 
@@ -529,40 +981,71 @@ export default function ChatsScreen() {
     try {
       setMessagesLoading(true);
       
-      // Try the mobile messages endpoint first, but fall back to welcome message
-      try {
-        const response = await api.getChatMessages(chatId);
-        
-        if (response.success) {
-          const messageData = response.messages || [];
-          if (messageData.length > 0) {
-            setMessages(messageData);
-            return;
-          }
-        }
-      } catch (messageError) {
-        console.log('Mobile messages endpoint not available, using welcome message');
+      // If it's the Chat Assistant (id: -1), show welcome message
+      if (chatId === -1) {
+        const welcomeMessage: ChatMessage = {
+          id: 1,
+          content: 'Hello! I\'m your Chat Assistant. I can help you with questions about your documents, analyze files, and provide insights. How can I help you today?',
+          sender: { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
+          is_own_message: false,
+          created_at: new Date().toISOString(), // This is fine for Chat Assistant as it's always current
+        };
+        setMessages([welcomeMessage]);
+        return;
       }
       
-      // Show welcome message for new/empty chats
-      const welcomeMessage: ChatMessage = {
-        id: 1,
-        content: 'Hello! I\'m your AI assistant. I can help you with questions about your documents, analyze files, and provide insights. How can I help you today?',
-        sender: { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
-        is_own_message: false,
-        created_at: new Date().toISOString(),
-      };
-      setMessages([welcomeMessage]);
+      // Use the chat store to load the specific conversation
+      const { fetchChatConversation } = useChatStore.getState();
+      await fetchChatConversation(chatId);
+      
+      // Get the current history from the store
+      const { currentHistory } = useChatStore.getState();
+      
+      if (currentHistory && currentHistory.messages.length > 0) {
+        // Convert chat store messages to the expected format
+        const convertedMessages: ChatMessage[] = currentHistory.messages.map((msg, index) => {
+          // Use actual message timestamp from backend - the backend provides 'created_at' field
+          // Use type assertion to access backend response fields
+          const backendMsg = msg as any;
+          let timestamp = backendMsg.created_at || backendMsg.timestamp;
+          
+          // Debug: Log the message timestamp
+          if (__DEV__ && index < 3) {
+            console.log('🕐 Message timestamp debug:', {
+              index,
+              created_at: backendMsg.created_at,
+              timestamp: backendMsg.timestamp,
+              finalTimestamp: timestamp
+            });
+          }
+          
+          // Generate unique ID for messages (backend messages don't have IDs)
+          const messageId = Date.now() + index + Math.random() * 1000;
+          
+          return {
+            id: Math.floor(messageId), // Ensure it's an integer
+            content: msg.content || '',
+            sender: msg.role === 'user' ? null : { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
+            is_own_message: msg.role === 'user',
+            created_at: timestamp || new Date().toISOString(),
+          };
+        });
+        
+        setMessages(convertedMessages);
+      } else {
+        // For empty chats, don't show any welcome message - just show empty chat
+        setMessages([]);
+      }
     } catch (error) {
       console.error('Failed to load messages:', error);
       
       // Show error message
       const errorMessage: ChatMessage = {
         id: 1,
-        content: 'Hello! I\'m your AI assistant. How can I help you today?',
-        sender: { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
+        content: 'Hello! I\'m your Chat Assistant. How can I help you today?',
+        sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
         is_own_message: false,
-        created_at: new Date().toISOString(),
+        created_at: new Date().toISOString(), // This is fine for error messages as they're current
       };
       setMessages([errorMessage]);
     } finally {
@@ -576,6 +1059,12 @@ export default function ChatsScreen() {
     try {
       setSendingMessage(true);
       startBounceAnimation();
+      
+      // Generate a task ID for progress tracking
+      const taskId = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Start progress tracking
+      // startProgressTracking(taskId);
       
       // Create abort controller for this request
       abortControllerRef.current = new AbortController();
@@ -608,28 +1097,11 @@ export default function ChatsScreen() {
         if (selectedMention) {
           console.log('📎 Persistent mention active:', selectedMention);
           chatContext += `\n\nContext: This message mentions a ${selectedMention.type} called "${selectedMention.name}".`;
-          
-          if (selectedMention.type === 'bookmark' && selectedMention.data.file_count) {
-            chatContext += ` This bookmark contains ${selectedMention.data.file_count} files.`;
-            // Add specific instruction for bookmark-focused search
-            chatContext += ` IMPORTANT: Search and provide answers ONLY from documents within the "${selectedMention.name}" bookmark collection. Do not use information from other bookmarks or documents.`;
-          } else if (selectedMention.type === 'user' && selectedMention.data.email) {
-            chatContext += ` User email: ${selectedMention.data.email}.`;
-            // Focus on user-related content
-            chatContext += ` IMPORTANT: Focus on information related to this specific user when searching documents.`;
-          } else if (selectedMention.type === 'workspace' && selectedMention.data.member_count) {
-            chatContext += ` This workspace has ${selectedMention.data.member_count} members.`;
-            // Focus on workspace-specific content
-            chatContext += ` IMPORTANT: Search and provide answers ONLY from documents within the "${selectedMention.name}" workspace. Do not use information from other workspaces.`;
-          } else if (selectedMention.type === 'file' && selectedMention.data.category) {
-            chatContext += ` File category: ${selectedMention.data.category}.`;
-            // Focus on specific file
-            chatContext += ` IMPORTANT: Search and provide answers ONLY from the "${selectedMention.name}" document. Do not use information from other files.`;
-          }
         }
         
-        // Prepare filters for context-aware search
+        // Build search filters based on context
         let searchFilters = {};
+        
         if (selectedMention) {
           if (selectedMention.type === 'bookmark') {
             // Filter to only search within this bookmark's documents
@@ -655,37 +1127,71 @@ export default function ChatsScreen() {
               context_type: 'user'
             };
           }
+        } else if (selectedChat.type === 'bookmark_focused' && selectedChat.bookmark_context) {
+          // Use bookmark context from the chat
+          searchFilters = {
+            bookmark_id: selectedChat.bookmark_context.id,
+            context_type: 'bookmark'
+          };
+        } else if (selectedChat.type === 'document_focused' && selectedChat.document_context) {
+          // Use document context from the chat
+          searchFilters = {
+            document_ids: [selectedChat.document_context.id],
+            context_type: 'document'
+          };
         }
         
-        // Use general chat endpoint for AI assistant with context filters
-        response = await api.sendChatMessage(chatContext, searchFilters, abortControllerRef.current?.signal);
+        // Use context search if mention is active, otherwise use general chat
+        if (selectedMention) {
+          const documentIds = selectedMention.type === 'bookmark' 
+            ? selectedMention.data.documents?.map((doc: any) => doc.id) || []
+            : selectedMention.type === 'file' 
+            ? [selectedMention.id]
+            : undefined;
+            
+          const contextFilters = {
+            context_type: selectedMention.type,
+            context_id: selectedMention.id,
+            document_ids: documentIds
+          };
+          response = await api.sendChatMessage(chatContext, contextFilters, abortControllerRef.current?.signal);
+        } else {
+          // Use general chat endpoint for AI assistant with context filters and search type
+          const chatSearchFilters = {
+            search_type: selectedSearchType, // Add selected search type
+            ...searchFilters // Include any context filters (bookmark, document, etc.)
+          };
+          response = await api.sendChatMessage(chatContext, chatSearchFilters, abortControllerRef.current?.signal);
+        }
       } else if (selectedChat.type === 'workspace') {
-        // Send to workspace endpoint (to be implemented)
-        response = await api.client.post(`/api/v1/mobile/workspace/${selectedChat.workspace?.id}/message`, {
-          message: newMessage.trim()
-        }, {
-          signal: abortControllerRef.current?.signal
-        });
-        response = response.data;
+        // Send to workspace endpoint
+        response = await api.sendChatMessageToChat(newMessage.trim(), selectedChat.workspace?.id);
       } else if (selectedChat.type === 'user_direct') {
-        // Send direct message (to be implemented)
-        response = await api.client.post(`/api/v1/mobile/chats/${selectedChat.id}/send`, {
-          message: newMessage.trim()
-        }, {
-          signal: abortControllerRef.current?.signal
-        });
-        response = response.data;
+        // Send direct message
+        response = await api.sendChatMessageToChat(newMessage.trim(), selectedChat.id);
       } else {
         // Fallback to general chat
         response = await api.sendChatMessage(newMessage.trim(), {}, abortControllerRef.current?.signal);
       }
 
-      if (response.success && response.response) {
-        // Add AI response
+      if (response.success && (response.response || response.data?.response)) {
+        // Get response text from either top level or data object
+        const responseText = response.response || response.data?.response || 'No response received';
+        
+        // Debug: Log response data to understand chat creation
+        console.log('📱 Chat response:', {
+          success: response.success,
+          chat_id: response.data?.chat_id,
+          selectedChat_id: selectedChat?.id,
+          selectedChat_type: selectedChat?.type,
+          responseText_length: responseText.length
+        });
+        
+        // Add Chat Assistant response
         const aiMessage: ChatMessage = {
           id: Date.now() + 1,
-          content: response.response,
-          sender: { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
+          content: responseText,
+          sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
           is_own_message: false,
           created_at: new Date().toISOString(),
         };
@@ -696,12 +1202,33 @@ export default function ChatsScreen() {
           messagesRef.current?.scrollToEnd({ animated: true });
         }, 100);
 
-        // Update the chat's last message in the chat list
-        setChats(prev => prev.map(chat => 
-          chat.id === selectedChat.id 
-            ? { ...chat, last_message: response.response, updated_at: new Date().toISOString() }
-            : chat
-        ));
+        // Check if this is a new chat (either no selectedChat.id or response has a new chat_id)
+        if (response.data?.chat_id && (!selectedChat?.id || selectedChat.id === -1)) {
+          // This is a new chat, refresh the entire chat list
+          console.log('🆕 New chat created, refreshing chat list...');
+          loadChats();
+        } else if (response.data?.chat_id) {
+          // If we have a chat_id but the chat is not in our list, refresh to get the new chat
+          const chatExists = chats.some(chat => chat.id === response.data.chat_id);
+          if (!chatExists) {
+            console.log('🆕 Chat not in list, refreshing to get new chat...');
+            loadChats();
+          } else {
+            // Update the chat's last message in the chat list
+            setChats(prev => prev.map(chat => 
+              chat.id === selectedChat?.id 
+                ? { ...chat, last_message: responseText || 'Message sent', updated_at: new Date().toISOString() }
+                : chat
+            ));
+          }
+        } else {
+          // Update the chat's last message in the chat list
+          setChats(prev => prev.map(chat => 
+            chat.id === selectedChat?.id 
+              ? { ...chat, last_message: responseText || 'Message sent', updated_at: new Date().toISOString() }
+              : chat
+          ));
+        }
       }
     } catch (error: any) {
       if (error.name === 'AbortError') {
@@ -728,6 +1255,7 @@ export default function ChatsScreen() {
     }
     setSendingMessage(false);
     stopBounceAnimation();
+    // stopProgressTracking(); // Removed - only using bouncing dots now
     
     setSelectedChat(chat);
     loadMessages(chat.id);
@@ -743,6 +1271,7 @@ export default function ChatsScreen() {
     }
     setSendingMessage(false);
     stopBounceAnimation();
+    // stopProgressTracking(); // Removed - only using bouncing dots now
     
     setSelectedChat(null);
     setMessages([]);
@@ -808,9 +1337,9 @@ export default function ChatsScreen() {
     switch (type) {
       case 'user': return 'person';
       case 'bookmark': return 'bookmark';
-      case 'file': return 'document';
+      case 'file': return 'document-text';
       case 'workspace': return 'business';
-      default: return 'at';
+      default: return 'at-circle';
     }
   };
 
@@ -825,44 +1354,86 @@ export default function ChatsScreen() {
   };
 
   const truncateFilename = (name: string, maxLength: number = 40) => {
-    if (name.length <= maxLength) return name;
-    return name.substring(0, maxLength) + '...';
+    const nameWithoutExtension = removeFileExtension(name);
+    if (nameWithoutExtension.length <= maxLength) {
+      return nameWithoutExtension;
+    }
+    return nameWithoutExtension.substring(0, maxLength - 3) + '...';
   };
 
   const createQuickChat = (type: 'ai_assistant' | 'user_direct' | 'workspace' | 'document_focused' | 'bookmark_focused') => {
     setShowQuickChatTypes(false);
     
-    if (type === 'ai_assistant') {
-      // Create AI assistant chat immediately
-      const newChat: Chat = {
-        id: Date.now(),
-        title: 'AI Assistant',
-        type: 'ai_assistant',
-        participants: [{ id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' }],
-        last_message: 'Ask me anything about your documents',
-        updated_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        unread_count: 0
+    // Create new chat immediately for all types
+    const newChat: Chat = {
+      id: Date.now(),
+      title: getChatTypeInfo(type).name,
+      type: type,
+      participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
+      last_message: `New ${getChatTypeInfo(type).name.toLowerCase()} - ready to chat`,
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      unread_count: 0
+    };
+    
+    // Add context based on type
+    if (type === 'document_focused') {
+      // For document focused, we'll need to select a document
+      // For now, create a placeholder that can be updated when document is selected
+      newChat.document_context = {
+        id: 0,
+        name: 'Select a document',
+        type: 'document'
       };
-      
-      setChats(prev => [newChat, ...prev]);
-      setSelectedChat(newChat);
-      setMessages([]);
-    } else {
-      // For other types, open the new chat modal with preselected type
-      setNewChatType(type);
-      setShowNewChatModal(true);
+    } else if (type === 'bookmark_focused') {
+      // For bookmark focused, we'll need to select a bookmark
+      newChat.bookmark_context = {
+        id: 0,
+        name: 'Select a bookmark collection',
+        description: 'Choose a bookmark collection to focus on',
+        file_count: 0,
+        documents: []
+      };
+    } else if (type === 'workspace') {
+      // For workspace, we'll need to select a workspace
+      newChat.workspace = {
+        id: 0,
+        name: 'Select a workspace',
+        description: 'Choose a workspace to chat in',
+        slug: '',
+        member_count: 0
+      };
     }
+    
+    // Add the new chat to the list and select it
+    // Ensure Chat Assistant always remains first
+    setChats(prev => {
+      const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
+      const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
+      
+      if (chatAssistant) {
+        // Chat Assistant exists, add new chat after it
+        return [chatAssistant, newChat, ...otherChats];
+      } else {
+        // No Chat Assistant found, add new chat at beginning
+        return [newChat, ...prev];
+      }
+    });
+    setSelectedChat(newChat);
+    setMessages([]);
+    
+    // Load welcome message for the new chat
+    loadMessages(newChat.id);
   };
 
   const getChatTypeInfo = (type: string) => {
     switch (type) {
       case 'ai_assistant':
         return { 
-          name: 'Start AI Chat', 
-          icon: 'sparkles' as const, 
+          name: 'Quick Chat', 
+          icon: 'chatbubbles' as const, 
           color: '#007AFF',
-          description: 'Chat with AI about your documents'
+          description: 'Chat with Assistant about your documents'
         };
       case 'document_focused':
         return { 
@@ -1013,34 +1584,196 @@ export default function ChatsScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    if (selectedChat) {
-      loadMessages(selectedChat.id);
-    } else {
-      loadChats();
-    }
+    // Always refresh the chat list when pulling to refresh
+    loadChats();
   };
 
   const formatMessageTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+      // Handle different timestamp formats from backend
+      let timestamp = dateString;
+      
+      // Debug: Log the original timestamp
+      if (__DEV__) {
+        console.log('🕐 Formatting message time:', { original: dateString, type: typeof dateString });
+      }
+      
+      // If timestamp doesn't have timezone info, treat as local time
+      if (timestamp && !timestamp.includes('Z') && !timestamp.includes('+') && !timestamp.includes('-', 10)) {
+        // Don't add Z - treat as local time to avoid timezone conversion issues
+        // The backend timestamps might already be in local time
+      }
+      
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) {
+        // Fallback: try parsing as ISO string without timezone
+        const fallbackDate = new Date(dateString);
+        if (isNaN(fallbackDate.getTime())) {
+          if (__DEV__) {
+            console.log('❌ Failed to parse timestamp:', dateString);
+          }
+          return 'Invalid Date';
+        }
+        return fallbackDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+      
+      // Debug: Log the parsed date
+      if (__DEV__) {
+        console.log('🕐 Parsed message date:', {
+          original: dateString,
+          parsed: date.toISOString(),
+          local: date.toLocaleString(),
+          formatted: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+      }
+      
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (error) {
+      if (__DEV__) {
+        console.log('❌ Error formatting message time:', error, 'for timestamp:', dateString);
+      }
+      return 'Invalid Date';
+    }
   };
 
   const formatChatTime = (dateString: string) => {
-    const date = new Date(dateString);
+    try {
+      // Handle different timestamp formats from backend
+      let timestamp = dateString;
+      
+      // Debug: Log the original timestamp
+      if (__DEV__) {
+        console.log('🕐 Formatting chat time:', { original: dateString, type: typeof dateString });
+      }
+      
+      // If timestamp doesn't have timezone info, treat as local time
+      if (timestamp && !timestamp.includes('Z') && !timestamp.includes('+') && !timestamp.includes('-', 10)) {
+        // Don't add Z - treat as local time to avoid timezone conversion issues
+        // The backend timestamps might already be in local time
+      }
+      
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) {
+        // Fallback: try parsing as ISO string without timezone
+        const fallbackDate = new Date(dateString);
+        if (isNaN(fallbackDate.getTime())) {
+          if (__DEV__) {
+            console.log('❌ Failed to parse chat timestamp:', dateString);
+          }
+          return 'Unknown';
+        }
+        return formatRelativeDate(fallbackDate);
+      }
+      
+      // Debug: Log the parsed date
+      if (__DEV__) {
+        console.log('🕐 Parsed chat date:', {
+          original: dateString,
+          parsed: date.toISOString(),
+          local: date.toLocaleString()
+        });
+      }
+      
+      return formatRelativeDate(date);
+    } catch (error) {
+      if (__DEV__) {
+        console.log('❌ Error formatting chat time:', error, 'for timestamp:', dateString);
+      }
+      return 'Unknown';
+    }
+  };
+
+  const formatRelativeDate = (date: Date) => {
     const now = new Date();
+    
+    // Debug: Log the dates being compared
+    if (__DEV__) {
+      console.log('🕐 Comparing dates:', {
+        now: now.toISOString(),
+        date: date.toISOString(),
+        nowLocal: now.toLocaleString(),
+        dateLocal: date.toLocaleString()
+      });
+    }
+    
+    // Check if the date is in the future (which would indicate a timezone issue)
     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
     
+    // If the date is in the future, it might be a timezone issue
+    if (diffInMinutes < 0) {
+      if (__DEV__) {
+        console.log('⚠️ Date is in the future, possible timezone issue:', {
+          date: date.toISOString(),
+          diffInMinutes: diffInMinutes
+        });
+      }
+      // For future dates, show the actual date instead of relative time
+      const currentYear = now.getFullYear();
+      const dateYear = date.getFullYear();
+      
+      if (dateYear === currentYear) {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      } else {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+    }
+    
+    // Less than 1 minute
     if (diffInMinutes < 1) return 'Now';
+    
+    // Less than 1 hour
     if (diffInMinutes < 60) return `${diffInMinutes}m`;
+    
+    // Less than 24 hours
     if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h`;
-    return date.toLocaleDateString();
+    
+    // Check if it's yesterday
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (date.toDateString() === yesterday.toDateString()) {
+      return 'Yesterday';
+    }
+    
+    // Check if it's within the last 7 days
+    const weekAgo = new Date(now);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    if (date > weekAgo) {
+      // Show day name (e.g., "Monday", "Tuesday")
+      return date.toLocaleDateString('en-US', { weekday: 'short' });
+    }
+    
+    // Older than a week - show date
+    const currentYear = now.getFullYear();
+    const dateYear = date.getFullYear();
+    
+    if (dateYear === currentYear) {
+      // Same year - show month and day (e.g., "Aug 23")
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    } else {
+      // Different year - show month, day, and year (e.g., "Aug 23, 2024")
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
   };
 
   const renderChatItem = ({ item }: { item: Chat }) => {
+    // Safety check for item
+    if (!item) {
+      return null;
+    }
+
+    // Debug: Log the first few chat items being rendered
+    if (item.id <= 5) {
+      console.log('🎨 Rendering chat item:', {
+        id: item.id,
+        title: item.title,
+        type: item.type
+      });
+    }
+
     const getChatIcon = () => {
       switch (item.type) {
         case 'ai_assistant':
-          return { name: 'sparkles' as const, color: '#007AFF' };
+          return { name: 'chatbubbles' as const, color: '#007AFF' };
         case 'document_focused':
           return { name: 'document-text' as const, color: '#34C759' };
         case 'workspace':
@@ -1050,32 +1783,47 @@ export default function ChatsScreen() {
         case 'bookmark_focused':
           return { name: 'bookmark' as const, color: '#AF52DE' };
         default:
+          console.log('⚠️ Unknown chat type:', item.type, 'for chat:', item.id);
           return { name: 'chatbubble' as const, color: '#007AFF' };
       }
     };
 
     const { name: iconName, color } = getChatIcon();
 
+    // Ensure all text values are properly stringified
+    const safeTitle = String(item.title || 'Untitled Chat');
+    const safeLastMessage = String(item.last_message || 'No messages');
+    const safeUpdatedAt = String(item.updated_at || new Date().toISOString());
+    const safeUnreadCount = Number(item.unread_count || 0);
+
     return (
       <TouchableOpacity style={styles.chatItem} onPress={() => selectChat(item)}>
         <View style={[styles.chatAvatar, { backgroundColor: `${color}20` }]}>
           <Ionicons name={iconName} size={24} color={color} />
         </View>
-      <View style={styles.chatContent}>
-        <View style={styles.chatItemHeader}>
-          <Text style={styles.chatTitle} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.chatTime}>{formatChatTime(item.updated_at)}</Text>
+        <View style={styles.chatContent}>
+          <View style={styles.chatItemHeader}>
+            <Text style={styles.chatTitle} numberOfLines={1}>
+              {safeTitle}
+            </Text>
+            <Text style={styles.chatTime}>
+              {formatChatTime(safeUpdatedAt)}
+            </Text>
+          </View>
+          <View style={styles.chatFooter}>
+            <Text style={styles.lastMessage} numberOfLines={2}>
+              {safeLastMessage}
+            </Text>
+            {safeUnreadCount > 0 && (
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadText}>
+                  {String(safeUnreadCount)}
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
-        <View style={styles.chatFooter}>
-          <Text style={styles.lastMessage} numberOfLines={2}>{item.last_message}</Text>
-          {item.unread_count && item.unread_count > 0 && (
-            <View style={styles.unreadBadge}>
-              <Text style={styles.unreadText}>{item.unread_count}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
     );
   };
 
@@ -1104,17 +1852,18 @@ export default function ChatsScreen() {
     </View>
   );
 
-  const renderChatsList = () => (
+  const renderChatsList = () => {
+    return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Chats</Text>
+        <Text style={styles.headerTitle}>Quick Chat</Text>
         <TouchableOpacity style={styles.newChatButton} onPress={() => setShowNewChatModal(true)}>
           <Ionicons name="add" size={24} color="#007AFF" />
         </TouchableOpacity>
       </View>
 
       {/* Search Box with Quick Chat Types */}
-      <View style={styles.searchContainer}>
+      <View style={styles.searchInputContainer}>
         <View style={styles.searchInputContainer}>
           <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
           <TextInput
@@ -1125,7 +1874,7 @@ export default function ChatsScreen() {
             placeholderTextColor="#999"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearSearchButton}>
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchIcon}>
               <Ionicons name="close-circle" size={20} color="#666" />
             </TouchableOpacity>
           )}
@@ -1141,7 +1890,7 @@ export default function ChatsScreen() {
         <FlatList
           data={filteredChats}
           renderItem={renderChatItem}
-          keyExtractor={(item) => item.id.toString()}
+          keyExtractor={(item) => String(item?.id || Math.random())}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
@@ -1152,34 +1901,40 @@ export default function ChatsScreen() {
         />
       )}
     </SafeAreaView>
-  );
+    );
+  };
 
   const renderChatMessages = () => (
     <SafeAreaView style={styles.container} edges={['top']}>
+      {/* Chat Header */}
       <View style={styles.chatHeader}>
-        <TouchableOpacity style={styles.backButton} onPress={goBackToChats}>
+        <TouchableOpacity 
+          style={styles.backButton} 
+          onPress={() => setSelectedChat(null)}
+        >
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
-        <View style={styles.chatHeaderContent}>
-          <Text style={styles.chatHeaderTitle}>{selectedChat?.title}</Text>
-          <Text style={styles.chatHeaderSubtitle}>
-            {selectedChat?.type === 'ai_assistant' && 'AI Assistant'}
-            {selectedChat?.type === 'document_focused' && selectedChat.document_context && 
-              `Document: ${selectedChat.document_context.name}`}
-            {selectedChat?.type === 'workspace' && selectedChat.workspace && 
-              `Workspace: ${selectedChat.workspace.name}`}
-            {selectedChat?.type === 'user_direct' && selectedChat.participants.length > 0 && 
-              `Direct message with ${selectedChat.participants[0].username}`}
-            {selectedChat?.type === 'bookmark_focused' && selectedChat.bookmark_context && 
-              `Bookmark: ${selectedChat.bookmark_context.name} (${selectedChat.bookmark_context.file_count} files)`}
-            {(!selectedChat?.type || !['ai_assistant', 'document_focused', 'workspace', 'user_direct', 'bookmark_focused'].includes(selectedChat.type)) &&
-              'AI Assistant'
-            }
+        
+        <View style={styles.chatHeaderInfo}>
+          <Text style={styles.chatTitle}>{selectedChat?.title || 'Chat'}</Text>
+          <Text style={styles.chatSubtitle}>
+            {selectedChat?.type === 'ai_assistant' ? 'Chat Assistant' : 
+             selectedChat?.type === 'document_focused' ? 'Document Chat' :
+             selectedChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
+             selectedChat?.type === 'workspace' ? 'Workspace Chat' :
+             selectedChat?.type === 'user_direct' ? 'Direct Message' : 'Chat'}
           </Text>
         </View>
-        <TouchableOpacity style={styles.chatMenuButton}>
-          <Ionicons name="ellipsis-vertical" size={20} color="#007AFF" />
-        </TouchableOpacity>
+
+        {/* Search Type Menu for AI Assistant */}
+        {selectedChat?.type === 'ai_assistant' && (
+          <TouchableOpacity 
+            style={styles.searchTypeButton} 
+            onPress={handleSearchTypeMenuPress}
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+          </TouchableOpacity>
+        )}
       </View>
 
       <KeyboardAvoidingView 
@@ -1242,6 +1997,8 @@ export default function ChatsScreen() {
                 </View>
               </View>
             )}
+
+            {/* Progress tracking removed - only showing bouncing dots */}
           </>
         )}
 
@@ -1250,7 +2007,7 @@ export default function ChatsScreen() {
           <View style={styles.mentionDisplay}>
             <View style={styles.mentionChip}>
               <Ionicons 
-                name={getMentionIcon(selectedMention.type) as any} 
+                name={getMentionIcon(selectedMention.type) as keyof typeof Ionicons.glyphMap} 
                 size={16} 
                 color={getMentionColor(selectedMention.type)} 
               />
@@ -1292,78 +2049,85 @@ export default function ChatsScreen() {
           </View>
         )}
 
-        {/* Inline Mention Dropdown - Above input */}
-        {showMentionModal && (
-          <View style={styles.mentionDropdown}>
-            <FlatList
-              data={mentionResults}
-              keyExtractor={(item) => `${item.type}-${item.id}`}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.mentionDropdownItem}
-                  onPress={() => selectMention(item)}
-                >
-                  <View style={[styles.mentionDropdownIcon, { backgroundColor: `${getMentionColor(item.type)}20` }]}>
-                    <Ionicons 
-                      name={getMentionIcon(item.type) as any} 
-                      size={16} 
-                      color={getMentionColor(item.type)} 
-                    />
-                  </View>
-                  <View style={styles.mentionDropdownContent}>
-                    <Text style={styles.mentionDropdownTitle}>
-                      {item.type === 'file' ? truncateFilename(item.name) : item.name}
-                    </Text>
-                    <Text style={styles.mentionDropdownSubtitle}>{item.subtitle}</Text>
-                  </View>
-                  <Text style={styles.mentionDropdownType}>{item.type}</Text>
-                </TouchableOpacity>
-              )}
-              style={styles.mentionDropdownList}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
-                <View style={styles.mentionDropdownEmpty}>
-                  <Text style={styles.mentionDropdownEmptyText}>
-                    {mentionQuery.trim() ? 'No results found' : 'Type to search...'}
-                  </Text>
-                </View>
-              }
-            />
-          </View>
-        )}
-
         <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.messageInput}
-            value={newMessage}
-            onChangeText={handleMentionInput}
-            placeholder="Type a message or @ to mention..."
-            multiline
-            maxLength={1000}
-          />
-          <Animated.View
-            style={[
-              {
-                transform: [{ scale: bounceAnim }],
-              },
-            ]}
-          >
-            <TouchableOpacity
+          {/* Inline Mention Dropdown - Above text input */}
+          {showMentionModal && (
+            <View style={styles.mentionDropdown}>
+              <FlatList
+                data={mentionResults}
+                keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.mentionDropdownItem}
+                    onPress={() => selectMention(item)}
+                  >
+                    <View style={[styles.mentionDropdownIcon, { backgroundColor: `${getMentionColor(item.type)}20` }]}>
+                      <Ionicons 
+                        name={getMentionIcon(item.type) as keyof typeof Ionicons.glyphMap} 
+                        size={16} 
+                        color={getMentionColor(item.type)} 
+                      />
+                    </View>
+                    <View style={styles.mentionDropdownContent}>
+                      <Text style={styles.mentionDropdownTitle}>
+                        {item.type === 'file' ? truncateFilename(item.name) : item.name}
+                      </Text>
+                      <Text style={styles.mentionDropdownSubtitle}>{item.subtitle}</Text>
+                    </View>
+                    <Text style={styles.mentionDropdownType}>{item.type}</Text>
+                  </TouchableOpacity>
+                )}
+                style={styles.mentionDropdownList}
+                showsVerticalScrollIndicator={false}
+                ListEmptyComponent={
+                  <View style={styles.mentionDropdownEmpty}>
+                    <Text style={styles.mentionDropdownEmptyText}>
+                      {mentionQuery.trim() ? 'No results found' : 'Type to search...'}
+                    </Text>
+                  </View>
+                }
+              />
+            </View>
+          )}
+          
+          {/* Text input and send button row */}
+          <View style={styles.inputRow}>
+            <TextInput
+              style={[styles.messageInput, { height: Math.max(36, Math.min(80, textInputHeight)) }]}
+              value={newMessage}
+              onChangeText={handleMentionInput}
+              placeholder="Ask about documents, meeting transcripts, or @ to mention..."
+              multiline
+              maxLength={1000}
+              onContentSizeChange={(event) => {
+                const { height } = event.nativeEvent.contentSize;
+                setTextInputHeight(height);
+              }}
+            />
+            <Animated.View
               style={[
-                styles.sendButton, 
-                sendingMessage ? styles.sendButtonProcessing : styles.sendButtonNormal,
-                (!newMessage.trim() && !sendingMessage) && styles.sendButtonDisabled
+                {
+                  transform: [{ scale: bounceAnim }],
+                },
               ]}
-              onPress={sendingMessage ? stopProcessing : sendMessage}
-              disabled={!newMessage.trim() && !sendingMessage}
             >
-              {sendingMessage ? (
-                <Ionicons name="stop" size={20} color="#fff" />
-              ) : (
-                <Ionicons name="send" size={20} color="#fff" />
-              )}
-            </TouchableOpacity>
-          </Animated.View>
+              <TouchableOpacity
+                style={[
+                  styles.sendButton, 
+                  sendingMessage ? styles.sendButtonProcessing : styles.sendButtonNormal,
+                  (!newMessage.trim() && !sendingMessage) && styles.sendButtonDisabled
+                ]}
+                onPress={sendingMessage ? stopProcessing : sendMessage}
+                disabled={!newMessage.trim() && !sendingMessage}
+              >
+                {sendingMessage ? (
+                  <Ionicons name="stop" size={20} color="#fff" />
+                ) : (
+                  <Ionicons name="send" size={20} color="#fff" />
+                )}
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -1404,12 +2168,14 @@ export default function ChatsScreen() {
             style={[styles.optionItem, newChatType === 'ai_assistant' && styles.selectedOption]}
             onPress={() => setNewChatType('ai_assistant')}
           >
-            <Ionicons name="sparkles" size={24} color="#007AFF" />
+            <Ionicons name="chatbubbles" size={24} color="#007AFF" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.optionTitle}>AI Assistant</Text>
-              <Text style={styles.optionSubtitle}>Chat with AI about your documents</Text>
+              <Text style={styles.optionTitle}>Chat Assistant</Text>
+              <Text style={styles.optionSubtitle}>Chat with AI about your documents and meeting transcripts</Text>
             </View>
-            {newChatType === 'ai_assistant' && <Ionicons name="checkmark" size={24} color="#007AFF" />}
+            {newChatType === 'ai_assistant' && (
+              <Ionicons name="checkmark" size={24} color="#007AFF" />
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -1421,7 +2187,9 @@ export default function ChatsScreen() {
               <Text style={styles.optionTitle}>Document Focus</Text>
               <Text style={styles.optionSubtitle}>Ask questions about a specific document</Text>
             </View>
-            {newChatType === 'document_focused' && <Ionicons name="checkmark" size={24} color="#34C759" />}
+            {newChatType === 'document_focused' && (
+              <Ionicons name="checkmark" size={24} color="#34C759" />
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -1433,7 +2201,9 @@ export default function ChatsScreen() {
               <Text style={styles.optionTitle}>Workspace Chat</Text>
               <Text style={styles.optionSubtitle}>Message all team members in a workspace</Text>
             </View>
-            {newChatType === 'workspace' && <Ionicons name="checkmark" size={24} color="#FF9500" />}
+            {newChatType === 'workspace' && (
+              <Ionicons name="checkmark" size={24} color="#FF9500" />
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -1445,7 +2215,9 @@ export default function ChatsScreen() {
               <Text style={styles.optionTitle}>Direct Message</Text>
               <Text style={styles.optionSubtitle}>Send a private message to another user</Text>
             </View>
-            {newChatType === 'user_direct' && <Ionicons name="checkmark" size={24} color="#FF3B30" />}
+            {newChatType === 'user_direct' && (
+              <Ionicons name="checkmark" size={24} color="#FF3B30" />
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -1457,7 +2229,9 @@ export default function ChatsScreen() {
               <Text style={styles.optionTitle}>Bookmark Collection</Text>
               <Text style={styles.optionSubtitle}>Chat about a specific bookmark collection</Text>
             </View>
-            {newChatType === 'bookmark_focused' && <Ionicons name="checkmark" size={24} color="#AF52DE" />}
+            {newChatType === 'bookmark_focused' && (
+              <Ionicons name="checkmark" size={24} color="#AF52DE" />
+            )}
           </TouchableOpacity>
 
           {/* Document Selection for Document-Focused Chat */}
@@ -1487,7 +2261,9 @@ export default function ChatsScreen() {
                       <Text style={styles.optionTitle}>{doc.name}</Text>
                       <Text style={styles.optionSubtitle}>{doc.type} • {doc.size}</Text>
                     </View>
-                    {selectedDocument?.id === doc.id && <Ionicons name="checkmark" size={20} color="#34C759" />}
+                    {selectedDocument?.id === doc.id && (
+                      <Ionicons name="checkmark" size={20} color="#34C759" />
+                    )}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -1521,7 +2297,9 @@ export default function ChatsScreen() {
                       <Text style={styles.optionTitle}>{workspace.name}</Text>
                       <Text style={styles.optionSubtitle}>{workspace.member_count} members</Text>
                     </View>
-                    {selectedWorkspace?.id === workspace.id && <Ionicons name="checkmark" size={20} color="#FF9500" />}
+                    {selectedWorkspace?.id === workspace.id && (
+                      <Ionicons name="checkmark" size={20} color="#FF9500" />
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>
@@ -1558,7 +2336,9 @@ export default function ChatsScreen() {
                         <Text style={styles.optionTitle}>{user.username}</Text>
                         <Text style={styles.optionSubtitle}>{user.email}</Text>
                       </View>
-                      {selectedUser?.id === user.id && <Ionicons name="checkmark" size={20} color="#FF3B30" />}
+                      {selectedUser?.id === user.id && (
+                        <Ionicons name="checkmark" size={20} color="#FF3B30" />
+                      )}
                     </TouchableOpacity>
                   ))
                 )}
@@ -1593,7 +2373,9 @@ export default function ChatsScreen() {
                       <Text style={styles.optionTitle}>{bookmark.name}</Text>
                       <Text style={styles.optionSubtitle}>{bookmark.file_count} files • {bookmark.description}</Text>
                     </View>
-                    {selectedBookmark?.id === bookmark.id && <Ionicons name="checkmark" size={20} color="#AF52DE" />}
+                    {selectedBookmark?.id === bookmark.id && (
+                      <Ionicons name="checkmark" size={20} color="#AF52DE" />
+                    )}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -1605,11 +2387,54 @@ export default function ChatsScreen() {
     </Modal>
   );
 
+  const handleSearchTypeSelect = (searchType: 'exact' | 'refined' | 'expanded') => {
+    setSelectedSearchType(searchType);
+    setShowSearchTypeMenu(false);
+  };
+
+  const handleSearchTypeMenuPress = () => {
+    setShowSearchTypeMenu(!showSearchTypeMenu);
+  };
+
   // Show chat list or individual chat based on selection
   return (
     <>
       {selectedChat ? renderChatMessages() : renderChatsList()}
       {renderNewChatModal()}
+      {/* Search Type Menu Modal */}
+      <Modal
+        visible={showSearchTypeMenu}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowSearchTypeMenu(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowSearchTypeMenu(false)}
+        >
+          <View style={styles.searchTypeMenuContainer}>
+            {(['exact', 'refined', 'expanded'] as const).map((type) => {
+              const isSelected = selectedSearchType === type;
+              
+              return (
+                <TouchableOpacity
+                  key={type}
+                  style={[styles.searchTypeMenuItem, isSelected && styles.selectedSearchTypeItem]}
+                  onPress={() => handleSearchTypeSelect(type)}
+                >
+                  <Text style={[styles.searchTypeText, isSelected && styles.selectedSearchTypeText]}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </Text>
+                  {isSelected && (
+                    <Ionicons name="checkmark" size={16} color="#007AFF" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </>
   );
 }
@@ -1624,18 +2449,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#000',
   },
   newChatButton: {
-    padding: 8,
+    padding: 6,
   },
   loadingContainer: {
     flex: 1,
@@ -1643,7 +2468,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    marginTop: 8,
+    marginTop: 6,
     color: '#666',
   },
   chatsList: {
@@ -1652,19 +2477,19 @@ const styles = StyleSheet.create({
   chatItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
   chatAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#f0f8ff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 10,
   },
   chatContent: {
     flex: 1,
@@ -1673,16 +2498,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   chatTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#000',
     flex: 1,
   },
   chatTime: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#666',
   },
   chatFooter: {
@@ -1691,51 +2516,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   lastMessage: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#666',
     flex: 1,
   },
   unreadBadge: {
     backgroundColor: '#007AFF',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    borderRadius: 8,
+    minWidth: 18,
+    height: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
+    marginLeft: 6,
   },
   unreadText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
   },
   chatHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
     backgroundColor: '#fff',
   },
   backButton: {
-    padding: 8,
-    marginRight: 8,
+    padding: 6,
+    marginRight: 6,
   },
-  chatHeaderContent: {
+  chatHeaderInfo: {
     flex: 1,
   },
   chatHeaderTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#000',
   },
-  chatHeaderSubtitle: {
-    fontSize: 12,
+  chatSubtitle: {
+    fontSize: 11,
     color: '#666',
   },
-  chatMenuButton: {
-    padding: 8,
+  searchTypeButton: {
+    padding: 6,
   },
   chatContainer: {
     flex: 1,
@@ -1745,11 +2570,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   messagesContent: {
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   messageContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 3,
   },
   ownMessage: {
     alignItems: 'flex-end',
@@ -1759,10 +2584,10 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     maxWidth: '80%',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
-    marginVertical: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginVertical: 1,
   },
   ownBubble: {
     backgroundColor: '#007AFF',
@@ -1771,8 +2596,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
   },
   messageText: {
-    fontSize: 16,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 18,
   },
   ownMessageText: {
     color: '#fff',
@@ -1781,8 +2606,8 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   messageTime: {
-    fontSize: 12,
-    marginTop: 4,
+    fontSize: 11,
+    marginTop: 3,
   },
   ownMessageTime: {
     color: 'rgba(255, 255, 255, 0.7)',
@@ -1791,34 +2616,34 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingHorizontal: 8,
-    paddingVertical: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
-    minHeight: 64,
+    minHeight: 56,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
   },
   messageInput: {
     flex: 1,
     borderWidth: 1,
     borderColor: '#e0e0e0',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 40,
-    maxHeight: 100,
-    fontSize: 16,
+    borderRadius: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 14,
     backgroundColor: '#f8f8f8',
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 6,
+    marginLeft: 4,
   },
   sendButtonNormal: {
     backgroundColor: '#007AFF',
@@ -1829,129 +2654,178 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: '#ccc',
   },
-  optionItem: {
+  sendButtonText: {
+    color: '#fff',
+    fontSize: 16,
+  },
+  newChatModal: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  newChatHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: '#f8f8f8',
-    marginBottom: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
-  selectedOption: {
-    backgroundColor: '#e7f3ff',
-    borderWidth: 1,
-    borderColor: '#007AFF',
-  },
-  optionTitle: {
-    fontSize: 16,
+  newChatTitle: {
+    fontSize: 18,
     fontWeight: '600',
     color: '#000',
   },
-  optionSubtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
+  closeButton: {
+    padding: 8,
   },
-  searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+  newChatContent: {
+    flex: 1,
+    padding: 16,
+  },
+  chatTypeSection: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  chatTypeOptions: {
+    gap: 8,
+  },
+  chatTypeOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  selectedChatTypeOption: {
+    borderColor: '#007AFF',
+    backgroundColor: '#f0f8ff',
+  },
+  chatTypeIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  chatTypeContent: {
+    flex: 1,
+  },
+  chatTypeTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  chatTypeDescription: {
+    fontSize: 12,
+    color: '#666',
   },
   searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8f8f8',
+    backgroundColor: '#f8f9fa',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    marginBottom: 16,
   },
   searchIcon: {
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 16,
-    color: '#000',
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#333',
   },
-  clearSearchButton: {
-    marginLeft: 8,
-  },
-  quickChatButton: {
-    padding: 8,
-    marginRight: 8,
-    justifyContent: 'center',
+  optionItem: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 4,
   },
-  quickChatTypesContainer: {
-    position: 'absolute',
-    bottom: 60,
-    left: 16,
-    right: 16,
-    backgroundColor: '#fff',
-    borderRadius: 12,
+  selectedOption: {
+    backgroundColor: '#f0f8ff',
+  },
+  optionTitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 2,
+  },
+  optionSubtitle: {
+    fontSize: 12,
+    color: '#666',
+  },
+  createButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  createButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  disabledButton: {
+    backgroundColor: '#ccc',
+  },
+  disabledButtonText: {
+    color: '#999',
+  },
+  // Mention styles
+  mentionDisplay: {
+    paddingHorizontal: 12,
     paddingVertical: 8,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  mentionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f8ff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  mentionText: {
+    fontSize: 14,
+    color: '#007AFF',
+    marginLeft: 8,
+    flex: 1,
+  },
+  removeMentionButton: {
+    marginLeft: 8,
+    padding: 2,
+  },
+  mentionDropdown: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    maxHeight: 120,
+    marginBottom: 8,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-    zIndex: 1000,
-  },
-  quickChatTypeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  quickChatTypeIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  quickChatTypeContent: {
-    flex: 1,
-  },
-  quickChatTypeName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000',
-  },
-  quickChatTypeDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
-  },
-
-  // Inline mention dropdown styles
-  mentionDropdown: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: -2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5,
-    maxHeight: 150,
-    marginHorizontal: 8,
-    marginBottom: 8,
-  },
-  mentionDropdownList: {
-    borderRadius: 12,
   },
   mentionDropdownItem: {
     flexDirection: 'row',
@@ -1962,94 +2836,208 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f0f0f0',
   },
   mentionDropdownIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 12,
   },
   mentionDropdownContent: {
     flex: 1,
   },
   mentionDropdownTitle: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#000',
-  },
-  mentionDropdownSubtitle: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 1,
+    fontWeight: '500',
+    color: '#333',
   },
   mentionDropdownType: {
-    fontSize: 11,
-    color: '#999',
-    textTransform: 'capitalize',
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  mentionDropdownList: {
+    maxHeight: 120,
   },
   mentionDropdownEmpty: {
-    paddingVertical: 20,
+    padding: 16,
     alignItems: 'center',
   },
   mentionDropdownEmptyText: {
     fontSize: 14,
     color: '#666',
-    textAlign: 'center',
+    fontStyle: 'italic',
   },
-  // Selected mention display styles
-  mentionDisplay: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#f8f9fa',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
+  mentionDropdownName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
   },
-  mentionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  mentionDropdownSubtitle: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  quickChatTypesContainer: {
     backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e0e0e0',
-    alignSelf: 'flex-start',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  mentionText: {
-    marginLeft: 8,
-    marginRight: 8,
+  quickChatTypeItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  quickChatTypeIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  quickChatTypeContent: {
+    flex: 1,
+  },
+  quickChatTypeName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  quickChatTypeDescription: {
+    fontSize: 12,
+    color: '#666',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchTypeMenuContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 8,
+    minWidth: 120,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  searchTypeMenuTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 16,
+  },
+  searchTypeMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  selectedSearchTypeItem: {
+    backgroundColor: '#f0f8ff',
+  },
+  searchTypeText: {
     fontSize: 14,
     color: '#333',
   },
-  removeMentionButton: {
-    padding: 2,
+  selectedSearchTypeText: {
+    color: '#007AFF',
+    fontWeight: '600',
   },
-  
+  searchTypeDescription: {
+    fontSize: 12,
+    color: '#666',
+  },
   // Bouncing balls animation styles
   bouncingBallsContainer: {
     alignItems: 'center',
     paddingVertical: 16,
-    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 20,
   },
   bouncingBallsWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    gap: 8,
   },
   bouncingBall: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#007AFF',
-    marginHorizontal: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
   },
   processingText: {
     fontSize: 14,
     color: '#666',
-    fontStyle: 'italic',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  progressContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    marginTop: 16,
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  progressTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  progressSubtitle: {
+    fontSize: 12,
+    color: '#666',
+  },
+  progressBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  progressBar: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#007AFF',
+  },
+  progressPercentage: {
+    fontSize: 12,
+    color: '#333',
+    marginLeft: 8,
+  },
+  progressMessage: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
   },
 }); 

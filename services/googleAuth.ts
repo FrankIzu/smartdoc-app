@@ -1,5 +1,6 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 import { API_BASE_URL, GOOGLE_CLIENT_ID } from '../constants/Config';
 import { deviceSecurityService } from './deviceSecurity';
 
@@ -56,11 +57,21 @@ class GoogleAuthService {
     };
 
     console.log('Google Auth initialized with redirect URI:', this.config.redirectUri);
-    this.initializeAuth();
+    
+    // Only initialize on client-side (avoid SSR issues)
+    if (Platform.OS !== 'web' || typeof window !== 'undefined') {
+      this.initializeAuth();
+    }
   }
 
   private async initializeAuth() {
     try {
+      // Only proceed if we're in a proper client environment
+      if (Platform.OS === 'web' && typeof window === 'undefined') {
+        console.log('Skipping Google Auth initialization on server-side');
+        return;
+      }
+
       // Set up WebBrowser for better UX
       WebBrowser.maybeCompleteAuthSession();
 
@@ -90,6 +101,14 @@ class GoogleAuthService {
 
   async signInWithGoogle(): Promise<GoogleAuthResult> {
     try {
+      // Check if we're in a proper client environment
+      if (Platform.OS === 'web' && typeof window === 'undefined') {
+        return {
+          success: false,
+          error: 'Google OAuth is not available on server-side rendering',
+        };
+      }
+
       // Check if client ID is properly configured
       if (!this.config.clientId || this.config.clientId === '') {
         return {
@@ -401,6 +420,6 @@ export default googleAuthService;
 
 // Export types
 export type {
-  GoogleAuthConfig, GoogleAuthResult, GoogleUserInfo, MobileGoogleLoginResponse
+    GoogleAuthConfig, GoogleAuthResult, GoogleUserInfo, MobileGoogleLoginResponse
 };
 

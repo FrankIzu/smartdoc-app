@@ -1,0 +1,33 @@
+[33mcommit 035d8d571d8a6e77a78ba68b57e31f179dac5672[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrancis[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/francis[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: GrabDocs Developer <dev@grabdocs.com>
+Date:   Tue Jul 8 03:53:00 2025 -0400
+
+    Pre-check all file type checkboxes by default in upload link form
+
+GOOGLE_OAUTH_SETUP.md
+MOBILE_OTP_IMPLEMENTATION.md
+app/(auth)/_layout.tsx
+app/(auth)/otp-verification.tsx
+app/(auth)/phone-login.tsx
+app/(auth)/sign-in.tsx
+app/(auth)/sign-up.tsx
+app/(tabs)/documents.tsx
+app/(tabs)/index.tsx
+app/(tabs)/settings.tsx
+app/analytics/dashboard.tsx
+app/documents/process-scan.tsx
+app/documents/upload.tsx
+app/forms/builder.tsx
+app/forms/create.tsx
+app/public-upload.tsx
+app/upload-links/[id].tsx
+app/upload-links/create.tsx
+app/upload-links/index.tsx
+app/workspaces/[id].tsx
+app/workspaces/create.tsx
+app/workspaces/index.tsx
+components/Scanner.tsx
+constants/Config.ts
+package-lock.json
+package.json
+services/googleAuth.ts

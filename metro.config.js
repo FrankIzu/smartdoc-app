@@ -45,7 +45,7 @@ if (process.env.NODE_ENV === 'development') {
     ...config.server,
     rewriteRequestUrl: (url) => {
       if (url.startsWith('/api/')) {
-        return `http://192.168.1.3:5000${url}`;
+        return `http://192.168.62.96:5000${url}`;
       }
       return url;
     },

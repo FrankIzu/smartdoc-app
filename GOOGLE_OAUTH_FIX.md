@@ -4,7 +4,7 @@
 Google Sign-In is failing with "Error 400: invalid_request" because the redirect URI is not properly configured.
 
 **Error Details:**
-- `redirect_uri=exp://192.168.1.3:8081/--/auth`
+- `redirect_uri=exp://192.168.1.7:8081/--/auth`
 - This redirect URI is not registered with the Google OAuth client
 
 ## Root Cause
@@ -29,7 +29,7 @@ The app is trying to use Expo's development client ID (`603386649315-vp4revvrcgr
 Add these redirect URIs to your OAuth client:
 ```
 https://auth.expo.io/@your-expo-username/grabdocs
-exp://192.168.1.3:8081/--/auth
+exp://192.168.1.7:8081/--/auth
 exp://localhost:8081/--/auth
 ```
 
