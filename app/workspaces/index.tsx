@@ -43,14 +43,21 @@ export default function WorkspacesScreen() {
     
     try {
       const response = await apiService.getMobileWorkspaces();
-      if (response.success) {
-        setWorkspaces(response.workspaces || []);
+      if (response.success && response.data) {
+        // Handle both response structures: data as array or data.workspaces
+        const workspacesData = Array.isArray(response.data) 
+          ? response.data 
+          : (response.data.workspaces || []);
+        
+        console.log('✅ Loaded workspaces:', workspacesData.length);
+        setWorkspaces(workspacesData);
       } else {
-        Alert.alert('Error', response.message || 'Failed to load workspaces');
+        console.log('❌ No workspaces found:', response);
+        setWorkspaces([]);
       }
     } catch (error: any) {
-      console.error('Load workspaces error:', error);
-      Alert.alert('Error', error.message || 'Failed to load workspaces');
+      console.error('❌ Failed to load workspaces:', error);
+      setWorkspaces([]);
     } finally {
       setLoading(false);
       setRefreshing(false);

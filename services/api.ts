@@ -738,11 +738,13 @@ class ApiService {
   
   async getMobileWorkspaces(): Promise<ApiResponse> {
     try {
+      console.log('🔄 Loading workspaces from:', MOBILE_ENDPOINTS.WORKSPACES);
       // Use proper mobile endpoint
       const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACES);
+      console.log('📋 Workspaces API response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error: any) {
-      console.error('Get mobile workspaces error:', error);
+      console.error('❌ Get mobile workspaces error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch workspaces');
     }
   }
