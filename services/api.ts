@@ -714,6 +714,26 @@ class ApiService {
     }
   }
 
+  async createBookmark(bookmarkData: { name: string; description?: string; color: string }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.BOOKMARKS, bookmarkData);
+      return response.data;
+    } catch (error: any) {
+      console.error('Create bookmark error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to create bookmark');
+    }
+  }
+
+  async deleteBookmark(bookmarkId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete bookmark error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to delete bookmark');
+    }
+  }
+
   // ==================== MOBILE WORKSPACES ====================
   
   async getMobileWorkspaces(): Promise<ApiResponse> {
