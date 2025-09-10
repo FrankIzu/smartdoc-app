@@ -170,6 +170,10 @@ export default function MeetingCallScreen() {
   }, []);
 
   const createMeeting = () => {
+    router.push('./create-meeting' as any);
+  };
+
+  const scheduleMeeting = () => {
     router.push('./schedule-meeting' as any);
   };
 
@@ -520,7 +524,7 @@ export default function MeetingCallScreen() {
           <Text style={styles.actionButtonText}>Join</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.actionButton} onPress={() => router.push('./schedule-meeting' as any)}>
+        <TouchableOpacity style={styles.actionButton} onPress={scheduleMeeting}>
           <Ionicons name="calendar" size={32} color="#FF9500" />
           <Text style={styles.actionButtonText}>Schedule</Text>
         </TouchableOpacity>
@@ -586,51 +590,53 @@ export default function MeetingCallScreen() {
       <Modal
         visible={showJoinModal}
         animationType="slide"
-        presentationStyle="pageSheet"
+        transparent={true}
         onRequestClose={() => setShowJoinModal(false)}
       >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowJoinModal(false)}>
-              <Text style={styles.cancelButton}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Join Meeting</Text>
-            <TouchableOpacity 
-              onPress={joinMeetingById}
-              disabled={!meetingId.trim()}
-            >
-              <Text style={[
-                styles.joinButton,
-                !meetingId.trim() && styles.joinButtonDisabled
-              ]}>
-                Join
-              </Text>
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.modalContent}>
-            <Text style={styles.inputLabel}>Meeting ID</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter meeting ID"
-              value={meetingId}
-              onChangeText={setMeetingId}
-              autoFocus
-              keyboardType="numeric"
-              autoCapitalize="none"
-            />
+        <View style={styles.modalOverlay}>
+          <View style={styles.joinModalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowJoinModal(false)}>
+                <Text style={styles.cancelButton}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Join Meeting</Text>
+              <TouchableOpacity 
+                onPress={joinMeetingById}
+                disabled={!meetingId.trim()}
+              >
+                <Text style={[
+                  styles.joinButton,
+                  !meetingId.trim() && styles.joinButtonDisabled
+                ]}>
+                  Join
+                </Text>
+              </TouchableOpacity>
+            </View>
             
-            <Text style={styles.inputLabel}>Passcode (Optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter meeting passcode"
-              value={meetingPassword}
-              onChangeText={setMeetingPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
+            <View style={styles.modalContent}>
+              <Text style={styles.inputLabel}>Meeting ID</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter meeting ID"
+                value={meetingId}
+                onChangeText={setMeetingId}
+                autoFocus
+                keyboardType="numeric"
+                autoCapitalize="none"
+              />
+              
+              <Text style={styles.inputLabel}>Passcode (Optional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter meeting passcode"
+                value={meetingPassword}
+                onChangeText={setMeetingPassword}
+                secureTextEntry
+                autoCapitalize="none"
+              />
+            </View>
           </View>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* Invite Modal */}
@@ -888,6 +894,24 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  joinModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginHorizontal: 20,
+    width: '90%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   modalContainer: {
     flex: 1,

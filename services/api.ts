@@ -60,6 +60,7 @@ const MOBILE_ENDPOINTS = {
   // Chat
   CHAT_HISTORY: '/api/v1/mobile/chat/history',
   CHAT_SEND: '/api/v1/mobile/chat/send',
+  CHAT_SMART_STREAM: '/api/v1/mobile/chat/smart/stream',
   
   // Forms
   FORMS: '/api/v1/mobile/forms',
@@ -515,11 +516,38 @@ class ApiService {
 
   async sendChatMessage(message: string, filters?: any, signal?: AbortSignal): Promise<ApiResponse> {
     try {
-      const payload: any = { message };
+      const payload: any = { 
+        message,
+        response_mode: 'flexible' // Use same response mode as web
+      };
+      
+      // Map filters to the same format as web
       if (filters) {
-        payload.filters = filters;
+        if (filters.context_file_ids) {
+          payload.context_file_ids = filters.context_file_ids;
+        }
+        if (filters.context_bookmark_ids) {
+          payload.context_bookmark_ids = filters.context_bookmark_ids;
+        }
+        if (filters.context_transcript_ids) {
+          payload.context_transcript_ids = filters.context_transcript_ids;
+        }
+        if (filters.search_type) {
+          payload.search_type = filters.search_type;
+        }
+        if (filters.chat_history_id) {
+          payload.chat_history_id = filters.chat_history_id;
+        }
+        // Map other filter properties
+        Object.keys(filters).forEach(key => {
+          if (!['context_file_ids', 'context_bookmark_ids', 'context_transcript_ids', 'search_type', 'chat_history_id'].includes(key)) {
+            payload[key] = filters[key];
+          }
+        });
       }
-      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, payload, {
+      
+      // Use the new streaming endpoint that calls smart_chat_stream()
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SMART_STREAM, payload, {
         signal
       });
       return response.data;
