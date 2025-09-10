@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
+import { useAuth } from '../context/auth';
 
 interface Meeting {
   id: string;
@@ -23,8 +24,8 @@ interface Meeting {
   participants: number;
   startTime: string;
   endTime?: string;
-  status: 'scheduled' | 'ongoing' | 'live' | 'ended' | 'upcoming' | 'active';
-  password?: string;
+  status: 'scheduled' | 'created' | 'active' | 'ended';
+  passcode?: string;
   roomUrl?: string;
   description?: string;
   duration?: number;
@@ -33,6 +34,8 @@ interface Meeting {
 
 export default function MeetingCallScreen() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const isAuthenticated = !!user;
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [upcomingMeetings, setUpcomingMeetings] = useState<Meeting[]>([]);
   const [ongoingMeetings, setOngoingMeetings] = useState<Meeting[]>([]);
@@ -47,10 +50,21 @@ export default function MeetingCallScreen() {
   const [inviteMessage, setInviteMessage] = useState('');
 
   useEffect(() => {
-    loadMeetings();
-  }, []);
+    if (isAuthenticated) {
+      loadMeetings();
+    } else {
+      setLoading(false);
+    }
+  }, [isAuthenticated]);
 
   const loadMeetings = async () => {
+    if (!isAuthenticated) {
+      console.log('📱 User not authenticated, skipping meetings load');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     try {
       setLoading(true);
       
@@ -71,10 +85,10 @@ export default function MeetingCallScreen() {
         
         // Filter meetings by status
         const upcoming = sortedMeetings.filter((m: Meeting) => 
-          m.status === 'scheduled' || m.status === 'upcoming'
+          m.status === 'scheduled' || m.status === 'created'
         );
         const ongoing = sortedMeetings.filter((m: Meeting) => 
-          m.status === 'ongoing' || m.status === 'live' || m.status === 'active'
+          m.status === 'active'
         );
         
         setUpcomingMeetings(upcoming);
@@ -85,6 +99,14 @@ export default function MeetingCallScreen() {
           upcoming: upcoming.length,
           ongoing: ongoing.length
         });
+        
+        // Debug: Log the actual status values from backend
+        console.log('📱 Meeting statuses from backend:', sortedMeetings.map((m: Meeting) => ({
+          title: m.title,
+          status: m.status,
+          startTime: m.startTime,
+          displayStatus: m.status.toUpperCase()
+        })));
       } else {
         // No meetings found - show empty state
         setMeetings([]);
@@ -92,12 +114,50 @@ export default function MeetingCallScreen() {
         setOngoingMeetings([]);
         console.log('📱 No meetings found in database');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load meetings from database:', error);
-      // On error - show empty state
-      setMeetings([]);
-      setUpcomingMeetings([]);
-      setOngoingMeetings([]);
+      console.error('Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          headers: error.config?.headers
+        }
+      });
+      
+      // Check if it's an authentication error
+      if (error.response?.status === 401 || error.message?.includes('Not authenticated')) {
+        console.log('📱 Authentication required for meetings');
+        Alert.alert(
+          'Authentication Required',
+          'Please log in to view your meetings.',
+          [
+            { text: 'OK', onPress: () => router.push('/(auth)/sign-in') }
+          ]
+        );
+      } else if (error.response?.status === 500) {
+        console.log('📱 Server error (500) - backend issue');
+        Alert.alert(
+          'Server Error',
+          'There was a server error loading meetings. Please try again later.',
+          [
+            { text: 'OK' }
+          ]
+        );
+        // Show empty state for server errors
+        setMeetings([]);
+        setUpcomingMeetings([]);
+        setOngoingMeetings([]);
+      } else {
+        // Other errors - show empty state
+        console.log('📱 Other error loading meetings:', error.response?.status);
+        setMeetings([]);
+        setUpcomingMeetings([]);
+        setOngoingMeetings([]);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -114,51 +174,45 @@ export default function MeetingCallScreen() {
   };
 
   const joinMeeting = (meeting: Meeting) => {
-    if (meeting.status === 'ongoing' || meeting.status === 'live') {
-      // Join ongoing meeting directly
-      router.push({
-        pathname: '/quick-reach/meeting-interface',
-        params: {
-          meetingId: meeting.meetingId,
-          title: meeting.title,
-          password: meeting.password || ''
-        }
-      });
-    } else {
-      // For scheduled meetings, may need password
-      if (meeting.password) {
-        // Show password prompt
-        Alert.prompt(
-          'Meeting Password',
-          'Enter the meeting password:',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Join', 
-              onPress: (password) => {
+    // Check if meeting is private and requires passcode
+    if (meeting.passcode) {
+      // Show passcode prompt for private meetings
+      Alert.prompt(
+        'Meeting Passcode',
+        'This is a private meeting. Enter the passcode:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Join', 
+            onPress: (passcode) => {
+              if (passcode) {
                 router.push({
-                  pathname: './meeting-interface' as any,
+                  pathname: './hms-meeting-interface',
                   params: {
                     meetingId: meeting.meetingId,
                     title: meeting.title,
-                    password: password || ''
+                    userName: 'Mobile User',
+                    passcode: passcode
                   }
                 });
+              } else {
+                Alert.alert('Error', 'Passcode is required for private meetings');
               }
             }
-          ],
-          'secure-text'
-        );
-      } else {
-        router.push({
-          pathname: './meeting-interface' as any,
-          params: {
-            meetingId: meeting.meetingId,
-            title: meeting.title,
-            password: ''
           }
-        });
-      }
+        ],
+        'secure-text'
+      );
+    } else {
+      // Public meeting - join directly without passcode
+      router.push({
+        pathname: './hms-meeting-interface',
+        params: {
+          meetingId: meeting.meetingId,
+          title: meeting.title,
+          userName: 'Mobile User'
+        }
+      });
     }
   };
 
@@ -171,7 +225,7 @@ export default function MeetingCallScreen() {
     try {
       const response = await apiClient.joinMeeting({
         meetingId: meetingId.trim(),
-        password: meetingPassword.trim()
+        passcode: meetingPassword.trim()
       });
 
       if (response.success && response.data) {
@@ -180,19 +234,19 @@ export default function MeetingCallScreen() {
         setMeetingPassword('');
         
         router.push({
-          pathname: './meeting-interface' as any,
+          pathname: './hms-meeting-interface',
           params: {
             meetingId: response.data.meetingId || meetingId.trim(),
             title: response.data.title || 'Meeting',
-            password: meetingPassword.trim()
+            userName: 'Mobile User'
           }
         });
       } else {
-        Alert.alert('Error', response.message || 'Invalid meeting ID or password');
+        Alert.alert('Error', response.message || 'Invalid meeting ID or passcode');
       }
     } catch (error) {
       console.error('Failed to join meeting:', error);
-      Alert.alert('Error', 'Failed to join meeting. Please check the meeting ID and password.');
+      Alert.alert('Error', 'Failed to join meeting. Please check the meeting ID and passcode.');
     }
   };
 
@@ -207,7 +261,10 @@ export default function MeetingCallScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const response = await apiClient.endMeeting(meeting.meetingId);
+              // Try using the id field instead of meetingId since backend expects room_id
+              const roomId = meeting.id || meeting.meetingId;
+              console.log('Ending meeting with ID:', roomId, 'from meeting:', meeting);
+              const response = await apiClient.endMeeting(roomId);
               if (response.success) {
                 Alert.alert('Success', 'Meeting ended successfully');
                 loadMeetings(); // Refresh the list
@@ -291,10 +348,10 @@ export default function MeetingCallScreen() {
 
   const renderMeetingCard = ({ item }: { item: Meeting }) => (
     <TouchableOpacity
-      style={[styles.meetingCard, (item.status === 'ongoing' || item.status === 'live') && styles.ongoingMeeting]}
+      style={[styles.meetingCard, item.status === 'active' && styles.ongoingMeeting]}
       onPress={() => joinMeeting(item)}
       onLongPress={() => {
-        const isLive = item.status === 'ongoing' || item.status === 'live';
+        const isLive = item.status === 'active';
         const buttons = [
           { text: 'Cancel', style: 'cancel' as const },
           { text: 'Join', onPress: () => joinMeeting(item) },
@@ -318,11 +375,14 @@ export default function MeetingCallScreen() {
         <View 
           style={[
             styles.statusBadge, 
-            (item.status === 'ongoing' || item.status === 'live') ? styles.statusOngoing : styles.statusScheduled
+            item.status === 'active' ? styles.statusOngoing : 
+            item.status === 'ended' ? styles.statusEnded :
+            item.status === 'created' ? styles.statusCreated :
+            styles.statusScheduled
           ]}
         >
           <Text style={styles.statusText}>
-            {(item.status === 'ongoing' || item.status === 'live') ? 'LIVE' : 'SCHED'}
+            {item.status.toUpperCase()}
           </Text>
         </View>
       </View>
@@ -385,6 +445,34 @@ export default function MeetingCallScreen() {
       )}
     </View>
   );
+
+  // Show authentication required message if not logged in
+  if (!isAuthenticated) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Meeting Call</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+        <View style={styles.loadingContainer}>
+          <Ionicons name="lock-closed" size={64} color="#999" />
+          <Text style={styles.loadingText}>Authentication Required</Text>
+          <Text style={[styles.loadingText, { fontSize: 16, color: '#666', marginTop: 8 }]}>
+            Please log in to view your meetings
+          </Text>
+          <TouchableOpacity 
+            style={[styles.actionButton, { marginTop: 20 }]} 
+            onPress={() => router.push('/(auth)/sign-in')}
+          >
+            <Text style={styles.actionButtonText}>Sign In</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (loading) {
     return (
@@ -532,10 +620,10 @@ export default function MeetingCallScreen() {
               autoCapitalize="none"
             />
             
-            <Text style={styles.inputLabel}>Password (Optional)</Text>
+            <Text style={styles.inputLabel}>Passcode (Optional)</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter meeting password"
+              placeholder="Enter meeting passcode"
               value={meetingPassword}
               onChangeText={setMeetingPassword}
               secureTextEntry
@@ -727,6 +815,12 @@ const styles = StyleSheet.create({
   },
   statusScheduled: {
     backgroundColor: '#007AFF',
+  },
+  statusCreated: {
+    backgroundColor: '#FF9500',
+  },
+  statusEnded: {
+    backgroundColor: '#8E8E93',
   },
   statusText: {
     fontSize: 10,

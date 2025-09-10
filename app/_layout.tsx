@@ -25,18 +25,7 @@ import { AuthProvider, useAuth } from './context/auth';
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
-  const { loading } = useAuth();
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
-
-  useEffect(() => {
-    if (!loading) {
-      SplashScreen.hideAsync();
-    }
-  }, [loading]);
-
-  if (loading) {
-    return null;
-  }
 
   return (
     <>
@@ -58,13 +47,29 @@ function RootLayoutNav() {
   );
 }
 
+function AuthWrapper() {
+  const { loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading) {
+      SplashScreen.hideAsync();
+    }
+  }, [loading]);
+
+  if (loading) {
+    return null;
+  }
+
+  return <RootLayoutNav />;
+}
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AuthProvider>
           <Enhanced2FAAuthProvider>
-            <RootLayoutNav />
+            <AuthWrapper />
           </Enhanced2FAAuthProvider>
         </AuthProvider>
       </SafeAreaProvider>

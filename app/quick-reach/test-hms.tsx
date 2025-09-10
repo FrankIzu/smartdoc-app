@@ -46,7 +46,7 @@ export default function TestHMSScreen() {
             text: 'Go to Meeting',
             onPress: () => {
               router.push({
-                pathname: '/quick-reach/hms-meeting-interface',
+                pathname: './hms-meeting-interface',
                 params: {
                   meetingId: roomCode.trim(),
                   title: 'Test Meeting',

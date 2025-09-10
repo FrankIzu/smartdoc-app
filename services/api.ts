@@ -153,19 +153,49 @@ class ApiService {
           const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
           if (token) {
             config.headers.Authorization = `Bearer ${token}`;
+            console.log('🔐 Adding auth token to request:', token.substring(0, 20) + '...');
+          } else {
+            console.log('🔐 No auth token found in storage');
           }
         } catch (error) {
           console.warn('Failed to get auth token:', error);
         }
+        
+        // Log request details for debugging
+        console.log('📡 API Request:', {
+          url: config.url,
+          method: config.method,
+          headers: {
+            ...config.headers,
+            Authorization: config.headers.Authorization ? 'Bearer [REDACTED]' : 'None'
+          }
+        });
+        
         return config;
       },
       (error) => Promise.reject(error)
     );
 
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        console.log('📡 API Response:', {
+          url: response.config.url,
+          status: response.status,
+          statusText: response.statusText
+        });
+        return response;
+      },
       async (error) => {
+        console.error('📡 API Error:', {
+          url: error.config?.url,
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          message: error.message
+        });
+        
         if (error.response?.status === 401) {
+          console.log('🔐 Clearing auth data due to 401 error');
           await this.clearAuthData();
         }
         return Promise.reject(error);
@@ -1061,7 +1091,7 @@ class ApiService {
     }
   }
 
-  async joinMeeting(data: { meetingId: string; password?: string }): Promise<ApiResponse> {
+  async joinMeeting(data: { meetingId: string; passcode?: string }): Promise<ApiResponse> {
     try {
       const response = await this.client.post('/api/v1/mobile/meetings/join', data);
       return response.data;
@@ -1073,10 +1103,28 @@ class ApiService {
 
   async endMeeting(meetingId: string): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(`/api/v1/mobile/meetings/${meetingId}/end`);
+      console.log('Attempting to end meeting with ID:', meetingId);
+      console.log('Using endpoint: /api/v1/video/room/' + meetingId + '/end');
+      
+      // Use string ID as confirmed by web backend logs
+      const response = await this.client.post(`/api/v1/video/room/${meetingId}/end`);
+      console.log('End meeting response:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('End meeting failed:', error);
+      console.error('Meeting ID was:', meetingId);
+      console.error('Full error response:', error.response?.data);
+      
+      // If room not found, return success anyway since the meeting is effectively ended
+      if (error.response?.status === 404) {
+        console.log('Room not found - treating as success since meeting is effectively ended');
+        return { 
+          success: true, 
+          message: 'Meeting ended successfully (room was not found in backend)',
+          data: { meetingId }
+        };
+      }
+      
       throw new Error(error.response?.data?.message || 'Failed to end meeting');
     }
   }

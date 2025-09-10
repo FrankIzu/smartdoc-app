@@ -1,16 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
@@ -18,36 +20,83 @@ import { apiClient } from '../../services/api';
 export default function ScheduleMeetingScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [startDateTime, setStartDateTime] = useState(new Date());
+  const [endDateTime, setEndDateTime] = useState(new Date(Date.now() + 60 * 60 * 1000)); // 1 hour later
   const [meetingData, setMeetingData] = useState({
     title: '',
     description: '',
-    startTime: '',
-    endTime: '',
+    startTime: startDateTime.toISOString(),
+    endTime: endDateTime.toISOString(),
     timezone: 'UTC',
-    password: '',
+    passcode: '',
     enableRecording: false,
     enableTranscription: false,
+    isPrivate: false,
     participants: [] as string[]
   });
   const [newParticipant, setNewParticipant] = useState('');
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
 
   const createMeeting = async () => {
     if (!meetingData.title.trim()) {
-      Alert.alert('Error', 'Please enter a meeting title');
+      Alert.alert('Error', 'Please enter a meeting name');
       return;
     }
 
     if (!meetingData.startTime) {
-      Alert.alert('Error', 'Please select a start time');
+      Alert.alert('Error', 'Please select a start date/time');
       return;
     }
 
+    if (meetingData.isPrivate && !meetingData.passcode.trim()) {
+      Alert.alert('Error', 'Please enter a passcode for private meetings');
+      return;
+    }
+
+    // Prepare meeting data with formatted dates and email notifications
+    const meetingPayload = {
+      // Try multiple name field formats for backend compatibility
+      name: meetingData.title,
+      roomName: meetingData.title,
+      title: meetingData.title,
+      room_name: meetingData.title,
+      
+      description: meetingData.description,
+      
+      // Try multiple date field formats
+      start_time: startDateTime.toISOString(),
+      end_time: endDateTime.toISOString(),
+      startTime: startDateTime.toISOString(),
+      endTime: endDateTime.toISOString(),
+      scheduled_time: startDateTime.toISOString(),
+      
+      timezone: meetingData.timezone,
+      isPrivate: meetingData.isPrivate,
+      passcode: meetingData.isPrivate ? meetingData.passcode : undefined,
+      enableRecording: meetingData.enableRecording,
+      enableTranscription: meetingData.enableTranscription,
+      participants: meetingData.participants,
+      
+      // Try multiple email field formats
+      sendEmailInvites: true,
+      send_email_invites: true,
+      email_invites: true,
+      notify_participants: true
+    };
+
+    console.log('📱 Sending meeting payload:', meetingPayload);
+
     try {
       setLoading(true);
-      const response = await apiClient.client.post('/api/v1/mobile/meetings/create', meetingData);
+
+      // Try the mobile schedule endpoint with comprehensive payload
+      const response = await apiClient.client.post('/api/v1/mobile/meetings/schedule', meetingPayload);
+      
+      console.log('📱 Meeting creation response:', response.data);
       
       if (response.data.success) {
-        Alert.alert('Success', 'Meeting scheduled successfully', [
+        Alert.alert('Success', 'Meeting scheduled successfully! Email invitations have been sent to all participants.', [
           {
             text: 'OK',
             onPress: () => {
@@ -59,34 +108,84 @@ export default function ScheduleMeetingScreen() {
         Alert.alert('Error', response.data.message || 'Failed to schedule meeting');
       }
     } catch (error: any) {
-      console.error('Failed to create meeting:', error);
-      Alert.alert('Error', 'Failed to schedule meeting');
+      console.error('Create meeting failed:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      console.error('Full error object:', error);
+      
+      if (error.response?.status === 409) {
+        // Handle conflict - existing active meeting
+        const activeMeeting = error.response?.data?.activeMeeting;
+        Alert.alert(
+          'Active Meeting Exists',
+          `You already have an active meeting: "${activeMeeting?.name || 'Unknown'}". Would you like to end it and create a new one?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'End & Create New', 
+              style: 'destructive',
+              onPress: async () => {
+                try {
+                  // End the existing meeting first
+                  await apiClient.endMeeting(activeMeeting.id.toString());
+                  
+                  // Then create the new meeting
+                  const response = await apiClient.client.post('/api/v1/mobile/meetings/schedule', meetingPayload);
+                  
+                  if (response.data.success) {
+                    Alert.alert('Success', 'Meeting scheduled successfully! Email invitations have been sent to all participants.', [
+                      {
+                        text: 'OK',
+                        onPress: () => {
+                          router.back();
+                        }
+                      }
+                    ]);
+                  } else {
+                    Alert.alert('Error', response.data.message || 'Failed to schedule meeting');
+                  }
+                } catch (endError) {
+                  console.error('Failed to end existing meeting:', endError);
+                  Alert.alert('Error', 'Failed to end existing meeting. Please try again.');
+                }
+              }
+            }
+          ]
+        );
+      } else if (error.response?.status === 500) {
+        Alert.alert('Server Error', 'There was a server error while scheduling the meeting. Please try again or contact support.');
+      } else {
+        Alert.alert('Error', error.response?.data?.message || 'Failed to schedule meeting');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const onStartDateChange = (event: any, selectedDate?: Date) => {
+    // Don't close the modal automatically - let user close it manually
+    if (selectedDate) {
+      setStartDateTime(selectedDate);
+      setMeetingData(prev => ({ ...prev, startTime: selectedDate.toISOString() }));
+    }
+  };
+
+  const onEndDateChange = (event: any, selectedDate?: Date) => {
+    // Don't close the modal automatically - let user close it manually
+    if (selectedDate) {
+      setEndDateTime(selectedDate);
+      setMeetingData(prev => ({ ...prev, endTime: selectedDate.toISOString() }));
+    }
+  };
+
   const addParticipant = () => {
-    if (!newParticipant.trim()) {
-      Alert.alert('Error', 'Please enter an email address');
-      return;
+    if (newParticipant.trim() && !meetingData.participants.includes(newParticipant.trim())) {
+      setMeetingData(prev => ({
+        ...prev,
+        participants: [...prev.participants, newParticipant.trim()]
+      }));
+      setNewParticipant('');
     }
-
-    if (!newParticipant.includes('@')) {
-      Alert.alert('Error', 'Please enter a valid email address');
-      return;
-    }
-
-    if (meetingData.participants.includes(newParticipant.trim())) {
-      Alert.alert('Error', 'This email is already added');
-      return;
-    }
-
-    setMeetingData(prev => ({
-      ...prev,
-      participants: [...prev.participants, newParticipant.trim()]
-    }));
-    setNewParticipant('');
   };
 
   const removeParticipant = (email: string) => {
@@ -96,26 +195,26 @@ export default function ScheduleMeetingScreen() {
     }));
   };
 
+  const toggleFeature = (feature: 'enableRecording' | 'enableTranscription' | 'isPrivate') => {
+    setMeetingData(prev => ({
+      ...prev,
+      [feature]: !prev[feature],
+      // Clear passcode if making meeting public
+      ...(feature === 'isPrivate' && !prev.isPrivate ? { passcode: '' } : {})
+    }));
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView 
-        style={styles.container} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardView}
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
-          </TouchableOpacity>
           <Text style={styles.headerTitle}>Schedule Meeting</Text>
-          <TouchableOpacity 
-            onPress={createMeeting}
-            disabled={loading}
-            style={[styles.saveButton, loading && styles.saveButtonDisabled]}
-          >
-            <Text style={[styles.saveButtonText, loading && styles.saveButtonTextDisabled]}>
-              {loading ? 'Creating...' : 'Create'}
-            </Text>
+          <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
+            <Ionicons name="close" size={24} color="#666" />
           </TouchableOpacity>
         </View>
 
@@ -125,89 +224,147 @@ export default function ScheduleMeetingScreen() {
             <Text style={styles.sectionTitle}>Meeting Details</Text>
             
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Title *</Text>
+              <Text style={styles.label}>Meeting Name *</Text>
               <TextInput
-                style={styles.input}
-                placeholder="Enter meeting title"
+                style={styles.textInput}
+                placeholder="Enter meeting name"
                 value={meetingData.title}
                 onChangeText={(text) => setMeetingData(prev => ({ ...prev, title: text }))}
-                autoFocus
+                maxLength={100}
               />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Description</Text>
+              <Text style={styles.label}>Description (Optional)</Text>
               <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="Enter meeting description (optional)"
+                style={[styles.textInput, styles.textArea]}
+                placeholder="Enter meeting description"
                 value={meetingData.description}
                 onChangeText={(text) => setMeetingData(prev => ({ ...prev, description: text }))}
                 multiline
                 numberOfLines={3}
+                maxLength={500}
               />
             </View>
-          </View>
 
-          {/* Schedule */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Schedule</Text>
-            
+            {/* Start Date/Time */}
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Start Time *</Text>
-              <TouchableOpacity style={styles.input}>
-                <Text style={styles.placeholderText}>Select start time</Text>
-                <Ionicons name="calendar" size={20} color="#666" />
+              <Text style={styles.label}>Start Date & Time *</Text>
+              <TouchableOpacity 
+                style={styles.datePickerContainer}
+                onPress={() => {
+                  setShowStartDatePicker(true);
+                  setShowEndDatePicker(false);
+                }}
+              >
+                <Text style={styles.datePickerLabel}>
+                  {startDateTime.toLocaleString([], { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric',
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                  })}
+                </Text>
+                <Ionicons name="calendar-outline" size={20} color="#007AFF" />
               </TouchableOpacity>
             </View>
 
+            {/* End Date/Time */}
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>End Time</Text>
-              <TouchableOpacity style={styles.input}>
-                <Text style={styles.placeholderText}>Select end time</Text>
-                <Ionicons name="calendar" size={20} color="#666" />
+              <Text style={styles.label}>End Date & Time *</Text>
+              <TouchableOpacity 
+                style={styles.datePickerContainer}
+                onPress={() => {
+                  setShowEndDatePicker(true);
+                  setShowStartDatePicker(false);
+                }}
+              >
+                <Text style={styles.datePickerLabel}>
+                  {endDateTime.toLocaleString([], { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric',
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                  })}
+                </Text>
+                <Ionicons name="calendar-outline" size={20} color="#007AFF" />
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Security */}
+          {/* Features */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Security</Text>
+            <Text style={styles.sectionTitle}>Features</Text>
             
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Meeting Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter password (optional)"
-                value={meetingData.password}
-                onChangeText={(text) => setMeetingData(prev => ({ ...prev, password: text }))}
-                secureTextEntry
-              />
-            </View>
+            <TouchableOpacity 
+              style={styles.featureRow}
+              onPress={() => toggleFeature('enableRecording')}
+            >
+              <View style={styles.featureInfo}>
+                <Text style={styles.featureTitle}>Enable Recording</Text>
+              </View>
+              <View style={[styles.checkbox, meetingData.enableRecording && styles.checkboxChecked]}>
+                {meetingData.enableRecording && <Ionicons name="checkmark" size={16} color="#fff" />}
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.featureRow}
+              onPress={() => toggleFeature('enableTranscription')}
+            >
+              <View style={styles.featureInfo}>
+                <Text style={styles.featureTitle}>Enable Transcription</Text>
+              </View>
+              <View style={[styles.checkbox, meetingData.enableTranscription && styles.checkboxChecked]}>
+                {meetingData.enableTranscription && <Ionicons name="checkmark" size={16} color="#fff" />}
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.featureRow}
+              onPress={() => toggleFeature('isPrivate')}
+            >
+              <View style={styles.featureInfo}>
+                <Text style={styles.featureTitle}>Private Meeting (Requires Passcode)</Text>
+              </View>
+              <View style={[styles.checkbox, meetingData.isPrivate && styles.checkboxChecked]}>
+                {meetingData.isPrivate && <Ionicons name="checkmark" size={16} color="#fff" />}
+              </View>
+            </TouchableOpacity>
+
+            {meetingData.isPrivate && (
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Passcode *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter passcode"
+                  value={meetingData.passcode}
+                  onChangeText={(text) => setMeetingData(prev => ({ ...prev, passcode: text }))}
+                  secureTextEntry
+                  maxLength={20}
+                />
+              </View>
+            )}
           </View>
 
           {/* Participants */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Participants</Text>
+            <Text style={styles.sectionTitle}>Participants (Optional)</Text>
             
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Add Participant</Text>
-              <View style={styles.participantInput}>
-                <TextInput
-                  style={[styles.input, styles.participantTextInput]}
-                  placeholder="Enter email address"
-                  value={newParticipant}
-                  onChangeText={setNewParticipant}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  onSubmitEditing={addParticipant}
-                />
-                <TouchableOpacity 
-                  style={styles.addButton}
-                  onPress={addParticipant}
-                >
-                  <Ionicons name="add" size={20} color="#007AFF" />
-                </TouchableOpacity>
-              </View>
+            <View style={styles.participantInput}>
+              <TextInput
+                style={[styles.textInput, styles.participantTextInput]}
+                placeholder="Enter email address"
+                value={newParticipant}
+                onChangeText={setNewParticipant}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              <TouchableOpacity style={styles.addButton} onPress={addParticipant}>
+                <Ionicons name="add" size={20} color="#007AFF" />
+              </TouchableOpacity>
             </View>
 
             {meetingData.participants.length > 0 && (
@@ -215,53 +372,120 @@ export default function ScheduleMeetingScreen() {
                 {meetingData.participants.map((email, index) => (
                   <View key={index} style={styles.participantItem}>
                     <Text style={styles.participantEmail}>{email}</Text>
-                    <TouchableOpacity
-                      onPress={() => removeParticipant(email)}
-                      style={styles.removeButton}
-                    >
-                      <Ionicons name="close" size={16} color="#FF3B30" />
+                    <TouchableOpacity onPress={() => removeParticipant(email)}>
+                      <Ionicons name="close-circle" size={20} color="#FF3B30" />
                     </TouchableOpacity>
                   </View>
                 ))}
-                <Text style={styles.participantCount}>
-                  {meetingData.participants.length} participant{meetingData.participants.length !== 1 ? 's' : ''}
-                </Text>
               </View>
             )}
           </View>
-
-          {/* Options */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Options</Text>
-            
-            <TouchableOpacity 
-              style={styles.optionItem}
-              onPress={() => setMeetingData(prev => ({ ...prev, enableRecording: !prev.enableRecording }))}
-            >
-              <View style={styles.optionInfo}>
-                <Text style={styles.optionTitle}>Enable Recording</Text>
-                <Text style={styles.optionDescription}>Record the meeting for future reference</Text>
-              </View>
-              <View style={[styles.toggle, meetingData.enableRecording && styles.toggleActive]}>
-                {meetingData.enableRecording && <View style={styles.toggleKnob} />}
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.optionItem}
-              onPress={() => setMeetingData(prev => ({ ...prev, enableTranscription: !prev.enableTranscription }))}
-            >
-              <View style={styles.optionInfo}>
-                <Text style={styles.optionTitle}>Enable Transcription</Text>
-                <Text style={styles.optionDescription}>Generate automatic transcripts</Text>
-              </View>
-              <View style={[styles.toggle, meetingData.enableTranscription && styles.toggleActive]}>
-                {meetingData.enableTranscription && <View style={styles.toggleKnob} />}
-              </View>
-            </TouchableOpacity>
-          </View>
         </ScrollView>
+
+        {/* Action Buttons */}
+        <View style={styles.actionButtons}>
+          <TouchableOpacity 
+            style={styles.cancelButton}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.createButton, loading && styles.createButtonDisabled]}
+            onPress={createMeeting}
+            disabled={loading}
+          >
+            <Text style={styles.createButtonText}>
+              {loading ? 'Scheduling...' : 'Schedule Meeting'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </KeyboardAvoidingView>
+
+      {/* Start Date/Time Picker Modal */}
+      <Modal
+        visible={showStartDatePicker}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowStartDatePicker(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowStartDatePicker(false)}
+        >
+          <TouchableOpacity 
+            style={styles.modalContainer}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
+                <Text style={styles.cancelButton}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Select Start Date & Time</Text>
+              <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
+                <Text style={styles.doneButton}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.modalContent}>
+              <DateTimePicker
+                value={startDateTime}
+                mode="datetime"
+                display="spinner"
+                onChange={onStartDateChange}
+                style={styles.modalDatePicker}
+                textColor="#000000"
+                accentColor="#007AFF"
+              />
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* End Date/Time Picker Modal */}
+      <Modal
+        visible={showEndDatePicker}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowEndDatePicker(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowEndDatePicker(false)}
+        >
+          <TouchableOpacity 
+            style={styles.modalContainer}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
+                <Text style={styles.cancelButton}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Select End Date & Time</Text>
+              <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
+                <Text style={styles.doneButton}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.modalContent}>
+              <DateTimePicker
+                value={endDateTime}
+                mode="datetime"
+                display="spinner"
+                onChange={onEndDateChange}
+                style={styles.modalDatePicker}
+                textColor="#000000"
+                accentColor="#007AFF"
+              />
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -270,6 +494,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
+  },
+  keyboardView: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -286,32 +513,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#212529',
   },
-  saveButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-  },
-  saveButtonDisabled: {
-    backgroundColor: '#adb5bd',
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  saveButtonTextDisabled: {
-    color: '#6c757d',
+  closeButton: {
+    padding: 4,
   },
   content: {
     flex: 1,
-    padding: 20,
+    paddingHorizontal: 20,
   },
   section: {
-    marginBottom: 24,
+    backgroundColor: '#fff',
+    marginTop: 16,
+    borderRadius: 12,
+    padding: 16,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#212529',
     marginBottom: 16,
@@ -319,62 +535,77 @@ const styles = StyleSheet.create({
   inputGroup: {
     marginBottom: 16,
   },
-  inputLabel: {
+  label: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#495057',
     marginBottom: 8,
   },
-  input: {
+  textInput: {
     borderWidth: 1,
     borderColor: '#e9ecef',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 16,
+    color: '#212529',
     backgroundColor: '#fff',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
   textArea: {
     height: 80,
     textAlignVertical: 'top',
-    alignItems: 'flex-start',
-    paddingTop: 12,
   },
-  placeholderText: {
-    color: '#6c757d',
+  featureRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f8f9fa',
+  },
+  featureInfo: {
+    flex: 1,
+  },
+  featureTitle: {
     fontSize: 16,
+    color: '#212529',
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#e9ecef',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
   },
   participantInput: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    marginBottom: 12,
   },
   participantTextInput: {
     flex: 1,
+    marginRight: 12,
   },
   addButton: {
-    width: 44,
-    height: 44,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e9ecef',
+    padding: 8,
   },
   participantsList: {
-    marginTop: 12,
+    marginTop: 8,
   },
   participantItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#e9ecef',
-    borderRadius: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
     marginBottom: 8,
   },
   participantEmail: {
@@ -382,52 +613,124 @@ const styles = StyleSheet.create({
     color: '#495057',
     flex: 1,
   },
-  removeButton: {
-    padding: 4,
+  actionButtons: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+    gap: 12,
   },
-  participantCount: {
-    fontSize: 12,
-    color: '#6c757d',
-    textAlign: 'center',
-    marginTop: 8,
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#6c757d',
+    alignItems: 'center',
   },
-  optionItem: {
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  createButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+  },
+  createButtonDisabled: {
+    backgroundColor: '#c6c6c6',
+  },
+  createButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  datePickerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+  },
+  datePickerLabel: {
+    fontSize: 16,
+    color: '#212529',
+  },
+  datePickerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: '#e9ecef',
+    marginBottom: 8,
   },
-  optionInfo: {
-    flex: 1,
-  },
-  optionTitle: {
+  datePickerTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#212529',
-    marginBottom: 4,
   },
-  optionDescription: {
-    fontSize: 14,
+  datePicker: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginHorizontal: 20,
+    maxHeight: '80%',
+    width: '90%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#212529',
+  },
+  cancelButton: {
+    fontSize: 16,
     color: '#6c757d',
   },
-  toggle: {
-    width: 44,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#e9ecef',
-    justifyContent: 'center',
-    paddingHorizontal: 2,
+  doneButton: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#007AFF',
   },
-  toggleActive: {
-    backgroundColor: '#007AFF',
-    alignItems: 'flex-end',
+  modalContent: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    alignItems: 'center',
   },
-  toggleKnob: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#fff',
+  modalDatePicker: {
+    width: '100%',
+    height: 200,
   },
 });

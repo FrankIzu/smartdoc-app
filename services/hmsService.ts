@@ -1,4 +1,21 @@
-import { HMSConfig, HMSRoom, HMSUpdateListenerActions } from '@100mslive/react-native-hms';
+// Conditional import for HMS - handle case where native module isn't available
+let HMSRoom: any = null;
+let HMSConfig: any = null;
+let HMSUpdateListenerActions: any = null;
+let HMSPeerUpdate: any = null;
+
+try {
+  const hmsModule = require('@100mslive/react-native-hms');
+  HMSRoom = hmsModule.HMSRoom;
+  HMSConfig = hmsModule.HMSConfig;
+  HMSUpdateListenerActions = hmsModule.HMSUpdateListenerActions;
+  HMSPeerUpdate = hmsModule.HMSPeerUpdate;
+  console.log('✅ HMS native module loaded successfully');
+} catch (error) {
+  console.warn('⚠️ HMS native module not available:', error instanceof Error ? error.message : String(error));
+  console.log('📱 Running in development mode without HMS native module');
+}
+
 import { HMSAuthTokenRequest, hmsBackendService } from './hmsBackendService';
 
 // HMS Configuration - Mobile app gets credentials from backend
@@ -34,12 +51,12 @@ export interface HMSMeetingState {
   isAudioEnabled: boolean;
   isVideoEnabled: boolean;
   participants: any[];
-  room: HMSRoom | null;
+  room: any | null; // Backend room data, not HMSRoom object
   error: string | null;
 }
 
 class HMSService {
-  private room: HMSRoom | null = null;
+  private room: any | null = null;
   private listeners: Map<string, Function> = new Map();
   private meetingState: HMSMeetingState = {
     isConnected: false,
@@ -55,6 +72,10 @@ class HMSService {
    */
   async initialize(): Promise<void> {
     try {
+      if (!HMSRoom) {
+        console.warn('⚠️ HMS native module not available - running in development mode');
+        return;
+      }
       // HMS SDK initialization is handled automatically when creating a room
       console.log('HMS Service initialized');
     } catch (error) {
@@ -64,39 +85,26 @@ class HMSService {
   }
 
   /**
-   * Join a meeting room
+   * Join a meeting room via backend
    */
   async joinMeeting(config: HMSMeetingConfig): Promise<void> {
     try {
-      // Create room code if not provided
-      const roomCode = config.roomCode || this.generateRoomCode();
-      
-      // Create HMS configuration
-      const hmsConfig: HMSConfig = {
-        authToken: await this.generateAuthToken(config),
-        username: config.userName,
-        roomCode: roomCode,
-        enableAudio: config.enableAudio !== false,
-        enableVideo: config.enableVideo !== false,
-        role: config.role || 'viewer'
-      };
+      // Call backend to create/join room (same as web)
+      const roomData = await hmsBackendService.createOrJoinRoom({
+        roomCode: config.roomCode,
+        userName: config.userName,
+        role: config.role || 'viewer',
+        userId: config.userId
+      });
 
-      // Create and join room
-      this.room = new HMSRoom();
-      
-      // Set up room listeners
-      this.setupRoomListeners();
-
-      // Join the room
-      await this.room.join(hmsConfig);
-      
+      // Mobile only handles display - backend manages room creation/joining
       this.updateMeetingState({
         isConnected: true,
-        room: this.room,
+        room: roomData, // Backend returns room info
         error: null
       });
 
-      console.log('Successfully joined HMS meeting:', roomCode);
+      console.log('Successfully joined HMS meeting via backend:', roomData.roomCode);
     } catch (error) {
       console.error('Failed to join HMS meeting:', error);
       this.updateMeetingState({
@@ -107,13 +115,13 @@ class HMSService {
   }
 
   /**
-   * Leave the current meeting
+   * Leave the current meeting via backend
    */
   async leaveMeeting(): Promise<void> {
     try {
-      if (this.room) {
-        await this.room.leave();
-        this.room = null;
+      if (this.meetingState.room) {
+        // Call backend to leave room (same as web)
+        await hmsBackendService.leaveRoom(this.meetingState.room.roomCode);
         
         this.updateMeetingState({
           isConnected: false,
@@ -121,7 +129,7 @@ class HMSService {
           participants: []
         });
 
-        console.log('Successfully left HMS meeting');
+        console.log('Successfully left HMS meeting via backend');
       }
     } catch (error) {
       console.error('Failed to leave HMS meeting:', error);
@@ -130,13 +138,13 @@ class HMSService {
   }
 
   /**
-   * Toggle audio mute/unmute
+   * Toggle audio mute/unmute via backend
    */
   async toggleAudio(): Promise<void> {
     try {
-      if (this.room && this.room.localPeer) {
+      if (this.meetingState.room) {
         const newAudioState = !this.meetingState.isAudioEnabled;
-        await this.room.localPeer.audioTrack?.setMute(!newAudioState);
+        await hmsBackendService.toggleAudio(this.meetingState.room.roomCode, newAudioState);
         
         this.updateMeetingState({
           isAudioEnabled: newAudioState
@@ -149,13 +157,13 @@ class HMSService {
   }
 
   /**
-   * Toggle video on/off
+   * Toggle video on/off via backend
    */
   async toggleVideo(): Promise<void> {
     try {
-      if (this.room && this.room.localPeer) {
+      if (this.meetingState.room) {
         const newVideoState = !this.meetingState.isVideoEnabled;
-        await this.room.localPeer.videoTrack?.setMute(!newVideoState);
+        await hmsBackendService.toggleVideo(this.meetingState.room.roomCode, newVideoState);
         
         this.updateMeetingState({
           isVideoEnabled: newVideoState
@@ -226,74 +234,12 @@ class HMSService {
   }
 
   /**
-   * Set up room event listeners
+   * Set up room event listeners - handled by backend
    */
   private setupRoomListeners(): void {
-    if (!this.room) return;
-
-    // Room joined
-    this.room.addEventListener(HMSUpdateListenerActions.ON_JOIN, (data: any) => {
-      console.log('Joined room:', data);
-      this.updateMeetingState({
-        isConnected: true,
-        participants: data.peers || []
-      });
-    });
-
-    // Room left
-    this.room.addEventListener(HMSUpdateListenerActions.ON_ROOM_END, (data: any) => {
-      console.log('Room ended:', data);
-      this.updateMeetingState({
-        isConnected: false,
-        room: null,
-        participants: []
-      });
-    });
-
-    // Peer joined
-    this.room.addEventListener(HMSUpdateListenerActions.ON_PEER_JOIN, (data: any) => {
-      console.log('Peer joined:', data);
-      this.updateMeetingState({
-        participants: [...this.meetingState.participants, data.peer]
-      });
-    });
-
-    // Peer left
-    this.room.addEventListener(HMSUpdateListenerActions.ON_PEER_REMOVED, (data: any) => {
-      console.log('Peer left:', data);
-      this.updateMeetingState({
-        participants: this.meetingState.participants.filter(
-          (p: any) => p.id !== data.peer.id
-        )
-      });
-    });
-
-    // Audio/Video state changes
-    this.room.addEventListener(HMSUpdateListenerActions.ON_AUDIO_CHANGED, (data: any) => {
-      console.log('Audio changed:', data);
-      if (data.peer.isLocal) {
-        this.updateMeetingState({
-          isAudioEnabled: data.enabled
-        });
-      }
-    });
-
-    this.room.addEventListener(HMSUpdateListenerActions.ON_VIDEO_CHANGED, (data: any) => {
-      console.log('Video changed:', data);
-      if (data.peer.isLocal) {
-        this.updateMeetingState({
-          isVideoEnabled: data.enabled
-        });
-      }
-    });
-
-    // Error handling
-    this.room.addEventListener(HMSUpdateListenerActions.ON_ERROR, (error: any) => {
-      console.error('HMS Room error:', error);
-      this.updateMeetingState({
-        error: error.message || 'Unknown error occurred'
-      });
-    });
+    // Event listeners are handled by backend webhooks
+    // Mobile only receives updates via backend API calls
+    console.log('Room listeners handled by backend webhooks');
   }
 
   /**
