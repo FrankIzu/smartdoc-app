@@ -113,16 +113,15 @@ export const useFileStore = create<FileStore>((set, get) => ({
           name: file.name,
         } as any);
         
-        const response = await apiService.uploadFile(
+        const response = await apiService.uploadFileWithProgressPolling(
           formData,
-          (progress) => {
-            console.log(`📊 Upload progress: ${progress}% for ${file.name}`);
+          (progress, message, phase) => {
+            console.log(`📊 Upload progress: ${progress}% for ${file.name} - ${message} (${phase})`);
             
-            // Update global progress bar
+            // Update global progress bar with detailed progress
             progressStore.updateProgress(progressId, {
               progress: progress,
               status: 'in-progress',
-              message: `Uploading ${file.name}... ${progress}%`,
             });
             
             console.log(`📊 Updated global progress bar for ${progressId}`);
@@ -137,12 +136,16 @@ export const useFileStore = create<FileStore>((set, get) => ({
         console.log('📁 Response data:', response.data);
         console.log('📁 Response message:', response.message);
         
-        if (response.success && response.data) {
-          // Update global progress to completed
+        if (response.success) {
+          // For mobile uploads, the response.data might be undefined initially
+          // The progress polling will handle the completion status
+          console.log('📁 Upload successful - task_id:', response.task_id);
+          
+          // The progress polling already updated the progress to completed
+          // Just ensure the progress shows as completed
           progressStore.updateProgress(progressId, {
             progress: 100,
             status: 'completed',
-            message: `${file.name} uploaded successfully!`,
           });
           
           // Update old progress system
@@ -151,11 +154,14 @@ export const useFileStore = create<FileStore>((set, get) => ({
             status: 'completed',
           });
           
-          // Add the new file to the files list
-          const currentFiles = get().files;
-          set({
-            files: [response.data, ...currentFiles],
-          });
+          // For mobile uploads, we don't immediately add to files list
+          // The files will be refreshed from the server
+          // This prevents duplicate entries and ensures we get the processed file data
+          
+          // Refresh the files list to show the newly uploaded file
+          setTimeout(() => {
+            get().fetchFiles(1); // Refresh files list
+          }, 1000);
           
           // Remove global progress after a delay
           setTimeout(() => {
@@ -173,7 +179,6 @@ export const useFileStore = create<FileStore>((set, get) => ({
           // Update global progress to error
           progressStore.updateProgress(progressId, {
             status: 'error',
-            message: response.message || 'Upload failed',
           });
           
           // Update old progress system
@@ -189,7 +194,6 @@ export const useFileStore = create<FileStore>((set, get) => ({
         // Update global progress to error
         progressStore.updateProgress(progressId, {
           status: 'error',
-          message: error.message || 'Upload failed',
         });
         
         // Update old progress system

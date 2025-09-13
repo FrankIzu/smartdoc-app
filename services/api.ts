@@ -56,6 +56,7 @@ const MOBILE_ENDPOINTS = {
   UPLOAD: '/api/v1/mobile/upload',
   FILE_BY_ID: (id: number) => `/api/v1/mobile/get-file/${id}`,
   FILE_DOWNLOAD: (id: number) => `/api/v1/mobile/file/${id}/download`,
+  FILE_DELETE: (id: number) => `/api/v1/mobile/file/${id}`,
   
   // Chat
   CHAT_HISTORY: '/api/v1/mobile/chat/history',
@@ -228,6 +229,16 @@ class ApiService {
         if (result.user) {
           await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
           console.log('💾 Stored mobile user data');
+        }
+        
+        // Store the authentication token
+        if (result.token) {
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
+          console.log('💾 Stored authentication token');
+        } else {
+          // Fallback to session_token for development
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          console.log('💾 Stored fallback session_token');
         }
         
         return {
@@ -453,6 +464,7 @@ class ApiService {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 120000, // Increase timeout to 2 minutes for large files
         onUploadProgress: (progressEvent) => {
           if (onProgress && progressEvent.total) {
             const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -469,13 +481,150 @@ class ApiService {
     } catch (error: any) {
       console.error('❌ Upload failed:', error);
       console.error('❌ Upload error response:', error.response?.data);
+      console.error('❌ Upload error details:', {
+        message: error.message,
+        code: error.code,
+        timeout: error.timeout,
+        status: error.response?.status
+      });
       throw new Error(error.response?.data?.message || 'Upload failed');
+    }
+  }
+
+  async getUploadProgress(taskId: string): Promise<ApiResponse> {
+    try {
+      console.log(`🔄 Checking upload progress for task: ${taskId}`);
+      const response = await this.client.get(`/api/v1/mobile/progress/${taskId}`, {
+        timeout: 10000 // 10 second timeout for progress requests
+      });
+      console.log(`📊 Progress response for ${taskId}:`, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Failed to get upload progress:', error);
+      console.error('❌ Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
+      throw new Error(error.response?.data?.message || 'Failed to get upload progress');
+    }
+  }
+
+  async uploadFileWithProgressPolling(
+    file: FormData, 
+    onProgress?: (progress: number, message?: string, phase?: string) => void
+  ): Promise<ApiResponse> {
+    try {
+      console.log('🔄 Starting upload with progress polling...');
+      
+      // Step 1: Upload the file (network progress)
+      const uploadResponse = await this.uploadFile(file, (networkProgress) => {
+        // Show network upload progress (0-20%)
+        const adjustedProgress = Math.round(networkProgress * 0.2);
+        onProgress?.(adjustedProgress, 'Uploading file...', 'upload');
+      });
+
+      // Step 2: Get task_id from response
+      const taskId = uploadResponse.task_id;
+      if (!taskId) {
+        console.warn('⚠️ No task_id in upload response, cannot poll progress');
+        onProgress?.(100, 'Upload completed', 'completed');
+        return uploadResponse;
+      }
+
+      console.log(`📋 Got task_id: ${taskId}, starting progress polling...`);
+      console.log(`📋 Upload response:`, uploadResponse);
+      console.log(`📋 About to start progress polling with onProgress:`, onProgress);
+
+      // Step 3: Poll for processing progress and wait for completion
+      return new Promise((resolve, reject) => {
+        const pollInterval = 200; // Poll every 200ms for very responsive updates
+        const maxPollTime = 300000; // Max 5 minutes for processing
+        const startTime = Date.now();
+
+        const pollProgress = async (): Promise<void> => {
+          try {
+            console.log(`🔄 Polling progress for task: ${taskId} (attempt ${Math.floor((Date.now() - startTime) / pollInterval) + 1})`);
+            const progressResponse = await this.getUploadProgress(taskId);
+            console.log(`📊 Raw progress response:`, progressResponse);
+            
+            if (progressResponse.success && progressResponse.data) {
+              const { progress, status, message, phase } = progressResponse.data;
+              
+              // Use actual progress from backend (0-100%)
+              const adjustedProgress = Math.min(100, Math.max(0, progress));
+              
+              console.log(`📊 Progress update: ${adjustedProgress}% - ${message} (${phase})`);
+              console.log(`📊 Calling onProgress callback with: ${adjustedProgress}%, "${message}", "${phase}"`);
+              
+              onProgress?.(adjustedProgress, message, phase);
+              
+              // Check if processing is complete
+              if (status === 'completed' || status === 'error' || adjustedProgress >= 100) {
+                console.log(`✅ Processing complete: ${status}`);
+                onProgress?.(100, 'Processing complete', 'completed');
+                resolve(uploadResponse);
+                return;
+              }
+              
+              // Continue polling if not complete and within time limit
+              if (Date.now() - startTime < maxPollTime) {
+                setTimeout(pollProgress, pollInterval);
+              } else {
+                console.warn('⚠️ Progress polling timeout reached');
+                onProgress?.(100, 'Processing timeout', 'timeout');
+                resolve(uploadResponse); // Still resolve with the upload response
+              }
+            } else {
+              console.warn('⚠️ Invalid progress response:', progressResponse);
+              console.warn('⚠️ Response success:', progressResponse.success);
+              console.warn('⚠️ Response data:', progressResponse.data);
+              
+              // If progress not found, show a default progress
+              if (!progressResponse.success && progressResponse.message?.includes('not found')) {
+                onProgress?.(25, 'Processing started...', 'processing');
+              }
+              
+              // Continue polling on invalid response
+              if (Date.now() - startTime < maxPollTime) {
+                setTimeout(pollProgress, pollInterval);
+              } else {
+                console.warn('⚠️ Progress polling timeout on invalid response');
+                resolve(uploadResponse);
+              }
+            }
+          } catch (error) {
+            console.error('❌ Progress polling error:', error);
+            console.error('❌ Error type:', typeof error);
+            console.error('❌ Error message:', error.message);
+            // Continue polling on error
+            if (Date.now() - startTime < maxPollTime) {
+              setTimeout(pollProgress, pollInterval);
+            } else {
+              console.warn('⚠️ Progress polling timeout on error');
+              resolve(uploadResponse);
+            }
+          }
+        };
+
+        // Start polling with a small delay to give backend time to initialize
+        console.log(`🔄 Starting progress polling for task: ${taskId}`);
+        console.log(`🔄 Polling will start in 200ms, then every ${pollInterval}ms for max ${maxPollTime}ms`);
+        setTimeout(() => {
+          console.log(`🔄 Starting first progress poll now...`);
+          pollProgress();
+        }, 200);
+      });
+    } catch (error: any) {
+      console.error('❌ Upload with progress polling failed:', error);
+      throw error;
     }
   }
 
   async deleteFile(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.delete(MOBILE_ENDPOINTS.FILE_BY_ID(id));
+      const response = await this.client.delete(MOBILE_ENDPOINTS.FILE_DELETE(id));
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Delete failed');

@@ -154,7 +154,7 @@ export default function SettingsScreen() {
         upload_settings: {
           wifi_only_upload: false,
           max_file_size_mb: 50,
-          allowed_file_types: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'gif'],
+          allowed_file_types: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif'],
         },
         privacy: {
         analytics_tracking: true,

@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     Dimensions,
     Image,
     Modal,
@@ -13,6 +12,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { apiClient } from '../services/api';
 import { secureStorage } from '../utils/storage';
@@ -106,6 +106,253 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
   );
 };
 
+// Helper function to get document type name
+const getDocumentTypeName = (fileName: string) => {
+  const ext = fileName.toLowerCase().split('.').pop();
+  switch (ext) {
+    case 'doc':
+    case 'docx':
+      return 'Word';
+    case 'xls':
+    case 'xlsx':
+      return 'Excel';
+    case 'ppt':
+    case 'pptx':
+      return 'PowerPoint';
+    default:
+      return 'Office';
+  }
+};
+
+
+// Authenticated WebView Component
+const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { fileUrl: string; authToken: string; fileName: string; fileType: string }) => {
+  const [htmlContent, setHtmlContent] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadDocument = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // For PDFs, use direct WebView with authenticated URL
+        if (fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf')) {
+          console.log('Loading PDF document:', fileName);
+          setLoading(false);
+          // Don't set htmlContent, we'll handle PDFs differently
+          return;
+        } else if (fileType === 'doc' || fileType === 'docx' || fileType.includes('document') || 
+                   fileName.toLowerCase().match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/)) {
+          // For Office documents, automatically try to load as PDF
+          console.log('Loading Office document:', fileName, 'Type:', fileType);
+          setLoading(false);
+          // Don't set htmlContent, we'll handle Office documents as PDFs in the WebView
+          return;
+        } else {
+          // For text documents, try to fetch content
+          const response = await fetch(fileUrl, {
+            headers: {
+              'Authorization': `Bearer ${authToken}`,
+              'X-Platform': 'android'
+            }
+          });
+
+          if (response.ok) {
+            const content = await response.text();
+            const html = `
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <style>
+                    body { 
+                      margin: 0; 
+                      padding: 20px; 
+                      font-family: Arial, sans-serif; 
+                      background: #fff;
+                      color: #333;
+                      line-height: 1.6;
+                    }
+                    pre { 
+                      white-space: pre-wrap; 
+                      word-wrap: break-word; 
+                      font-family: monospace;
+                    }
+                  </style>
+                </head>
+                <body>
+                  <pre>${content}</pre>
+                </body>
+              </html>
+            `;
+            setHtmlContent(html);
+          } else {
+            setError(`Failed to load document: ${response.status}`);
+          }
+        }
+      } catch (err) {
+        setError('Failed to load document');
+        console.error('Document load error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDocument();
+  }, [fileUrl, authToken, fileType]);
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading document...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Ionicons name="alert-circle" size={64} color="#FF3B30" />
+        <Text style={styles.errorText}>{error}</Text>
+      </View>
+    );
+  }
+
+  // For PDFs and Office documents, use direct WebView with authenticated URL
+  if (fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf') ||
+      fileType === 'doc' || fileType === 'docx' || fileType.includes('document') || 
+      fileName.toLowerCase().match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/)) {
+    
+    // For Office documents, automatically try to get PDF version (with conversion if needed)
+    let finalUrl = fileUrl;
+    if (fileType === 'doc' || fileType === 'docx' || fileType.includes('document') || 
+        fileName.toLowerCase().match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/)) {
+      finalUrl = fileUrl.replace('/download', '/download?pdf=true');
+    }
+    
+    return (
+      <WebView
+        source={{ 
+          uri: finalUrl,
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'X-Platform': 'android'
+          }
+        }}
+        style={styles.webView}
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        startInLoadingState={true}
+        onError={(syntheticEvent) => {
+          const { nativeEvent } = syntheticEvent;
+          console.error('Document WebView error:', nativeEvent);
+          setError('Failed to load document');
+        }}
+        onHttpError={(syntheticEvent) => {
+          const { nativeEvent } = syntheticEvent;
+          console.error('Document WebView HTTP error:', nativeEvent);
+          setError(`Failed to load document: HTTP ${nativeEvent.statusCode}`);
+        }}
+        onLoadEnd={() => {
+          console.log('Document WebView loaded successfully');
+        }}
+        onLoadStart={() => {
+          console.log('Document WebView started loading');
+        }}
+      />
+    );
+  }
+
+  return (
+    <WebView
+      source={{ html: htmlContent }}
+      style={styles.webView}
+      javaScriptEnabled={true}
+      domStorageEnabled={true}
+      startInLoadingState={false}
+      onError={(syntheticEvent) => {
+        const { nativeEvent } = syntheticEvent;
+        console.error('WebView error:', nativeEvent);
+        setError('Failed to load document');
+      }}
+      onHttpError={(syntheticEvent) => {
+        const { nativeEvent } = syntheticEvent;
+        console.error('WebView HTTP error:', nativeEvent);
+        setError(`Failed to load document: HTTP ${nativeEvent.statusCode}`);
+      }}
+      onLoadEnd={() => {
+        console.log('WebView loaded successfully');
+      }}
+      onLoadStart={() => {
+        console.log('WebView started loading');
+      }}
+    />
+  );
+};
+
+// Text Document Viewer Component
+const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string; authToken: string; fileName: string }) => {
+  const [content, setContent] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadTextContent = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(fileUrl, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'X-Platform': 'android'
+          }
+        });
+
+        if (response.ok) {
+          const text = await response.text();
+          setContent(text);
+        } else {
+          setError(`Failed to load text content: ${response.status}`);
+        }
+      } catch (err) {
+        setError('Failed to load text document');
+        console.error('Text document load error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTextContent();
+  }, [fileUrl, authToken]);
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading text document...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Ionicons name="alert-circle" size={64} color="#FF3B30" />
+        <Text style={styles.errorText}>{error}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={styles.textContainer} contentContainerStyle={styles.textContent}>
+      <Text style={styles.textDocument}>{content}</Text>
+    </ScrollView>
+  );
+};
+
 export default function DocumentViewer({
   fileId,
   fileName,
@@ -117,10 +364,19 @@ export default function DocumentViewer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
 
   useEffect(() => {
     loadFileUrl();
   }, [fileId]);
+
+  useEffect(() => {
+    const getToken = async () => {
+      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      setAuthToken(token);
+    };
+    getToken();
+  }, []);
 
   const loadFileUrl = async () => {
     try {
@@ -214,9 +470,36 @@ export default function DocumentViewer({
   const isImageFile = (type: string) => {
     const isImage = type === 'image' || 
            type.includes('image/') || 
-           fileName.toLowerCase().match(/\.(jpg|jpeg|png|gif|bmp|webp)$/);
+           fileName.toLowerCase().match(/\.(jpg|jpeg|png|gif|bmp|webp|heic|heif)$/);
     
     return isImage;
+  };
+
+  const isPdfFile = (type: string) => {
+    return type === 'pdf' || 
+           type.includes('pdf') || 
+           fileName.toLowerCase().endsWith('.pdf');
+  };
+
+  const isOfficeDocument = (type: string) => {
+    const officeExtensions = /\.(doc|docx|xls|xlsx|ppt|pptx)$/;
+    return type === 'doc' || 
+           type === 'docx' || 
+           type === 'xls' || 
+           type === 'xlsx' || 
+           type === 'ppt' || 
+           type === 'pptx' ||
+           type.includes('document') ||
+           type.includes('spreadsheet') ||
+           type.includes('presentation') ||
+           fileName.toLowerCase().match(officeExtensions);
+  };
+
+  const isTextDocument = (type: string) => {
+    const textExtensions = /\.(txt|rtf|md)$/;
+    return type === 'text' || 
+           type.includes('text/') ||
+           fileName.toLowerCase().match(textExtensions);
   };
 
   const isDocumentImage = (type: string, category?: string) => {
@@ -235,22 +518,24 @@ export default function DocumentViewer({
       return 'Document Preview';
     }
     
-    switch (fileType) {
-      case 'doc':
+    if (isPdfFile(fileType)) {
+      return 'PDF Document';
+    } else if (isOfficeDocument(fileType)) {
+      if (fileType.includes('doc') || fileName.toLowerCase().match(/\.(doc|docx)$/)) {
         return 'Word Document';
-      case 'pdf':
-        return 'PDF Document';
-      case 'image':
-        return 'Image Viewer';
-      default:
-        return 'Document Viewer';
+      } else if (fileType.includes('xls') || fileName.toLowerCase().match(/\.(xls|xlsx)$/)) {
+        return 'Excel Spreadsheet';
+      } else if (fileType.includes('ppt') || fileName.toLowerCase().match(/\.(ppt|pptx)$/)) {
+        return 'PowerPoint Presentation';
+      }
+      return 'Office Document';
+    } else if (isTextDocument(fileType)) {
+      return 'Text Document';
+    } else if (isImageFile(fileType)) {
+      return 'Image Viewer';
     }
-  };
-
-  const isPdfFile = (type: string) => {
-    return type === 'pdf' || 
-           type.includes('pdf') || 
-           fileName.toLowerCase().endsWith('.pdf');
+    
+    return 'Document Preview';
   };
 
   const renderImage = () => {
@@ -304,139 +589,38 @@ export default function DocumentViewer({
     );
   };
 
-  const renderPdf = () => {
-    return (
-      <View style={styles.placeholderContainer}>
-        <Ionicons name="document-text" size={64} color="#007AFF" />
-        <Text style={styles.placeholderText}>PDF Document</Text>
-        <Text style={styles.placeholderSubtext}>
-          {fileName}{'\n'}
-          PDF viewing will be implemented with a dedicated PDF library.
-        </Text>
-        <View style={styles.actionButtons}>
-          <TouchableOpacity 
-            style={[styles.downloadButton, styles.primaryButton]}
-            onPress={() => {
-              if (fileUrl) {
-                // Open PDF in external viewer
-                Alert.alert(
-                  'Open PDF',
-                  'Would you like to open this PDF in an external viewer?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Open', onPress: () => {
-                      // In a real app, you would use Linking.openURL or a PDF viewer library
-                      Alert.alert('Info', 'PDF viewer integration would open the file here');
-                    }}
-                  ]
-                );
-              }
-            }}
-          >
-            <Ionicons name="eye" size={20} color="#fff" />
-            <Text style={styles.downloadButtonText}>View PDF</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.downloadButton, styles.secondaryButton]}
-            onPress={() => {
-              if (fileUrl) {
-                Alert.alert('Download', 'PDF download functionality would be implemented here');
-              }
-            }}
-          >
-            <Ionicons name="download" size={20} color="#007AFF" />
-            <Text style={[styles.downloadButtonText, { color: '#007AFF' }]}>Download</Text>
-          </TouchableOpacity>
+  const renderDocumentPreview = () => {
+    if (!fileUrl) return null;
+
+    if (!authToken) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading document...</Text>
         </View>
-      </View>
+      );
+    }
+
+    // Use the AuthenticatedWebView for all document types
+    return (
+      <AuthenticatedWebView 
+        fileUrl={fileUrl} 
+        authToken={authToken} 
+        fileName={fileName} 
+        fileType={fileType} 
+      />
     );
   };
 
-  const renderOtherDocument = () => {
-    const getDocumentIcon = () => {
-      switch (fileType) {
-        case 'doc':
-          return 'document-text';
-        case 'pdf':
-          return 'document';
-        case 'image':
-          return 'image';
-        default:
-          return 'document-text-outline';
-      }
-    };
-
-    const getDocumentTitle = () => {
-      switch (fileType) {
-        case 'doc':
-          return 'Word Document';
-        case 'pdf':
-          return 'PDF Document';
-        case 'image':
-          return 'Image File';
-        default:
-          return 'Document';
-      }
-    };
-
-    const getDocumentDescription = () => {
-      switch (fileType) {
-        case 'doc':
-          return 'Microsoft Word document. You can view the content or download the file.';
-        case 'pdf':
-          return 'PDF document. You can view the content or download the file.';
-        case 'image':
-          return 'Image file. You can view the image or download it.';
-        default:
-          return 'Document file. You can view the content or download the file.';
-      }
-    };
-
-    // For images, show the image directly instead of buttons
-    if (fileType === 'image' && fileUrl) {
-      return renderImage();
-    }
-
+  const renderFallbackDocument = () => {
     return (
       <View style={styles.placeholderContainer}>
-        <Ionicons name={getDocumentIcon() as any} size={64} color="#007AFF" />
-        <Text style={styles.placeholderText}>{getDocumentTitle()}</Text>
+        <Ionicons name="document-text-outline" size={64} color="#007AFF" />
+        <Text style={styles.placeholderText}>Document Preview</Text>
         <Text style={styles.placeholderSubtext}>
           {fileName}{'\n'}
-          {getDocumentDescription()}
+          Preview for this document type is not yet implemented.
         </Text>
-        {fileUrl && (
-          <View style={styles.actionButtons}>
-            <TouchableOpacity 
-              style={[styles.downloadButton, styles.primaryButton]}
-              onPress={() => {
-                Alert.alert(
-                  'View Document',
-                  `Would you like to view this ${fileType} document?`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'View', onPress: () => {
-                      // In a real app, you would integrate with appropriate viewers
-                      Alert.alert('Info', `${fileType.toUpperCase()} viewer integration would open the file here`);
-                    }}
-                  ]
-                );
-              }}
-            >
-              <Ionicons name="eye" size={20} color="#fff" />
-              <Text style={styles.downloadButtonText}>View Document</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.downloadButton, styles.secondaryButton]}
-              onPress={() => {
-                Alert.alert('Download', 'File download functionality would be implemented here');
-              }}
-            >
-              <Ionicons name="download" size={20} color="#007AFF" />
-              <Text style={[styles.downloadButtonText, { color: '#007AFF' }]}>Download</Text>
-            </TouchableOpacity>
-          </View>
-        )}
       </View>
     );
   };
@@ -465,14 +649,21 @@ export default function DocumentViewer({
 
     const isImage = isImageFile(fileType);
     const isPdf = isPdfFile(fileType);
+    const isOffice = isOfficeDocument(fileType);
+    const isText = isTextDocument(fileType);
 
+    // For images, show the image directly
     if (isImage) {
       return renderImage();
-    } else if (isPdf) {
-      return renderPdf();
-    } else {
-      return renderOtherDocument();
     }
+    
+    // For PDFs, Office documents, and text documents, show WebView preview
+    if (isPdf || isOffice || isText) {
+      return renderDocumentPreview();
+    }
+    
+    // For other document types, show fallback
+    return renderFallbackDocument();
   };
 
   // DocumentViewer rendering
@@ -497,6 +688,13 @@ export default function DocumentViewer({
         <View style={styles.content}>
           {renderContent()}
         </View>
+        
+        {/* Bottom Close Button */}
+        <View style={styles.bottomContainer}>
+          <TouchableOpacity style={styles.bottomCloseButton} onPress={onClose}>
+            <Ionicons name="close" size={24} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     </Modal>
   );
@@ -512,12 +710,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
+    backgroundColor: '#fff',
   },
   closeButton: {
-    padding: 8,
+    padding: 12,
+    borderRadius: 20,
   },
   title: {
     flex: 1,
@@ -626,5 +826,48 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginLeft: 8,
+  },
+  webView: {
+    flex: 1,
+  },
+  webViewLoading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  bottomContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#fff',
+  },
+  bottomCloseButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 25,
+    alignSelf: 'center',
+    width: 50,
+    height: 50,
+  },
+  textContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  textContent: {
+    padding: 16,
+  },
+  textDocument: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#333',
+    fontFamily: 'monospace',
   },
 });

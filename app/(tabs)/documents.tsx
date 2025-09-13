@@ -26,7 +26,7 @@ import { useAuth } from '../context/auth';
 interface Document {
   id: string;
   name: string;
-  type: 'pdf' | 'doc' | 'image' | 'other' | 'form';
+  type: string; // Now supports more specific types like 'docx', 'xlsx', 'pptx', 'txt', etc.
   size: string;
   uploadDate: Date;
   status: 'processed' | 'processing' | 'error';
@@ -427,15 +427,32 @@ export default function QuickFilesScreen() {
     }
   }, [searchQuery, filterBy]); // Add dependencies
 
-  const getFileTypeFromExtension = (filename: string | null | undefined): 'pdf' | 'doc' | 'image' | 'other' => {
+  const getFileTypeFromExtension = (filename: string | null | undefined): string => {
     if (!filename || typeof filename !== 'string') {
       return 'other';
     }
     
     const ext = filename.toLowerCase().split('.').pop();
+    if (!ext) return 'other';
+    
+    // PDF files
     if (ext === 'pdf') return 'pdf';
-    if (['doc', 'docx'].includes(ext || '')) return 'doc';
-    if (['jpg', 'jpeg', 'png', 'gif', 'bmp'].includes(ext || '')) return 'image';
+    
+    // Word documents
+    if (['doc', 'docx'].includes(ext)) return 'docx';
+    
+    // Excel spreadsheets
+    if (['xls', 'xlsx'].includes(ext)) return 'xlsx';
+    
+    // PowerPoint presentations
+    if (['ppt', 'pptx'].includes(ext)) return 'pptx';
+    
+    // Text files
+    if (['txt', 'rtf', 'md'].includes(ext)) return 'txt';
+    
+    // Image files
+    if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif'].includes(ext)) return 'image';
+    
     return 'other';
   };
 

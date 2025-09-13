@@ -167,22 +167,16 @@ export default function PublicUploadScreen() {
         } as any);
 
         try {
-          const response = await api.post(`/upload-to/${token}`, formData, {
-            headers: {
-              'Content-Type': 'multipart/form-data',
-            },
-            onUploadProgress: (progressEvent: any) => {
-              if (progressEvent.total) {
-                const progress = Math.round(
-                  (progressEvent.loaded * 100) / progressEvent.total
-                );
-                newProgress[fileKey] = progress;
-                setUploadProgress({ ...newProgress });
-              }
-            },
+          // Use the new progress polling method
+          const { apiClient } = await import('../services/api');
+          
+          const response = await apiClient.uploadFileWithProgressPolling(formData, (progress, message, phase) => {
+            console.log(`📊 Public upload progress: ${progress}% - ${message} (${phase})`);
+            newProgress[fileKey] = progress;
+            setUploadProgress({ ...newProgress });
           });
 
-          if (response.data.success) {
+          if (response.success) {
             newProgress[fileKey] = 100;
             setUploadProgress({ ...newProgress });
           }
@@ -240,6 +234,8 @@ export default function PublicUploadScreen() {
       case 'jpeg':
       case 'png':
       case 'gif':
+      case 'heic':
+      case 'heif':
         return 'image';
       case 'mp4':
       case 'avi':

@@ -155,16 +155,6 @@ export default function GlobalProgressBar({
         <View style={styles.content}>
           {progressData.map((item) => (
             <View key={item.id} style={styles.progressItem}>
-              <View style={styles.progressHeader}>
-                <View style={styles.progressTitle}>
-                  {getStatusIcon(item.status)}
-                  <Text style={styles.progressText}>{item.title}</Text>
-                </View>
-                <Text style={[styles.progressPercent, { color: getStatusColor(item.status) }]}>
-                  {Math.round(item.progress)}%
-                </Text>
-              </View>
-              
               <View style={styles.progressBarContainer}>
                 <View style={styles.progressBar}>
                   <View
@@ -177,11 +167,10 @@ export default function GlobalProgressBar({
                     ]}
                   />
                 </View>
+                <Text style={[styles.progressPercent, { color: getStatusColor(item.status) }]}>
+                  {Math.round(item.progress)}%
+                </Text>
               </View>
-
-              {item.message && (
-                <Text style={styles.progressMessage}>{item.message}</Text>
-              )}
             </View>
           ))}
         </View>
@@ -253,11 +242,11 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingBottom: 8,
     maxHeight: 200,
   },
   progressItem: {
-    marginBottom: 12,
+    marginBottom: 4,
   },
   progressHeader: {
     flexDirection: 'row',
@@ -281,13 +270,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   progressBarContainer: {
-    marginBottom: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   progressBar: {
     height: 4,
     backgroundColor: '#E5E7EB',
     borderRadius: 2,
     overflow: 'hidden',
+    flex: 1,
+    marginRight: 8,
   },
   progressFill: {
     height: '100%',

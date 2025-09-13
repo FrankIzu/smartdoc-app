@@ -62,9 +62,10 @@ export default function UploadScreen() {
           // Import API client
           const { apiClient } = await import('../../services/api');
           
-          // Upload file using API client
-          const uploadResult = await apiClient.uploadFile(formData, (progress) => {
+          // Upload file using API client with progress polling
+          const uploadResult = await apiClient.uploadFileWithProgressPolling(formData, (progress, message, phase) => {
             setProgress(progress);
+            console.log(`📊 Upload progress: ${progress}% - ${message} (${phase})`);
           });
 
           console.log('Upload successful:', uploadResult);
