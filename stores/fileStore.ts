@@ -220,7 +220,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       
       // Launch camera
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
@@ -249,6 +249,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
     try {
       console.log('🖼️ Simple gallery upload test...');
       
+      // Set image picker state
+      set({ isImagePickerOpen: true, error: null });
+      
       // First try with expo-media-library approach
       console.log('🖼️ Requesting media library permissions...');
       const { status } = await MediaLibrary.requestPermissionsAsync();
@@ -262,7 +265,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
         console.log('🖼️ ImagePicker permission result:', permissionResult);
         
         if (!permissionResult.granted) {
-          set({ error: 'Media library permission is required to select photos' });
+          set({ error: 'Media library permission is required to select photos', isImagePickerOpen: false });
           return false;
         }
       }
@@ -270,10 +273,14 @@ export const useFileStore = create<FileStore>((set, get) => ({
       console.log('🖼️ Launching simple image picker...');
       // Use the most basic configuration possible
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 1,
+        allowsMultipleSelection: true,
       });
       console.log('🖼️ Simple picker result:', result);
+      
+      // Reset image picker state
+      set({ isImagePickerOpen: false });
       
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const files: FileUpload[] = result.assets.map((asset, index) => ({
@@ -291,7 +298,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       return false;
     } catch (error: any) {
       console.error('🖼️ Gallery upload error:', error);
-      set({ error: error.message || 'Failed to select media' });
+      set({ error: error.message || 'Failed to select media', isImagePickerOpen: false });
       return false;
     }
   },

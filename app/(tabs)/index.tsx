@@ -40,7 +40,7 @@ import { useAuth } from '../context/auth';
     }
     
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsMultipleSelection: false,
       quality: 0.8,
     });
@@ -93,6 +93,7 @@ interface RecentActivity {
 function DashboardScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const { uploadFromGallery, uploadFromDocuments } = useFileStore();
   const isAuthenticated = !!user;
   const [stats, setStats] = useState({
     totalDocuments: 0,
@@ -109,8 +110,37 @@ function DashboardScreen() {
   const [connectionStatus, setConnectionStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [showUploadOptions, setShowUploadOptions] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadTimeout, setUploadTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [isOpeningPicker, setIsOpeningPicker] = useState(false);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
+
+  // Helper function to safely set upload state with timeout
+  const setUploadStateWithTimeout = (uploading: boolean) => {
+    setIsUploading(uploading);
+    
+    if (uploading) {
+      // Clear any existing timeout
+      if (uploadTimeout) {
+        clearTimeout(uploadTimeout);
+      }
+      
+      // Set a timeout to automatically reset upload state after 30 seconds
+      const timeout = setTimeout(() => {
+        console.log('⏰ Upload timeout reached, resetting upload state');
+        setIsUploading(false);
+        setUploadTimeout(null);
+      }, 30000);
+      
+      setUploadTimeout(timeout);
+    } else {
+      // Clear timeout when upload is complete
+      if (uploadTimeout) {
+        clearTimeout(uploadTimeout);
+        setUploadTimeout(null);
+      }
+    }
+  };
 
   const loadDashboardData = useCallback(async () => {
     console.log('🏠 Starting dashboard data load...');
@@ -349,6 +379,15 @@ function DashboardScreen() {
     return () => clearInterval(interval);
   }, [isAuthenticated, user, loadDashboardData]);
 
+  // Cleanup upload timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (uploadTimeout) {
+        clearTimeout(uploadTimeout);
+      }
+    };
+  }, [uploadTimeout]);
+
   const formatTimeAgo = (date: Date | undefined | null) => {
     // Handle undefined, null, or invalid dates
     if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
@@ -445,26 +484,32 @@ function DashboardScreen() {
     }
     
     console.log('📁 Files upload button clicked');
-    setIsUploading(true);
+    setUploadStateWithTimeout(true);
+    setIsOpeningPicker(true);
     setShowUploadOptions(false);
     
     // Wait for modal to fully close before opening picker
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     try {
-      // Use the fileStore's built-in upload method which handles state properly
-      const fileStore = useFileStore.getState();
-      const success = await fileStore.uploadFromDocuments();
+      // Use the reactive hook method which handles state properly
+      const success = await uploadFromDocuments();
       
       if (success) {
         Alert.alert('Success', 'Files uploaded successfully!');
         loadDashboardData();
+      } else {
+        // Handle case where upload returns false (user cancelled or failed)
+        console.log('📁 Upload was cancelled or failed');
       }
     } catch (error) {
       console.error('📁 Document upload error:', error);
       Alert.alert('Error', 'Failed to upload files. Please try again.');
     } finally {
-      setIsUploading(false);
+      // Always reset the uploading state
+      console.log('📁 Resetting upload state');
+      setUploadStateWithTimeout(false);
+      setIsOpeningPicker(false);
     }
   };
 
@@ -480,31 +525,34 @@ function DashboardScreen() {
     }
     
     console.log('🖼️ Gallery upload button clicked');
-    setIsUploading(true);
+    setUploadStateWithTimeout(true);
+    setIsOpeningPicker(true);
     setShowUploadOptions(false);
     
     // Wait for modal to fully close before opening picker
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     try {
-      console.log('🖼️ Getting file store...');
-      const fileStore = useFileStore.getState();
-      
       console.log('🖼️ Starting gallery upload...');
-      const success = await fileStore.uploadFromGallery();
+      const success = await uploadFromGallery();
       console.log('🖼️ Gallery upload result:', success);
       
       if (success) {
         Alert.alert('Success', 'Photos uploaded successfully!');
         loadDashboardData();
       } else {
+        // Handle case where upload returns false (user cancelled or failed)
+        console.log('🖼️ Gallery upload was cancelled or failed');
         Alert.alert('Upload Failed', 'Failed to upload photos. Please try again.');
       }
     } catch (error: any) {
       console.error('🖼️ Gallery upload error:', error);
       Alert.alert('Error', error.message || 'Failed to upload photos. Please try again.');
     } finally {
-      setIsUploading(false);
+      // Always reset the uploading state
+      console.log('🖼️ Resetting upload state');
+      setUploadStateWithTimeout(false);
+      setIsOpeningPicker(false);
     }
   };
 
@@ -924,12 +972,30 @@ function DashboardScreen() {
         visible={showUploadOptions}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => setShowUploadOptions(false)}
+        onRequestClose={() => {
+          setShowUploadOptions(false);
+          // Only reset upload state if not in the middle of opening a picker
+          if (isUploading && !isOpeningPicker) {
+            console.log('🔄 Modal closed, resetting upload state');
+            setUploadStateWithTimeout(false);
+          } else if (isOpeningPicker) {
+            console.log('🔄 Modal closed while opening picker, keeping upload state active');
+          }
+        }}
       >
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
-          onPress={() => setShowUploadOptions(false)}
+          onPress={() => {
+            setShowUploadOptions(false);
+            // Only reset upload state if not in the middle of opening a picker
+            if (isUploading && !isOpeningPicker) {
+              console.log('🔄 Modal overlay pressed, resetting upload state');
+              setUploadStateWithTimeout(false);
+            } else if (isOpeningPicker) {
+              console.log('🔄 Modal overlay pressed while opening picker, keeping upload state active');
+            }
+          }}
         >
           <TouchableOpacity
             style={styles.uploadOptionsContainer}
