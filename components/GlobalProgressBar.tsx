@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Animated, Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { PanGestureHandler, State } from 'react-native-gesture-handler';
 
 interface ProgressData {
   id: string;
@@ -28,6 +29,8 @@ export default function GlobalProgressBar({
   onClose,
 }: GlobalProgressBarProps) {
   const slideAnimation = React.useRef(new Animated.Value(0)).current;
+  const swipeAnimation = React.useRef(new Animated.Value(0)).current;
+  const lastGestureY = React.useRef(0);
 
   React.useEffect(() => {
     if (visible) {
@@ -45,12 +48,45 @@ export default function GlobalProgressBar({
     }
   }, [visible, minimized, slideAnimation]);
 
+  const onGestureEvent = Animated.event(
+    [{ nativeEvent: { translationY: swipeAnimation } }],
+    { useNativeDriver: true }
+  );
+
+  const onHandlerStateChange = (event: any) => {
+    if (event.nativeEvent.state === State.END) {
+      const { translationY, velocityY } = event.nativeEvent;
+      
+      // If swiped up significantly or with high velocity, close the progress bar
+      if (translationY < -50 || velocityY < -500) {
+        // Animate out and close
+        Animated.timing(swipeAnimation, {
+          toValue: -200,
+          duration: 200,
+          useNativeDriver: true,
+        }).start(() => {
+          onClose();
+          swipeAnimation.setValue(0); // Reset for next time
+        });
+      } else {
+        // Snap back to original position
+        Animated.spring(swipeAnimation, {
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      }
+    }
+  };
+
   if (!visible) return null;
 
-  const translateY = slideAnimation.interpolate({
-    inputRange: [0, 1],
-    outputRange: [minimized ? -60 : 0, 0],
-  });
+  const translateY = Animated.add(
+    slideAnimation.interpolate({
+      inputRange: [0, 1],
+      outputRange: [minimized ? -60 : 0, 0],
+    }),
+    swipeAnimation
+  );
 
   const getStatusIcon = (status: ProgressData['status']) => {
     switch (status) {
@@ -79,16 +115,23 @@ export default function GlobalProgressBar({
   };
 
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        {
-          transform: [{ translateY }],
-        },
-      ]}
+    <PanGestureHandler
+      onGestureEvent={onGestureEvent}
+      onHandlerStateChange={onHandlerStateChange}
+      activeOffsetY={[-10, 10]}
+      failOffsetX={[-50, 50]}
     >
+      <Animated.View
+        style={[
+          styles.container,
+          {
+            transform: [{ translateY }],
+          },
+        ]}
+      >
       <View style={styles.header}>
         <View style={styles.headerLeft}>
+          <View style={styles.dragHandle} />
           <Text style={styles.title}>Progress</Text>
           <Text style={styles.count}>
             {progressData.filter(p => p.status === 'completed').length} / {progressData.length}
@@ -143,7 +186,8 @@ export default function GlobalProgressBar({
           ))}
         </View>
       )}
-    </Animated.View>
+      </Animated.View>
+    </PanGestureHandler>
   );
 }
 
@@ -177,6 +221,13 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  dragHandle: {
+    width: 30,
+    height: 4,
+    backgroundColor: '#D1D5DB',
+    borderRadius: 2,
+    marginRight: 8,
   },
   title: {
     fontSize: 16,

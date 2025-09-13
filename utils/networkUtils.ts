@@ -15,11 +15,10 @@ export const getBackendUrl = (): string => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  // Development in Expo Go
-  if (isDevelopment && isExpoGo) {
-    // Use localhost since backend is running locally
-    console.log('🔧 Using localhost for development');
-    return 'http://localhost:5000';
+  // Development - use the specified IP address
+  if (isDevelopment) {
+    console.log('🔧 Using development IP for backend');
+    return 'http://192.168.62.96:5000';
   }
   
   // Production or standalone app
@@ -43,7 +42,7 @@ const getLocalNetworkIP = (): string | null => {
   // For iOS simulator, use localhost
   if (Platform.OS === 'ios') {
     // For iOS development with physical device, use machine IP
-    return '192.168.1.7';
+    return '192.168.62.96';
   }
   
   // For web, use localhost
@@ -65,9 +64,9 @@ export const getNetworkFallbacks = (): string[] => {
   // For development, always include multiple IP options
   if (__DEV__) {
     const allIPs = [
-      'localhost',       // Primary for local development
+      '192.168.62.96',  // Primary machine IP for mobile devices
+      'localhost',       // Localhost fallback
       '127.0.0.1',      // Alternative localhost
-      '192.168.1.7',    // Machine IP for mobile devices
       '10.0.2.2',       // Android emulator
     ];
     

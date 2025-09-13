@@ -2,15 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
@@ -411,7 +411,7 @@ export default function MeetingCallScreen() {
           <Ionicons name="videocam" size={20} color="#007AFF" />
         </TouchableOpacity>
         
-        {(item.status === 'ongoing' || item.status === 'live') && (
+        {(item.status === 'active') && (
           <TouchableOpacity
             style={styles.actionIcon}
             onPress={(e) => {

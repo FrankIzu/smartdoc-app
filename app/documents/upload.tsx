@@ -22,7 +22,16 @@ export default function UploadScreen() {
   };
 
   const handleUpload = async () => {
+    const { useFileStore } = require('../../stores/fileStore');
+    const fileStore = useFileStore.getState();
+    
+    if (fileStore.isDocumentPickerOpen) {
+      console.log('Document picker already in progress, ignoring request');
+      return;
+    }
+    
     try {
+      fileStore.setDocumentPickerOpen(true);
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf', 'image/*', 'application/msword',
                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
@@ -75,6 +84,7 @@ export default function UploadScreen() {
     } finally {
       setUploading(false);
       setProgress(0);
+      fileStore.setDocumentPickerOpen(false);
     }
   };
 

@@ -423,7 +423,7 @@ export default function ScheduleMeetingScreen() {
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
           <TouchableOpacity 
-            style={styles.cancelButton}
+            style={styles.cancelButtonContainer}
             onPress={() => router.back()}
           >
             <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -460,7 +460,7 @@ export default function ScheduleMeetingScreen() {
           >
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
-                <Text style={styles.cancelButton}>Cancel</Text>
+                <Text style={styles.modalCancelButton}>Cancel</Text>
               </TouchableOpacity>
               <Text style={styles.modalTitle}>Select Start Date & Time</Text>
               <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
@@ -503,7 +503,7 @@ export default function ScheduleMeetingScreen() {
           >
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
-                <Text style={styles.cancelButton}>Cancel</Text>
+                <Text style={styles.modalCancelButton}>Cancel</Text>
               </TouchableOpacity>
               <Text style={styles.modalTitle}>Select End Date & Time</Text>
               <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
@@ -662,7 +662,7 @@ const styles = StyleSheet.create({
     borderTopColor: '#e9ecef',
     gap: 12,
   },
-  cancelButton: {
+  cancelButtonContainer: {
     flex: 1,
     paddingVertical: 12,
     borderRadius: 8,
@@ -755,7 +755,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#212529',
   },
-  cancelButton: {
+  modalCancelButton: {
     fontSize: 16,
     color: '#6c757d',
   },

@@ -55,7 +55,10 @@
               "pathPrefix": "/auth"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -86,7 +89,8 @@
         {
           "faceIDPermission": "GrabDocs uses Face ID for secure and convenient authentication to access your account and documents."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

@@ -54,6 +54,8 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
       timestamp: Date.now(),
     };
     
+    console.log(`📊 Adding progress item: ${id}`, newProgress);
+    
     set((state) => ({
       progressData: [...state.progressData, newProgress],
       visible: true,
@@ -63,6 +65,7 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
   },
 
   updateProgress: (id, updates) => {
+    console.log(`📊 Updating progress item: ${id}`, updates);
     set((state) => ({
       progressData: state.progressData.map((item) =>
         item.id === id ? { ...item, ...updates } : item

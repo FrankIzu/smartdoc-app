@@ -132,8 +132,18 @@ export default function ManageBookmarksScreen() {
     );
   };
 
+  const handleBookmarkPress = (bookmark: Bookmark) => {
+    router.push({
+      pathname: '/bookmarks/detail',
+      params: { id: bookmark.id.toString() }
+    });
+  };
+
   const renderBookmarkItem = ({ item }: { item: Bookmark }) => (
-    <View style={styles.bookmarkCard}>
+    <TouchableOpacity 
+      style={styles.bookmarkCard}
+      onPress={() => handleBookmarkPress(item)}
+    >
       <View style={styles.bookmarkHeader}>
         <View style={[styles.bookmarkColorIndicator, { backgroundColor: item.color }]} />
         <View style={styles.bookmarkInfo}>
@@ -145,14 +155,20 @@ export default function ManageBookmarksScreen() {
             {item.file_count} file{item.file_count !== 1 ? 's' : ''}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={() => handleDeleteBookmark(item)}
-        >
-          <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-        </TouchableOpacity>
+        <View style={styles.bookmarkActions}>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={(e) => {
+              e.stopPropagation();
+              handleDeleteBookmark(item);
+            }}
+          >
+            <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+          </TouchableOpacity>
+          <Ionicons name="chevron-forward" size={20} color="#C7C7CC" style={styles.chevron} />
+        </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   const renderColorOption = (color: string) => (
@@ -373,6 +389,14 @@ const styles = StyleSheet.create({
   bookmarkHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  bookmarkActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 'auto',
+  },
+  chevron: {
+    marginLeft: 8,
   },
   bookmarkColorIndicator: {
     width: 16,

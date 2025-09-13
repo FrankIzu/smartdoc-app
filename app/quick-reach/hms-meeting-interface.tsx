@@ -14,14 +14,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 let HMSPrebuilt: any = null;
 let HMSConfig: any = null;
 
-try {
-  const hmsModule = require('@100mslive/react-native-hms');
-  HMSPrebuilt = hmsModule.HMSPrebuilt;
-  HMSConfig = hmsModule.HMSConfig;
-  console.log('✅ 100ms Prebuilt Interface loaded successfully');
-} catch (error) {
-  console.warn('⚠️ 100ms Prebuilt Interface not available:', error instanceof Error ? error.message : String(error));
-  console.log('📱 Running in development mode without 100ms Prebuilt');
+// Check if we're in Expo Go (development mode)
+const isExpoGo = __DEV__ && typeof navigator !== 'undefined' && navigator.product === 'ReactNative';
+
+if (!isExpoGo) {
+  try {
+    const hmsModule = require('@100mslive/react-native-hms');
+    HMSPrebuilt = hmsModule.HMSPrebuilt;
+    HMSConfig = hmsModule.HMSConfig;
+    console.log('✅ 100ms Prebuilt Interface loaded successfully');
+  } catch (error) {
+    console.warn('⚠️ 100ms Prebuilt Interface not available:', error instanceof Error ? error.message : String(error));
+    console.log('📱 Running in development mode without 100ms Prebuilt');
+  }
+} else {
+  console.log('📱 Running in Expo Go - HMS Prebuilt Interface not available');
 }
 
 export default function HMSMeetingInterfaceScreen() {

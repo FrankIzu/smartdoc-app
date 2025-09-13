@@ -1,0 +1,817 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Modal,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { apiClient } from '../../services/api';
+import { useAuth } from '../context/auth';
+
+interface Bookmark {
+  id: number;
+  name: string;
+  description?: string;
+  color: string;
+  file_count: number;
+  is_active: boolean;
+}
+
+interface Document {
+  id: string;
+  name: string;
+  type: string;
+  category?: string;
+  size?: string;
+  created_at: string;
+  status: string;
+}
+
+export default function BookmarkDetailScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const { user } = useAuth();
+  
+  const [bookmark, setBookmark] = useState<Bookmark | null>(null);
+  const [files, setFiles] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showAddFilesModal, setShowAddFilesModal] = useState(false);
+  const [availableFiles, setAvailableFiles] = useState<Document[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [loadingAvailableFiles, setLoadingAvailableFiles] = useState(false);
+  
+  // Edit form state
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editColor, setEditColor] = useState('#007AFF');
+  
+  const colors = [
+    '#007AFF', '#34C759', '#FF9500', '#FF3B30', 
+    '#AF52DE', '#5856D6', '#8E44AD', '#E74C3C'
+  ];
+
+  const bookmarkId = params.id ? parseInt(params.id as string) : null;
+
+  useEffect(() => {
+    if (bookmarkId) {
+      loadBookmarkDetails();
+    }
+  }, [bookmarkId]);
+
+  const loadBookmarkDetails = async () => {
+    if (!bookmarkId) return;
+    
+    try {
+      setLoading(true);
+      
+      // Load bookmark info and files in parallel
+      console.log(`📁 Loading bookmark details for ID: ${bookmarkId}`);
+      const [bookmarkResponse, filesResponse] = await Promise.all([
+        apiClient.getBookmarks(),
+        apiClient.getBookmarkFiles(bookmarkId)
+      ]);
+      
+      console.log(`📁 Bookmark response:`, bookmarkResponse);
+      console.log(`📁 Files response:`, filesResponse);
+      
+      if (bookmarkResponse.success && bookmarkResponse.data) {
+        const bookmarksData = Array.isArray(bookmarkResponse.data) 
+          ? bookmarkResponse.data 
+          : (bookmarkResponse.data.bookmarks || []);
+        
+        const foundBookmark = bookmarksData.find((b: Bookmark) => b.id === bookmarkId);
+        if (foundBookmark) {
+          setBookmark(foundBookmark);
+          setEditName(foundBookmark.name);
+          setEditDescription(foundBookmark.description || '');
+          setEditColor(foundBookmark.color);
+        }
+      }
+      
+      if (filesResponse.success && filesResponse.data) {
+        const filesData = filesResponse.data;
+        console.log(`📁 Bookmark files loaded:`, filesData);
+        
+        // Map backend field names to frontend interface
+        const mappedFiles = filesData.map((file: any) => ({
+          id: file.id.toString(),
+          name: file.filename || file.original_filename || 'Unknown file',
+          type: file.file_type || file.file_kind || 'document',
+          category: file.file_kind || file.file_type,
+          size: file.file_size ? `${(file.file_size / 1024).toFixed(1)} KB` : undefined,
+          created_at: file.created_at,
+          status: 'processed' // Assume processed for bookmark files
+        }));
+        
+        setFiles(mappedFiles);
+      }
+      
+    } catch (error) {
+      console.error('Failed to load bookmark details:', error);
+      Alert.alert('Error', 'Failed to load bookmark details');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadBookmarkDetails();
+  };
+
+  const handleEditBookmark = async () => {
+    if (!bookmark || !editName.trim()) {
+      Alert.alert('Error', 'Bookmark name is required');
+      return;
+    }
+
+    try {
+      const response = await apiClient.updateBookmark(bookmark.id, {
+        name: editName.trim(),
+        description: editDescription.trim(),
+        color: editColor
+      });
+
+      if (response.success) {
+        setBookmark(prev => prev ? {
+          ...prev,
+          name: editName.trim(),
+          description: editDescription.trim(),
+          color: editColor
+        } : null);
+        setShowEditModal(false);
+        Alert.alert('Success', 'Bookmark updated successfully');
+      } else {
+        Alert.alert('Error', response.message || 'Failed to update bookmark');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update bookmark');
+    }
+  };
+
+  const handleDeleteBookmark = () => {
+    if (!bookmark) return;
+
+    Alert.alert(
+      'Delete Bookmark',
+      `Are you sure you want to delete "${bookmark.name}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await apiClient.deleteBookmark(bookmark.id);
+              if (response.success) {
+                Alert.alert('Success', 'Bookmark deleted successfully', [
+                  { text: 'OK', onPress: () => router.back() }
+                ]);
+              } else {
+                Alert.alert('Error', response.message || 'Failed to delete bookmark');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete bookmark');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleRemoveFile = (fileId: string) => {
+    if (!bookmark) return;
+
+    Alert.alert(
+      'Remove File',
+      'Are you sure you want to remove this file from the bookmark?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await apiClient.removeFileFromBookmark(bookmark.id, parseInt(fileId));
+              if (response.success) {
+                setFiles(prev => prev.filter(f => f.id !== fileId));
+                setBookmark(prev => prev ? { ...prev, file_count: prev.file_count - 1 } : null);
+                Alert.alert('Success', 'File removed from bookmark');
+              } else {
+                Alert.alert('Error', response.message || 'Failed to remove file');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to remove file');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const loadAvailableFiles = async () => {
+    try {
+      setLoadingAvailableFiles(true);
+      console.log('📁 Starting to load available files...');
+      let allFiles: any[] = [];
+      let page = 1;
+      const perPage = 100;
+      let hasMore = true;
+      
+      // Load files in batches until we get all files
+      while (hasMore) {
+        const response = await apiClient.getFiles(page, perPage);
+        console.log(`📁 API Response for page ${page}:`, response);
+        
+        if (response.success && response.files) {
+          const filesData = response.files;
+          console.log(`📁 Found ${filesData.length} files on page ${page}`);
+          console.log(`📁 Sample file data:`, filesData[0]);
+          
+          allFiles = allFiles.concat(filesData);
+          
+          // Check if we have more files to load
+          const totalFiles = response.pagination?.total || filesData.length;
+          hasMore = filesData.length === perPage && allFiles.length < totalFiles;
+          page++;
+        } else {
+          console.log('📁 No more files or error:', response);
+          hasMore = false;
+        }
+      }
+      
+      // Map backend field names to frontend interface
+      const mappedFiles = allFiles.map((file: any) => ({
+        id: file.id.toString(),
+        name: file.filename || file.original_filename || 'Unknown file',
+        type: file.file_type || file.file_kind || 'document',
+        category: file.file_kind || file.file_type,
+        size: file.file_size ? `${(file.file_size / 1024).toFixed(1)} KB` : undefined,
+        created_at: file.created_at,
+        status: 'processed' // Assume processed for available files
+      }));
+      
+      // Filter out files that are already in the bookmark
+      const bookmarkFileIds = new Set(files.map(f => f.id));
+      const available = mappedFiles.filter((f: Document) => !bookmarkFileIds.has(f.id));
+      setAvailableFiles(available);
+      console.log(`📁 Total files loaded: ${allFiles.length}`);
+      console.log(`📁 Files already in bookmark: ${bookmarkFileIds.size}`);
+      console.log(`📁 Available files for bookmark: ${available.length}`);
+      console.log(`📁 Available files:`, available);
+    } catch (error) {
+      console.error('Failed to load available files:', error);
+      Alert.alert('Error', 'Failed to load available files');
+    } finally {
+      setLoadingAvailableFiles(false);
+    }
+  };
+
+  const handleShowAddFilesModal = () => {
+    console.log('📁 Opening add files modal...');
+    loadAvailableFiles();
+    setShowAddFilesModal(true);
+  };
+
+  const handleAddSelectedFiles = async () => {
+    if (!bookmark || selectedFiles.size === 0) return;
+
+    try {
+      const fileIds = Array.from(selectedFiles).map(id => parseInt(id));
+      const response = await apiClient.addFilesToBookmark(bookmark.id, fileIds);
+      
+      if (response.success) {
+        // Reload bookmark details to get updated file list
+        await loadBookmarkDetails();
+        setSelectedFiles(new Set());
+        setShowAddFilesModal(false);
+        Alert.alert('Success', `${fileIds.length} file(s) added to bookmark`);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to add files');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to add files');
+    }
+  };
+
+  const toggleFileSelection = (fileId: string) => {
+    setSelectedFiles(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(fileId)) {
+        newSet.delete(fileId);
+      } else {
+        newSet.add(fileId);
+      }
+      return newSet;
+    });
+  };
+
+  const renderFileItem = ({ item }: { item: Document }) => (
+    <View style={styles.fileItem}>
+      <View style={styles.fileInfo}>
+        <Ionicons 
+          name={item.type === 'form' ? 'document-text' : 'document'} 
+          size={24} 
+          color="#007AFF" 
+        />
+        <View style={styles.fileDetails}>
+          <Text style={styles.fileName} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.fileMeta}>
+            {item.category || item.type} • {item.size || 'No size info'}
+          </Text>
+        </View>
+      </View>
+      <TouchableOpacity
+        style={styles.removeButton}
+        onPress={() => handleRemoveFile(item.id)}
+      >
+        <Ionicons name="close-circle" size={24} color="#FF3B30" />
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderAvailableFileItem = ({ item }: { item: Document }) => (
+    <TouchableOpacity
+      style={[
+        styles.availableFileItem,
+        selectedFiles.has(item.id) && styles.selectedFileItem
+      ]}
+      onPress={() => toggleFileSelection(item.id)}
+    >
+      <View style={styles.fileInfo}>
+        <Ionicons 
+          name={item.type === 'form' ? 'document-text' : 'document'} 
+          size={24} 
+          color="#007AFF" 
+        />
+        <View style={styles.fileDetails}>
+          <Text style={styles.fileName} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.fileMeta}>
+            {item.category || item.type} • {item.size || 'No size info'}
+          </Text>
+        </View>
+      </View>
+      {selectedFiles.has(item.id) && (
+        <Ionicons name="checkmark-circle" size={24} color="#34C759" />
+      )}
+    </TouchableOpacity>
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading bookmark...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!bookmark) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Ionicons name="bookmark-outline" size={64} color="#C7C7CC" />
+          <Text style={styles.errorTitle}>Bookmark not found</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>{bookmark.name}</Text>
+        <TouchableOpacity onPress={() => setShowEditModal(true)}>
+          <Ionicons name="create-outline" size={24} color="#007AFF" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.bookmarkInfo}>
+        <View style={[styles.colorIndicator, { backgroundColor: bookmark.color }]} />
+        <View style={styles.bookmarkDetails}>
+          <Text style={styles.bookmarkName}>{bookmark.name}</Text>
+          {bookmark.description && (
+            <Text style={styles.bookmarkDescription}>{bookmark.description}</Text>
+          )}
+          <Text style={styles.fileCount}>{bookmark.file_count} file(s)</Text>
+        </View>
+      </View>
+
+      <View style={styles.actions}>
+        <TouchableOpacity style={styles.actionButton} onPress={handleShowAddFilesModal}>
+          <Ionicons name="add" size={20} color="#007AFF" />
+          <Text style={styles.actionButtonText}>Add Files</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.actionButton, styles.deleteButton]} onPress={handleDeleteBookmark}>
+          <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+          <Text style={[styles.actionButtonText, styles.deleteButtonText]}>Delete</Text>
+        </TouchableOpacity>
+      </View>
+
+      <FlatList
+        data={files}
+        renderItem={renderFileItem}
+        keyExtractor={(item) => item.id}
+        style={styles.filesList}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Ionicons name="document-outline" size={48} color="#C7C7CC" />
+            <Text style={styles.emptyStateTitle}>No files in this bookmark</Text>
+            <Text style={styles.emptyStateDescription}>
+              Add files to organize them in this bookmark
+            </Text>
+          </View>
+        }
+      />
+
+      {/* Edit Bookmark Modal */}
+      <Modal visible={showEditModal} animationType="slide" presentationStyle="pageSheet">
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowEditModal(false)}>
+              <Text style={styles.modalCancelButton}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Edit Bookmark</Text>
+            <TouchableOpacity onPress={handleEditBookmark}>
+              <Text style={styles.modalSaveButton}>Save</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modalContent}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Name</Text>
+              <TextInput
+                style={styles.textInput}
+                value={editName}
+                onChangeText={setEditName}
+                placeholder="Bookmark name"
+                maxLength={50}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Description</Text>
+              <TextInput
+                style={[styles.textInput, styles.textArea]}
+                value={editDescription}
+                onChangeText={setEditDescription}
+                placeholder="Optional description"
+                multiline
+                numberOfLines={3}
+                maxLength={200}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Color</Text>
+              <View style={styles.colorPicker}>
+                {colors.map((color) => (
+                  <TouchableOpacity
+                    key={color}
+                    style={[
+                      styles.colorOption,
+                      { backgroundColor: color },
+                      editColor === color && styles.selectedColor
+                    ]}
+                    onPress={() => setEditColor(color)}
+                  />
+                ))}
+              </View>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Add Files Modal */}
+      <Modal visible={showAddFilesModal} animationType="slide" presentationStyle="pageSheet">
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => {
+              setShowAddFilesModal(false);
+              setSelectedFiles(new Set());
+            }}>
+              <Text style={styles.modalCancelButton}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Add Files</Text>
+            <TouchableOpacity 
+              onPress={handleAddSelectedFiles}
+              disabled={selectedFiles.size === 0}
+            >
+              <Text style={[
+                styles.modalSaveButton,
+                selectedFiles.size === 0 && styles.disabledButton
+              ]}>
+                Add ({selectedFiles.size})
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+           {loadingAvailableFiles ? (
+             <View style={styles.loadingContainer}>
+               <ActivityIndicator size="large" color="#007AFF" />
+               <Text style={styles.loadingText}>Loading your files...</Text>
+             </View>
+           ) : (
+             <FlatList
+               data={availableFiles}
+               renderItem={renderAvailableFileItem}
+               keyExtractor={(item) => item.id}
+               style={styles.availableFilesList}
+               ListEmptyComponent={
+                 <View style={styles.emptyState}>
+                   <Ionicons name="document-outline" size={48} color="#C7C7CC" />
+                   <Text style={styles.emptyStateTitle}>No available files</Text>
+                   <Text style={styles.emptyStateDescription}>
+                     All your files are already in this bookmark
+                   </Text>
+                 </View>
+               }
+             />
+           )}
+        </SafeAreaView>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginTop: 16,
+    marginBottom: 24,
+  },
+  backButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  backButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5EA',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+    marginHorizontal: 16,
+  },
+  bookmarkInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: 'white',
+    marginBottom: 8,
+  },
+  colorIndicator: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  bookmarkDetails: {
+    flex: 1,
+  },
+  bookmarkName: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  bookmarkDescription: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  fileCount: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  actions: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    marginBottom: 8,
+    gap: 12,
+  },
+  actionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  deleteButton: {
+    borderColor: '#FF3B30',
+  },
+  actionButtonText: {
+    marginLeft: 8,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#007AFF',
+  },
+  deleteButtonText: {
+    color: '#FF3B30',
+  },
+  filesList: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  fileItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  availableFileItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  selectedFileItem: {
+    backgroundColor: '#F0F8FF',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  fileInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  fileDetails: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 2,
+  },
+  fileMeta: {
+    fontSize: 14,
+    color: '#666',
+  },
+  removeButton: {
+    padding: 4,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 48,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateDescription: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    paddingHorizontal: 32,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5EA',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  modalCancelButton: {
+    fontSize: 16,
+    color: '#007AFF',
+  },
+  modalSaveButton: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  disabledButton: {
+    color: '#C7C7CC',
+  },
+  modalContent: {
+    padding: 16,
+  },
+  inputGroup: {
+    marginBottom: 24,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 8,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#E5E5EA',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+    backgroundColor: 'white',
+  },
+  textArea: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
+  colorPicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  colorOption: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  selectedColor: {
+    borderColor: '#333',
+  },
+  availableFilesList: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+});

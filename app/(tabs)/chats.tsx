@@ -1060,11 +1060,13 @@ export default function ChatsScreen() {
       }
       
       // Use the chat store to load the specific conversation
+      console.log('🔄 Loading messages for chat ID:', chatId);
       const { fetchChatConversation } = useChatStore.getState();
       await fetchChatConversation(chatId);
       
       // Get the current history from the store
       const { currentHistory } = useChatStore.getState();
+      console.log('📋 Current history from store:', currentHistory);
       
       if (currentHistory && currentHistory.messages.length > 0) {
         // Convert chat store messages to the expected format

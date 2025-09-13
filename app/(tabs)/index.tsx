@@ -1,21 +1,75 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
-  Image,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    Alert,
+    Image,
+    Modal,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
+import { useFileStore } from '../../stores/fileStore';
 import { useAuth } from '../context/auth';
+
+// Debug function to reset document picker state
+(global as any).resetDocumentPicker = async () => {
+  const fileStore = useFileStore.getState();
+  await fileStore.forceResetDocumentPicker();
+  console.log('🔄 Document picker state force reset manually');
+};
+
+// Debug function to test image picker directly
+(global as any).testImagePicker = async () => {
+  try {
+    const ImagePicker = require('expo-image-picker');
+    console.log('🖼️ Testing image picker directly...');
+    
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    console.log('🖼️ Permission result:', permissionResult);
+    
+    if (!permissionResult.granted) {
+      console.log('🖼️ Permission denied');
+      return;
+    }
+    
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: false,
+      quality: 0.8,
+    });
+    
+    console.log('🖼️ Direct picker result:', result);
+  } catch (error) {
+    console.error('🖼️ Direct picker error:', error);
+  }
+};
+
+// Debug function to reset image picker state
+(global as any).resetImagePicker = () => {
+  const fileStore = useFileStore.getState();
+  fileStore.resetImagePicker();
+  console.log('🔄 Image picker state reset manually');
+};
+
+// Ultra simple image picker test
+(global as any).ultraSimpleImagePicker = async () => {
+  try {
+    const ImagePicker = require('expo-image-picker');
+    console.log('🖼️ Ultra simple picker test...');
+    
+    const result = await ImagePicker.launchImageLibraryAsync();
+    console.log('🖼️ Ultra simple result:', result);
+  } catch (error) {
+    console.error('🖼️ Ultra simple error:', error);
+  }
+};
 
 interface DashboardStats {
   totalDocuments: number;
@@ -53,6 +107,8 @@ function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
 
@@ -382,39 +438,84 @@ function DashboardScreen() {
     }
   };
 
+  const handleUploadFromFiles = async () => {
+    if (isUploading) {
+      console.log('📁 Upload already in progress, ignoring request');
+      return;
+    }
+    
+    console.log('📁 Files upload button clicked');
+    setIsUploading(true);
+    setShowUploadOptions(false);
+    
+    // Wait for modal to fully close before opening picker
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    try {
+      // Use the fileStore's built-in upload method which handles state properly
+      const fileStore = useFileStore.getState();
+      const success = await fileStore.uploadFromDocuments();
+      
+      if (success) {
+        Alert.alert('Success', 'Files uploaded successfully!');
+        loadDashboardData();
+      }
+    } catch (error) {
+      console.error('📁 Document upload error:', error);
+      Alert.alert('Error', 'Failed to upload files. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleUploadFromCamera = () => {
+    setShowUploadOptions(false);
+    router.push('/scanner');
+  };
+
+  const handleUploadFromGallery = async () => {
+    if (isUploading) {
+      console.log('🖼️ Upload already in progress, ignoring request');
+      return;
+    }
+    
+    console.log('🖼️ Gallery upload button clicked');
+    setIsUploading(true);
+    setShowUploadOptions(false);
+    
+    // Wait for modal to fully close before opening picker
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    try {
+      console.log('🖼️ Getting file store...');
+      const fileStore = useFileStore.getState();
+      
+      console.log('🖼️ Starting gallery upload...');
+      const success = await fileStore.uploadFromGallery();
+      console.log('🖼️ Gallery upload result:', success);
+      
+      if (success) {
+        Alert.alert('Success', 'Photos uploaded successfully!');
+        loadDashboardData();
+      } else {
+        Alert.alert('Upload Failed', 'Failed to upload photos. Please try again.');
+      }
+    } catch (error: any) {
+      console.error('🖼️ Gallery upload error:', error);
+      Alert.alert('Error', error.message || 'Failed to upload photos. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleQuickAction = (action: string) => {
     switch (action) {
       case 'scan':
         router.push('/(tabs)/documents');
         break;
       case 'upload':
-        // Use direct file upload instead of navigating to upload screen
-        DocumentPicker.getDocumentAsync({
-          type: ['application/pdf', 'image/*', 'application/msword',
-                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-          multiple: true,
-        }).then((result) => {
-          if (!result.canceled && result.assets) {
-            // Use the file store to upload files with global progress bar
-            const { useFileStore } = require('../../stores/fileStore');
-            const fileStore = useFileStore.getState();
-            
-            const files = result.assets.map((asset) => ({
-              uri: asset.uri,
-              name: asset.name,
-              type: asset.mimeType || 'application/octet-stream',
-              size: asset.size,
-            }));
-            
-            fileStore.uploadFiles(files).then((success: boolean) => {
-              if (success) {
-                Alert.alert('Success', 'Files uploaded successfully!');
-                // Refresh dashboard data
-                loadDashboardData();
-              }
-            });
-          }
-        });
+        // Show upload options modal
+        setShowUploadOptions(true);
         break;
       case 'chat':
         router.push('/(tabs)/chats');
@@ -793,7 +894,7 @@ function DashboardScreen() {
             [
               {
                 text: 'Upload File',
-                onPress: () => router.push('/documents'),
+                onPress: () => setShowUploadOptions(true),
               },
               {
                 text: 'Scan Document',
@@ -817,6 +918,85 @@ function DashboardScreen() {
       >
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
+
+      {/* Upload Options Modal */}
+      <Modal
+        visible={showUploadOptions}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowUploadOptions(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowUploadOptions(false)}
+        >
+          <TouchableOpacity
+            style={styles.uploadOptionsContainer}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.uploadOptionsHeader}>
+              <Text style={styles.uploadOptionsTitle}>Upload Document</Text>
+              <TouchableOpacity onPress={() => setShowUploadOptions(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.uploadOptionsContent}>
+              <TouchableOpacity
+                style={[styles.uploadOption, isUploading && styles.uploadOptionDisabled]}
+                onPress={() => {
+                  console.log('📁 Files button pressed in modal');
+                  handleUploadFromFiles();
+                }}
+                disabled={isUploading}
+              >
+                <View style={[styles.uploadOptionIcon, { backgroundColor: '#007AFF' }]}>
+                  <Ionicons name="document" size={24} color="#fff" />
+                </View>
+                <View style={styles.uploadOptionText}>
+                  <Text style={styles.uploadOptionTitle}>Files</Text>
+                  <Text style={styles.uploadOptionSubtitle}>Upload from your device</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.uploadOption}
+                onPress={handleUploadFromCamera}
+              >
+                <View style={[styles.uploadOptionIcon, { backgroundColor: '#FF9500' }]}>
+                  <Ionicons name="camera" size={24} color="#fff" />
+                </View>
+                <View style={styles.uploadOptionText}>
+                  <Text style={styles.uploadOptionTitle}>Camera</Text>
+                  <Text style={styles.uploadOptionSubtitle}>Take a photo or scan document</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.uploadOption, isUploading && styles.uploadOptionDisabled]}
+                onPress={() => {
+                  console.log('🖼️ Gallery button pressed in modal');
+                  handleUploadFromGallery();
+                }}
+                disabled={isUploading}
+              >
+                <View style={[styles.uploadOptionIcon, { backgroundColor: '#5856D6' }]}>
+                  <Ionicons name="images" size={24} color="#fff" />
+                </View>
+                <View style={styles.uploadOptionText}>
+                  <Text style={styles.uploadOptionTitle}>Images Gallery</Text>
+                  <Text style={styles.uploadOptionSubtitle}>Upload from your photo gallery</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1169,6 +1349,74 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 8,
     flex: 1,
+  },
+  // Upload options modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadOptionsContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    width: '90%',
+    maxWidth: 400,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  uploadOptionsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e5e5',
+  },
+  uploadOptionsTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+  },
+  uploadOptionsContent: {
+    padding: 16,
+  },
+  uploadOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  uploadOptionDisabled: {
+    opacity: 0.5,
+  },
+  uploadOptionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  uploadOptionText: {
+    flex: 1,
+    marginRight: 10,
+  },
+  uploadOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  uploadOptionSubtitle: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
   },
 });
 

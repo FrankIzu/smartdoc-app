@@ -94,7 +94,16 @@ export default function PublicUploadScreen() {
   };
 
   const selectFiles = async () => {
+    const { useFileStore } = require('../stores/fileStore');
+    const fileStore = useFileStore.getState();
+    
+    if (fileStore.isDocumentPickerOpen) {
+      console.log('Document picker already in progress, ignoring request');
+      return;
+    }
+    
     try {
+      fileStore.setDocumentPickerOpen(true);
       const result = await DocumentPicker.getDocumentAsync({
         multiple: true,
         type: '*/*',
@@ -125,6 +134,8 @@ export default function PublicUploadScreen() {
     } catch (error) {
       console.error('Failed to select files:', error);
       Alert.alert('Error', 'Failed to select files');
+    } finally {
+      fileStore.setDocumentPickerOpen(false);
     }
   };
 

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -17,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import ExternalFilePicker from '../../components/ExternalFilePicker';
 import LoadingDots from '../../components/LoadingDots';
+import QuickFormViewer from '../../components/QuickFormViewer';
 import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
@@ -68,7 +68,7 @@ export default function QuickFilesScreen() {
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [showExternalFilePicker, setShowExternalFilePicker] = useState(false);
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
-  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const [showQuickFormViewer, setShowQuickFormViewer] = useState(false);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   
   // Kebab menu state
@@ -500,19 +500,15 @@ export default function QuickFilesScreen() {
       });
     }
 
-    // If the document is a form (either by type or category), open form builder
+    // If the document is a form (either by type or category), open quick form viewer
     if (
       document.type === 'form' ||
       document.category?.toLowerCase() === 'form' ||
       document.category?.toLowerCase() === 'forms'
     ) {
-      // For recent forms, we have the form data, so we can open the form builder with the form ID
-      if (document.formData) {
-        router.push(`/forms/builder?formId=${document.id}&formName=${encodeURIComponent(document.name)}`);
-      } else {
-        // For legacy form files, use fileId
-        router.push(`/forms/builder?fileId=${document.id}`);
-      }
+      // Open quick form viewer instead of form builder
+      setSelectedDocument(document);
+      setShowQuickFormViewer(true);
       return;
     }
 
@@ -702,47 +698,22 @@ export default function QuickFilesScreen() {
     return false;
   };
 
-  const handleUploadFromFiles = () => {
-    setShowUploadOptions(false);
-    DocumentPicker.getDocumentAsync({
-      type: ['application/pdf', 'image/*', 'application/msword',
-             'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-      multiple: true,
-    }).then((result) => {
-      if (!result.canceled && result.assets) {
-        const fileStore = useFileStore.getState();
-        
-        const files = result.assets.map((asset) => ({
-          uri: asset.uri,
-          name: asset.name,
-          type: asset.mimeType || 'application/octet-stream',
-          size: asset.size,
-        }));
-        
-        fileStore.uploadFiles(files).then((success) => {
-          if (success) {
-            Alert.alert('Success', 'Files uploaded successfully!');
-            loadDocuments(true); // Refresh documents list
-          }
-        });
+  const handleUploadFromFiles = async () => {
+    try {
+      // Use the fileStore's built-in upload method which handles state properly
+      const fileStore = useFileStore.getState();
+      const success = await fileStore.uploadFromDocuments();
+      
+      if (success) {
+        Alert.alert('Success', 'Files uploaded successfully!');
+        loadDocuments(true); // Refresh documents list
       }
-    });
+    } catch (error) {
+      console.error('Document upload error:', error);
+      Alert.alert('Error', 'Failed to upload files. Please try again.');
+    }
   };
 
-  const handleUploadFromPhotos = () => {
-    setShowUploadOptions(false);
-    handleGalleryUpload();
-  };
-
-  const handleUploadFromDropbox = () => {
-    setShowUploadOptions(false);
-    setShowExternalFilePicker(true);
-  };
-
-  const handleUploadFromGoogleDrive = () => {
-    setShowUploadOptions(false);
-    setShowExternalFilePicker(true);
-  };
 
   const renderDocument = ({ item }: { item: Document }) => (
     <TouchableOpacity
@@ -808,9 +779,6 @@ export default function QuickFilesScreen() {
               <Ionicons name="cloud-upload" size={24} color="#007AFF" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.headerButton}>
-              <Ionicons name="cloud-download" size={24} color="#10B981" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerButton}>
               <Ionicons name="camera" size={24} color="#007AFF" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.headerButton}>
@@ -851,19 +819,13 @@ export default function QuickFilesScreen() {
         <View style={styles.headerActions}>
           <TouchableOpacity 
             style={styles.headerButton}
-            onPress={() => setShowUploadOptions(true)}
+            onPress={handleUploadFromFiles}
           >
-            <Ionicons name="cloud-upload" size={24} color="#007AFF" />
+            <Ionicons name="document" size={24} color="#007AFF" />
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.headerButton}
-            onPress={() => setShowExternalFilePicker(true)}
-          >
-            <Ionicons name="cloud-download" size={24} color="#10B981" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.headerButton}
-            onPress={() => router.push('/scanner' as any)}
+            onPress={() => router.push('/scanner')}
           >
             <Ionicons name="camera" size={24} color="#007AFF" />
           </TouchableOpacity>
@@ -969,10 +931,10 @@ export default function QuickFilesScreen() {
             {!searchQuery && (
               <TouchableOpacity 
                 style={styles.uploadButton}
-                onPress={() => setShowUploadOptions(true)}
+                onPress={handleUploadFromFiles}
               >
-                <Ionicons name="cloud-upload" size={20} color="#fff" />
-                <Text style={styles.uploadButtonText}>Upload File</Text>
+                <Ionicons name="document" size={20} color="#fff" />
+                <Text style={styles.uploadButtonText}>Upload Files</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -993,6 +955,18 @@ export default function QuickFilesScreen() {
         />
       )}
 
+      {/* Quick Form Viewer */}
+      {showQuickFormViewer && selectedDocument && (
+        <QuickFormViewer
+          formId={selectedDocument.id}
+          formName={selectedDocument.name}
+          onClose={() => {
+            setShowQuickFormViewer(false);
+            setSelectedDocument(null);
+          }}
+        />
+      )}
+
       {/* External File Picker */}
       <ExternalFilePicker
         visible={showExternalFilePicker}
@@ -1001,86 +975,6 @@ export default function QuickFilesScreen() {
         onImportSuccess={handleImportSuccess}
       />
 
-      {/* Upload Options Modal */}
-      <Modal
-        visible={showUploadOptions}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowUploadOptions(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowUploadOptions(false)}
-        >
-          <View style={styles.uploadOptionsContainer}>
-            <View style={styles.uploadOptionsHeader}>
-              <Text style={styles.uploadOptionsTitle}>Upload Document</Text>
-              <TouchableOpacity onPress={() => setShowUploadOptions(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.uploadOptionsContent}>
-              <TouchableOpacity
-                style={styles.uploadOption}
-                onPress={handleUploadFromFiles}
-              >
-                <View style={[styles.uploadOptionIcon, { backgroundColor: '#007AFF' }]}>
-                  <Ionicons name="document" size={24} color="#fff" />
-                </View>
-                <View style={styles.uploadOptionText}>
-                  <Text style={styles.uploadOptionTitle}>Files</Text>
-                  <Text style={styles.uploadOptionSubtitle}>Upload from your device</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.uploadOption}
-                onPress={handleUploadFromPhotos}
-              >
-                <View style={[styles.uploadOptionIcon, { backgroundColor: '#5856D6' }]}>
-                  <Ionicons name="images" size={24} color="#fff" />
-                </View>
-                <View style={styles.uploadOptionText}>
-                  <Text style={styles.uploadOptionTitle}>Photos</Text>
-                  <Text style={styles.uploadOptionSubtitle}>Upload from your photo gallery</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.uploadOption}
-                onPress={handleUploadFromDropbox}
-              >
-                <View style={[styles.uploadOptionIcon, { backgroundColor: '#0061FF' }]}>
-                  <Ionicons name="logo-dropbox" size={24} color="#fff" />
-                </View>
-                <View style={styles.uploadOptionText}>
-                  <Text style={styles.uploadOptionTitle}>Dropbox</Text>
-                  <Text style={styles.uploadOptionSubtitle}>Import from Dropbox</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.uploadOption}
-                onPress={handleUploadFromGoogleDrive}
-              >
-                <View style={[styles.uploadOptionIcon, { backgroundColor: '#4285F4' }]}>
-                  <Ionicons name="logo-google" size={24} color="#fff" />
-                </View>
-                <View style={styles.uploadOptionText}>
-                  <Text style={styles.uploadOptionTitle}>Google Drive</Text>
-                  <Text style={styles.uploadOptionSubtitle}>Import from Google Drive</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
 
       {/* Kebab Menu Modal */}
       <Modal
@@ -1441,65 +1335,6 @@ const styles = StyleSheet.create({
     color: '#333',
     marginLeft: 12,
     fontWeight: '500',
-  },
-  // Upload options modal styles
-  uploadOptionsContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    width: '90%',
-    maxWidth: 400,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  uploadOptionsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
-  },
-  uploadOptionsTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#333',
-  },
-  uploadOptionsContent: {
-    padding: 16,
-  },
-  uploadOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  uploadOptionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  uploadOptionText: {
-    flex: 1,
-    marginRight: 10,
-  },
-  uploadOptionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  uploadOptionSubtitle: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 2,
   },
   // Bookmark modal styles
   bookmarkModalContainer: {

@@ -69,7 +69,7 @@ export const API_BASE_URL = (() => {
   }
   
   // HARDCODED FOR DEVELOPMENT: Use the actual machine IP for mobile devices
-  if (__DEV__ && Constants.appOwnership === 'expo') {
+  if (__DEV__) {
     const hardcodedUrl = 'http://192.168.62.96:5000';
     console.log('🔧 FORCED API URL (hardcoded for development):', hardcodedUrl);
     console.log('🔧 This overrides all other detection logic');

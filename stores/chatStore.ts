@@ -53,21 +53,53 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ isLoading: true, error: null });
     
     try {
-      const response = await apiService.getChatConversation(id);
-      
-      if (response.success && response.data) {
-        set({
-          currentHistory: response.data,
-          isLoading: false,
-          error: null,
-        });
-      } else {
-        set({
-          isLoading: false,
-          error: response.message || 'Failed to fetch conversation',
-        });
+      console.log('🔍 Fetching chat conversation for ID:', id);
+
+      let messages: any[] | null = null;
+
+      // Primary: use the existing chat history endpoint (was working before)
+      try {
+        const historyResponse = await apiService.getChatHistory();
+        console.log('📜 Chat history response loaded');
+        if (historyResponse && (historyResponse as any).success) {
+          const histories = (historyResponse as any).data || [];
+          const match = histories.find((h: any) => h.id === id);
+          messages = match?.messages || [];
+        }
+      } catch (e) {
+        console.warn('⚠️ getChatHistory failed, will try messages fallback');
       }
+
+      // Fallback: dedicated chat messages endpoint if available
+      if (!messages || messages.length === 0) {
+        try {
+          const messagesResponse = await apiService.getChatMessages(id);
+          console.log('📨 Chat messages response (fallback):', messagesResponse);
+          if (messagesResponse && (messagesResponse as any).success) {
+            messages = (messagesResponse as any).data?.messages || (messagesResponse as any).data || [];
+          }
+        } catch (e) {
+          console.warn('⚠️ getChatMessages also failed');
+        }
+      }
+
+      console.log('💬 Messages found:', Array.isArray(messages) ? messages.length : 0);
+
+      const chatHistory: ChatHistory = {
+        id,
+        title: `Chat ${id}`,
+        messages: messages || [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      
+      set({
+        currentHistory: chatHistory,
+        isLoading: false,
+        error: null,
+      });
     } catch (error: any) {
+      console.error('Failed to fetch chat conversation:', error);
       set({
         isLoading: false,
         error: error.message || 'Failed to fetch conversation',

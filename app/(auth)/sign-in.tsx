@@ -18,6 +18,7 @@ import {
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { googleAuthService } from '../../services/googleAuth';
 import { useAuth } from '../context/auth';
+import { API_BASE_URL } from '../../constants/Config';
 
 export default function SignInScreen() {
   const router = useRouter();

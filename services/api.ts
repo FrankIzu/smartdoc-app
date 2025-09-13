@@ -54,7 +54,7 @@ const MOBILE_ENDPOINTS = {
   // Files
   FILES: '/api/v1/mobile/files',
   UPLOAD: '/api/v1/mobile/upload',
-  FILE_BY_ID: (id: number) => `/api/v1/mobile/file/${id}`,
+  FILE_BY_ID: (id: number) => `/api/v1/mobile/get-file/${id}`,
   FILE_DOWNLOAD: (id: number) => `/api/v1/mobile/file/${id}/download`,
   
   // Chat
@@ -83,7 +83,7 @@ const MOBILE_ENDPOINTS = {
   
   // Chat system
   CHATS: '/api/v1/mobile/chats',
-  CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/chats/${chatId}/messages`,
+  CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/chat/messages/${chatId}`,
   CHAT_SEND_MESSAGE: '/api/v1/mobile/chat/send',
   
   // Bookmarks
@@ -456,14 +456,19 @@ class ApiService {
         onUploadProgress: (progressEvent) => {
           if (onProgress && progressEvent.total) {
             const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            console.log(`📡 Upload progress event: ${progressEvent.loaded}/${progressEvent.total} = ${progress}%`);
             onProgress(progress);
+          } else {
+            console.log(`📡 Upload progress event ignored: onProgress=${!!onProgress}, total=${progressEvent.total}`);
           }
         },
       });
       console.log('✅ Upload successful');
+      console.log('📡 Upload response:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('❌ Upload failed:', error);
+      console.error('❌ Upload error response:', error.response?.data);
       throw new Error(error.response?.data?.message || 'Upload failed');
     }
   }
@@ -608,6 +613,15 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to delete form');
+    }
+  }
+
+  async getFormById(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.FORM_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to get form');
     }
   }
 
@@ -772,11 +786,61 @@ class ApiService {
 
   async addFileToBookmark(bookmarkId: number, fileId: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files`, { file_id: fileId });
+      const response = await this.client.post(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files/${fileId}`);
       return response.data;
     } catch (error: any) {
       console.error('Add file to bookmark error:', error);
       throw new Error(error.response?.data?.message || 'Failed to add file to bookmark');
+    }
+  }
+
+  async addFilesToBookmark(bookmarkId: number, fileIds: number[]): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files/bulk`, { file_ids: fileIds });
+      return response.data;
+    } catch (error: any) {
+      console.error('Add files to bookmark error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to add files to bookmark');
+    }
+  }
+
+  async getBookmarkFiles(bookmarkId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get bookmark files error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to fetch bookmark files');
+    }
+  }
+
+  async removeFileFromBookmark(bookmarkId: number, fileId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files/${fileId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Remove file from bookmark error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to remove file from bookmark');
+    }
+  }
+
+  async updateBookmark(bookmarkId: number, data: { name?: string; description?: string; color?: string }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}`, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Update bookmark error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update bookmark');
+    }
+  }
+
+  async deleteBookmark(bookmarkId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete bookmark error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to delete bookmark');
     }
   }
 
