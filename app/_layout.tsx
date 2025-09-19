@@ -10,6 +10,7 @@ LogBox.ignoreLogs([
   'Linking requires a build-time setting',
 ]);
 
+import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
 import { Slot, SplashScreen } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -17,7 +18,6 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import GlobalProgressBar from '../components/GlobalProgressBar';
 import NetworkIndicator from '../components/NetworkIndicator';
-import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
 import { useProgressStore } from '../services/progressService';
 import { AuthProvider, useAuth } from './context/auth';
 

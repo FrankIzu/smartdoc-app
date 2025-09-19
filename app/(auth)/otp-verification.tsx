@@ -1,3 +1,4 @@
+import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
@@ -14,7 +15,6 @@ import {
 } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { API_BASE_URL } from '../../constants/Config';
-import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 
 interface OtpVerificationParams {
   username: string;

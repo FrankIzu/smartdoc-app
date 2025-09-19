@@ -1,3 +1,4 @@
+import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -13,7 +14,6 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { apiService as api } from '../../services/api';
 import deviceSecurityService from '../../services/deviceSecurity';
 import { useAuth } from '../context/auth';

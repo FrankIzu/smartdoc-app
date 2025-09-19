@@ -1,8 +1,22 @@
 import Constants from 'expo-constants';
 
-// API Configuration
-export const API_BASE_URL = 'http://192.168.1.7:5000'; // Updated to use correct IP address
-export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
+// API Configuration - Auto-detect based on environment
+export const API_BASE_URL = (() => {
+  // 1. Check explicit environment variable
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+  
+  // 2. Auto-detect based on development mode
+  if (__DEV__) {
+    return 'http://192.168.1.7:5000'; // Local development
+  }
+  
+  // 3. Production fallback
+  return 'https://api.grabdocs.com'; // Production
+})();
+
+export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || (__DEV__ ? 'development' : 'production');
 
 // OAuth Configuration - Platform-specific client IDs
 const GOOGLE_CLIENT_ID_WEB = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB || '';

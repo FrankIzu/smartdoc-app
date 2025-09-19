@@ -7,12 +7,18 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "development"
+      },
       "ios": {
         "resourceClass": "m-medium"
       }
     },
     "preview": {
-      "distribution": "internal",
+      "distribution": "store",
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "staging"
+      },
       "ios": {
         "resourceClass": "m-medium"
       },
@@ -21,12 +27,49 @@
       }
     },
     "production": {
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "production",
+        "NODE_ENV": "production"
+      },
+      "ios": {
+        "resourceClass": "m-medium",
+        "distribution": "store",
+        "buildConfiguration": "Release"
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "distribution": "store"
+      }
+    },
+    "minimal": {
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "production",
+        "NODE_ENV": "production"
+      },
       "ios": {
         "resourceClass": "m-medium",
         "distribution": "store"
       },
       "android": {
-        "buildType": "app-bundle",
+        "buildType": "apk"
+      }
+    },
+    "test": {
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "production",
+        "NODE_ENV": "development"
+      },
+      "ios": {
+        "resourceClass": "m-medium",
+        "distribution": "store"
+      }
+    },
+    "simple": {
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "production"
+      },
+      "ios": {
+        "resourceClass": "m-medium",
         "distribution": "store"
       }
     }
@@ -34,13 +77,13 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "APPLE_ID",
-        "ascAppId": "APP_STORE_CONNECT_APP_ID",
-        "appleTeamId": "APPLE_TEAM_ID"
+        "appleId": "fracis.onodueze@gmail.com",
+        "ascAppId": "6752529430",
+        "appleTeamId": "Q33K3Q7Q53"
       },
       "android": {
         "serviceAccountKeyPath": "C:\\llm\\projects\\grabdocs-service-accounts-463905-18ffc93ed84a.json",
-        "track": "internal"
+        "track": "production"
       }
     }
   }

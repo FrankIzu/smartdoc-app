@@ -1,0 +1,105 @@
+# EAS Build Ignore File
+# Exclude unnecessary files to reduce build size and upload time
+
+# Development files
+node_modules/.cache
+.expo
+dist
+web-build
+
+# Documentation
+*.md
+docs/
+README.md
+ENVIRONMENT_SETUP.md
+OAUTH_DEPLOYMENT_GUIDE.md
+OAUTH_INTEGRATION_STATUS.md
+GOOGLE_OAUTH_FIX.md
+GOOGLE_OAUTH_SETUP.md
+ENHANCED_2FA_IMPLEMENTATION.md
+EXTERNAL_FILE_UPLOAD_IMPLEMENTATION.md
+HMS_INTEGRATION_GUIDE.md
+MOBILE_HMS_WEBHOOK_INTEGRATION_SUMMARY.md
+MOBILE_OTP_IMPLEMENTATION.md
+PLAY_STORE_LISTING.md
+POST_LAUNCH_CHECKLIST.md
+RELEASE_NOTES_v1.0.0.md
+SETTINGS_IMPLEMENTATION_STATUS.md
+SUBMISSION_CHECKLIST.md
+USER_GUIDE.md
+ACCOUNT_MIGRATION_GUIDE.md
+
+# Test files
+test-*
+*_test.*
+__tests__/
+*.test.*
+test-files/
+
+# Logs
+*.log
+logs/
+
+# Backup files
+*.backup
+app-backup/
+_project_cleanup/
+
+# Data directories
+data/
+uploads/
+processed/
+extracted_metadata/
+francis/
+recordings/
+templates/
+transcripts/
+user_2/
+
+# Python files (not needed for mobile build)
+*.py
+manager-francis/
+db_scripts/
+check_*.py
+debug_*.py
+reupload_*.py
+test_*.py
+
+# Other development files
+.env.example
+env.example
+env.production.example
+.env.production.template
+cookies.txt
+background_reprocessor.log
+
+# Git
+.git
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.aab
+*.apk
+
+# Large files and directories
+dev-files/
+grabdocs/
+scripts/
+utils/
+hooks/
+types/
+stores/
+contexts/
+%USERPROFILE%/

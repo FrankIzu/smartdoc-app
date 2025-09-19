@@ -4,33 +4,18 @@ const path = require('path');
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
 
-// Suppress Metro bundler warnings
-config.reporter = {
-  update: (event) => {
-    // Only log errors and important events, suppress warnings
-    if (event.type === 'bundle_build_failed' || 
-        event.type === 'global_cache_error' ||
-        event.type === 'bundle_build_done') {
-      console.log(event);
-    }
-  }
-};
-
 // Configure resolver for @ path mapping
 config.resolver = {
   ...config.resolver,
   alias: {
     '@': path.resolve(__dirname, '.'),
   },
-  unstable_enablePackageExports: true,
-  sourceExts: [...config.resolver.sourceExts, 'mjs', 'cjs'],
 };
 
-// Configure transformer to handle environment variables properly
+// Optimize for EAS Build
 config.transformer = {
   ...config.transformer,
   minifierConfig: {
-    ...config.transformer.minifierConfig,
     keep_fnames: true,
     mangle: {
       keep_fnames: true,
@@ -38,18 +23,7 @@ config.transformer = {
   },
 };
 
-// Add development proxy for web platform
-if (process.env.NODE_ENV === 'development') {
-  // This will only affect web development
-  config.server = {
-    ...config.server,
-    rewriteRequestUrl: (url) => {
-      if (url.startsWith('/api/')) {
-        return `http://192.168.62.96:5000${url}`;
-      }
-      return url;
-    },
-  };
-}
+// Increase memory limit for bundling
+config.maxWorkers = 2;
 
 module.exports = config; 

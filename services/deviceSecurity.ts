@@ -1,4 +1,4 @@
-import * as Crypto from 'expo-crypto';
+// import * as Crypto from 'expo-crypto'; // Temporarily disabled for build
 import * as Device from 'expo-device';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';

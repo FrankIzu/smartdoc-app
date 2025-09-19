@@ -1,20 +1,6 @@
-// Conditional import for HMS - handle case where native module isn't available
-let HMSRoom: any = null;
-let HMSConfig: any = null;
-let HMSUpdateListenerActions: any = null;
-let HMSPeerUpdate: any = null;
-
-try {
-  const hmsModule = require('@100mslive/react-native-hms');
-  HMSRoom = hmsModule.HMSRoom;
-  HMSConfig = hmsModule.HMSConfig;
-  HMSUpdateListenerActions = hmsModule.HMSUpdateListenerActions;
-  HMSPeerUpdate = hmsModule.HMSPeerUpdate;
-  console.log('✅ HMS native module loaded successfully');
-} catch (error) {
-  console.warn('⚠️ HMS native module not available:', error instanceof Error ? error.message : String(error));
-  console.log('📱 Running in development mode without HMS native module');
-}
+// HMS package temporarily disabled for deployment
+// All HMS functionality is handled via backend API calls
+console.log('📱 HMS module temporarily disabled for deployment');
 
 import { HMSAuthTokenRequest, hmsBackendService } from './hmsBackendService';
 
@@ -72,12 +58,9 @@ class HMSService {
    */
   async initialize(): Promise<void> {
     try {
-      if (!HMSRoom) {
-        console.warn('⚠️ HMS native module not available - running in development mode');
-        return;
-      }
-      // HMS SDK initialization is handled automatically when creating a room
-      console.log('HMS Service initialized');
+      // HMS package is temporarily disabled for deployment
+      console.warn('⚠️ HMS native module not available - running in development mode');
+      return;
     } catch (error) {
       console.error('Failed to initialize HMS Service:', error);
       throw error;

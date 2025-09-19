@@ -35,7 +35,7 @@ interface UploadFile {
 }
 
 const api = {
-  get: async <T>(url: string): Promise<{ data: T }> => {
+  get: async <T,>(url: string): Promise<{ data: T }> => {
     const response = await fetch(`${API_BASE_URL}${url}`);
     const data = await response.json();
     return { data };
