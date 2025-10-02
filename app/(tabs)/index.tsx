@@ -18,58 +18,7 @@ import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
 import { useAuth } from '../context/auth';
 
-// Debug function to reset document picker state
-(global as any).resetDocumentPicker = async () => {
-  const fileStore = useFileStore.getState();
-  await fileStore.forceResetDocumentPicker();
-  console.log('🔄 Document picker state force reset manually');
-};
-
-// Debug function to test image picker directly
-(global as any).testImagePicker = async () => {
-  try {
-    const ImagePicker = require('expo-image-picker');
-    console.log('🖼️ Testing image picker directly...');
-    
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    console.log('🖼️ Permission result:', permissionResult);
-    
-    if (!permissionResult.granted) {
-      console.log('🖼️ Permission denied');
-      return;
-    }
-    
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: false,
-      quality: 0.8,
-    });
-    
-    console.log('🖼️ Direct picker result:', result);
-  } catch (error) {
-    console.error('🖼️ Direct picker error:', error);
-  }
-};
-
-// Debug function to reset image picker state
-(global as any).resetImagePicker = () => {
-  const fileStore = useFileStore.getState();
-  fileStore.resetImagePicker();
-  console.log('🔄 Image picker state reset manually');
-};
-
-// Ultra simple image picker test
-(global as any).ultraSimpleImagePicker = async () => {
-  try {
-    const ImagePicker = require('expo-image-picker');
-    console.log('🖼️ Ultra simple picker test...');
-    
-    const result = await ImagePicker.launchImageLibraryAsync();
-    console.log('🖼️ Ultra simple result:', result);
-  } catch (error) {
-    console.error('🖼️ Ultra simple error:', error);
-  }
-};
+// Debug functions removed for production build
 
 interface DashboardStats {
   totalDocuments: number;

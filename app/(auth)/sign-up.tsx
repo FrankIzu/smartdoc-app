@@ -1,10 +1,10 @@
-import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/Colors';
+import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { googleAuthService } from '../../services/googleAuth';
 
 export default function SignUpScreen() {
