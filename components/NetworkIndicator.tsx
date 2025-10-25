@@ -88,9 +88,9 @@ export default function NetworkIndicator({ compact = false, persistent = false }
   };
 
   const getIcon = () => {
-    if (status.isChecking) return 'wifi'; // Network icon for checking
-    if (status.isConnected) return 'wifi'; // Network icon for connected
-    return 'wifi-outline'; // Network icon for disconnected
+    if (status.isChecking) return 'wifi'; // Wifi icon for checking
+    if (status.isConnected) return 'wifi'; // Wifi icon for connected
+    return 'wifi-outline'; // Wifi outline icon for disconnected
   };
 
   // Compact version for persistent display
@@ -110,7 +110,7 @@ export default function NetworkIndicator({ compact = false, persistent = false }
         >
           <Ionicons 
             name={getIcon() as any} 
-            size={16} 
+            size={12} 
             color={getStatusColor()} 
           />
         </Animated.View>
@@ -133,7 +133,7 @@ export default function NetworkIndicator({ compact = false, persistent = false }
       >
         <Ionicons 
           name={getIcon() as any} 
-          size={16} 
+          size={12} 
           color="white" 
         />
       </Animated.View>

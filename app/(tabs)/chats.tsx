@@ -2,25 +2,26 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService as api } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
+import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 
 interface ChatParticipant {
   id: number;
@@ -126,6 +127,14 @@ export default function ChatsScreen() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
   
+  // Streaming state for fake character-by-character animation
+  const [streamingMessageIndex, setStreamingMessageIndex] = useState<number | null>(null);
+  const streamingIntervalRef = useRef<number | null>(null);
+  const contentBufferRef = useRef<string>('');
+  const displayedCharsRef = useRef<number>(0);
+  const isPreviewPhaseRef = useRef<boolean>(true);
+  const isStreamingRef = useRef<boolean>(false);
+  
 
   
   // Enhanced chat functionality state
@@ -148,6 +157,17 @@ export default function ChatsScreen() {
   const [filteredUsers, setFilteredUsers] = useState<ChatParticipant[]>([]);
   const [filteredBookmarks, setFilteredBookmarks] = useState<Bookmark[]>([]);
   
+  // Cleanup streaming on unmount
+  useEffect(() => {
+    return () => {
+      // Cleanup streaming interval when component unmounts
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+    };
+  }, []);
+  
 
   
   // Quick chat type selector
@@ -165,7 +185,7 @@ export default function ChatsScreen() {
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
   
   // Text input height state
-  const [textInputHeight, setTextInputHeight] = useState(36);
+  const [textInputHeight, setTextInputHeight] = useState(20);
   
   // Animation and abort controller refs
   const bounceAnim = useRef(new Animated.Value(1)).current;
@@ -173,10 +193,7 @@ export default function ChatsScreen() {
   
   const messagesRef = useRef<FlatList>(null);
 
-  // Animation states for bouncing balls
-  const ball1Anim = useRef(new Animated.Value(0)).current;
-  const ball2Anim = useRef(new Animated.Value(0)).current;
-  const ball3Anim = useRef(new Animated.Value(0)).current;
+  // Animation states (removed bouncing balls)
 
   // Progress tracking state
   const [progressData, setProgressData] = useState<{
@@ -261,7 +278,7 @@ export default function ChatsScreen() {
           }
           
           // Fetch document details using the fileId
-          const response = await api.getFileById(parseInt(params.fileId as string));
+          const response = await (api as any).getFileById(parseInt(params.fileId as string));
           
           if (response.success && response.files && response.files.length > 0) {
             const documentData = response.files[0];
@@ -514,33 +531,7 @@ export default function ChatsScreen() {
   }, [params.workspaceId, params.workspaceName, params.workspaceDescription, params.workspaceSlug, params.workspaceOwnerId, params.workspaceIsPersonal, params.workspaceMemberCount, params.workspaceUserRole, params.workspaceCanManage, params.workspaceCanInvite, params.workspaceCanEdit]);
 
   const startBounceAnimation = () => {
-    // Start bouncing balls animation with improved timing
-    const createBounceAnimation = (animValue: Animated.Value, delay: number) => {
-      return Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(animValue, {
-            toValue: -12,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(animValue, {
-            toValue: 0,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-    };
-
-    // Start animations with different delays for each ball
-    Animated.parallel([
-      createBounceAnimation(ball1Anim, 0),
-      createBounceAnimation(ball2Anim, 200),
-      createBounceAnimation(ball3Anim, 400),
-    ]).start();
-
-    // Keep existing button bounce animation
+    // Keep only the button bounce animation
     Animated.loop(
       Animated.sequence([
         Animated.timing(bounceAnim, {
@@ -558,16 +549,8 @@ export default function ChatsScreen() {
   };
 
   const stopBounceAnimation = () => {
-    // Stop all animations
-    ball1Anim.stopAnimation();
-    ball2Anim.stopAnimation();
-    ball3Anim.stopAnimation();
+    // Stop button animation
     bounceAnim.stopAnimation();
-    
-    // Reset values
-    ball1Anim.setValue(0);
-    ball2Anim.setValue(0);
-    ball3Anim.setValue(0);
     bounceAnim.setValue(1);
   };
 
@@ -944,14 +927,14 @@ export default function ChatsScreen() {
       // Always put default Chat Assistant first, followed by other chats sorted by date
       const allChats = [DEFAULT_CHAT_ASSISTANT, ...sortedChats];
       
-      console.log('📱 Loaded chats:', {
-        total: allChats.length,
-        defaultChat: DEFAULT_CHAT_ASSISTANT,
-        otherChats: sortedChats.length,
-        chatIds: sortedChats.map(c => c.id),
-        chatTitles: sortedChats.map(c => c.title),
-        chatTypes: allChats.slice(0, 5).map(c => ({ id: c.id, type: c.type, title: c.title }))
-      });
+      // console.log('📱 Loaded chats:', {
+      //   total: allChats.length,
+      //   defaultChat: DEFAULT_CHAT_ASSISTANT,
+      //   otherChats: sortedChats.length,
+      //   chatIds: sortedChats.map(c => c.id),
+      //   chatTitles: sortedChats.map(c => c.title),
+      //   chatTypes: allChats.slice(0, 5).map(c => ({ id: c.id, type: c.type, title: c.title }))
+      // });
       setChats(allChats);
       
     } catch (error) {
@@ -966,7 +949,7 @@ export default function ChatsScreen() {
 
   const loadWorkspaces = async () => {
     try {
-      const response = await api.getMobileWorkspaces();
+      const response = await (api as any).getMobileWorkspaces();
       if (response.success && response.data) {
         // Handle both response structures: data.workspaces or data as array
         const workspacesData = Array.isArray(response.data) 
@@ -997,7 +980,7 @@ export default function ChatsScreen() {
           size: file.file_size
         })) || [];
         setDocuments(docs);
-        console.log(`📄 Loaded ${docs.length} documents for mentions:`, docs.map(d => d.name));
+        // console.log(`📄 Loaded ${docs.length} documents for mentions:`, docs.map(d => d.name));
       } else {
         setDocuments([]);
       }
@@ -1009,7 +992,7 @@ export default function ChatsScreen() {
 
   const loadUsers = async () => {
     try {
-      const response = await api.getWorkspaceUsers();
+      const response = await (api as any).getWorkspaceUsers();
       if (response.success && response.data) {
         setUsers(response.data.users || []);
       } else {
@@ -1023,7 +1006,7 @@ export default function ChatsScreen() {
 
   const loadBookmarks = async () => {
     try {
-      const response = await api.getBookmarks();
+      const response = await (api as any).getBookmarks();
       if (response.success && response.data) {
         // Handle both response structures: data.bookmarks or data as array
         const bookmarksData = Array.isArray(response.data) 
@@ -1060,7 +1043,7 @@ export default function ChatsScreen() {
       }
       
       // Use the chat store to load the specific conversation
-      console.log('🔄 Loading messages for chat ID:', chatId);
+      // console.log('🔄 Loading messages for chat ID:', chatId);
       const { fetchChatConversation } = useChatStore.getState();
       await fetchChatConversation(chatId);
       
@@ -1078,12 +1061,12 @@ export default function ChatsScreen() {
           
           // Debug: Log the message timestamp
           if (__DEV__ && index < 3) {
-            console.log('🕐 Message timestamp debug:', {
-              index,
-              created_at: backendMsg.created_at,
-              timestamp: backendMsg.timestamp,
-              finalTimestamp: timestamp
-            });
+            // console.log('🕐 Message timestamp debug:', {
+            //   index,
+            //   created_at: backendMsg.created_at,
+            //   timestamp: backendMsg.timestamp,
+            //   finalTimestamp: timestamp
+            // });
           }
           
           // Generate unique ID for messages (backend messages don't have IDs)
@@ -1120,18 +1103,112 @@ export default function ChatsScreen() {
     }
   };
 
+  // Helper function to start/continue character streaming
+  const startOrContinueStreaming = (assistantMsgIndex: number) => {
+    console.log('🎬 startOrContinueStreaming called, isStreaming:', isStreamingRef.current, 'contentBuffer length:', contentBufferRef.current.length);
+    
+    // If already streaming, just return (the interval will pick up new content)
+    if (isStreamingRef.current) {
+      console.log('📝 Streaming already active, new content will be picked up automatically');
+      return;
+    }
+    
+    console.log('🚀 Starting new streaming interval...');
+    isStreamingRef.current = true;
+    
+    // Get dynamic speeds based on current phase
+    const getCurrentSpeed = () => {
+      if (isPreviewPhaseRef.current) {
+        return { charsPerInterval: 2, intervalMs: 30 }; // Preview: SLOWER TYPING (67 chars/sec)
+      } else {
+        return { charsPerInterval: 2, intervalMs: 30 }; // Refinement: FAST (67 chars/sec)
+      }
+    };
+    
+    streamingIntervalRef.current = setInterval(() => {
+      // Check if we have more content to display
+      if (displayedCharsRef.current >= contentBufferRef.current.length) {
+        // No more content available yet, keep waiting
+        console.log(`⏸️ Caught up: displayed ${displayedCharsRef.current}/${contentBufferRef.current.length} chars, waiting for more...`);
+        return;
+      }
+      
+      // Get current speed settings
+      const { charsPerInterval } = getCurrentSpeed();
+      
+      // Display next batch of characters
+      const endIndex = Math.min(displayedCharsRef.current + charsPerInterval, contentBufferRef.current.length);
+      const displayText = contentBufferRef.current.slice(0, endIndex);
+      displayedCharsRef.current = endIndex;
+      
+      console.log(`📝 Streaming ${isPreviewPhaseRef.current ? 'PREVIEW' : 'REFINEMENT'}: ${displayedCharsRef.current}/${contentBufferRef.current.length} chars`);
+      
+      // Update UI with current content
+      setMessages(prev => {
+        const newMessages = [...prev];
+        if (newMessages[assistantMsgIndex]) {
+          newMessages[assistantMsgIndex] = {
+            ...newMessages[assistantMsgIndex],
+            content: displayText
+          };
+          console.log(`🔄 Updated message ${assistantMsgIndex} with content: "${displayText.substring(0, 50)}..."`);
+        } else {
+          // Create new assistant message if it doesn't exist
+          const assistantMessage: ChatMessage = {
+            id: Date.now() + 1,
+            content: displayText,
+            sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+            is_own_message: false,
+            created_at: new Date().toISOString()
+          };
+          newMessages.push(assistantMessage);
+          console.log(`🔄 Created new assistant message with content: "${displayText.substring(0, 50)}..."`);
+        }
+        return newMessages;
+      });
+    }, 5); // Fixed interval - speed is controlled by charsPerInterval
+  };
+  
+  // Helper function to stop streaming and finalize
+  const stopStreaming = (assistantMsgIndex: number, isFinal: boolean) => {
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+    }
+    isStreamingRef.current = false;
+    
+    if (isFinal) {
+      console.log(`✅ Streaming complete - displayed all ${displayedCharsRef.current} characters`);
+      // Final update with complete state
+      setMessages(prev => {
+        const newMessages = [...prev];
+        if (newMessages[assistantMsgIndex]) {
+          newMessages[assistantMsgIndex] = {
+            ...newMessages[assistantMsgIndex],
+            content: contentBufferRef.current
+          };
+        } else {
+          // Create new assistant message if it doesn't exist
+          const assistantMessage: ChatMessage = {
+            id: Date.now() + 1,
+            content: contentBufferRef.current,
+            sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+            is_own_message: false,
+            created_at: new Date().toISOString()
+          };
+          newMessages.push(assistantMessage);
+        }
+        return newMessages;
+      });
+    }
+  };
+
   const sendMessage = async () => {
     if (!selectedChat || !newMessage.trim()) return;
 
     try {
       setSendingMessage(true);
       startBounceAnimation();
-      
-      // Generate a task ID for progress tracking
-      const taskId = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      // Start progress tracking
-      // startProgressTracking(taskId);
       
       // Create abort controller for this request
       abortControllerRef.current = new AbortController();
@@ -1144,12 +1221,22 @@ export default function ChatsScreen() {
         is_own_message: true,
         created_at: new Date().toISOString(),
       };
+      
+      // Save message text before clearing
+      const messageText = newMessage.trim();
       setMessages(prev => [...prev, userMessage]);
       setNewMessage('');
 
-      // Send message based on chat type
-      let response;
+      // Don't add placeholder message - the processing message will be handled by the FlatList data prop
+      const assistantMessageIndex = messages.length; // Index of assistant message (no placeholder added)
       
+      // Reset streaming state
+      contentBufferRef.current = '';
+      displayedCharsRef.current = 0;
+      isPreviewPhaseRef.current = true;
+      isStreamingRef.current = false;
+
+      // For AI assistant chats, use streaming
       if (selectedChat.type === 'ai_assistant' || selectedChat.type === 'document_focused' || selectedChat.type === 'bookmark_focused') {
         // Build context for AI
         let chatContext = userMessage.content;
@@ -1208,7 +1295,8 @@ export default function ChatsScreen() {
           };
         }
         
-        // Use context search if mention is active, otherwise use general chat
+        // Build search filters for streaming
+        let streamFilters = {};
         if (selectedMention) {
           const documentIds = selectedMention.type === 'bookmark' 
             ? selectedMention.data.documents?.map((doc: any) => doc.id) || []
@@ -1216,85 +1304,259 @@ export default function ChatsScreen() {
             ? [selectedMention.id]
             : undefined;
             
-          const contextFilters = {
+          streamFilters = {
             context_type: selectedMention.type,
             context_id: selectedMention.id,
             document_ids: documentIds
           };
-          response = await api.sendChatMessage(chatContext, contextFilters, abortControllerRef.current?.signal);
         } else {
           // Use general chat endpoint for AI assistant with context filters and search type
-          const chatSearchFilters = {
+          streamFilters = {
             search_type: selectedSearchType, // Add selected search type
             ...searchFilters // Include any context filters (bookmark, document, etc.)
           };
-          response = await api.sendChatMessage(chatContext, chatSearchFilters, abortControllerRef.current?.signal);
         }
-      } else if (selectedChat.type === 'workspace') {
-        // Send to workspace endpoint
-        response = await api.sendChatMessageToChat(newMessage.trim(), selectedChat.workspace?.id);
-      } else if (selectedChat.type === 'user_direct') {
-        // Send direct message
-        response = await api.sendChatMessageToChat(newMessage.trim(), selectedChat.id);
-      } else {
-        // Fallback to general chat
-        response = await api.sendChatMessage(newMessage.trim(), {}, abortControllerRef.current?.signal);
-      }
 
-      if (response.success && (response.response || response.data?.response)) {
-        // Get response text from either top level or data object
-        const responseText = response.response || response.data?.response || 'No response received';
-        
-        // Debug: Log response data to understand chat creation
-        console.log('📱 Chat response:', {
-          success: response.success,
-          chat_id: response.data?.chat_id,
-          selectedChat_id: selectedChat?.id,
-          selectedChat_type: selectedChat?.type,
-          responseText_length: responseText.length
-        });
-        
-        // Add Chat Assistant response
-        const aiMessage: ChatMessage = {
-          id: Date.now() + 1,
-          content: responseText,
-          sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
-          is_own_message: false,
-          created_at: new Date().toISOString(),
-        };
-        setMessages(prev => [...prev, aiMessage]);
-        
-        // Auto-scroll to bottom
-        setTimeout(() => {
-          messagesRef.current?.scrollToEnd({ animated: true });
-        }, 100);
+        // Use SSE streaming for AI chat
+        await (api as any).sendChatMessageStream(
+          chatContext,
+          streamFilters,
+          abortControllerRef.current?.signal,
+          (type: string, data: any) => {
+            // Handle different SSE event types
+            switch (type) {
+              case 'status':
+              case 'started':
+              case 'understanding':
+              case 'understood':
+              case 'searching':
+              case 'search_results':
+              case 'refining':
+              case 'synthesizing':
+                // Create assistant message if it doesn't exist, or update if it does
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  if (newMessages[assistantMessageIndex]) {
+                    // Update existing message
+                    newMessages[assistantMessageIndex] = {
+                      ...newMessages[assistantMessageIndex],
+                      content: data.message || '...'
+                    };
+                  } else {
+                    // Create new assistant message
+                    const assistantMessage: ChatMessage = {
+                      id: Date.now() + 1,
+                      content: data.message || '...',
+                      sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+                      is_own_message: false,
+                      created_at: new Date().toISOString()
+                    };
+                    newMessages.push(assistantMessage);
+                  }
+                  return newMessages;
+                });
+                break;
 
-        // Check if this is a new chat (either no selectedChat.id or response has a new chat_id)
-        if (response.data?.chat_id && (!selectedChat?.id || selectedChat.id === -1)) {
-          // This is a new chat, refresh the entire chat list
-          console.log('🆕 New chat created, refreshing chat list...');
-          loadChats();
-        } else if (response.data?.chat_id) {
-          // If we have a chat_id but the chat is not in our list, refresh to get the new chat
-          const chatExists = chats.some(chat => chat.id === response.data.chat_id);
-          if (!chatExists) {
-            console.log('🆕 Chat not in list, refreshing to get new chat...');
-            loadChats();
-          } else {
-            // Update the chat's last message in the chat list
-            setChats(prev => prev.map(chat => 
-              chat.id === selectedChat?.id 
-                ? { ...chat, last_message: responseText || 'Message sent', updated_at: new Date().toISOString() }
-                : chat
-            ));
+              case 'instant_preview':
+                // Instant preview received - start streaming immediately
+                const instantContent = data.content || '';
+                console.log('⚡ INSTANT preview received:', instantContent.substring(0, 50));
+                
+                // Set content buffer and start streaming
+                contentBufferRef.current = instantContent;
+                displayedCharsRef.current = 0;
+                isPreviewPhaseRef.current = true;
+                
+                // Display first chunk immediately
+                const initialCharsToShow = Math.min(20, instantContent.length);
+                const initialContent = instantContent.slice(0, initialCharsToShow);
+                displayedCharsRef.current = initialCharsToShow;
+                
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  if (newMessages[assistantMessageIndex]) {
+                    newMessages[assistantMessageIndex] = {
+                      ...newMessages[assistantMessageIndex],
+                      content: initialContent
+                    };
+                  } else {
+                    // Create new assistant message
+                    const assistantMessage: ChatMessage = {
+                      id: Date.now() + 1,
+                      content: initialContent,
+                      sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+                      is_own_message: false,
+                      created_at: new Date().toISOString()
+                    };
+                    newMessages.push(assistantMessage);
+                  }
+                  return newMessages;
+                });
+                
+                // Start streaming remaining content
+                startOrContinueStreaming(assistantMessageIndex);
+                break;
+
+              case 'fallback_response':
+                // Handle non-streaming response
+                console.log('📝 Received fallback response:', data.content);
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  if (newMessages[assistantMessageIndex]) {
+                    newMessages[assistantMessageIndex] = {
+                      ...newMessages[assistantMessageIndex],
+                      content: data.content
+                    };
+                  }
+                  return newMessages;
+                });
+                break;
+
+              case 'error':
+                // Handle streaming errors gracefully with user-friendly messages
+                console.error('❌ Streaming error:', data.error);
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  if (newMessages[assistantMessageIndex]) {
+                    newMessages[assistantMessageIndex] = {
+                      ...newMessages[assistantMessageIndex],
+                      content: data.content || 'Sorry, there was an error processing your request. Please try again.'
+                    };
+                  }
+                  return newMessages;
+                });
+                break;
+
+              case 'chunk':
+              case 'preview_chunk':
+                // Template preview chunk
+                const previewChunkContent = data.content || '';
+                console.log('📦 Template preview chunk received');
+                
+                // Check if first chunk or append
+                if (data.chunk_index === 0 || contentBufferRef.current.includes('Searching')) {
+                  // First chunk - replace instant preview
+                  contentBufferRef.current = previewChunkContent;
+                  displayedCharsRef.current = 0;
+                } else {
+                  // Subsequent chunks - append
+                  contentBufferRef.current += previewChunkContent;
+                }
+                
+                // Start streaming if not already started
+                startOrContinueStreaming(assistantMessageIndex);
+                break;
+
+              case 'preview_complete':
+                console.log('✅ Preview complete');
+                // Ensure preview is fully displayed before moving to refinement
+                if (displayedCharsRef.current < contentBufferRef.current.length) {
+                  // Still streaming preview, let it finish
+                  console.log('⏳ Preview still streaming, waiting for completion...');
+                } else {
+                  console.log('✅ Preview fully displayed, ready for refinement');
+                }
+                break;
+
+              case 'refinement_chunk':
+                const refinementChunkContent = data.content || '';
+                console.log('🔄 Refinement chunk received');
+                
+                if (data.chunk_index === 0) {
+                  // First refinement chunk - ensure preview is fully displayed first
+                  const waitForPreviewComplete = () => {
+                    if (displayedCharsRef.current >= contentBufferRef.current.length && isPreviewPhaseRef.current) {
+                      // Preview is complete, start refinement
+                      console.log('🔄 Starting refinement phase');
+                      contentBufferRef.current = refinementChunkContent;
+                      displayedCharsRef.current = 0;
+                      isPreviewPhaseRef.current = false;
+                      startOrContinueStreaming(assistantMessageIndex);
+                    } else {
+                      // Still streaming preview, wait a bit more
+                      setTimeout(waitForPreviewComplete, 100);
+                    }
+                  };
+                  waitForPreviewComplete();
+                } else {
+                  // Subsequent chunks - append
+                  contentBufferRef.current += refinementChunkContent;
+                }
+                break;
+
+              case 'complete':
+                console.log('✅ Stream complete');
+                
+                // Stop streaming and finalize
+                setTimeout(() => {
+                  stopStreaming(assistantMessageIndex, true);
+                  
+                  // Auto-scroll to bottom
+                  setTimeout(() => {
+                    messagesRef.current?.scrollToEnd({ animated: true });
+                  }, 100);
+                }, 500);
+                break;
+
+              default:
+                console.log('Unknown SSE event type:', type);
+            }
           }
-        } else {
-          // Update the chat's last message in the chat list
-          setChats(prev => prev.map(chat => 
-            chat.id === selectedChat?.id 
-              ? { ...chat, last_message: responseText || 'Message sent', updated_at: new Date().toISOString() }
-              : chat
-          ));
+        );
+
+        // After streaming completes, update chat list
+        setChats(prev => prev.map(chat => 
+          chat.id === selectedChat?.id 
+            ? { ...chat, last_message: contentBufferRef.current.substring(0, 50) + '...', updated_at: new Date().toISOString() }
+            : chat
+        ));
+      } else if (selectedChat.type === 'workspace') {
+        // Send to workspace endpoint (non-streaming)
+        const response = await (api as any).sendChatMessageToChat(messageText, selectedChat.workspace?.id);
+        
+        if (response.success && (response.response || response.data?.response)) {
+          const responseText = response.response || response.data?.response || 'No response received';
+          
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[assistantMessageIndex] = {
+              ...newMessages[assistantMessageIndex],
+              content: responseText
+            };
+            return newMessages;
+          });
+        }
+      } else if (selectedChat.type === 'user_direct') {
+        // Send direct message (non-streaming)
+        const response = await (api as any).sendChatMessageToChat(messageText, selectedChat.id);
+        
+        if (response.success && (response.response || response.data?.response)) {
+          const responseText = response.response || response.data?.response || 'No response received';
+          
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[assistantMessageIndex] = {
+              ...newMessages[assistantMessageIndex],
+              content: responseText
+            };
+            return newMessages;
+          });
+        }
+      } else {
+        // Fallback to general chat (non-streaming)
+        const response = await (api as any).sendChatMessage(messageText, {}, abortControllerRef.current?.signal);
+        
+        if (response.success && (response.response || response.data?.response)) {
+          const responseText = response.response || response.data?.response || 'No response received';
+          
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[assistantMessageIndex] = {
+              ...newMessages[assistantMessageIndex],
+              content: responseText
+            };
+            return newMessages;
+          });
         }
       }
     } catch (error: any) {
@@ -1304,7 +1566,53 @@ export default function ChatsScreen() {
         return;
       }
       console.error('Failed to send message:', error);
-      Alert.alert('Error', 'Failed to send message');
+      
+      // Determine user-friendly error message based on error type
+      let fallbackResponse = "I apologize, but I'm experiencing some technical difficulties right now. Let me try to help you with a general response based on your question.\n\n" +
+        "Based on your query, I can provide some general guidance, though I may not have access to your specific documents at the moment. " +
+        "Please try again in a moment, or feel free to rephrase your question if you'd like to continue our conversation.";
+      
+      if (error.message?.includes('Network request timed out') || 
+          error.message?.includes('timeout') ||
+          error.message?.includes('ECONNABORTED') ||
+          error.message?.includes('TypeError: Network request timed out')) {
+        fallbackResponse = "⚠️ Connection timed out. Please check your internet connection and try again.\n\n" +
+          "I'm unable to process your request right now due to a connection timeout. This usually happens when:\n" +
+          "• Your internet connection is slow or unstable\n" +
+          "• The server is temporarily busy\n\n" +
+          "Please try again in a moment.";
+      } else if (error.message?.includes('Network Error') || 
+                 error.message?.includes('ERR_NETWORK') ||
+                 error.message?.includes('fetch')) {
+        fallbackResponse = "🌐 Unable to connect to the server. Please check your internet connection.\n\n" +
+          "I'm unable to reach the server right now. This usually means:\n" +
+          "• Your internet connection is not working\n" +
+          "• The server is temporarily unavailable\n" +
+          "• There might be a network configuration issue\n\n" +
+          "Please check your connection and try again.";
+      } else if (error.message?.includes('No response from server')) {
+        fallbackResponse = "🔌 No response from server. Please check your connection and try again.\n\n" +
+          "The server didn't respond to your request. This could be due to:\n" +
+          "• Server maintenance or downtime\n" +
+          "• Network connectivity issues\n" +
+          "• Server overload\n\n" +
+          "Please try again in a few moments.";
+      }
+      
+      // Start fake streaming with fallback content
+      contentBufferRef.current = fallbackResponse;
+      displayedCharsRef.current = 0;
+      isPreviewPhaseRef.current = true;
+      isStreamingRef.current = true;
+      
+      // Start the streaming animation
+      startOrContinueStreaming(messages.length);
+      
+      // Stop streaming after content is fully displayed
+      setTimeout(() => {
+        stopStreaming(messages.length, true);
+      }, fallbackResponse.length * 50 + 1000); // 50ms per character + 1 second buffer
+      
     } finally {
       setSendingMessage(false);
       stopBounceAnimation();
@@ -1320,9 +1628,16 @@ export default function ChatsScreen() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    
+    // Stop streaming if active
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+    }
+    isStreamingRef.current = false;
+    
     setSendingMessage(false);
     stopBounceAnimation();
-    // stopProgressTracking(); // Removed - only using bouncing dots now
     
     setSelectedChat(chat);
     loadMessages(chat.id);
@@ -1336,9 +1651,16 @@ export default function ChatsScreen() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    
+    // Stop streaming if active
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+    }
+    isStreamingRef.current = false;
+    
     setSendingMessage(false);
     stopBounceAnimation();
-    // stopProgressTracking(); // Removed - only using bouncing dots now
     
     setSelectedChat(null);
     setMessages([]);
@@ -1671,7 +1993,7 @@ export default function ChatsScreen() {
       
       // Debug: Log the original timestamp
       if (__DEV__) {
-        console.log('🕐 Formatting message time:', { original: dateString, type: typeof dateString });
+        // console.log('🕐 Formatting message time:', { original: dateString, type: typeof dateString });
       }
       
       // If timestamp doesn't have timezone info, treat as local time
@@ -1695,12 +2017,12 @@ export default function ChatsScreen() {
       
       // Debug: Log the parsed date
       if (__DEV__) {
-        console.log('🕐 Parsed message date:', {
-          original: dateString,
-          parsed: date.toISOString(),
-          local: date.toLocaleString(),
-          formatted: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        });
+        // console.log('🕐 Parsed message date:', {
+        //   original: dateString,
+        //   parsed: date.toISOString(),
+        //   local: date.toLocaleString(),
+        //   formatted: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        // });
       }
       
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1719,7 +2041,7 @@ export default function ChatsScreen() {
       
       // Debug: Log the original timestamp
       if (__DEV__) {
-        console.log('🕐 Formatting chat time:', { original: dateString, type: typeof dateString });
+        // console.log('🕐 Formatting chat time:', { original: dateString, type: typeof dateString });
       }
       
       // If timestamp doesn't have timezone info, treat as local time
@@ -1743,11 +2065,11 @@ export default function ChatsScreen() {
       
       // Debug: Log the parsed date
       if (__DEV__) {
-        console.log('🕐 Parsed chat date:', {
-          original: dateString,
-          parsed: date.toISOString(),
-          local: date.toLocaleString()
-        });
+        // console.log('🕐 Parsed chat date:', {
+        //   original: dateString,
+        //   parsed: date.toISOString(),
+        //   local: date.toLocaleString()
+        // });
       }
       
       return formatRelativeDate(date);
@@ -1764,12 +2086,12 @@ export default function ChatsScreen() {
     
     // Debug: Log the dates being compared
     if (__DEV__) {
-      console.log('🕐 Comparing dates:', {
-        now: now.toISOString(),
-        date: date.toISOString(),
-        nowLocal: now.toLocaleString(),
-        dateLocal: date.toLocaleString()
-      });
+      // console.log('🕐 Comparing dates:', {
+      //   now: now.toISOString(),
+      //   date: date.toISOString(),
+      //   nowLocal: now.toLocaleString(),
+      //   dateLocal: date.toLocaleString()
+      // });
     }
     
     // Check if the date is in the future (which would indicate a timezone issue)
@@ -1838,13 +2160,13 @@ export default function ChatsScreen() {
     }
 
     // Debug: Log the first few chat items being rendered
-    if (item.id <= 5) {
-      console.log('🎨 Rendering chat item:', {
-        id: item.id,
-        title: item.title,
-        type: item.type
-      });
-    }
+    // if (item.id <= 5) {
+    //   console.log('🎨 Rendering chat item:', {
+    //     id: item.id,
+    //     title: item.title,
+    //     type: item.type
+    //   });
+    // }
 
     const getChatIcon = () => {
       switch (item.type) {
@@ -1903,30 +2225,60 @@ export default function ChatsScreen() {
     );
   };
 
-  const renderMessageItem = ({ item }: { item: ChatMessage }) => (
-    <View style={[
-      styles.messageContainer,
-      item.is_own_message ? styles.ownMessage : styles.otherMessage
-    ]}>
+  const renderMessageItem = ({ item }: { item: ChatMessage }) => {
+    // Handle processing message (negative ID indicates processing)
+    if (item.id === -1) {
+      return (
+        <View style={[
+          styles.messageContainer,
+          styles.otherMessage
+        ]}>
+          <View style={[
+            styles.messageBubble,
+            styles.otherBubble
+          ]}>
+            <ProcessingMessageDisplay
+              isProcessing={true}
+              hasRealData={false}
+              processingType="general"
+              onComplete={() => {}}
+            />
+            <Text style={[
+              styles.messageTime,
+              styles.otherMessageTime
+            ]}>
+              {formatMessageTime(item.created_at)}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    return (
       <View style={[
-        styles.messageBubble,
-        item.is_own_message ? styles.ownBubble : styles.otherBubble
+        styles.messageContainer,
+        item.is_own_message ? styles.ownMessage : styles.otherMessage
       ]}>
-        <Text style={[
-          styles.messageText,
-          item.is_own_message ? styles.ownMessageText : styles.otherMessageText
+        <View style={[
+          styles.messageBubble,
+          item.is_own_message ? styles.ownBubble : styles.otherBubble
         ]}>
-          {item.content}
-        </Text>
-        <Text style={[
-          styles.messageTime,
-          item.is_own_message ? styles.ownMessageTime : styles.otherMessageTime
-        ]}>
-          {formatMessageTime(item.created_at)}
-        </Text>
+          <Text style={[
+            styles.messageText,
+            item.is_own_message ? styles.ownMessageText : styles.otherMessageText
+          ]}>
+            {item.content}
+          </Text>
+          <Text style={[
+            styles.messageTime,
+            item.is_own_message ? styles.ownMessageTime : styles.otherMessageTime
+          ]}>
+            {formatMessageTime(item.created_at)}
+          </Text>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderChatsList = () => {
     return (
@@ -2016,7 +2368,7 @@ export default function ChatsScreen() {
       <KeyboardAvoidingView 
         style={styles.chatContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 25}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         {messagesLoading ? (
           <View style={styles.loadingContainer}>
@@ -2027,7 +2379,14 @@ export default function ChatsScreen() {
           <>
             <FlatList
               ref={messagesRef}
-              data={messages}
+              data={sendingMessage ? [...messages, {
+                id: -1, // Use negative ID for processing message
+                content: 'Processing your request...',
+                is_own_message: false,
+                created_at: new Date().toISOString(),
+                user_id: 0,
+                sender: { id: 0, username: 'AI Assistant', email: 'ai@grabdocs.com' }
+              } as ChatMessage] : messages}
               renderItem={renderMessageItem}
               keyExtractor={(item) => item.id.toString()}
               style={styles.messagesList}
@@ -2042,37 +2401,6 @@ export default function ChatsScreen() {
               onTouchStart={() => setShowQuickChatTypes(false)}
             />
             
-            {/* Bouncing balls animation when AI is processing */}
-            {sendingMessage && (
-              <View style={styles.bouncingBallsContainer}>
-                <View style={styles.bouncingBallsWrapper}>
-                  <Animated.View
-                    style={[
-                      styles.bouncingBall,
-                      {
-                        transform: [{ translateY: ball1Anim }],
-                      },
-                    ]}
-                  />
-                  <Animated.View
-                    style={[
-                      styles.bouncingBall,
-                      {
-                        transform: [{ translateY: ball2Anim }],
-                      },
-                    ]}
-                  />
-                  <Animated.View
-                    style={[
-                      styles.bouncingBall,
-                      {
-                        transform: [{ translateY: ball3Anim }],
-                      },
-                    ]}
-                  />
-                </View>
-              </View>
-            )}
 
             {/* Progress tracking removed - only showing bouncing dots */}
           </>
@@ -2169,7 +2497,7 @@ export default function ChatsScreen() {
           {/* Text input and send button row */}
           <View style={styles.inputRow}>
             <TextInput
-              style={[styles.messageInput, { height: Math.max(36, Math.min(80, textInputHeight)) }]}
+              style={[styles.messageInput, { height: Math.max(20, Math.min(80, textInputHeight)) }]}
               value={newMessage}
               onChangeText={handleMentionInput}
               placeholder="Ask about documents, meeting transcripts, or @ to mention..."
@@ -2661,9 +2989,11 @@ const styles = StyleSheet.create({
   messageBubble: {
     maxWidth: '80%',
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 4,
     borderRadius: 16,
     marginVertical: 1,
+    overflow: 'hidden', // Ensure content stays within bubble
+    flexShrink: 1, // Allow bubble to shrink if needed
   },
   ownBubble: {
     backgroundColor: '#007AFF',
@@ -2674,6 +3004,9 @@ const styles = StyleSheet.create({
   messageText: {
     fontSize: 14,
     lineHeight: 18,
+    flexWrap: 'wrap',
+    wordWrap: 'break-word',
+    maxWidth: '100%', // Don't exceed bubble width
   },
   ownMessageText: {
     color: '#fff',
@@ -2693,11 +3026,11 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     paddingHorizontal: 6,
-    paddingVertical: 8,
+    paddingVertical: 4,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
-    minHeight: 56,
+    minHeight: 48,
   },
   inputRow: {
     flexDirection: 'row',
@@ -2709,9 +3042,11 @@ const styles = StyleSheet.create({
     borderColor: '#e0e0e0',
     borderRadius: 18,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 2,
     fontSize: 14,
     backgroundColor: '#f8f8f8',
+    minHeight: 20,
+    maxHeight: 80,
   },
   sendButton: {
     width: 32,
@@ -3038,29 +3373,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
   },
-  // Bouncing balls animation styles
-  bouncingBallsContainer: {
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-  },
-  bouncingBallsWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  bouncingBall: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#007AFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 3,
-  },
+  // Processing message styles (handled by ProcessingMessageDisplay component)
   processingText: {
     fontSize: 14,
     color: '#666',

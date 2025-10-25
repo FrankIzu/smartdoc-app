@@ -2,15 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Modal,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Modal,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
@@ -220,6 +220,18 @@ export default function MeetingCallScreen() {
     }
   };
 
+  const viewMeetingAssets = (meeting: Meeting) => {
+    // Navigate to meeting assets page with meeting details
+    router.push({
+      pathname: '/quick-reach/meeting-details',
+      params: {
+        meetingId: meeting.meetingId,
+        meetingTitle: meeting.title,
+        roomCode: meeting.meetingId
+      }
+    });
+  };
+
   const joinMeetingById = async () => {
     if (!meetingId.trim()) {
       Alert.alert('Error', 'Please enter a meeting ID');
@@ -296,16 +308,43 @@ export default function MeetingCallScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const response = await apiClient.deleteMeeting(meeting.meetingId);
+              const response = await apiClient.deleteMeeting(meeting.id);
+              
               if (response.success) {
                 Alert.alert('Success', 'Meeting deleted successfully');
                 loadMeetings(); // Refresh the list
+              } else if (response.requires_confirmation) {
+                // Show confirmation dialog for meetings with assets
+                Alert.alert(
+                  'Confirm Deletion',
+                  response.message,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Delete Permanently', 
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          const confirmResponse = await apiClient.deleteMeeting(meeting.id, true);
+                          if (confirmResponse.success) {
+                            Alert.alert('Success', 'Meeting and all assets deleted successfully');
+                            loadMeetings(); // Refresh the list
+                          } else {
+                            Alert.alert('Error', confirmResponse.message || 'Failed to delete meeting');
+                          }
+                        } catch (error: any) {
+                          Alert.alert('Error', error.message || 'Failed to delete meeting');
+                        }
+                      }
+                    }
+                  ]
+                );
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete meeting');
               }
-            } catch (error) {
+            } catch (error: any) {
               console.error('Failed to delete meeting:', error);
-              Alert.alert('Error', 'Failed to delete meeting');
+              Alert.alert('Error', error.message || 'Failed to delete meeting');
             }
           }
         }
@@ -353,12 +392,13 @@ export default function MeetingCallScreen() {
   const renderMeetingCard = ({ item }: { item: Meeting }) => (
     <TouchableOpacity
       style={[styles.meetingCard, item.status === 'active' && styles.ongoingMeeting]}
-      onPress={() => joinMeeting(item)}
+      onPress={() => viewMeetingAssets(item)}
       onLongPress={() => {
         const isLive = item.status === 'active';
         const buttons = [
           { text: 'Cancel', style: 'cancel' as const },
-          { text: 'Join', onPress: () => joinMeeting(item) },
+          { text: 'Join Meeting', onPress: () => joinMeeting(item) },
+          { text: 'View Assets', onPress: () => viewMeetingAssets(item) },
           ...(isLive ? [{ text: 'End Meeting', style: 'destructive' as const, onPress: () => endMeeting(item) }] : []),
           { text: 'Delete', style: 'destructive' as const, onPress: () => deleteMeeting(item) },
           { text: 'Invite', onPress: () => {

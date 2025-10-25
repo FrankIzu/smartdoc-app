@@ -109,7 +109,7 @@ export default function UploadScreen() {
             <View style={styles.uploadingContainer}>
               <ActivityIndicator size="large" color="#007AFF" />
               <Text style={styles.uploadingText}>Uploading... {progress}%</Text>
-              <Text style={styles.uploadSubtext}>Please don't close this screen</Text>
+              <Text style={styles.uploadSubtext}>Please don&apos;t close this screen</Text>
             </View>
           ) : (
             <>

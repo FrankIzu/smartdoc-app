@@ -1,4 +1,3 @@
-import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
@@ -15,6 +14,7 @@ import {
 } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { API_BASE_URL } from '../../constants/Config';
+import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 
 interface OtpVerificationParams {
   username: string;
@@ -191,7 +191,7 @@ export default function OtpVerificationScreen() {
 
         <Text style={styles.title}>Enter Verification Code</Text>
         <Text style={styles.subtitle}>
-          We've sent a 6-digit code to your {getMethodText()}
+          We&apos;ve sent a 6-digit code to your {getMethodText()}
         </Text>
         <Text style={styles.identifier}>{params.identifier}</Text>
 
@@ -241,7 +241,7 @@ export default function OtpVerificationScreen() {
         </TouchableOpacity>
 
         <View style={styles.resendContainer}>
-          <Text style={styles.resendText}>Didn't receive the code? </Text>
+          <Text style={styles.resendText}>Didn&apos;t receive the code? </Text>
           <TouchableOpacity
             onPress={handleResendOtp}
             disabled={isResending || timeLeft > 540} // Allow resend after 1 minute

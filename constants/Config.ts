@@ -9,11 +9,11 @@ export const API_BASE_URL = (() => {
   
   // 2. Auto-detect based on development mode
   if (__DEV__) {
-    return 'http://192.168.1.7:5000'; // Local development
+    return 'http://192.168.1.4:5000'; // Local development
   }
   
   // 3. Production fallback
-  return 'https://api.grabdocs.com'; // Production
+  return 'https://api.grabdocs.com'; // Production Render backend
 })();
 
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || (__DEV__ ? 'development' : 'production');
@@ -43,7 +43,7 @@ export const GOOGLE_CLIENT_ID = (() => {
 export const DROPBOX_CLIENT_ID = process.env.EXPO_PUBLIC_DROPBOX_APP_KEY || ''; // Dropbox App Key (same as Client ID)
 
 // Expo Development Server URL
-export const EXPO_DEV_URL = 'http://192.168.1.7:8081';
+export const EXPO_DEV_URL = 'http://192.168.1.4:8082';
 
 // App Configuration
 export const APP_NAME = process.env.EXPO_PUBLIC_APP_NAME || 'GrabDocs Mobile';

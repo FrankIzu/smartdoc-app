@@ -166,7 +166,7 @@ export default function PhoneLoginScreen() {
         <View style={styles.stepContainer}>
             <Text style={styles.stepTitle}>Enter Phone Number</Text>
             <Text style={styles.stepDescription}>
-                We'll send you a verification code to confirm your identity
+                We&apos;ll send you a verification code to confirm your identity
             </Text>
 
             <View style={styles.phoneContainer}>
@@ -323,7 +323,7 @@ export default function PhoneLoginScreen() {
                         <Link href="/sign-up" asChild>
                             <Pressable style={styles.linkButton}>
                                 <Text style={styles.linkText}>
-                                    Don't have an account? Sign up
+                                    Don&apos;t have an account? Sign up
                                 </Text>
                             </Pressable>
                         </Link>

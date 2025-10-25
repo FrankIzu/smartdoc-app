@@ -529,7 +529,7 @@ export default function FormBuilderScreen() {
           <View style={styles.emptyState}>
             <Ionicons name="document-outline" size={48} color="#ccc" />
             <Text style={styles.emptyStateText}>No fields added yet</Text>
-            <Text style={styles.emptyStateSubtext}>Tap "Add Field" to get started</Text>
+            <Text style={styles.emptyStateSubtext}>Tap &quot;Add Field&quot; to get started</Text>
           </View>
         ) : (
           <FlatList

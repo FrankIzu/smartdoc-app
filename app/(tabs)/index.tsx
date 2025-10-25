@@ -2,15 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Alert,
-    Image,
-    Modal,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  Alert,
+  Image,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
@@ -59,7 +59,7 @@ function DashboardScreen() {
   const [connectionStatus, setConnectionStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [showUploadOptions, setShowUploadOptions] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadTimeout, setUploadTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
@@ -92,7 +92,7 @@ function DashboardScreen() {
   };
 
   const loadDashboardData = useCallback(async () => {
-    console.log('🏠 Starting dashboard data load...');
+    // console.log('🏠 Starting dashboard data load...');
     
     // Check if user is authenticated before making API calls
     if (!isAuthenticated || !user) {
@@ -117,23 +117,23 @@ function DashboardScreen() {
       const defaultActivities: RecentActivity[] = [];
       
       // First test backend connectivity
-      console.log('🔍 Testing backend connectivity before loading dashboard...');
+      // console.log('🔍 Testing backend connectivity before loading dashboard...');
       let connectivityTest;
       try {
         connectivityTest = await apiClient.checkAuth();
-        console.log('🔍 Dashboard connectivity test result:', connectivityTest);
+        // console.log('🔍 Dashboard connectivity test result:', connectivityTest);
         setConnectionStatus({
           success: connectivityTest.success,
           message: connectivityTest.message || 'Auth check completed'
         });
       } catch (error) {
-        console.error('❌ Connectivity test failed:', error);
+        // console.error('❌ Connectivity test failed:', error);
         connectivityTest = { success: false, message: 'Connection test failed' };
         setConnectionStatus(connectivityTest);
       }
       
       if (!connectivityTest.success) {
-        console.error('❌ Dashboard connectivity test failed:', connectivityTest);
+        // console.error('❌ Dashboard connectivity test failed:', connectivityTest);
         console.log('⚠️ Using fallback data due to connectivity issues');
         // Set fallback data for development
         setStats({
@@ -166,13 +166,13 @@ function DashboardScreen() {
         return; // Exit early with fallback data
       }
       
-      console.log('✅ Backend connectivity OK, loading dashboard data...');
+      // console.log('✅ Backend connectivity OK, loading dashboard data...');
       
       // Load dashboard stats with robust error handling
       try {
-        console.log('📊 Attempting to load dashboard stats...');
-        const dashboardResponse = await apiClient.getDashboardStats();
-        console.log('📊 Dashboard stats response:', dashboardResponse);
+        // console.log('📊 Attempting to load dashboard stats...');
+        const dashboardResponse = await (apiClient as any).getDashboardStats();
+        // console.log('📊 Dashboard stats response:', dashboardResponse);
         
         if (dashboardResponse && dashboardResponse.success && dashboardResponse.data) {
           // Handle both direct stats and nested stats structure
@@ -188,7 +188,7 @@ function DashboardScreen() {
             recentAnalytics: Number(statsData.recentAnalytics) || 0,
           };
           
-          console.log('📊 Setting safe dashboard stats:', safeStats);
+          // console.log('📊 Setting safe dashboard stats:', safeStats);
           setStats(safeStats);
         } else {
           console.warn('📊 Dashboard stats API call succeeded but no valid data returned');
@@ -198,11 +198,11 @@ function DashboardScreen() {
         console.warn('📊 Dashboard stats failed, using defaults:', error);
         // Try to get data from files endpoint as fallback
         try {
-          console.log('📊 Trying files endpoint as fallback...');
+          // console.log('📊 Trying files endpoint as fallback...');
           const filesResponse = await apiClient.getFiles();
           if (filesResponse && filesResponse.success && filesResponse.data) {
             const fileCount = Array.isArray(filesResponse.data) ? filesResponse.data.length : 0;
-            console.log('📊 Found files count:', fileCount);
+            // console.log('📊 Found files count:', fileCount);
             setStats({
               ...defaultStats,
               totalDocuments: fileCount,
@@ -218,9 +218,9 @@ function DashboardScreen() {
       
       // Load recent activities with robust error handling
       try {
-        console.log('📈 Attempting to load recent activities...');
-        const activitiesResponse: any = await apiClient.getRecentActivities(7, 10);
-        console.log('📈 Recent activities response:', activitiesResponse);
+        // console.log('📈 Attempting to load recent activities...');
+        const activitiesResponse: any = await (apiClient as any).getRecentActivities(7, 10);
+        // console.log('📈 Recent activities response:', activitiesResponse);
         
         if (activitiesResponse && activitiesResponse.success) {
           // Handle different response structures
@@ -228,11 +228,11 @@ function DashboardScreen() {
           const activities = Array.isArray(responseData) ? responseData : [];
           
           if (Array.isArray(activities) && activities.length > 0) {
-            console.log('📈 Processing activities:', activities.length);
+            // console.log('📈 Processing activities:', activities.length);
             
             const formattedActivities = activities.map((activity: any, index: number) => {
               try {
-                console.log(`📈 Processing activity ${index}:`, activity);
+                // console.log(`📈 Processing activity ${index}:`, activity);
                 // Ensure timestamp is always a valid Date object
                 let timestamp: Date;
                 try {
@@ -258,7 +258,7 @@ function DashboardScreen() {
                   icon: activity.icon || 'document-outline'
                 };
               } catch (activityError) {
-                console.warn(`📈 Failed to process activity ${index}:`, activityError);
+                // console.warn(`📈 Failed to process activity ${index}:`, activityError);
                 return {
                   id: `error-${index}-${Date.now()}`,
                   type: 'unknown',
@@ -270,23 +270,23 @@ function DashboardScreen() {
               }
             }).filter(Boolean); // Remove any null/undefined items
             
-            console.log('📈 Setting formatted activities:', formattedActivities);
+            // console.log('📈 Setting formatted activities:', formattedActivities);
             setRecentActivities(formattedActivities);
           } else {
-            console.log('📈 No activities returned, using empty array');
+            // console.log('📈 No activities returned, using empty array');
             setRecentActivities(defaultActivities);
           }
         } else {
-          console.warn('📈 Recent activities API call succeeded but no valid data returned');
+          // console.warn('📈 Recent activities API call succeeded but no valid data returned');
           setRecentActivities(defaultActivities);
         }
       } catch (error) {
-        console.warn('📈 Recent activities failed, using empty array:', error);
+        // console.warn('📈 Recent activities failed, using empty array:', error);
         setRecentActivities(defaultActivities);
       }
       
     } catch (error) {
-      console.error('🏠 Unexpected error in dashboard data loading:', error);
+      // console.error('🏠 Unexpected error in dashboard data loading:', error);
       // Ensure we always have safe defaults
       setStats({
         totalDocuments: 0,
@@ -300,7 +300,7 @@ function DashboardScreen() {
       setRecentActivities([]);
     } finally {
       setLoading(false);
-      console.log('🏠 Dashboard data loading completed');
+      // console.log('🏠 Dashboard data loading completed');
     }
   }, [user, isAuthenticated]); // Include auth state in dependencies to reload when auth changes
 
@@ -321,7 +321,7 @@ function DashboardScreen() {
     if (!isAuthenticated || !user) return;
 
     const interval = setInterval(() => {
-      console.log('🔄 Auto-refreshing dashboard...');
+      // console.log('🔄 Auto-refreshing dashboard...');
       loadDashboardData();
     }, AUTO_REFRESH_INTERVAL);
 
@@ -428,11 +428,11 @@ function DashboardScreen() {
 
   const handleUploadFromFiles = async () => {
     if (isUploading) {
-      console.log('📁 Upload already in progress, ignoring request');
+      // console.log('📁 Upload already in progress, ignoring request');
       return;
     }
     
-    console.log('📁 Files upload button clicked');
+    // console.log('📁 Files upload button clicked');
     setUploadStateWithTimeout(true);
     setIsOpeningPicker(true);
     setShowUploadOptions(false);
@@ -449,14 +449,14 @@ function DashboardScreen() {
         loadDashboardData();
       } else {
         // Handle case where upload returns false (user cancelled or failed)
-        console.log('📁 Upload was cancelled or failed');
+        // console.log('📁 Upload was cancelled or failed');
       }
     } catch (error) {
-      console.error('📁 Document upload error:', error);
+      // console.error('📁 Document upload error:', error);
       Alert.alert('Error', 'Failed to upload files. Please try again.');
     } finally {
       // Always reset the uploading state
-      console.log('📁 Resetting upload state');
+      // console.log('📁 Resetting upload state');
       setUploadStateWithTimeout(false);
       setIsOpeningPicker(false);
     }
@@ -469,11 +469,11 @@ function DashboardScreen() {
 
   const handleUploadFromGallery = async () => {
     if (isUploading) {
-      console.log('🖼️ Upload already in progress, ignoring request');
+      // console.log('🖼️ Upload already in progress, ignoring request');
       return;
     }
     
-    console.log('🖼️ Gallery upload button clicked');
+    // console.log('🖼️ Gallery upload button clicked');
     setUploadStateWithTimeout(true);
     setIsOpeningPicker(true);
     setShowUploadOptions(false);
@@ -482,24 +482,24 @@ function DashboardScreen() {
     await new Promise(resolve => setTimeout(resolve, 500));
     
     try {
-      console.log('🖼️ Starting gallery upload...');
+      // console.log('🖼️ Starting gallery upload...');
       const success = await uploadFromGallery();
-      console.log('🖼️ Gallery upload result:', success);
+      // console.log('🖼️ Gallery upload result:', success);
       
       if (success) {
         Alert.alert('Success', 'Photos uploaded successfully!');
         loadDashboardData();
       } else {
         // Handle case where upload returns false (user cancelled or failed)
-        console.log('🖼️ Gallery upload was cancelled or failed');
+        // console.log('🖼️ Gallery upload was cancelled or failed');
         Alert.alert('Upload Failed', 'Failed to upload photos. Please try again.');
       }
     } catch (error: any) {
-      console.error('🖼️ Gallery upload error:', error);
+      // console.error('🖼️ Gallery upload error:', error);
       Alert.alert('Error', error.message || 'Failed to upload photos. Please try again.');
     } finally {
       // Always reset the uploading state
-      console.log('🖼️ Resetting upload state');
+      // console.log('🖼️ Resetting upload state');
       setUploadStateWithTimeout(false);
       setIsOpeningPicker(false);
     }
@@ -532,9 +532,6 @@ function DashboardScreen() {
         break;
       case 'meeting-call':
         router.push('/quick-reach/meeting-call');
-        break;
-      case 'meeting-assets':
-        router.push('/quick-reach/meeting-assets');
         break;
       case 'bookmarks':
         router.push('/bookmarks/manage');
@@ -602,7 +599,7 @@ function DashboardScreen() {
         message: `Processing test file... ${progress}%`
       });
       
-      console.log(`📊 Test progress update: ${progress}%`);
+      // console.log(`📊 Test progress update: ${progress}%`);
       
       if (progress >= 100) {
         clearInterval(progressInterval);
@@ -612,7 +609,7 @@ function DashboardScreen() {
             progress: 100,
             message: 'Test file processing completed!'
           });
-          console.log('✅ Test progress completed');
+          // console.log('✅ Test progress completed');
         }, 1000);
       }
     }, 1000); // Update every second
@@ -777,15 +774,6 @@ function DashboardScreen() {
               isNew={true}
             />
             <QuickActionCard
-              key="action-meeting-assets"
-              title="Meeting Assets"
-              subtitle="Recordings, transcripts & files"
-              icon="folder-open"
-              color="#AF52DE"
-              onPress={() => handleQuickAction('meeting-assets')}
-              isNew={true}
-            />
-            <QuickActionCard
               key="action-upload-links"
               title="Quick Links"
               subtitle="Create links to receive files"
@@ -925,10 +913,10 @@ function DashboardScreen() {
           setShowUploadOptions(false);
           // Only reset upload state if not in the middle of opening a picker
           if (isUploading && !isOpeningPicker) {
-            console.log('🔄 Modal closed, resetting upload state');
+            // console.log('🔄 Modal closed, resetting upload state');
             setUploadStateWithTimeout(false);
           } else if (isOpeningPicker) {
-            console.log('🔄 Modal closed while opening picker, keeping upload state active');
+            // console.log('🔄 Modal closed while opening picker, keeping upload state active');
           }
         }}
       >
@@ -939,10 +927,10 @@ function DashboardScreen() {
             setShowUploadOptions(false);
             // Only reset upload state if not in the middle of opening a picker
             if (isUploading && !isOpeningPicker) {
-              console.log('🔄 Modal overlay pressed, resetting upload state');
+              // console.log('🔄 Modal overlay pressed, resetting upload state');
               setUploadStateWithTimeout(false);
             } else if (isOpeningPicker) {
-              console.log('🔄 Modal overlay pressed while opening picker, keeping upload state active');
+              // console.log('🔄 Modal overlay pressed while opening picker, keeping upload state active');
             }
           }}
         >
@@ -962,7 +950,7 @@ function DashboardScreen() {
               <TouchableOpacity
                 style={[styles.uploadOption, isUploading && styles.uploadOptionDisabled]}
                 onPress={() => {
-                  console.log('📁 Files button pressed in modal');
+                  // console.log('📁 Files button pressed in modal');
                   handleUploadFromFiles();
                 }}
                 disabled={isUploading}
@@ -994,7 +982,7 @@ function DashboardScreen() {
               <TouchableOpacity
                 style={[styles.uploadOption, isUploading && styles.uploadOptionDisabled]}
                 onPress={() => {
-                  console.log('🖼️ Gallery button pressed in modal');
+                  // console.log('🖼️ Gallery button pressed in modal');
                   handleUploadFromGallery();
                 }}
                 disabled={isUploading}

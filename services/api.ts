@@ -19,6 +19,10 @@ interface ApiResponse<T = any> {
   }>;
   files?: any[];
   forms?: any[];
+  requires_confirmation?: boolean;
+  asset_count?: number;
+  asset_details?: string[];
+  warning?: string;
 }
 
 interface AuthResponse {
@@ -104,12 +108,19 @@ const MOBILE_ENDPOINTS = {
   UPLOAD_LINK_FILES: (id: number) => `/api/v1/mobile/upload-links/${id}/files`,
   
   // Meeting Assets & Webhooks (using existing web endpoints)
-  MEETING_ASSETS: '/api/meeting-assets',
-  MEETING_TRANSCRIPT: (meetingId: string) => `/api/meetings/${meetingId}/transcript`,
-  MEETING_SUMMARY: (meetingId: string) => `/api/meetings/${meetingId}/summary`,
-  MEETING_CHAT: (meetingId: string) => `/api/meetings/${meetingId}/chat`,
-  MEETING_REPORT: (meetingId: string) => `/api/meetings/${meetingId}/report`,
-  MEETING_DOWNLOAD: (meetingId: string, assetType: string) => `/api/meetings/${meetingId}/download/${assetType}`,
+  MEETING_ASSETS: '/api/v1/mobile/meeting-assets',
+  MEETINGS: '/api/v1/mobile/meetings',
+  MEETING_CREATE: '/api/v1/mobile/meetings/create',
+  MEETING_JOIN: '/api/v1/mobile/meetings/join',
+  MEETING_SCHEDULE: '/api/v1/mobile/meetings/schedule',
+  MEETING_TRANSCRIPT: (meetingId: string) => `/api/v1/mobile/meetings/${meetingId}/transcript`,
+  MEETING_SUMMARY: (meetingId: string) => `/api/v1/mobile/meetings/${meetingId}/summary`,
+  MEETING_CHAT: (meetingId: string) => `/api/v1/mobile/meetings/${meetingId}/chat`,
+  MEETING_REPORT: (meetingId: string) => `/api/v1/mobile/meetings/${meetingId}/report`,
+  MEETING_DOWNLOAD: (meetingId: string, assetType: string) => `/api/v1/mobile/meetings/${meetingId}/download/${assetType}`,
+  
+  // Configuration
+  // CONFIG: '/api/v1/mobile/config', // Not available on backend
 } as const;
 
 // Main API Service Class
@@ -164,14 +175,14 @@ class ApiService {
         }
         
         // Log request details for debugging
-        console.log('📡 API Request:', {
-          url: config.url,
-          method: config.method,
-          headers: {
-            ...config.headers,
-            Authorization: config.headers.Authorization ? 'Bearer [REDACTED]' : 'None'
-          }
-        });
+        // console.log('📡 API Request:', {
+        //   url: config.url,
+        //   method: config.method,
+        //   headers: {
+        //     ...config.headers,
+        //     Authorization: config.headers.Authorization ? 'Bearer [REDACTED]' : 'None'
+        //   }
+        // });
         
         return config;
       },
@@ -180,21 +191,21 @@ class ApiService {
 
     this.client.interceptors.response.use(
       (response) => {
-        console.log('📡 API Response:', {
-          url: response.config.url,
-          status: response.status,
-          statusText: response.statusText
-        });
+        // console.log('📡 API Response:', {
+        //   url: response.config.url,
+        //   status: response.status,
+        //   statusText: response.statusText
+        // });
         return response;
       },
       async (error) => {
-        console.error('📡 API Error:', {
-          url: error.config?.url,
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data,
-          message: error.message
-        });
+        // console.error('📡 API Error:', {
+        //   url: error.config?.url,
+        //   status: error.response?.status,
+        //   statusText: error.response?.statusText,
+        //   data: error.response?.data,
+        //   message: error.message
+        // });
         
         if (error.response?.status === 401) {
           console.log('🔐 Clearing auth data due to 401 error');
@@ -234,7 +245,7 @@ class ApiService {
         // Store the authentication token
         if (result.token) {
           await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
-          console.log('💾 Stored authentication token');
+          console.log('💾 Stored authentication token:', result.token.substring(0, 20) + '...');
         } else {
           // Fallback to session_token for development
           await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
@@ -256,11 +267,11 @@ class ApiService {
       };
       
     } catch (error: any) {
-      console.error('❌ Mobile login error:', error);
+      // console.error('❌ Mobile login error:', error);
       
       if (error.response) {
-        console.error('❌ Error response:', error.response.data);
-        console.error('❌ Error status:', error.response.status);
+        // console.error('❌ Error response:', error.response.data);
+        // console.error('❌ Error status:', error.response.status);
         
         if (error.response.status === 0) {
           throw new Error('Unable to reach the server. Please check your connection.');
@@ -272,10 +283,10 @@ class ApiService {
         
         throw new Error(error.response.data?.message || 'Login failed');
       } else if (error.request) {
-        console.error('❌ No response received:', error.request);
+        // console.error('❌ No response received:', error.request);
         throw new Error('No response from server. Please check your connection.');
       } else {
-        console.error('❌ Error setting up request:', error.message);
+        // console.error('❌ Error setting up request:', error.message);
         throw new Error('Error setting up request: ' + error.message);
       }
     }
@@ -342,7 +353,7 @@ class ApiService {
       console.log('✅ OTP request response:', response.status, response.data);
       return response.data;
     } catch (error: any) {
-      console.error('❌ OTP request error:', error);
+      // console.error('❌ OTP request error:', error);
       throw new Error(error.response?.data?.message || 'Failed to send verification code');
     }
   }
@@ -359,7 +370,7 @@ class ApiService {
       console.log('✅ OTP verification response:', response.status, response.data);
       return response.data;
     } catch (error: any) {
-      console.error('❌ OTP verification error:', error);
+      // console.error('❌ OTP verification error:', error);
       throw new Error(error.response?.data?.message || 'Invalid verification code');
     }
   }
@@ -398,7 +409,7 @@ class ApiService {
       };
       
     } catch (error: any) {
-      console.error('❌ Phone login error:', error);
+      // console.error('❌ Phone login error:', error);
       throw new Error(error.response?.data?.message || 'Phone login failed');
     }
   }
@@ -415,7 +426,7 @@ class ApiService {
       console.log('✅ Phone check response:', response.status, response.data);
       return response.data;
     } catch (error: any) {
-      console.error('❌ Phone check error:', error);
+      // console.error('❌ Phone check error:', error);
       throw new Error(error.response?.data?.message || 'Failed to check phone number');
     }
   }
@@ -479,14 +490,8 @@ class ApiService {
       console.log('📡 Upload response:', response.data);
       return response.data;
     } catch (error: any) {
-      console.error('❌ Upload failed:', error);
-      console.error('❌ Upload error response:', error.response?.data);
-      console.error('❌ Upload error details:', {
-        message: error.message,
-        code: error.code,
-        timeout: error.timeout,
-        status: error.response?.status
-      });
+      // console.error('❌ Upload failed:', error);
+      // console.error('❌ Upload error response:', error.response?.data);
       throw new Error(error.response?.data?.message || 'Upload failed');
     }
   }
@@ -500,13 +505,13 @@ class ApiService {
       console.log(`📊 Progress response for ${taskId}:`, response.data);
       return response.data;
     } catch (error: any) {
-      console.error('❌ Failed to get upload progress:', error);
-      console.error('❌ Error details:', {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data,
-        message: error.message
-      });
+      // console.error('❌ Failed to get upload progress:', error);
+      // console.error('❌ Error details:', {
+      //   status: error.response?.status,
+      //   statusText: error.response?.statusText,
+      //   data: error.response?.data,
+      //   message: error.message
+      // });
       throw new Error(error.response?.data?.message || 'Failed to get upload progress');
     }
   }
@@ -526,7 +531,7 @@ class ApiService {
       });
 
       // Step 2: Get task_id from response
-      const taskId = uploadResponse.task_id;
+      const taskId = (uploadResponse as any).task_id;
       if (!taskId) {
         console.warn('⚠️ No task_id in upload response, cannot poll progress');
         onProgress?.(100, 'Upload completed', 'completed');
@@ -595,9 +600,9 @@ class ApiService {
               }
             }
           } catch (error) {
-            console.error('❌ Progress polling error:', error);
-            console.error('❌ Error type:', typeof error);
-            console.error('❌ Error message:', error.message);
+            // console.error('❌ Progress polling error:', error);
+            // console.error('❌ Error type:', typeof error);
+            // console.error('❌ Error message:', (error as any).message);
             // Continue polling on error
             if (Date.now() - startTime < maxPollTime) {
               setTimeout(pollProgress, pollInterval);
@@ -617,7 +622,7 @@ class ApiService {
         }, 200);
       });
     } catch (error: any) {
-      console.error('❌ Upload with progress polling failed:', error);
+      // console.error('❌ Upload with progress polling failed:', error);
       throw error;
     }
   }
@@ -661,7 +666,7 @@ class ApiService {
       };
       
     } catch (error: any) {
-      console.error('❌ Download file error:', error);
+      // console.error('❌ Download file error:', error);
       throw new Error(error.response?.data?.message || 'Download failed');
     }
   }
@@ -710,6 +715,233 @@ class ApiService {
         throw error; // Re-throw abort errors to be handled by caller
       }
       throw new Error(error.response?.data?.message || 'Chat failed');
+    }
+  }
+
+  // SSE Streaming chat message (with fake character-by-character streaming)
+  async sendChatMessageStream(
+    message: string, 
+    filters?: any, 
+    signal?: AbortSignal,
+    onChunk?: (type: string, data: any) => void
+  ): Promise<void> {
+    try {
+      const payload: any = { 
+        message,
+        response_mode: 'flexible', // Use same response mode as web
+        preview_mode: true // Enable preview mode for streaming
+      };
+      
+      // Map filters to the same format as web
+      if (filters) {
+        if (filters.context_file_ids) {
+          payload.context_file_ids = filters.context_file_ids;
+        }
+        if (filters.context_bookmark_ids) {
+          payload.context_bookmark_ids = filters.context_bookmark_ids;
+        }
+        if (filters.context_transcript_ids) {
+          payload.context_transcript_ids = filters.context_transcript_ids;
+        }
+        if (filters.search_type) {
+          payload.search_type = filters.search_type;
+        }
+        if (filters.chat_history_id) {
+          payload.chat_history_id = filters.chat_history_id;
+        }
+        // Map other filter properties
+        Object.keys(filters).forEach(key => {
+          if (!['context_file_ids', 'context_bookmark_ids', 'context_transcript_ids', 'search_type', 'chat_history_id'].includes(key)) {
+            payload[key] = filters[key];
+          }
+        });
+      }
+
+      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      const baseURL = this.client.defaults.baseURL || '';
+      
+      // Use fetch for SSE streaming
+      const response = await fetch(`${baseURL}${MOBILE_ENDPOINTS.CHAT_SMART_STREAM}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify(payload),
+        signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Check if response is actually a stream
+      const contentType = response.headers.get('content-type');
+      console.log('🔍 Response content-type:', contentType);
+      
+      if (!contentType?.includes('text/event-stream')) {
+        console.log('⚠️ Server returned non-streaming response, falling back to regular chat');
+        // Fallback to regular chat API
+        try {
+          const fallbackResponse = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, {
+            message: message,
+            filters: filters
+          });
+          
+          if (onChunk) {
+            onChunk('fallback_response', {
+              type: 'fallback_response',
+              content: fallbackResponse.data.response || fallbackResponse.data.message || 'Response received'
+            });
+          }
+          return;
+        } catch (fallbackError: any) {
+          console.error('❌ Fallback also failed:', fallbackError);
+          if (onChunk) {
+            onChunk('error', {
+              type: 'error',
+              content: 'Unable to process your request. Please try again later.',
+              error: fallbackError.message
+            });
+          }
+          return;
+        }
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        console.error('❌ Response body is not readable, attempting fallback:', {
+          body: response.body,
+          status: response.status,
+          headers: response.headers
+        });
+        
+        // Try fallback when body is not readable
+        try {
+          const fallbackResponse = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, {
+            message: message,
+            filters: filters
+          });
+          
+          if (onChunk) {
+            onChunk('fallback_response', {
+              type: 'fallback_response',
+              content: fallbackResponse.data.response || fallbackResponse.data.message || 'Response received'
+            });
+          }
+          return;
+        } catch (fallbackError) {
+          console.error('❌ Fallback also failed:', fallbackError);
+          throw new Error('Response body is not readable and fallback failed');
+        }
+      }
+
+      const decoder = new TextDecoder();
+      let incompleteLineBuffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          // console.log('📖 Stream done');
+          break;
+        }
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (let i = 0; i < lines.length; i++) {
+          let line = lines[i];
+          
+          // If we have an incomplete line from before, prepend it
+          if (incompleteLineBuffer) {
+            line = incompleteLineBuffer + line;
+            incompleteLineBuffer = '';
+          }
+          
+          if (line.startsWith('data: ')) {
+            try {
+              const jsonStr = line.slice(6);
+              const data = JSON.parse(jsonStr);
+              // console.log('🔍 SSE data received:', data.type);
+              
+              // Call the onChunk callback with the data
+              if (onChunk) {
+                onChunk(data.type, data);
+              }
+            } catch (error) {
+              // Incomplete JSON - save for next iteration
+              if (i === lines.length - 1) {
+                incompleteLineBuffer = line;
+              } else {
+                console.error('Failed to parse SSE data:', error);
+              }
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        throw error; // Re-throw abort errors to be handled by caller
+      }
+      console.error('Chat stream failed:', error);
+      
+      // Determine user-friendly error message based on error type
+      let userFriendlyMessage = 'Sorry, there was an issue processing your request.';
+      
+      if (error.message?.includes('Network request timed out') || 
+          error.message?.includes('timeout') ||
+          error.message?.includes('ECONNABORTED') ||
+          error.message?.includes('TypeError: Network request timed out')) {
+        userFriendlyMessage = 'Connection timed out. Please check your internet connection and try again.';
+      } else if (error.message?.includes('Network Error') || 
+                 error.message?.includes('ERR_NETWORK') ||
+                 error.message?.includes('fetch')) {
+        userFriendlyMessage = 'Unable to connect to the server. Please check your internet connection.';
+      } else if (error.message?.includes('Response body is not readable')) {
+        userFriendlyMessage = 'The server response format is not supported. Trying alternative method...';
+      } else if (error.message?.includes('No response from server')) {
+        userFriendlyMessage = 'No response from server. Please check your connection and try again.';
+      }
+      
+      // If streaming fails, try to provide a fallback response
+      if (onChunk) {
+        // Try fallback API call
+        try {
+          const fallbackResponse = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, {
+            message: message,
+            filters: filters
+          });
+          
+          onChunk('fallback_response', {
+            type: 'fallback_response',
+            content: fallbackResponse.data.response || fallbackResponse.data.message || 'Response received'
+          });
+          return; // Success with fallback
+        } catch (fallbackError: any) {
+          console.error('❌ Fallback also failed:', fallbackError);
+          
+          // Determine fallback error message
+          let fallbackMessage = 'Unable to process your request. Please try again later.';
+          if (fallbackError.message?.includes('Network request timed out') || 
+              fallbackError.message?.includes('timeout') ||
+              fallbackError.message?.includes('TypeError: Network request timed out')) {
+            fallbackMessage = 'Connection timed out. Please check your internet connection and try again.';
+          } else if (fallbackError.message?.includes('Network Error') || 
+                     fallbackError.message?.includes('ERR_NETWORK')) {
+            fallbackMessage = 'Unable to connect to the server. Please check your internet connection.';
+          } else if (fallbackError.message?.includes('No response from server')) {
+            fallbackMessage = 'No response from server. Please check your connection and try again.';
+          }
+          
+          onChunk('error', { 
+            type: 'error', 
+            content: fallbackMessage,
+            error: fallbackError.message 
+          });
+        }
+      }
+      
+      throw new Error(error.message || 'Chat stream failed');
     }
   }
 
@@ -825,7 +1057,7 @@ class ApiService {
       console.log('✅ Recent activities loaded');
       return response.data;
     } catch (error: any) {
-      console.error('❌ Failed to get recent activities:', error);
+      // console.error('❌ Failed to get recent activities:', error);
       throw new Error(error.response?.data?.message || 'Failed to get recent activities');
     }
   }
@@ -839,8 +1071,24 @@ class ApiService {
       console.log('✅ Comprehensive analytics loaded');
       return response.data;
     } catch (error: any) {
-      console.error('❌ Failed to get comprehensive analytics:', error);
+      // console.error('❌ Failed to get comprehensive analytics:', error);
       throw new Error(error.response?.data?.message || 'Failed to get comprehensive analytics');
+    }
+  }
+
+  async getReceiptAnalytics(days = 30): Promise<ApiResponse> {
+    try {
+      console.log(`📊 Getting receipt analytics (${days} days)`);
+      // Try the dashboard analytics endpoint that has receipt data
+      const response = await this.client.get('/api/dashboard/analytics', {
+        params: { days }
+      });
+      console.log('✅ Receipt analytics loaded');
+      return response.data;
+    } catch (error: any) {
+      console.log('❌ Receipt analytics failed, trying comprehensive analytics');
+      // Fallback to comprehensive analytics
+      return this.getComprehensiveAnalytics(days);
     }
   }
 
@@ -1003,16 +1251,6 @@ class ApiService {
     }
   }
 
-  async deleteBookmark(bookmarkId: number): Promise<ApiResponse> {
-    try {
-      const response = await this.client.delete(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}`);
-      return response.data;
-    } catch (error: any) {
-      console.error('Delete bookmark error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to delete bookmark');
-    }
-  }
-
   // ==================== MOBILE WORKSPACES ====================
   
   async getMobileWorkspaces(): Promise<ApiResponse> {
@@ -1020,10 +1258,9 @@ class ApiService {
       console.log('🔄 Loading workspaces from:', MOBILE_ENDPOINTS.WORKSPACES);
       // Use proper mobile endpoint
       const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACES);
-      console.log('📋 Workspaces API response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error: any) {
-      console.error('❌ Get mobile workspaces error:', error);
+      // console.error('❌ Get mobile workspaces error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch workspaces');
     }
   }
@@ -1370,12 +1607,50 @@ class ApiService {
     }
   }
 
-  async deleteMeeting(meetingId: string): Promise<ApiResponse> {
+  async deleteMeeting(meetingId: string, forceDelete: boolean = false): Promise<ApiResponse> {
     try {
-      const response = await this.client.delete(`/api/v1/mobile/meetings/${meetingId}`);
+      console.log('🗑️ Attempting to delete meeting:', meetingId);
+      console.log('🔍 Meeting ID type:', typeof meetingId, 'Value:', meetingId);
+      console.log('🔍 Force delete:', forceDelete);
+      
+      // Use the correct endpoint that deletes the meeting record
+      // Use delete-confirmed endpoint when user has already confirmed
+      const url = forceDelete 
+        ? `/api/v1/video/room/${meetingId}/delete-confirmed`
+        : `/api/v1/video/room/${meetingId}/delete`;
+      const response = await this.client.delete(url);
+      console.log('✅ Meeting delete response:', response.data);
+      
+      // Check if confirmation is required
+      if (response.data.requires_confirmation && !forceDelete) {
+        console.log('⚠️ Confirmation required for meeting with assets');
+        return {
+          success: false,
+          requires_confirmation: true,
+          message: response.data.message,
+          asset_count: response.data.asset_count,
+          asset_details: response.data.asset_details,
+          warning: response.data.warning
+        };
+      }
+      
       return response.data;
     } catch (error: any) {
-      console.error('Delete meeting failed:', error);
+      console.error('❌ Delete meeting failed:', error);
+      console.error('Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
+      
+      // Handle specific errors
+      if (error.response?.status === 404) {
+        throw new Error('Meeting not found. The meeting may have already been deleted or the ID is incorrect.');
+      } else if (error.response?.status === 403) {
+        throw new Error('You are not authorized to delete this meeting. Only the meeting creator can delete it.');
+      }
+      
       throw new Error(error.response?.data?.message || 'Failed to delete meeting');
     }
   }
@@ -1394,7 +1669,9 @@ class ApiService {
 
   async getMeetingAssets(): Promise<ApiResponse> {
     try {
+      console.log('📁 Loading meeting assets with local file paths...');
       const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_ASSETS);
+      console.log('📁 Meeting assets response:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('Get meeting assets failed:', error);
@@ -1454,6 +1731,9 @@ class ApiService {
       throw new Error(error.response?.data?.message || 'Failed to download meeting asset');
     }
   }
+
+  // ==================== CONFIGURATION ====================
+  // Configuration endpoint not available on backend
 }
 
 // Create and export singleton instance

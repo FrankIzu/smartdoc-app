@@ -1,8 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useAuth } from '../app/context/auth';
-import { API_BASE_URL } from '../constants/Config';
+import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { deviceSecurityService } from '../services/deviceSecurity';
 import { googleAuthService } from '../services/googleAuth';
+import { secureStorage } from '../utils/storage';
 
 // Import types from the real service
 type DeviceFingerprint = any;
@@ -226,26 +227,41 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       const result = await response.json();
       console.log('📊 API Response data:', result);
 
-              if (result.success) {
-          console.log('✅ LOGIN SUCCESS');
-          // Login successful
-          await deviceSecurityService.resetFailedAttempts();
-          
-          if (result.session_info?.deviceTrusted) {
-            await deviceSecurityService.setDeviceTrust('trusted', 30);
-          }
+      if (result.success) {
+        console.log('✅ LOGIN SUCCESS');
+        // Login successful
+        await deviceSecurityService.resetFailedAttempts();
+        
+        if (result.session_info?.deviceTrusted) {
+          await deviceSecurityService.setDeviceTrust('trusted', 30);
+        }
 
-          await deviceSecurityService.setLastLoginData({
-            timestamp: new Date().toISOString(),
-          });
+        await deviceSecurityService.setLastLoginData({
+          timestamp: new Date().toISOString(),
+        });
 
-          setAuthState(prev => ({
-            ...prev,
-            isAuthenticated: true,
-            user: result.user,
-            isLoading: false,
-            lastRiskScore: riskScore,
-          }));
+        // Store authentication token and user data
+        if (result.token) {
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
+          console.log('💾 Stored authentication token');
+        } else {
+          // Fallback to session_token for development
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          console.log('💾 Stored fallback session_token');
+        }
+
+        if (result.user) {
+          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+          console.log('💾 Stored user data');
+        }
+
+        setAuthState(prev => ({
+          ...prev,
+          isAuthenticated: true,
+          user: result.user,
+          isLoading: false,
+          lastRiskScore: riskScore,
+        }));
 
           // 🔄 SYNC WITH REGULAR AUTH CONTEXT FOR NAVIGATION
           console.log('🔄 Syncing with regular auth context...');
@@ -361,6 +377,21 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
           timestamp: new Date().toISOString(),
         });
 
+        // Store authentication token and user data
+        if (result.token) {
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
+          console.log('💾 Stored authentication token (biometric)');
+        } else {
+          // Fallback to session_token for development
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          console.log('💾 Stored fallback session_token (biometric)');
+        }
+
+        if (result.user) {
+          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+          console.log('💾 Stored user data (biometric)');
+        }
+
         setAuthState(prev => ({
           ...prev,
           isAuthenticated: true,
@@ -412,6 +443,21 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       const result = await googleAuthService.signInWithGoogleEnhanced();
 
       if (result.success && result.user) {
+        // Store authentication token and user data
+        if (result.token) {
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
+          console.log('💾 Stored authentication token (Google)');
+        } else {
+          // Fallback to session_token for development
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          console.log('💾 Stored fallback session_token (Google)');
+        }
+
+        if (result.user) {
+          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+          console.log('💾 Stored user data (Google)');
+        }
+
         setAuthState(prev => ({
           ...prev,
           isAuthenticated: true,
@@ -531,6 +577,21 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
           timestamp: new Date().toISOString(),
         });
 
+        // Store authentication token and user data
+        if (result.token) {
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
+          console.log('💾 Stored authentication token (phone)');
+        } else {
+          // Fallback to session_token for development
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          console.log('💾 Stored fallback session_token (phone)');
+        }
+
+        if (result.user) {
+          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+          console.log('💾 Stored user data (phone)');
+        }
+
         setAuthState(prev => ({
           ...prev,
           isAuthenticated: true,
@@ -578,6 +639,21 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       const result = await response.json();
 
       if (result.success) {
+        // Store authentication token and user data
+        if (result.token) {
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
+          console.log('💾 Stored authentication token (signup)');
+        } else {
+          // Fallback to session_token for development
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          console.log('💾 Stored fallback session_token (signup)');
+        }
+
+        if (result.user) {
+          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+          console.log('💾 Stored user data (signup)');
+        }
+
         setAuthState(prev => ({
           ...prev,
           isAuthenticated: true,
@@ -622,6 +698,15 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
 
       // Clear Google auth if used
       await googleAuthService.signOut();
+
+      // Clear stored authentication data
+      try {
+        await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+        await secureStorage.removeItem(STORAGE_KEYS.USER_DATA);
+        console.log('💾 Cleared authentication data');
+      } catch (error) {
+        console.warn('Failed to clear auth data:', error);
+      }
 
       setAuthState({
         isAuthenticated: false,
@@ -731,6 +816,6 @@ export function useEnhanced2FAAuth() {
 
 // Export types
 export type {
-  AuthState, Enhanced2FAContextType, Enhanced2FAUser, LoginCredentials
+    AuthState, Enhanced2FAContextType, Enhanced2FAUser, LoginCredentials
 };
 

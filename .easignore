@@ -96,9 +96,4 @@ Thumbs.db
 # Large files and directories
 dev-files/
 grabdocs/
-scripts/
-utils/
-hooks/
-types/
-stores/
 %USERPROFILE%/

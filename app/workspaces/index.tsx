@@ -199,7 +199,7 @@ export default function WorkspacesScreen() {
       <Ionicons name="business" size={64} color="#ccc" />
       <Text style={styles.emptyStateTitle}>No Workspaces</Text>
       <Text style={styles.emptyStateText}>
-        You don't belong to any workspaces yet. Create one to get started!
+        You don&apos;t belong to any workspaces yet. Create one to get started!
       </Text>
       <TouchableOpacity
         style={styles.createButton}

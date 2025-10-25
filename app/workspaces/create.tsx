@@ -166,7 +166,7 @@ export default function CreateWorkspaceScreen() {
               <View style={styles.infoContent}>
                 <Text style={styles.infoTitle}>Getting Started</Text>
                 <Text style={styles.infoText}>
-                  After creating your workspace, you'll be able to invite team members and start collaborating on documents and forms.
+                  After creating your workspace, you&apos;ll be able to invite team members and start collaborating on documents and forms.
                 </Text>
               </View>
             </View>
