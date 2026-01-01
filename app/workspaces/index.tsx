@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     Alert,
     FlatList,
@@ -11,6 +11,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
 
@@ -34,6 +35,7 @@ interface Workspace {
 export default function WorkspacesScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const colors = useThemeColors();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -136,43 +138,200 @@ export default function WorkspacesScreen() {
     router.push(`/workspaces/${workspace.id}`);
   };
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    headerTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    loadingContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    listContainer: {
+      padding: 16,
+    },
+    emptyContainer: {
+      flex: 1,
+    },
+    workspaceCard: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+    },
+    workspaceHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+    },
+    workspaceInfo: {
+      flex: 1,
+      marginRight: 12,
+    },
+    workspaceName: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    workspaceDescription: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginBottom: 8,
+    },
+    workspaceMeta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 12,
+    },
+    roleContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+    },
+    roleText: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginLeft: 4,
+      textTransform: 'capitalize',
+    },
+    memberCount: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    inactiveTag: {
+      backgroundColor: '#FFE5E5',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+    },
+    inactiveText: {
+      fontSize: 12,
+      color: '#FF6B6B',
+      fontWeight: '500',
+    },
+    defaultTag: {
+      backgroundColor: '#E3F2FD',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+    },
+    defaultText: {
+      fontSize: 12,
+      color: '#007AFF',
+      fontWeight: '500',
+    },
+    workspaceActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    actionButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    emptyState: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 32,
+    },
+    emptyStateTitle: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    emptyStateText: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      lineHeight: 20,
+      marginBottom: 24,
+    },
+    createButton: {
+      backgroundColor: '#007AFF',
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 8,
+    },
+    createButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '600',
+    },
+  }), [colors]);
+
   const renderWorkspaceItem = ({ item: workspace }: { item: Workspace }) => (
     <TouchableOpacity
-      style={styles.workspaceCard}
+      style={dynamicStyles.workspaceCard}
       onPress={() => handleLinkPress(workspace)}
     >
-      <View style={styles.workspaceHeader}>
-        <View style={styles.workspaceInfo}>
-          <Text style={styles.workspaceName}>{workspace.name}</Text>
+      <View style={dynamicStyles.workspaceHeader}>
+        <View style={dynamicStyles.workspaceInfo}>
+          <Text style={dynamicStyles.workspaceName}>{workspace.name}</Text>
           {workspace.description && (
-            <Text style={styles.workspaceDescription}>{workspace.description}</Text>
+            <Text style={dynamicStyles.workspaceDescription}>{workspace.description}</Text>
           )}
-          <View style={styles.workspaceMeta}>
-            <View style={styles.roleContainer}>
+          <View style={dynamicStyles.workspaceMeta}>
+            <View style={dynamicStyles.roleContainer}>
               <Ionicons 
                 name={workspace.user_role === 'owner' ? 'star' : 
                       workspace.user_role === 'admin' ? 'shield' : 
                       workspace.user_role === 'member' ? 'person' : 'eye'} 
                 size={14} 
-                color="#666" 
+                color={colors.textSecondary} 
               />
-              <Text style={styles.roleText}>{workspace.user_role}</Text>
+              <Text style={dynamicStyles.roleText}>{workspace.user_role}</Text>
             </View>
-            <Text style={styles.memberCount}>
+            <Text style={dynamicStyles.memberCount}>
               {workspace.member_count} member{workspace.member_count !== 1 ? 's' : ''}
             </Text>
+            {workspace.is_personal && (
+              <View style={dynamicStyles.defaultTag}>
+                <Text style={dynamicStyles.defaultText}>Default</Text>
+              </View>
+            )}
             {!workspace.is_active && (
-              <View style={styles.inactiveTag}>
-                <Text style={styles.inactiveText}>Inactive</Text>
+              <View style={dynamicStyles.inactiveTag}>
+                <Text style={dynamicStyles.inactiveText}>Inactive</Text>
               </View>
             )}
           </View>
         </View>
         
         {workspace.can_manage && (
-          <View style={styles.workspaceActions}>
+          <View style={dynamicStyles.workspaceActions}>
             <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: workspace.is_active ? '#FF6B6B' : '#4ECDC4' }]}
+              style={[dynamicStyles.actionButton, { backgroundColor: workspace.is_active ? '#FF6B6B' : '#4ECDC4' }]}
               onPress={() => handleToggleActive(workspace)}
             >
               <Ionicons 
@@ -182,12 +341,15 @@ export default function WorkspacesScreen() {
               />
             </TouchableOpacity>
             
-            <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: '#FF6B6B' }]}
-              onPress={() => handleDeleteWorkspace(workspace)}
-            >
-              <Ionicons name="trash" size={16} color="#fff" />
-            </TouchableOpacity>
+            {/* Don't show delete button for default/personal workspace */}
+            {!workspace.is_personal && (
+              <TouchableOpacity
+                style={[dynamicStyles.actionButton, { backgroundColor: '#FF6B6B' }]}
+                onPress={() => handleDeleteWorkspace(workspace)}
+              >
+                <Ionicons name="trash" size={16} color="#fff" />
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -195,45 +357,45 @@ export default function WorkspacesScreen() {
   );
 
   const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <Ionicons name="business" size={64} color="#ccc" />
-      <Text style={styles.emptyStateTitle}>No Workspaces</Text>
-      <Text style={styles.emptyStateText}>
+    <View style={dynamicStyles.emptyState}>
+      <Ionicons name="business" size={64} color={colors.textLight} />
+      <Text style={dynamicStyles.emptyStateTitle}>No Workspaces</Text>
+      <Text style={dynamicStyles.emptyStateText}>
         You don&apos;t belong to any workspaces yet. Create one to get started!
       </Text>
       <TouchableOpacity
-        style={styles.createButton}
+        style={dynamicStyles.createButton}
         onPress={() => router.push('/workspaces/create')}
       >
-        <Text style={styles.createButtonText}>Create Workspace</Text>
+        <Text style={dynamicStyles.createButtonText}>Create Workspace</Text>
       </TouchableOpacity>
     </View>
   );
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
           <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Team Workspace</Text>
+          <Text style={dynamicStyles.headerTitle}>Team Workspace</Text>
           <View style={{ width: 24 }} />
         </View>
-        <View style={styles.loadingContainer}>
-          <Text>Loading workspaces...</Text>
+        <View style={dynamicStyles.loadingContainer}>
+          <Text style={{ color: colors.textSecondary }}>Loading workspaces...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={dynamicStyles.container}>
+      <View style={dynamicStyles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Team Workspace</Text>
+        <Text style={dynamicStyles.headerTitle}>Team Workspace</Text>
         <TouchableOpacity onPress={() => router.push('/workspaces/create')}>
           <Ionicons name="add" size={24} color="#007AFF" />
         </TouchableOpacity>
@@ -243,7 +405,7 @@ export default function WorkspacesScreen() {
         data={workspaces}
         renderItem={renderWorkspaceItem}
         keyExtractor={(item) => item.id.toString()}
-        contentContainerStyle={workspaces.length === 0 ? styles.emptyContainer : styles.listContainer}
+        contentContainerStyle={workspaces.length === 0 ? dynamicStyles.emptyContainer : dynamicStyles.listContainer}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
@@ -253,144 +415,3 @@ export default function WorkspacesScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  listContainer: {
-    padding: 16,
-  },
-  emptyContainer: {
-    flex: 1,
-  },
-  workspaceCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  workspaceHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  workspaceInfo: {
-    flex: 1,
-    marginRight: 12,
-  },
-  workspaceName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  workspaceDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
-  },
-  workspaceMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  roleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  roleText: {
-    fontSize: 12,
-    color: '#666',
-    marginLeft: 4,
-    textTransform: 'capitalize',
-  },
-  memberCount: {
-    fontSize: 12,
-    color: '#666',
-  },
-  inactiveTag: {
-    backgroundColor: '#FFE5E5',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  inactiveText: {
-    fontSize: 12,
-    color: '#FF6B6B',
-    fontWeight: '500',
-  },
-  workspaceActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-  },
-  emptyStateTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyStateText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  createButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  createButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-}); 

@@ -5,9 +5,8 @@ import { Platform } from 'react-native';
  * Get the appropriate backend URL based on the current environment and platform
  */
 export const getBackendUrl = (): string => {
-  // Check if we're in Expo Go development
+  // Check if we're in Expo Go (local testing only)
   const isExpoGo = Constants.appOwnership === 'expo';
-  const isDevelopment = __DEV__;
   
   // Environment variable override (highest priority)
   if (process.env.EXPO_PUBLIC_API_URL) {
@@ -15,14 +14,14 @@ export const getBackendUrl = (): string => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  // Development - use the specified IP address
-  if (isDevelopment) {
-    console.log('🔧 Using development IP for backend');
-    return 'http://192.168.62.96:5000';
+  // Expo Go = local testing, use localhost
+  if (isExpoGo) {
+    console.log('🔧 Using localhost API URL (Expo Go detected)');
+    return 'http://192.168.1.5:5000';
   }
   
-  // Production or standalone app
-  console.log('🔧 Using production API URL');
+  // Standalone app (dev builds or production builds) = use production
+  console.log('🔧 Using production API URL (standalone app detected)');
   return 'https://api.grabdocs.com';
 };
 
@@ -42,7 +41,7 @@ const getLocalNetworkIP = (): string | null => {
   // For iOS simulator, use localhost
   if (Platform.OS === 'ios') {
     // For iOS development with physical device, use machine IP
-    return '192.168.62.96';
+    return '192.168.1.5';
   }
   
   // For web, use localhost
@@ -61,10 +60,11 @@ const getLocalNetworkIP = (): string | null => {
 export const getNetworkFallbacks = (): string[] => {
   const primaryUrl = getBackendUrl();
   
-  // For development, always include multiple IP options
-  if (__DEV__) {
+  // For Expo Go (local testing), include multiple IP options
+  const isExpoGo = Constants.appOwnership === 'expo';
+  if (isExpoGo) {
     const allIPs = [
-      '192.168.62.96',  // Primary machine IP for mobile devices
+      '192.168.1.5',    // Primary machine IP for mobile devices
       'localhost',       // Localhost fallback
       '127.0.0.1',      // Alternative localhost
       '10.0.2.2',       // Android emulator
@@ -75,13 +75,13 @@ export const getNetworkFallbacks = (): string[] => {
       .filter(ip => !primaryUrl.includes(ip))
       .map(ip => `http://${ip}:5000`);
     
-    console.log('🔧 Network fallbacks for development:', fallbacks);
+    console.log('🔧 Network fallbacks for Expo Go:', fallbacks);
     return fallbacks;
   }
   
   // Production fallbacks
   return [
-    'https://smartdoc-production.up.railway.app',
+    'https://api.grabdocs.com',
   ];
 };
 

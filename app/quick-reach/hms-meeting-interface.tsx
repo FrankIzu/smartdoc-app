@@ -9,30 +9,53 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { hmsBackendService } from './hmsBackendService';
+import { useAuth } from '../context/auth';
 
-// HMS package temporarily disabled for deployment
+// HMS package - enabled for local testing
 // All HMS functionality is handled via backend API calls
-console.log('📱 HMS Prebuilt Interface temporarily disabled for deployment');
+console.log('📱 HMS Prebuilt Interface - Loading HMS package');
 
-// Import HMS components (will be undefined in development mode)
+// Import HMS components
 let HMSPrebuilt: any = null;
 let HMSConfig: any = null;
 
 try {
-  // In production builds, these would be imported from the HMS package
-  // HMSPrebuilt = require('@100mslive/react-native-hms').HMSPrebuilt;
-  // HMSConfig = require('@100mslive/react-native-hms').HMSConfig;
-} catch (error) {
-  console.log('📱 HMS package not available:', error);
+  // Try to import HMS Room Kit (prebuilt UI) - requires native module
+  // For localhost testing, you need a development build
+  const roomKitPackage = require('@100mslive/react-native-room-kit');
+  if (roomKitPackage && roomKitPackage.HMSPrebuilt) {
+    HMSPrebuilt = roomKitPackage.HMSPrebuilt;
+    console.log('📱 HMS Room Kit (Prebuilt) loaded successfully');
+  } else {
+    console.log('📱 HMS Room Kit imported but HMSPrebuilt not found');
+  }
+  
+  // Also import HMS SDK for config if needed
+  try {
+    const hmsSDK = require('@100mslive/react-native-hms');
+    HMSConfig = hmsSDK.HMSConfig;
+  } catch (sdkError) {
+    console.log('📱 HMS SDK not available (optional)');
+  }
+} catch (error: any) {
+  console.log('📱 HMS Room Kit not available:', error?.message || error);
+  console.log('📱 This is expected if:');
+  console.log('   1. Package not installed: npm install @100mslive/react-native-room-kit');
+  console.log('   2. Dev build created before package install (rebuild needed)');
+  console.log('   3. Native module not properly linked');
+  // Will fall back to development mode UI
 }
 
 export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { meetingId, title, userName } = params;
+  const { user } = useAuth();
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
 
   // Debug logging
   console.log('📱 100ms Prebuilt Interface - Received params:', {
@@ -60,10 +83,36 @@ export default function HMSMeetingInterfaceScreen() {
 
       console.log('📱 Initializing 100ms Prebuilt Interface with meeting ID:', meetingId);
       
-      // For development mode, we'll show a placeholder
+      // Generate auth token from backend
+      try {
+        const token = await hmsBackendService.generateAuthToken({
+          roomCode: meetingId as string,
+          userName: (userName as string) || user?.name || 'Mobile User',
+          role: 'host', // or 'viewer' based on your needs
+          userId: user?.id?.toString()
+        });
+        setAuthToken(token);
+        console.log('📱 HMS auth token generated successfully');
+      } catch (tokenError: any) {
+        // 405 means endpoint doesn't exist - backend needs to implement it
+        if (tokenError?.response?.status === 405) {
+          console.warn('⚠️ HMS token endpoint not implemented (405): /api/v1/mobile/meetings/hms-token');
+          console.warn('⚠️ Backend needs to implement this endpoint for HMS to work');
+        } else {
+          console.error('Failed to generate HMS auth token:', tokenError?.message || tokenError);
+        }
+        // Continue anyway - might work without token in some cases
+        console.log('📱 Continuing without auth token (may work for testing)');
+      }
+      
+      // Check if HMS Prebuilt is available
       if (!HMSPrebuilt) {
         console.log('📱 100ms Prebuilt not available - showing development mode');
-        setError('100ms Prebuilt Interface not available in development mode. Please use a development build for full functionality.');
+        console.log('📱 To test with full functionality:');
+        console.log('   1. Install HMS package: npm install @100mslive/react-native-hms');
+        console.log('   2. Create a development build (not Expo Go)');
+        console.log('   3. Ensure backend HMS endpoints are configured');
+        // Don't set error - show development mode UI instead
         return;
       }
 
@@ -138,13 +187,14 @@ export default function HMSMeetingInterfaceScreen() {
   }
 
   // 100ms Prebuilt Interface
-  if (HMSPrebuilt && HMSConfig) {
+  if (HMSPrebuilt && HMSConfig && authToken) {
     return (
       <SafeAreaView style={styles.container}>
         <HMSPrebuilt
           config={{
             roomCode: meetingId as string,
-            userName: (userName as string) || 'Mobile User',
+            userName: (userName as string) || user?.name || 'Mobile User',
+            authToken: authToken,
             // Add other HMS configuration as needed
           }}
           onLeave={handleLeaveMeeting}
@@ -174,11 +224,28 @@ export default function HMSMeetingInterfaceScreen() {
 
         <View style={styles.developmentMessage}>
           <Text style={styles.developmentText}>
-            The 100ms Prebuilt Interface is not available in Expo Go development mode.
+            The 100ms Prebuilt Interface requires a development build (not Expo Go).
           </Text>
           <Text style={styles.developmentText}>
-            To test the full functionality, you need to create a development build with the HMS native module.
+            To test with an existing meeting:
           </Text>
+          <Text style={[styles.developmentText, { marginTop: 12, fontWeight: '600' }]}>
+            1. Install: npm install @100mslive/react-native-hms
+          </Text>
+          <Text style={[styles.developmentText, { fontWeight: '600' }]}>
+            2. Create dev build: npx expo run:android or npx expo run:ios
+          </Text>
+          <Text style={[styles.developmentText, { fontWeight: '600' }]}>
+            3. Ensure backend HMS endpoints are configured
+          </Text>
+          <Text style={[styles.developmentText, { marginTop: 12 }]}>
+            Meeting ID: {meetingId}
+          </Text>
+          {authToken && (
+            <Text style={[styles.developmentText, { marginTop: 8, fontSize: 12 }]}>
+              Auth token generated ✓
+            </Text>
+          )}
         </View>
 
         <TouchableOpacity style={styles.leaveButton} onPress={handleLeaveMeeting}>

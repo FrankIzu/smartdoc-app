@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
@@ -55,11 +56,12 @@ const MOBILE_ENDPOINTS = {
   // User
   USER: '/api/v1/mobile/user',
   
-  // Files
+  // Files (all operations go through backend encryption)
   FILES: '/api/v1/mobile/files',
-  UPLOAD: '/api/v1/mobile/upload',
+  UPLOAD: '/api/v1/mobile/upload', // Backend encrypts on save
   FILE_BY_ID: (id: number) => `/api/v1/mobile/get-file/${id}`,
-  FILE_DOWNLOAD: (id: number) => `/api/v1/mobile/file/${id}/download`,
+  FILE_DOWNLOAD: (id: number) => `/api/v1/mobile/file/${id}/download`, // Backend decrypts on download
+  FILE_VIEW: (id: number) => `/api/v1/mobile/file/${id}/view`, // Backend decrypts for viewing
   FILE_DELETE: (id: number) => `/api/v1/mobile/file/${id}`,
   
   // Chat
@@ -86,10 +88,17 @@ const MOBILE_ENDPOINTS = {
   TEMPLATES: '/api/v1/mobile/templates',
   FORM_TEMPLATES: '/api/v1/mobile/form-templates',
   
-  // Chat system
+  // Chat system (AI Chat)
   CHATS: '/api/v1/mobile/chats',
   CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/chat/messages/${chatId}`,
   CHAT_SEND_MESSAGE: '/api/v1/mobile/chat/send',
+  
+  // User Chat (Mobile-specific - separate from web user chat)
+  USER_CHATS: '/api/v1/mobile/user-chat/chats',
+  USER_CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/user-chat/chats/${chatId}/messages`,
+  USER_CHAT_SEND: (chatId: number) => `/api/v1/mobile/user-chat/chats/${chatId}/send`,
+  USER_CHAT_START: '/api/v1/mobile/user-chat/start-chat',
+  USER_CHAT_SEARCH_USERS: '/api/v1/mobile/user-chat/search-users',
   
   // Bookmarks
   BOOKMARKS: '/api/v1/mobile/bookmarks',
@@ -99,6 +108,9 @@ const MOBILE_ENDPOINTS = {
   WORKSPACE_BY_ID: (id: number) => `/api/v1/mobile/workspaces/${id}`,
   WORKSPACE_MEMBERS: (id: number) => `/api/v1/mobile/workspaces/${id}/members`,
   WORKSPACE_MEMBER_BY_ID: (workspaceId: number, memberId: number) => `/api/v1/mobile/workspaces/${workspaceId}/members/${memberId}`,
+  WORKSPACE_MEMBER_ROLE: (workspaceId: number, memberId: number) => `/api/v1/mobile/workspaces/${workspaceId}/members/${memberId}/role`,
+  WORKSPACE_INVITATION_RESEND: (workspaceId: number, invitationId: number) => `/api/v1/mobile/workspaces/${workspaceId}/invitations/${invitationId}/resend`,
+  WORKSPACE_INVITATION_BY_ID: (workspaceId: number, invitationId: number) => `/api/v1/mobile/workspaces/${workspaceId}/invitations/${invitationId}`,
   WORKSPACE_USERS: '/api/v1/mobile/workspace-users',
   
   // Upload Links
@@ -118,6 +130,7 @@ const MOBILE_ENDPOINTS = {
   MEETING_CHAT: (meetingId: string) => `/api/v1/mobile/meetings/${meetingId}/chat`,
   MEETING_REPORT: (meetingId: string) => `/api/v1/mobile/meetings/${meetingId}/report`,
   MEETING_DOWNLOAD: (meetingId: string, assetType: string) => `/api/v1/mobile/meetings/${meetingId}/download/${assetType}`,
+  MEETING_DELETE_ASSETS: (meetingId: string) => `/api/v1/video/room/${meetingId}/delete-assets`,
   
   // Configuration
   // CONFIG: '/api/v1/mobile/config', // Not available on backend
@@ -129,16 +142,18 @@ class ApiService {
 
   constructor() {
     // Determine the actual platform for the X-Platform header
-    // For development, use 'android' to bypass iOS HTTPS requirements
-    const isDevelopment = __DEV__ || process.env.NODE_ENV === 'development';
-    const platformHeader = isDevelopment ? 'android' : // Use android in dev to avoid HTTPS issues
+    // For Expo Go (local testing), use 'android' to bypass iOS HTTPS requirements
+    // For standalone apps, use the actual platform
+    const isExpoGo = Constants.appOwnership === 'expo';
+    const platformHeader = isExpoGo ? 'android' : // Use android in Expo Go to avoid HTTPS issues
                           Platform.OS === 'ios' ? 'ios' : 
                           Platform.OS === 'android' ? 'android' : 
                           'mobile'; // fallback for web or other platforms
     
     console.log('🔧 API Service Platform Config:', {
       platformOS: Platform.OS,
-      isDevelopment,
+      isExpoGo,
+      appOwnership: Constants.appOwnership,
       platformHeader,
       baseURL: API_BASE_URL
     });
@@ -453,13 +468,14 @@ class ApiService {
 
   // ==================== MOBILE FILE MANAGEMENT ====================
 
-  async getFiles(page = 1, perPage = 20, search?: string, category?: string): Promise<ApiResponse> {
+  async getFiles(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number): Promise<ApiResponse> {
     try {
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('perPage', perPage.toString());
       if (search) params.append('search', search);
       if (category) params.append('category', category);
+      if (workspaceId) params.append('workspace_id', workspaceId.toString());
       
       const response = await this.client.get(`${MOBILE_ENDPOINTS.FILES}?${params}`);
       return response.data;
@@ -468,9 +484,14 @@ class ApiService {
     }
   }
 
+  /**
+   * Upload file - backend automatically encrypts files on save
+   * All file operations go through backend encryption class
+   */
   async uploadFile(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
     try {
       console.log('🔄 Attempting file upload...');
+      console.log('🔐 File will be encrypted by backend encryption class on save');
       const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD, file, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -487,6 +508,7 @@ class ApiService {
         },
       });
       console.log('✅ Upload successful');
+      console.log('🔐 File encrypted and saved by backend');
       console.log('📡 Upload response:', response.data);
       return response.data;
     } catch (error: any) {
@@ -645,20 +667,26 @@ class ApiService {
     }
   }
 
+  /**
+   * Download file - backend automatically decrypts encrypted files
+   * All file operations go through backend encryption class
+   */
   async downloadFile(id: number): Promise<{ url: string; filename: string; blob?: Blob }> {
     try {
       console.log('🔄 Downloading file with ID:', id);
+      console.log('🔐 File will be decrypted by backend encryption class');
       
       // First get the file info
       const infoResponse = await this.client.get(MOBILE_ENDPOINTS.FILE_BY_ID(id));
       const fileInfo = infoResponse.data?.file;
       const filename = fileInfo?.name || `document_${id}`;
       
-      // Get the download URL - we'll return it for external opening
+      // Get the download URL - backend handles decryption automatically
       const downloadUrl = `${API_BASE_URL}${MOBILE_ENDPOINTS.FILE_DOWNLOAD(id)}`;
       
       console.log('📁 File download URL:', downloadUrl);
       console.log('📁 File name:', filename);
+      console.log('🔐 Backend will decrypt file before serving');
       
       return {
         url: downloadUrl,
@@ -671,10 +699,51 @@ class ApiService {
     }
   }
 
-  // ==================== MOBILE CHAT ====================
+  /**
+   * View file - backend automatically decrypts encrypted files for viewing
+   * All file operations go through backend encryption class
+   */
+  async viewFile(id: number): Promise<{ url: string; filename: string }> {
+    try {
+      console.log('🔄 Viewing file with ID:', id);
+      console.log('🔐 File will be decrypted by backend encryption class');
+      
+      // First get the file info
+      const infoResponse = await this.client.get(MOBILE_ENDPOINTS.FILE_BY_ID(id));
+      const fileInfo = infoResponse.data?.file;
+      const filename = fileInfo?.name || `document_${id}`;
+      
+      // Use view endpoint if available, otherwise fallback to download
+      // Backend handles decryption automatically
+      const viewUrl = `${API_BASE_URL}${MOBILE_ENDPOINTS.FILE_VIEW(id)}`;
+      
+      console.log('📁 File view URL:', viewUrl);
+      console.log('📁 File name:', filename);
+      console.log('🔐 Backend will decrypt file before serving');
+      
+      return {
+        url: viewUrl,
+        filename: filename
+      };
+      
+    } catch (error: any) {
+      // Fallback to download endpoint if view endpoint doesn't exist
+      console.log('⚠️ View endpoint not available, falling back to download endpoint');
+      return this.downloadFile(id);
+    }
+  }
 
+  // ==================== MOBILE CHAT ====================
+  // All chat communication and responses are encrypted by backend
+
+  /**
+   * Send chat message - backend automatically encrypts messages and responses
+   * All chat operations go through backend encryption class
+   */
   async sendChatMessage(message: string, filters?: any, signal?: AbortSignal): Promise<ApiResponse> {
     try {
+      console.log('💬 Sending chat message');
+      console.log('🔐 Message and response will be encrypted by backend encryption class');
       const payload: any = { 
         message,
         response_mode: 'flexible' // Use same response mode as web
@@ -718,7 +787,10 @@ class ApiService {
     }
   }
 
-  // SSE Streaming chat message (with fake character-by-character streaming)
+  /**
+   * SSE Streaming chat message - backend automatically encrypts messages and responses
+   * All chat operations go through backend encryption class
+   */
   async sendChatMessageStream(
     message: string, 
     filters?: any, 
@@ -726,6 +798,8 @@ class ApiService {
     onChunk?: (type: string, data: any) => void
   ): Promise<void> {
     try {
+      console.log('💬 Sending streaming chat message');
+      console.log('🔐 Message and streaming response will be encrypted by backend encryption class');
       const payload: any = { 
         message,
         response_mode: 'flexible', // Use same response mode as web
@@ -1134,38 +1208,93 @@ class ApiService {
     }
   }
 
-  // ==================== MOBILE CHAT SYSTEM ====================
+  // ==================== USER CHAT SYSTEM (Mobile-specific endpoints) ====================
+  // These endpoints handle ONLY user-to-user and workspace chats (NOT AI chats)
+  // Mobile endpoints are SEPARATE from web endpoints to avoid 403 errors
+  // Web uses: /api/v1/web/user-chat/*
+  // Mobile uses: /api/v1/mobile/user-chat/*
   
+  /**
+   * Get all user chats - Mobile-specific endpoint
+   * Returns direct messages and workspace chats only
+   */
   async getChats(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.CHATS);
+      const response = await this.client.get(MOBILE_ENDPOINTS.USER_CHATS);
       return response.data;
     } catch (error: any) {
       console.error('Get chats error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to fetch chats');
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to fetch chats';
+      throw new Error(errorMessage);
     }
   }
 
+  /**
+   * Get messages for a specific chat - Mobile-specific endpoint
+   */
   async getChatMessages(chatId: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_MESSAGES(chatId));
+      const response = await this.client.get(MOBILE_ENDPOINTS.USER_CHAT_MESSAGES(chatId));
       return response.data;
     } catch (error: any) {
       console.error('Get chat messages error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to fetch chat messages');
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to fetch chat messages';
+      throw new Error(errorMessage);
     }
   }
 
-  async sendChatMessageToChat(message: string, chatId?: number): Promise<ApiResponse> {
+  /**
+   * Send a message to a chat - Mobile-specific endpoint
+   */
+  async sendChatMessageToChat(message: string, chatId: number, metadata?: any): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND_MESSAGE, {
-        message,
-        chat_id: chatId
-      });
+      const payload: any = {
+        content: message,
+        type: 'text'
+      };
+      
+      if (metadata) {
+        payload.metadata = metadata;
+      }
+      
+      const response = await this.client.post(MOBILE_ENDPOINTS.USER_CHAT_SEND(chatId), payload);
       return response.data;
     } catch (error: any) {
       console.error('Send chat message error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to send chat message');
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to send chat message';
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * Start a new user chat (direct or workspace) - Mobile-specific endpoint
+   */
+  async startUserChat(data: { 
+    type: 'direct' | 'workspace';
+    user_id?: number;
+    workspace_id?: number;
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.USER_CHAT_START, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Start chat error:', error);
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to start chat';
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * Search for users and workspaces to start chats - Mobile-specific endpoint
+   */
+  async searchUsersForChat(query: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.USER_CHAT_SEARCH_USERS}?q=${encodeURIComponent(query)}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Search users error:', error);
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to search users';
+      throw new Error(errorMessage);
     }
   }
 
@@ -1359,6 +1488,36 @@ class ApiService {
     } catch (error: any) {
       console.error('Remove workspace member error:', error);
       throw new Error(error.response?.data?.message || 'Failed to remove workspace member');
+    }
+  }
+
+  async updateWorkspaceMemberRole(workspaceId: number, memberId: number, role: 'owner' | 'admin' | 'member' | 'viewer'): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.WORKSPACE_MEMBER_ROLE(workspaceId, memberId), { role });
+      return response.data;
+    } catch (error: any) {
+      console.error('Update workspace member role error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update member role');
+    }
+  }
+
+  async resendWorkspaceInvitation(workspaceId: number, invitationId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WORKSPACE_INVITATION_RESEND(workspaceId, invitationId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Resend workspace invitation error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to resend invitation');
+    }
+  }
+
+  async cancelWorkspaceInvitation(workspaceId: number, invitationId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(MOBILE_ENDPOINTS.WORKSPACE_INVITATION_BY_ID(workspaceId, invitationId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Cancel workspace invitation error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to cancel invitation');
     }
   }
 
@@ -1676,6 +1835,18 @@ class ApiService {
     } catch (error: any) {
       console.error('Get meeting assets failed:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch meeting assets');
+    }
+  }
+
+  async deleteMeetingAssets(meetingId: string): Promise<ApiResponse> {
+    try {
+      console.log('🗑️ Deleting all assets for meeting:', meetingId);
+      const response = await this.client.delete(MOBILE_ENDPOINTS.MEETING_DELETE_ASSETS(meetingId));
+      console.log('✅ Delete meeting assets response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete meeting assets failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to delete meeting assets');
     }
   }
 

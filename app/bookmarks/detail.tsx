@@ -1,19 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import DocumentViewer from '../../components/DocumentViewer';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useAuth } from '../context/auth';
 
@@ -40,6 +42,7 @@ export default function BookmarkDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
+  const themeColors = useThemeColors();
   
   const [bookmark, setBookmark] = useState<Bookmark | null>(null);
   const [files, setFiles] = useState<Document[]>([]);
@@ -50,13 +53,15 @@ export default function BookmarkDetailScreen() {
   const [availableFiles, setAvailableFiles] = useState<Document[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [loadingAvailableFiles, setLoadingAvailableFiles] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [showDocumentViewer, setShowDocumentViewer] = useState(false);
   
   // Edit form state
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editColor, setEditColor] = useState('#007AFF');
   
-  const colors = [
+  const bookmarkColors = [
     '#007AFF', '#34C759', '#FF9500', '#FF3B30', 
     '#AF52DE', '#5856D6', '#8E44AD', '#E74C3C'
   ];
@@ -243,8 +248,8 @@ export default function BookmarkDetailScreen() {
           allFiles = allFiles.concat(filesData);
           
           // Check if we have more files to load
-          const totalFiles = response.pagination?.total || filesData.length;
-          hasMore = filesData.length === perPage && allFiles.length < totalFiles;
+          // If we got fewer files than perPage, we've reached the end
+          hasMore = filesData.length === perPage;
           page++;
         } else {
           console.log('📁 No more files or error:', response);
@@ -318,47 +323,299 @@ export default function BookmarkDetailScreen() {
     });
   };
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: themeColors.background,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 16,
+      color: themeColors.textSecondary,
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    errorTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: themeColors.text,
+      marginTop: 16,
+      marginBottom: 24,
+    },
+    backButton: {
+      backgroundColor: '#007AFF',
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 8,
+    },
+    backButtonText: {
+      color: 'white',
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: themeColors.headerBackground || themeColors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: themeColors.border,
+    },
+    headerTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: themeColors.text,
+      flex: 1,
+      marginHorizontal: 16,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    headerIconButton: {
+      padding: 4,
+    },
+    bookmarkInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 16,
+      backgroundColor: themeColors.card,
+      marginBottom: 8,
+    },
+    colorIndicator: {
+      width: 16,
+      height: 16,
+      borderRadius: 8,
+      marginRight: 12,
+    },
+    bookmarkDetails: {
+      flex: 1,
+    },
+    bookmarkName: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: themeColors.text,
+      marginBottom: 4,
+    },
+    bookmarkDescription: {
+      fontSize: 14,
+      color: themeColors.textSecondary,
+      marginBottom: 4,
+    },
+    fileCount: {
+      fontSize: 14,
+      color: '#007AFF',
+      fontWeight: '500',
+    },
+    filesList: {
+      flex: 1,
+      paddingHorizontal: 16,
+    },
+    fileItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: 16,
+      backgroundColor: themeColors.card,
+      borderRadius: 8,
+      marginBottom: 8,
+    },
+    availableFileItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: 16,
+      backgroundColor: themeColors.card,
+      borderRadius: 8,
+      marginBottom: 8,
+    },
+    selectedFileItem: {
+      backgroundColor: themeColors.surface,
+      borderWidth: 1,
+      borderColor: '#007AFF',
+    },
+    fileInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+    },
+    fileDetails: {
+      marginLeft: 12,
+      flex: 1,
+    },
+    fileName: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: themeColors.text,
+      marginBottom: 2,
+    },
+    fileMeta: {
+      fontSize: 14,
+      color: themeColors.textSecondary,
+    },
+    removeButton: {
+      padding: 4,
+    },
+    emptyState: {
+      alignItems: 'center',
+      paddingVertical: 48,
+    },
+    emptyStateTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: themeColors.text,
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    emptyStateDescription: {
+      fontSize: 14,
+      color: themeColors.textSecondary,
+      textAlign: 'center',
+      paddingHorizontal: 32,
+    },
+    modalContainer: {
+      flex: 1,
+      backgroundColor: themeColors.background,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: themeColors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: themeColors.border,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: themeColors.text,
+    },
+    modalCancelButton: {
+      fontSize: 16,
+      color: '#007AFF',
+    },
+    modalSaveButton: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#007AFF',
+    },
+    disabledButton: {
+      color: themeColors.textLight,
+    },
+    modalContent: {
+      padding: 16,
+    },
+    inputGroup: {
+      marginBottom: 24,
+    },
+    inputLabel: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: themeColors.text,
+      marginBottom: 8,
+    },
+    textInput: {
+      borderWidth: 1,
+      borderColor: themeColors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      fontSize: 16,
+      backgroundColor: themeColors.surface,
+      color: themeColors.text,
+    },
+    textArea: {
+      height: 80,
+      textAlignVertical: 'top',
+    },
+    colorPicker: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+    },
+    colorOption: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    selectedColor: {
+      borderColor: themeColors.text,
+    },
+    availableFilesList: {
+      flex: 1,
+      paddingHorizontal: 16,
+    },
+  }), [themeColors]);
+
+  const handleFilePress = async (file: Document) => {
+    setSelectedDocument(file);
+    setShowDocumentViewer(true);
+  };
+
   const renderFileItem = ({ item }: { item: Document }) => (
-    <View style={styles.fileItem}>
-      <View style={styles.fileInfo}>
+    <TouchableOpacity 
+      style={dynamicStyles.fileItem}
+      onPress={() => handleFilePress(item)}
+      activeOpacity={0.7}
+    >
+      <View style={dynamicStyles.fileInfo}>
         <Ionicons 
           name={item.type === 'form' ? 'document-text' : 'document'} 
           size={24} 
           color="#007AFF" 
         />
-        <View style={styles.fileDetails}>
-          <Text style={styles.fileName} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.fileMeta}>
+        <View style={dynamicStyles.fileDetails}>
+          <Text style={dynamicStyles.fileName} numberOfLines={1}>{item.name}</Text>
+          <Text style={dynamicStyles.fileMeta}>
             {item.category || item.type} • {item.size || 'No size info'}
           </Text>
         </View>
       </View>
       <TouchableOpacity
-        style={styles.removeButton}
-        onPress={() => handleRemoveFile(item.id)}
+        style={dynamicStyles.removeButton}
+        onPress={(e) => {
+          e.stopPropagation();
+          handleRemoveFile(item.id);
+        }}
       >
         <Ionicons name="close-circle" size={24} color="#FF3B30" />
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 
   const renderAvailableFileItem = ({ item }: { item: Document }) => (
     <TouchableOpacity
       style={[
-        styles.availableFileItem,
-        selectedFiles.has(item.id) && styles.selectedFileItem
+        dynamicStyles.availableFileItem,
+        selectedFiles.has(item.id) && dynamicStyles.selectedFileItem
       ]}
       onPress={() => toggleFileSelection(item.id)}
     >
-      <View style={styles.fileInfo}>
+      <View style={dynamicStyles.fileInfo}>
         <Ionicons 
           name={item.type === 'form' ? 'document-text' : 'document'} 
           size={24} 
           color="#007AFF" 
         />
-        <View style={styles.fileDetails}>
-          <Text style={styles.fileName} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.fileMeta}>
+        <View style={dynamicStyles.fileDetails}>
+          <Text style={dynamicStyles.fileName} numberOfLines={1}>{item.name}</Text>
+          <Text style={dynamicStyles.fileMeta}>
             {item.category || item.type} • {item.size || 'No size info'}
           </Text>
         </View>
@@ -371,10 +628,10 @@ export default function BookmarkDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading bookmark...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading bookmark...</Text>
         </View>
       </SafeAreaView>
     );
@@ -382,12 +639,12 @@ export default function BookmarkDetailScreen() {
 
   if (!bookmark) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.errorContainer}>
-          <Ionicons name="bookmark-outline" size={64} color="#C7C7CC" />
-          <Text style={styles.errorTitle}>Bookmark not found</Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backButtonText}>Go Back</Text>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.errorContainer}>
+          <Ionicons name="bookmark-outline" size={64} color={themeColors.textLight} />
+          <Text style={dynamicStyles.errorTitle}>Bookmark not found</Text>
+          <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
+            <Text style={dynamicStyles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -395,50 +652,47 @@ export default function BookmarkDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={dynamicStyles.container} edges={['top']}>
+      <View style={dynamicStyles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>{bookmark.name}</Text>
-        <TouchableOpacity onPress={() => setShowEditModal(true)}>
-          <Ionicons name="create-outline" size={24} color="#007AFF" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.bookmarkInfo}>
-        <View style={[styles.colorIndicator, { backgroundColor: bookmark.color }]} />
-        <View style={styles.bookmarkDetails}>
-          <Text style={styles.bookmarkName}>{bookmark.name}</Text>
-          {bookmark.description && (
-            <Text style={styles.bookmarkDescription}>{bookmark.description}</Text>
-          )}
-          <Text style={styles.fileCount}>{bookmark.file_count} file(s)</Text>
+        <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name}</Text>
+        <View style={dynamicStyles.headerActions}>
+          <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton}>
+            <Ionicons name="add" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowEditModal(true)} style={dynamicStyles.headerIconButton}>
+            <Ionicons name="create-outline" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleDeleteBookmark} style={dynamicStyles.headerIconButton}>
+            <Ionicons name="trash-outline" size={24} color="#FF3B30" />
+          </TouchableOpacity>
         </View>
       </View>
 
-      <View style={styles.actions}>
-        <TouchableOpacity style={styles.actionButton} onPress={handleShowAddFilesModal}>
-          <Ionicons name="add" size={20} color="#007AFF" />
-          <Text style={styles.actionButtonText}>Add Files</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionButton, styles.deleteButton]} onPress={handleDeleteBookmark}>
-          <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-          <Text style={[styles.actionButtonText, styles.deleteButtonText]}>Delete</Text>
-        </TouchableOpacity>
+      <View style={dynamicStyles.bookmarkInfo}>
+        <View style={[dynamicStyles.colorIndicator, { backgroundColor: bookmark.color }]} />
+        <View style={dynamicStyles.bookmarkDetails}>
+          <Text style={dynamicStyles.bookmarkName}>{bookmark.name}</Text>
+          {bookmark.description && (
+            <Text style={dynamicStyles.bookmarkDescription}>{bookmark.description}</Text>
+          )}
+          <Text style={dynamicStyles.fileCount}>{bookmark.file_count} file(s)</Text>
+        </View>
       </View>
 
       <FlatList
         data={files}
         renderItem={renderFileItem}
         keyExtractor={(item) => item.id}
-        style={styles.filesList}
+        style={dynamicStyles.filesList}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Ionicons name="document-outline" size={48} color="#C7C7CC" />
-            <Text style={styles.emptyStateTitle}>No files in this bookmark</Text>
-            <Text style={styles.emptyStateDescription}>
+          <View style={dynamicStyles.emptyState}>
+            <Ionicons name="document-outline" size={48} color={themeColors.textLight} />
+            <Text style={dynamicStyles.emptyStateTitle}>No files in this bookmark</Text>
+            <Text style={dynamicStyles.emptyStateDescription}>
               Add files to organize them in this bookmark
             </Text>
           </View>
@@ -447,52 +701,54 @@ export default function BookmarkDetailScreen() {
 
       {/* Edit Bookmark Modal */}
       <Modal visible={showEditModal} animationType="slide" presentationStyle="pageSheet">
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer}>
+          <View style={dynamicStyles.modalHeader}>
             <TouchableOpacity onPress={() => setShowEditModal(false)}>
-              <Text style={styles.modalCancelButton}>Cancel</Text>
+              <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Edit Bookmark</Text>
+            <Text style={dynamicStyles.modalTitle}>Edit Bookmark</Text>
             <TouchableOpacity onPress={handleEditBookmark}>
-              <Text style={styles.modalSaveButton}>Save</Text>
+              <Text style={dynamicStyles.modalSaveButton}>Save</Text>
             </TouchableOpacity>
           </View>
 
-          <View style={styles.modalContent}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Name</Text>
+          <View style={dynamicStyles.modalContent}>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.inputLabel}>Name</Text>
               <TextInput
-                style={styles.textInput}
+                style={dynamicStyles.textInput}
                 value={editName}
                 onChangeText={setEditName}
                 placeholder="Bookmark name"
+                placeholderTextColor={themeColors.textLight}
                 maxLength={50}
               />
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Description</Text>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.inputLabel}>Description</Text>
               <TextInput
-                style={[styles.textInput, styles.textArea]}
+                style={[dynamicStyles.textInput, dynamicStyles.textArea]}
                 value={editDescription}
                 onChangeText={setEditDescription}
                 placeholder="Optional description"
+                placeholderTextColor={themeColors.textLight}
                 multiline
                 numberOfLines={3}
                 maxLength={200}
               />
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Color</Text>
-              <View style={styles.colorPicker}>
-                {colors.map((color) => (
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.inputLabel}>Color</Text>
+              <View style={dynamicStyles.colorPicker}>
+                {bookmarkColors.map((color) => (
                   <TouchableOpacity
                     key={color}
                     style={[
-                      styles.colorOption,
+                      dynamicStyles.colorOption,
                       { backgroundColor: color },
-                      editColor === color && styles.selectedColor
+                      editColor === color && dynamicStyles.selectedColor
                     ]}
                     onPress={() => setEditColor(color)}
                   />
@@ -505,22 +761,22 @@ export default function BookmarkDetailScreen() {
 
       {/* Add Files Modal */}
       <Modal visible={showAddFilesModal} animationType="slide" presentationStyle="pageSheet">
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer}>
+          <View style={dynamicStyles.modalHeader}>
             <TouchableOpacity onPress={() => {
               setShowAddFilesModal(false);
               setSelectedFiles(new Set());
             }}>
-              <Text style={styles.modalCancelButton}>Cancel</Text>
+              <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Add Files</Text>
+            <Text style={dynamicStyles.modalTitle}>Add Files</Text>
             <TouchableOpacity 
               onPress={handleAddSelectedFiles}
               disabled={selectedFiles.size === 0}
             >
               <Text style={[
-                styles.modalSaveButton,
-                selectedFiles.size === 0 && styles.disabledButton
+                dynamicStyles.modalSaveButton,
+                selectedFiles.size === 0 && dynamicStyles.disabledButton
               ]}>
                 Add ({selectedFiles.size})
               </Text>
@@ -528,21 +784,21 @@ export default function BookmarkDetailScreen() {
           </View>
 
            {loadingAvailableFiles ? (
-             <View style={styles.loadingContainer}>
+             <View style={dynamicStyles.loadingContainer}>
                <ActivityIndicator size="large" color="#007AFF" />
-               <Text style={styles.loadingText}>Loading your files...</Text>
+               <Text style={dynamicStyles.loadingText}>Loading your files...</Text>
              </View>
            ) : (
              <FlatList
                data={availableFiles}
                renderItem={renderAvailableFileItem}
                keyExtractor={(item) => item.id}
-               style={styles.availableFilesList}
+               style={dynamicStyles.availableFilesList}
                ListEmptyComponent={
-                 <View style={styles.emptyState}>
-                   <Ionicons name="document-outline" size={48} color="#C7C7CC" />
-                   <Text style={styles.emptyStateTitle}>No available files</Text>
-                   <Text style={styles.emptyStateDescription}>
+                 <View style={dynamicStyles.emptyState}>
+                   <Ionicons name="document-outline" size={48} color={themeColors.textLight} />
+                   <Text style={dynamicStyles.emptyStateTitle}>No available files</Text>
+                   <Text style={dynamicStyles.emptyStateDescription}>
                      All your files are already in this bookmark
                    </Text>
                  </View>
@@ -551,267 +807,21 @@ export default function BookmarkDetailScreen() {
            )}
         </SafeAreaView>
       </Modal>
+
+      {/* Document Viewer */}
+      {showDocumentViewer && selectedDocument && (
+        <DocumentViewer
+          fileId={selectedDocument.id}
+          fileName={selectedDocument.name}
+          fileType={selectedDocument.type}
+          fileCategory={selectedDocument.category}
+          onClose={() => {
+            setShowDocumentViewer(false);
+            setSelectedDocument(null);
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 24,
-  },
-  backButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  backButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E5EA',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    flex: 1,
-    marginHorizontal: 16,
-  },
-  bookmarkInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: 'white',
-    marginBottom: 8,
-  },
-  colorIndicator: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  bookmarkDetails: {
-    flex: 1,
-  },
-  bookmarkName: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  bookmarkDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  fileCount: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
-  },
-  actions: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    marginBottom: 8,
-    gap: 12,
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: 'white',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#007AFF',
-  },
-  deleteButton: {
-    borderColor: '#FF3B30',
-  },
-  actionButtonText: {
-    marginLeft: 8,
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#007AFF',
-  },
-  deleteButtonText: {
-    color: '#FF3B30',
-  },
-  filesList: {
-    flex: 1,
-    paddingHorizontal: 16,
-  },
-  fileItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: 'white',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  availableFileItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: 'white',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  selectedFileItem: {
-    backgroundColor: '#F0F8FF',
-    borderWidth: 1,
-    borderColor: '#007AFF',
-  },
-  fileInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  fileDetails: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  fileName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 2,
-  },
-  fileMeta: {
-    fontSize: 14,
-    color: '#666',
-  },
-  removeButton: {
-    padding: 4,
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 48,
-  },
-  emptyStateTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyStateDescription: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    paddingHorizontal: 32,
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E5EA',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  modalCancelButton: {
-    fontSize: 16,
-    color: '#007AFF',
-  },
-  modalSaveButton: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  disabledButton: {
-    color: '#C7C7CC',
-  },
-  modalContent: {
-    padding: 16,
-  },
-  inputGroup: {
-    marginBottom: 24,
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 8,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#E5E5EA',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 16,
-    backgroundColor: 'white',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  colorPicker: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  colorOption: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  selectedColor: {
-    borderColor: '#333',
-  },
-  availableFilesList: {
-    flex: 1,
-    paddingHorizontal: 16,
-  },
-});

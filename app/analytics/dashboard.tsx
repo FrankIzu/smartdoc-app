@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 
 interface ComprehensiveAnalytics {
@@ -86,6 +87,33 @@ interface ComprehensiveAnalytics {
     total_spending: number;
     total_workspaces: number;
     total_forms: number;
+    total_invoices?: number;
+    total_invoice_amount?: number;
+  };
+  invoices?: {
+    overview: {
+      total_invoices: number;
+      total_amount: number;
+      paid_amount: number;
+      unpaid_amount: number;
+      partial_amount: number;
+      avg_invoice_amount: number;
+      paid_count: number;
+      unpaid_count: number;
+      partial_count: number;
+      overdue_count: number;
+      overdue_amount: number;
+    };
+    payment_distribution: Array<{status: string; count: number; total_amount: number; percentage: number}>;
+    category_distribution: Array<{category: string; count: number; total_amount: number; avg_amount: number; percentage: number}>;
+    monthly_trends: Array<{month: string; month_key: string; count: number; total_amount: number; paid_count: number; unpaid_count: number}>;
+    top_vendors: Array<{vendor_name: string; count: number; total_amount: number; avg_amount: number}>;
+    aging_buckets: {
+      '0-30': {count: number; amount: number};
+      '31-60': {count: number; amount: number};
+      '61-90': {count: number; amount: number};
+      '90+': {count: number; amount: number};
+    };
   };
   recentActivity?: string[];
 }
@@ -95,11 +123,14 @@ const { width } = Dimensions.get('window');
 export default function AnalyticsDashboard() {
   const router = useRouter();
   const { isAuthenticated, user, isLoading: authLoading } = useEnhanced2FAAuth();
+  const colors = useThemeColors();
   const [analytics, setAnalytics] = useState<ComprehensiveAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [timePeriod, setTimePeriod] = useState('30'); // Default to 30 days
   const [selectedCategory, setSelectedCategory] = useState('All'); // Category filter for receipts
+  const [selectedInvoiceCategory, setSelectedInvoiceCategory] = useState('All'); // Category filter for invoices
+  const [activeTab, setActiveTab] = useState<'receipts' | 'invoices'>('receipts');
 
   console.log('📊 AnalyticsDashboard component loaded', { isAuthenticated, user: user?.username, authLoading });
 
@@ -289,23 +320,24 @@ export default function AnalyticsDashboard() {
         // Count receipts (files that are classified as receipts)
         const receiptFiles = actualFiles.filter((file: any) => {
           const fileName = file.filename || file.original_filename || '';
-          const isReceipt = file.file_kind === 'Receipt' ||
+          const fileKind = (file.file_kind || '').toLowerCase();
+          const isReceipt = fileKind === 'receipt' ||
+                           fileKind === 'receipts' ||
                            file.receipt_category ||
                            fileName.toLowerCase().includes('receipt') ||
-                           fileName.toLowerCase().includes('img_') ||
-                           fileName.toLowerCase().includes('photo') ||
-                           file.file_type === 'image' ||
-                           file.category === 'receipt' ||
                            (file.json_data && (file.json_data.amount || file.json_data.total_amount));
-          console.log('📊 Receipt check:', { 
-            fileName: fileName, 
-            fileKind: file.file_kind, 
-            fileType: file.file_type,
-            receiptCategory: file.receipt_category,
-            hasAmount: !!(file.json_data && (file.json_data.amount || file.json_data.total_amount)),
-            isReceipt 
-          });
           return isReceipt;
+        });
+
+        // Count invoices (files that are classified as invoices)
+        const invoiceFiles = actualFiles.filter((file: any) => {
+          const fileName = file.filename || file.original_filename || '';
+          const fileKind = (file.file_kind || '').toLowerCase();
+          const isInvoice = fileKind === 'invoice' ||
+                           fileKind === 'invoices' ||
+                           fileName.toLowerCase().includes('invoice') ||
+                           (file.json_data && (file.json_data.invoice_number || file.json_data.invoice_date));
+          return isInvoice;
         });
         
         console.log('📊 Actual files found:', actualFiles.length);
@@ -380,6 +412,43 @@ export default function AnalyticsDashboard() {
           }))
         });
         
+        // Calculate invoice analytics from files data
+        const totalInvoices = invoiceFiles.length;
+        const invoiceAmounts = invoiceFiles.map((file: any) => {
+          const amount = file.json_data?.total_amount || 
+                        file.json_data?.amount || 
+                        file.json_data?.invoice_amount ||
+                        file.json_data?.total ||
+                        file.amount || 
+                        file.total_amount || 0;
+          let numericAmount = 0;
+          if (typeof amount === 'number') {
+            numericAmount = amount;
+          } else if (typeof amount === 'string' && amount.trim() !== '') {
+            const cleanAmount = amount.replace(/[^0-9.-]/g, '');
+            const parsed = parseFloat(cleanAmount);
+            numericAmount = isNaN(parsed) ? 0 : parsed;
+          }
+          return numericAmount;
+        });
+        const totalInvoiceAmount = invoiceAmounts.reduce((sum: number, amt: number) => sum + amt, 0);
+        const avgInvoiceAmount = totalInvoices > 0 ? totalInvoiceAmount / totalInvoices : 0;
+        
+        // Calculate payment status for invoices
+        const paidInvoices = invoiceFiles.filter((file: any) => {
+          const status = (file.json_data?.payment_status || file.json_data?.status || '').toLowerCase();
+          return status === 'paid' || status === 'complete';
+        });
+        const unpaidInvoices = invoiceFiles.filter((file: any) => {
+          const status = (file.json_data?.payment_status || file.json_data?.status || '').toLowerCase();
+          return status === 'unpaid' || status === 'pending' || !status;
+        });
+        const paidAmount = paidInvoices.reduce((sum: number, file: any) => {
+          const amount = file.json_data?.total_amount || file.json_data?.amount || 0;
+          return sum + (typeof amount === 'number' ? amount : parseFloat(String(amount).replace(/[^0-9.-]/g, '')) || 0);
+        }, 0);
+        const unpaidAmount = totalInvoiceAmount - paidAmount;
+
         const analyticsData = {
           summary: {
             period: `${days} days`,
@@ -390,6 +459,8 @@ export default function AnalyticsDashboard() {
             total_spending: totalSpending,
             total_workspaces: 0,
             total_forms: 0,
+            total_invoices: totalInvoices,
+            total_invoice_amount: totalInvoiceAmount,
           },
           receipts: {
             summary: {
@@ -441,6 +512,48 @@ export default function AnalyticsDashboard() {
             total_responses: 0, // Not provided by API
             form_details: [],
           },
+          invoices: totalInvoices > 0 ? {
+            overview: {
+              total_invoices: totalInvoices,
+              total_amount: totalInvoiceAmount,
+              paid_amount: paidAmount,
+              unpaid_amount: unpaidAmount,
+              partial_amount: 0,
+              avg_invoice_amount: avgInvoiceAmount,
+              paid_count: paidInvoices.length,
+              unpaid_count: unpaidInvoices.length,
+              partial_count: 0,
+              overdue_count: 0,
+              overdue_amount: 0,
+            },
+            payment_distribution: [
+              { status: 'Paid', count: paidInvoices.length, total_amount: paidAmount, percentage: totalInvoices > 0 ? (paidInvoices.length / totalInvoices) * 100 : 0 },
+              { status: 'Unpaid', count: unpaidInvoices.length, total_amount: unpaidAmount, percentage: totalInvoices > 0 ? (unpaidInvoices.length / totalInvoices) * 100 : 0 },
+            ],
+            category_distribution: [],
+            monthly_trends: [],
+            top_vendors: invoiceFiles.map((file: any, index: number) => {
+              const vendorName = file.json_data?.vendor_name || 
+                                file.json_data?.supplier_name ||
+                                file.json_data?.business_name ||
+                                file.filename || 
+                                file.original_filename || 
+                                `Vendor ${index + 1}`;
+              const fileAmount = file.json_data?.total_amount || file.json_data?.amount || 0;
+              return {
+                vendor_name: vendorName,
+                count: 1,
+                total_amount: typeof fileAmount === 'number' ? fileAmount : parseFloat(String(fileAmount).replace(/[^0-9.-]/g, '')) || 0,
+                avg_amount: typeof fileAmount === 'number' ? fileAmount : parseFloat(String(fileAmount).replace(/[^0-9.-]/g, '')) || 0,
+              };
+            }),
+            aging_buckets: {
+              '0-30': { count: 0, amount: 0 },
+              '31-60': { count: 0, amount: 0 },
+              '61-90': { count: 0, amount: 0 },
+              '90+': { count: 0, amount: 0 },
+            },
+          } : undefined,
           recentActivity: [],
         };
         console.log('📊 Processed analytics data:', analyticsData);
@@ -677,7 +790,7 @@ export default function AnalyticsDashboard() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Receipt Analytics</Text>
+          <Text style={styles.headerTitle}>Analytics</Text>
           <View style={styles.placeholder} />
         </View>
         <View style={styles.loadingContainer}>
@@ -697,7 +810,7 @@ export default function AnalyticsDashboard() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Receipt Analytics</Text>
+          <Text style={styles.headerTitle}>Analytics</Text>
           <TouchableOpacity onPress={() => loadAnalytics()}>
             <Ionicons name="refresh" size={24} color="#007AFF" />
           </TouchableOpacity>
@@ -792,6 +905,36 @@ export default function AnalyticsDashboard() {
         </TouchableOpacity>
       </View>
 
+      {/* Tabs */}
+      <View style={styles.tabsContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'receipts' && styles.tabActive]}
+          onPress={() => setActiveTab('receipts')}
+        >
+          <Ionicons 
+            name="receipt" 
+            size={20} 
+            color={activeTab === 'receipts' ? '#007AFF' : '#666'} 
+          />
+          <Text style={[styles.tabText, activeTab === 'receipts' && styles.tabTextActive]}>
+            Receipts
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'invoices' && styles.tabActive]}
+          onPress={() => setActiveTab('invoices')}
+        >
+          <Ionicons 
+            name="document-text" 
+            size={20} 
+            color={activeTab === 'invoices' ? '#007AFF' : '#666'} 
+          />
+          <Text style={[styles.tabText, activeTab === 'invoices' && styles.tabTextActive]}>
+            Invoices
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
         style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -799,142 +942,190 @@ export default function AnalyticsDashboard() {
       >
         <TimePeriodSelector />
 
-        {/* Receipt Overview Stats */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Receipt Overview</Text>
-          <View style={styles.statsGrid}>
-            <StatCard
-              title="Total Receipts"
-              value={analytics.summary?.total_receipts || 0}
-              icon="receipt"
-              color="#34C759"
-            />
-            <StatCard
-              title="Total Spent"
-              value={formatCurrency(analytics.summary?.total_spending || 0)}
-              icon="card"
-              color="#FF9500"
-            />
-            <StatCard
-              title="Average Receipt"
-              value={formatCurrency(analytics.receipts?.summary?.average_amount || 0)}
-              icon="calculator"
-              color="#007AFF"
-            />
-            <StatCard
-              title="Recent Activity"
-              value={analytics.receipts?.summary?.recent_30d || 0}
-              subtitle={`${analytics.receipts?.summary?.recent_90d || 0} in last 90 days`}
-              icon="calendar"
-              color="#AF52DE"
-            />
-          </View>
-        </View>
-
-        {/* Receipt Analytics */}
-        {(analytics.summary?.total_receipts || 0) > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Receipt Analytics</Text>
-            
-            {/* Category Filter */}
-            <CategoryFilter />
-            
-            {/* Enhanced Overview Stats */}
-            <View style={styles.subsection}>
-              <Text style={styles.subsectionTitle}>Spending Overview</Text>
-              <View style={styles.receiptStatsGrid}>
-                <StatCard
-                  title="Total Receipts"
-                  value={analytics.summary?.total_receipts || 0}
-                  subtitle={`$${(analytics.summary?.total_spending || 0).toLocaleString()} total spent`}
-                  icon="receipt"
-                  color="#34C759"
-                />
-                <StatCard
-                  title="Average Receipt"
-                  value={formatCurrency((analytics.receipts?.summary?.average_amount || 0))}
-                  subtitle={`$${(analytics.receipts?.summary?.total_tax || 0)} total tax`}
-                  icon="card"
-                  color="#FF9500"
-                />
-                <StatCard
-                  title="Recent Activity"
-                  value={analytics.receipts?.summary?.recent_30d || 0}
-                  subtitle={`${analytics.receipts?.summary?.recent_90d || 0} in last 90 days`}
-                  icon="calendar"
-                  color="#007AFF"
-                />
-                <StatCard
-                  title="Total Spending"
-                  value={formatCurrency(analytics.summary?.total_spending || 0)}
-                  subtitle={`Across ${analytics.summary?.total_receipts || 0} receipts`}
-                  icon="cash"
-                  color="#AF52DE"
-                />
-              </View>
-            </View>
-
-            {/* Category Distribution */}
-            <View style={styles.subsection}>
-              <Text style={styles.subsectionTitle}>Category Distribution & Expenses</Text>
-              {(analytics.receipts?.categories || []).length > 0 ? (
-                (analytics.receipts?.categories || []).map((category, index) => (
-                  <View key={category.category} style={styles.categoryItem}>
-                    <View style={styles.categoryItemHeader}>
-                      <View style={styles.categoryItemInfo}>
-                        <View style={[styles.categoryColorDot, { backgroundColor: categoryColors[index % categoryColors.length] }]} />
-                        <Text style={styles.categoryItemName}>{category.category}</Text>
-                      </View>
-                      <Text style={styles.categoryItemAmount}>{formatCurrency(category.total_amount)}</Text>
-                    </View>
-                    <View style={styles.categoryItemDetails}>
-                      <Text style={styles.categoryItemPercentage}>{category.percentage.toFixed(1)}%</Text>
-                      <Text style={styles.categoryItemCount}>{category.count} receipts</Text>
-                    </View>
-                    <View style={styles.categoryProgressBar}>
-                      <View 
-                        style={[
-                          styles.categoryProgressFill, 
-                          { 
-                            width: `${category.percentage}%`, 
-                            backgroundColor: categoryColors[index % categoryColors.length] 
-                          }
-                        ]} 
-                      />
-                    </View>
+        {activeTab === 'receipts' && (
+          <>
+            {(analytics.summary?.total_receipts || 0) > 0 ? (
+              <>
+                {/* Receipt Overview Stats */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Receipt Overview</Text>
+                  <View style={styles.statsRow}>
+                    <StatCard
+                      title="Total Receipts"
+                      value={analytics.summary?.total_receipts || 0}
+                      subtitle={formatCurrency(analytics.summary?.total_spending || 0)}
+                      icon="receipt"
+                      color="#34C759"
+                    />
+                    <StatCard
+                      title="Average Receipt"
+                      value={formatCurrency(analytics.receipts?.summary?.average_amount || 0)}
+                      subtitle={`${analytics.receipts?.summary?.recent_30d || 0} in last 30 days`}
+                      icon="calculator"
+                      color="#007AFF"
+                    />
                   </View>
-                ))
+                </View>
+            
+                {/* Category Distribution - Compact */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Category Distribution</Text>
+              {(analytics.receipts?.categories || []).length > 0 ? (
+                <View style={styles.compactChartContainer}>
+                  {(analytics.receipts?.categories || []).map((category, index) => {
+                    const color = categoryColors[index % categoryColors.length];
+                    return (
+                      <View key={`category-${index}-${category.category}`} style={styles.compactChartItem}>
+                        <View style={styles.compactChartHeader}>
+                          <View style={[styles.compactChartDot, { backgroundColor: color }]} />
+                          <Text style={styles.compactChartLabel}>{category.category}</Text>
+                        </View>
+                        <View style={styles.compactChartBar}>
+                          <View style={[styles.compactChartFill, { width: `${category.percentage}%`, backgroundColor: color }]} />
+                        </View>
+                        <View style={styles.compactChartValues}>
+                          <Text style={styles.compactChartAmount}>{formatCurrency(category.total_amount)}</Text>
+                          <Text style={styles.compactChartPercentage}>{category.percentage.toFixed(1)}%</Text>
+                          <Text style={styles.compactChartCount}>{category.count}</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
               ) : (
                 <Text style={styles.emptyText}>No receipt categories yet</Text>
               )}
             </View>
 
-            {/* Top Businesses */}
-            {(analytics.receipts?.top_businesses || []).length > 0 && (
-              <View style={styles.subsection}>
-                <Text style={styles.subsectionTitle}>Top Businesses by Spending</Text>
-                {(analytics.receipts?.top_businesses || []).slice(0, 8).map((business, index) => (
-                  <View key={business.business} style={styles.businessItem}>
-                    <View style={styles.businessInfo}>
-                      <View style={styles.businessHeader}>
-                        <Ionicons name="storefront" size={16} color="#666" />
-                        <Text style={styles.businessName}>{business.business}</Text>
-                      </View>
-                      <Text style={styles.businessStats}>
-                        {business.count} visits • Avg: {formatCurrency(business.total_amount / business.count)}
-                      </Text>
+                  {/* Top Businesses - Compact */}
+                  {(analytics.receipts?.top_businesses || []).length > 0 && (
+                    <View style={styles.section}>
+                      <Text style={styles.sectionTitle}>Top Businesses</Text>
+                      {(analytics.receipts?.top_businesses || []).slice(0, 6).map((business, index) => (
+                        <View key={`business-${index}-${business.business}`} style={styles.compactListItem}>
+                          <View style={styles.compactListInfo}>
+                            <Text style={styles.compactListName}>{business.business}</Text>
+                            <Text style={styles.compactListSubtext}>
+                              {business.count} visit{business.count !== 1 ? 's' : ''} • Avg: {formatCurrency(business.total_amount / business.count)}
+                            </Text>
+                          </View>
+                          <Text style={styles.compactListAmount}>{formatCurrency(business.total_amount)}</Text>
+                        </View>
+                      ))}
                     </View>
-                    <View style={styles.businessAmount}>
-                      <Text style={styles.businessTotal}>{formatCurrency(business.total_amount)}</Text>
-                      <Text style={styles.businessRank}>#{index + 1}</Text>
-                    </View>
-                  </View>
-                ))}
+                  )}
+              </>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="receipt-outline" size={64} color="#ccc" />
+                <Text style={styles.emptyText}>No Receipt Data Available</Text>
+                <Text style={styles.emptySubtext}>
+                  Receipt analytics will appear here once you upload some receipts.
+                </Text>
               </View>
             )}
-          </View>
+          </>
         )}
 
+        {activeTab === 'invoices' && (
+          <>
+            {analytics.invoices && analytics.invoices.overview ? (
+              <>
+                {/* Invoice Overview Stats */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Invoice Overview</Text>
+                  <View style={styles.statsRow}>
+                    <StatCard
+                      title="Total Invoices"
+                      value={analytics.invoices.overview.total_invoices || 0}
+                      subtitle={formatCurrency(analytics.invoices.overview.total_amount || 0)}
+                      icon="document-text"
+                      color="#2563EB"
+                    />
+                    <StatCard
+                      title="Overdue"
+                      value={analytics.invoices.overview.overdue_count || 0}
+                      subtitle={formatCurrency(analytics.invoices.overview.overdue_amount || 0)}
+                      icon="calendar"
+                      color="#F59E0B"
+                    />
+                  </View>
+                  <View style={styles.statsRow}>
+                    <StatCard
+                      title="Paid"
+                      value={analytics.invoices.overview.paid_count || 0}
+                      subtitle={formatCurrency(analytics.invoices.overview.paid_amount || 0)}
+                      icon="checkmark-circle"
+                      color="#10B981"
+                    />
+                    <StatCard
+                      title="Unpaid"
+                      value={analytics.invoices.overview.unpaid_count || 0}
+                      subtitle={formatCurrency(analytics.invoices.overview.unpaid_amount || 0)}
+                      icon="close-circle"
+                      color="#EF4444"
+                    />
+                  </View>
+                </View>
+
+                {/* Payment Status Distribution */}
+                {analytics.invoices.payment_distribution && analytics.invoices.payment_distribution.length > 0 && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Payment Status</Text>
+                    <View style={styles.compactChartContainer}>
+                      {analytics.invoices.payment_distribution.map((item, index) => {
+                        const colors: Record<string, string> = { 'Paid': '#10B981', 'Unpaid': '#EF4444', 'Partial': '#F59E0B' };
+                        const color = colors[item.status] || '#6366F1';
+                        return (
+                          <View key={`payment-${index}-${item.status}`} style={styles.compactChartItem}>
+                            <View style={styles.compactChartHeader}>
+                              <View style={[styles.compactChartDot, { backgroundColor: color }]} />
+                              <Text style={styles.compactChartLabel}>{item.status}</Text>
+                            </View>
+                            <View style={styles.compactChartBar}>
+                              <View style={[styles.compactChartFill, { width: `${item.percentage}%`, backgroundColor: color }]} />
+                            </View>
+                            <View style={styles.compactChartValues}>
+                              <Text style={styles.compactChartAmount}>{formatCurrency(item.total_amount)}</Text>
+                              <Text style={styles.compactChartPercentage}>{item.percentage.toFixed(1)}%</Text>
+                              <Text style={styles.compactChartCount}>{item.count}</Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
+
+                {/* Top Vendors */}
+                {analytics.invoices.top_vendors && analytics.invoices.top_vendors.length > 0 && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Top Vendors</Text>
+                    {analytics.invoices.top_vendors.slice(0, 6).map((vendor, index) => (
+                      <View key={`vendor-${index}-${vendor.vendor_name}`} style={styles.compactListItem}>
+                        <View style={styles.compactListInfo}>
+                          <Text style={styles.compactListName}>{vendor.vendor_name}</Text>
+                          <Text style={styles.compactListSubtext}>
+                            {vendor.count} invoice{vendor.count !== 1 ? 's' : ''} • Avg: {formatCurrency(vendor.avg_amount)}
+                          </Text>
+                        </View>
+                        <Text style={styles.compactListAmount}>{formatCurrency(vendor.total_amount)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="document-text-outline" size={64} color="#ccc" />
+                <Text style={styles.emptyText}>No Invoice Data Available</Text>
+                <Text style={styles.emptySubtext}>
+                  Invoice analytics will appear here once you upload some invoices.
+                </Text>
+              </View>
+            )}
+          </>
+        )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -1067,9 +1258,17 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 12,
   },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  statsRowThree: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
   statCard: {
     flex: 1,
-    minWidth: (width - 64) / 2,
     backgroundColor: '#f8f9fa',
     padding: 16,
     borderRadius: 12,
@@ -1354,6 +1553,136 @@ const styles = StyleSheet.create({
   activityText: {
     fontSize: 14,
     color: '#333',
+    lineHeight: 20,
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    paddingHorizontal: 16,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    gap: 6,
+  },
+  tabActive: {
+    borderBottomColor: '#007AFF',
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#666',
+  },
+  tabTextActive: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  compactChartContainer: {
+    gap: 12,
+  },
+  compactChartItem: {
+    marginBottom: 12,
+  },
+  compactChartHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 8,
+  },
+  compactChartDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  compactChartLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+  },
+  compactChartBar: {
+    height: 6,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 3,
+    marginBottom: 6,
+    overflow: 'hidden',
+  },
+  compactChartFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  compactChartValues: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  compactChartAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  compactChartPercentage: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#007AFF',
+  },
+  compactChartCount: {
+    fontSize: 12,
+    color: '#666',
+  },
+  compactListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  compactListInfo: {
+    flex: 1,
+  },
+  compactListName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 2,
+  },
+  compactListSubtext: {
+    fontSize: 12,
+    color: '#666',
+  },
+  compactListAmount: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 64,
+    paddingHorizontal: 40,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 8,
+    textAlign: 'center',
     lineHeight: 20,
   },
 }); 

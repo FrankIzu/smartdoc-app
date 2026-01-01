@@ -1,23 +1,24 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Animated,
+    FlatList,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
@@ -117,6 +118,7 @@ const DEFAULT_CHAT_ASSISTANT: Chat = {
 export default function ChatsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const colors = useThemeColors();
   
   const [chats, setChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with Chat Assistant
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
@@ -126,6 +128,7 @@ export default function ChatsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null); // User profile for determining is_own_message
   
   // Streaming state for fake character-by-character animation
   const [streamingMessageIndex, setStreamingMessageIndex] = useState<number | null>(null);
@@ -134,6 +137,7 @@ export default function ChatsScreen() {
   const displayedCharsRef = useRef<number>(0);
   const isPreviewPhaseRef = useRef<boolean>(true);
   const isStreamingRef = useRef<boolean>(false);
+  const isFakeStreamingRef = useRef<boolean>(false); // Track if we're in fake streaming mode
   
 
   
@@ -185,7 +189,7 @@ export default function ChatsScreen() {
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
   
   // Text input height state
-  const [textInputHeight, setTextInputHeight] = useState(20);
+  const [textInputHeight, setTextInputHeight] = useState(40);
   
   // Animation and abort controller refs
   const bounceAnim = useRef(new Animated.Value(1)).current;
@@ -579,7 +583,20 @@ export default function ChatsScreen() {
   // Refresh chat list when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
+      // Load user profile first (needed for determining is_own_message)
+      const loadUserProfile = async () => {
+        try {
+          const response = await api.getUserProfile();
+          if (response) {
+            setUserProfile(response);
+          }
+        } catch (error) {
+          console.error('Failed to load user profile:', error);
+        }
+      };
+      
       // Refresh chat list when screen comes into focus
+      loadUserProfile();
       loadChats();
     }, [])
   );
@@ -781,7 +798,7 @@ export default function ChatsScreen() {
     try {
       setLoading(true);
       
-      // Try to load chat histories from backend
+      // Try to load chat histories from backend (AI chats)
       const { fetchChatHistories } = useChatStore.getState();
       await fetchChatHistories();
       
@@ -790,6 +807,30 @@ export default function ChatsScreen() {
       
       if (error) {
         console.error('Chat store error:', error);
+      }
+      
+      // Load user chats (SAME endpoint as web chat.tsx - user-to-user and workspace only)
+      let userChats: Chat[] = [];
+      try {
+        const userChatsResponse = await api.getChats();
+        if (userChatsResponse.success && (userChatsResponse as any).chats) {
+          // Web chat.tsx returns: { success: true, chats: Chat[] }
+          userChats = (userChatsResponse as any).chats.map((chat: any) => ({
+            id: chat.id,
+            title: chat.display_name || 'Untitled Chat',
+            type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
+            participants: chat.participants || [],
+            last_message: chat.latest_message?.content || 'No messages yet',
+            updated_at: chat.last_message_at || new Date().toISOString(),
+            created_at: chat.created_at || new Date().toISOString(),
+            unread_count: chat.unread_count || 0,
+            workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
+          }));
+          
+          console.log('📱 Loaded', userChats.length, 'user chats from web endpoint');
+        }
+      } catch (userChatError) {
+        console.log('Failed to load user chats:', userChatError);
       }
       
       // Convert chat histories to the expected format, excluding any existing "Chat Assistant" chats
@@ -917,8 +958,11 @@ export default function ChatsScreen() {
         convertedChats = [];
       }
       
-      // Sort chats by updated_at date (most recent first), but keep Chat Assistant at top
-      const sortedChats = convertedChats.sort((a, b) => {
+      // Combine AI chats and user chats
+      const allChatsCombined = [...convertedChats, ...userChats];
+      
+      // Sort all chats by updated_at date (most recent first), but keep Chat Assistant at top
+      const sortedChats = allChatsCombined.sort((a, b) => {
         const dateA = new Date(a.updated_at).getTime();
         const dateB = new Date(b.updated_at).getTime();
         return dateB - dateA; // Most recent first
@@ -927,14 +971,13 @@ export default function ChatsScreen() {
       // Always put default Chat Assistant first, followed by other chats sorted by date
       const allChats = [DEFAULT_CHAT_ASSISTANT, ...sortedChats];
       
-      // console.log('📱 Loaded chats:', {
-      //   total: allChats.length,
-      //   defaultChat: DEFAULT_CHAT_ASSISTANT,
-      //   otherChats: sortedChats.length,
-      //   chatIds: sortedChats.map(c => c.id),
-      //   chatTitles: sortedChats.map(c => c.title),
-      //   chatTypes: allChats.slice(0, 5).map(c => ({ id: c.id, type: c.type, title: c.title }))
-      // });
+      console.log('📱 Loaded chats:', {
+        total: allChats.length,
+        aiChats: convertedChats.length,
+        userChats: userChats.length,
+        defaultChat: DEFAULT_CHAT_ASSISTANT,
+        otherChats: sortedChats.length,
+      });
       setChats(allChats);
       
     } catch (error) {
@@ -992,9 +1035,10 @@ export default function ChatsScreen() {
 
   const loadUsers = async () => {
     try {
-      const response = await (api as any).getWorkspaceUsers();
-      if (response.success && response.data) {
-        setUsers(response.data.users || []);
+      // Use web chat.tsx search endpoint to get users
+      const response = await api.searchUsersForChat('');
+      if (response.success && (response as any).users) {
+        setUsers((response as any).users);
       } else {
         setUsers([]);
       }
@@ -1042,7 +1086,35 @@ export default function ChatsScreen() {
         return;
       }
       
-      // Use the chat store to load the specific conversation
+      // Check if this is a user chat (user_direct or workspace)
+      const chat = chats.find(c => c.id === chatId);
+      if (chat && (chat.type === 'user_direct' || chat.type === 'workspace')) {
+        // Load user chat messages using web endpoint (same as web chat.tsx)
+        const response = await api.getChatMessages(chatId);
+        if (response.success && (response as any).messages) {
+          // Web chat.tsx returns: { success: true, messages: ChatMessage[] }
+          const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => ({
+            id: msg.id,
+            content: msg.content || '',
+            sender: msg.sender || null,
+            is_own_message: msg.sender_id === userProfile?.id,
+            created_at: msg.created_at || new Date().toISOString(),
+            document_context: msg.metadata?.attachments?.[0] ? {
+              id: msg.metadata.attachments[0].file_id,
+              name: msg.metadata.attachments[0].name,
+              type: msg.metadata.attachments[0].mimeType || 'other'
+            } : undefined
+          }));
+          
+          setMessages(convertedMessages);
+        } else {
+          setMessages([]);
+        }
+        setMessagesLoading(false);
+        return;
+      }
+      
+      // Use the chat store to load the specific conversation (for AI chats)
       // console.log('🔄 Loading messages for chat ID:', chatId);
       const { fetchChatConversation } = useChatStore.getState();
       await fetchChatConversation(chatId);
@@ -1206,6 +1278,9 @@ export default function ChatsScreen() {
   const sendMessage = async () => {
     if (!selectedChat || !newMessage.trim()) return;
 
+    // Declare assistantMessageIndex outside try-catch so it's accessible in both
+    let assistantMessageIndex = 0;
+
     try {
       setSendingMessage(true);
       startBounceAnimation();
@@ -1228,16 +1303,41 @@ export default function ChatsScreen() {
       setNewMessage('');
 
       // Don't add placeholder message - the processing message will be handled by the FlatList data prop
-      const assistantMessageIndex = messages.length; // Index of assistant message (no placeholder added)
+      // Calculate assistant message index BEFORE adding placeholder (if needed)
+      assistantMessageIndex = messages.length; // Index of assistant message (no placeholder added)
       
       // Reset streaming state
       contentBufferRef.current = '';
       displayedCharsRef.current = 0;
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = false;
+      isFakeStreamingRef.current = false;
 
       // For AI assistant chats, use streaming
       if (selectedChat.type === 'ai_assistant' || selectedChat.type === 'document_focused' || selectedChat.type === 'bookmark_focused') {
+        // Start fake streaming immediately for better perceived performance
+        const fakeContent = "Thinking...";
+        contentBufferRef.current = fakeContent;
+        displayedCharsRef.current = 0;
+        isPreviewPhaseRef.current = true;
+        isFakeStreamingRef.current = true;
+        isStreamingRef.current = true;
+        
+        // Create placeholder assistant message
+        // Calculate index after user message is added (messages.length already includes user message)
+        assistantMessageIndex = messages.length; // This is the index where placeholder will be
+        
+        const placeholderMessage: ChatMessage = {
+          id: Date.now() + 1,
+          content: '',
+          sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+          is_own_message: false,
+          created_at: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, placeholderMessage]);
+        
+        // Start fake streaming animation
+        startOrContinueStreaming(assistantMessageIndex);
         // Build context for AI
         let chatContext = userMessage.content;
         
@@ -1358,14 +1458,15 @@ export default function ChatsScreen() {
                 break;
 
               case 'instant_preview':
-                // Instant preview received - start streaming immediately
+                // Instant preview received - replace fake streaming with real content
                 const instantContent = data.content || '';
                 console.log('⚡ INSTANT preview received:', instantContent.substring(0, 50));
                 
-                // Set content buffer and start streaming
+                // Replace fake content with real content
                 contentBufferRef.current = instantContent;
                 displayedCharsRef.current = 0;
                 isPreviewPhaseRef.current = true;
+                isFakeStreamingRef.current = false; // Real content arrived, stop fake streaming
                 
                 // Display first chunk immediately
                 const initialCharsToShow = Math.min(20, instantContent.length);
@@ -1393,23 +1494,24 @@ export default function ChatsScreen() {
                   return newMessages;
                 });
                 
-                // Start streaming remaining content
+                // Continue streaming with real content
                 startOrContinueStreaming(assistantMessageIndex);
                 break;
 
               case 'fallback_response':
-                // Handle non-streaming response
+                // Handle non-streaming response - replace fake streaming with real content
                 console.log('📝 Received fallback response:', data.content);
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  if (newMessages[assistantMessageIndex]) {
-                    newMessages[assistantMessageIndex] = {
-                      ...newMessages[assistantMessageIndex],
-                      content: data.content
-                    };
-                  }
-                  return newMessages;
-                });
+                isFakeStreamingRef.current = false; // Real content arrived, stop fake streaming
+                contentBufferRef.current = data.content || '';
+                displayedCharsRef.current = 0;
+                
+                // Display content with streaming animation
+                startOrContinueStreaming(assistantMessageIndex);
+                
+                // Stop streaming after content is fully displayed
+                setTimeout(() => {
+                  stopStreaming(assistantMessageIndex, true);
+                }, (data.content?.length || 0) * 50 + 1000);
                 break;
 
               case 'error':
@@ -1429,13 +1531,16 @@ export default function ChatsScreen() {
 
               case 'chunk':
               case 'preview_chunk':
-                // Template preview chunk
+                // Template preview chunk - replace fake streaming with real content
                 const previewChunkContent = data.content || '';
                 console.log('📦 Template preview chunk received');
                 
+                // Replace fake content with real content
+                isFakeStreamingRef.current = false; // Real content arrived, stop fake streaming
+                
                 // Check if first chunk or append
-                if (data.chunk_index === 0 || contentBufferRef.current.includes('Searching')) {
-                  // First chunk - replace instant preview
+                if (data.chunk_index === 0 || contentBufferRef.current.includes('Thinking') || contentBufferRef.current.includes('Searching')) {
+                  // First chunk - replace fake/instant preview
                   contentBufferRef.current = previewChunkContent;
                   displayedCharsRef.current = 0;
                 } else {
@@ -1443,7 +1548,7 @@ export default function ChatsScreen() {
                   contentBufferRef.current += previewChunkContent;
                 }
                 
-                // Start streaming if not already started
+                // Continue streaming with real content
                 startOrContinueStreaming(assistantMessageIndex);
                 break;
 
@@ -1461,6 +1566,9 @@ export default function ChatsScreen() {
               case 'refinement_chunk':
                 const refinementChunkContent = data.content || '';
                 console.log('🔄 Refinement chunk received');
+                
+                // Replace fake content if still in fake streaming mode
+                isFakeStreamingRef.current = false; // Real content arrived, stop fake streaming
                 
                 if (data.chunk_index === 0) {
                   // First refinement chunk - ensure preview is fully displayed first
@@ -1510,37 +1618,49 @@ export default function ChatsScreen() {
             ? { ...chat, last_message: contentBufferRef.current.substring(0, 50) + '...', updated_at: new Date().toISOString() }
             : chat
         ));
-      } else if (selectedChat.type === 'workspace') {
-        // Send to workspace endpoint (non-streaming)
-        const response = await (api as any).sendChatMessageToChat(messageText, selectedChat.workspace?.id);
-        
-        if (response.success && (response.response || response.data?.response)) {
-          const responseText = response.response || response.data?.response || 'No response received';
-          
-          setMessages(prev => {
-            const newMessages = [...prev];
-            newMessages[assistantMessageIndex] = {
-              ...newMessages[assistantMessageIndex],
-              content: responseText
-            };
-            return newMessages;
-          });
-        }
       } else if (selectedChat.type === 'user_direct') {
-        // Send direct message (non-streaming)
-        const response = await (api as any).sendChatMessageToChat(messageText, selectedChat.id);
+        // Send direct message using web endpoint (same as web chat.tsx)
+        const response = await api.sendChatMessageToChat(messageText, selectedChat.id);
         
-        if (response.success && (response.response || response.data?.response)) {
-          const responseText = response.response || response.data?.response || 'No response received';
+        if (response.success && (response as any).message) {
+          // Web chat.tsx returns: { success: true, message: ChatMessage }
+          const newMsg = (response as any).message;
+          setMessages(prev => [...prev, {
+            id: newMsg.id,
+            content: newMsg.content,
+            sender: newMsg.sender,
+            is_own_message: true,
+            created_at: newMsg.created_at || new Date().toISOString()
+          }]);
           
-          setMessages(prev => {
-            const newMessages = [...prev];
-            newMessages[assistantMessageIndex] = {
-              ...newMessages[assistantMessageIndex],
-              content: responseText
-            };
-            return newMessages;
-          });
+          // Update chat list
+          setChats(prev => prev.map(chat => 
+            chat.id === selectedChat.id 
+              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString() }
+              : chat
+          ));
+        }
+      } else if (selectedChat.type === 'workspace') {
+        // Send workspace message using web endpoint (same as web chat.tsx)
+        const response = await api.sendChatMessageToChat(messageText, selectedChat.id);
+        
+        if (response.success && (response as any).message) {
+          // Web chat.tsx returns: { success: true, message: ChatMessage }
+          const newMsg = (response as any).message;
+          setMessages(prev => [...prev, {
+            id: newMsg.id,
+            content: newMsg.content,
+            sender: newMsg.sender,
+            is_own_message: true,
+            created_at: newMsg.created_at || new Date().toISOString()
+          }]);
+          
+          // Update chat list
+          setChats(prev => prev.map(chat => 
+            chat.id === selectedChat.id 
+              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString() }
+              : chat
+          ));
         }
       } else {
         // Fallback to general chat (non-streaming)
@@ -1562,6 +1682,11 @@ export default function ChatsScreen() {
     } catch (error: any) {
       if (error.name === 'AbortError') {
         console.log('Request was aborted');
+        // Stop fake streaming if it was active
+        if (isFakeStreamingRef.current) {
+          stopStreaming(assistantMessageIndex, false);
+          isFakeStreamingRef.current = false;
+        }
         // Don't show error for aborted requests
         return;
       }
@@ -1599,18 +1724,19 @@ export default function ChatsScreen() {
           "Please try again in a few moments.";
       }
       
-      // Start fake streaming with fallback content
+      // Replace fake streaming with error fallback content
+      isFakeStreamingRef.current = false; // No longer fake, this is the final content
       contentBufferRef.current = fallbackResponse;
       displayedCharsRef.current = 0;
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = true;
       
-      // Start the streaming animation
-      startOrContinueStreaming(messages.length);
+      // Continue streaming with error message
+      startOrContinueStreaming(assistantMessageIndex);
       
       // Stop streaming after content is fully displayed
       setTimeout(() => {
-        stopStreaming(messages.length, true);
+        stopStreaming(assistantMessageIndex, true);
       }, fallbackResponse.length * 50 + 1000); // 50ms per character + 1 second buffer
       
     } finally {
@@ -1912,17 +2038,36 @@ export default function ChatsScreen() {
             Alert.alert('Error', 'Please select a workspace');
             return;
           }
-          newChat = {
-            id: Date.now(),
-            title: `${selectedWorkspace.name} Team Chat`,
-            type: 'workspace',
-            participants: [], // Will be populated with workspace members
-            last_message: 'Start a team conversation',
-            updated_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            unread_count: 0,
-            workspace: selectedWorkspace
-          };
+          
+          // Create workspace chat using web endpoint (same as web chat.tsx)
+          try {
+            const response = await api.startUserChat({
+              type: 'workspace',
+              workspace_id: selectedWorkspace.id
+            });
+            
+            if (response.success && (response as any).chat) {
+              // Web chat.tsx returns: { success: true, chat: Chat, existing: boolean }
+              newChat = {
+                id: (response as any).chat.id,
+                title: (response as any).chat.display_name || `${selectedWorkspace.name} Team Chat`,
+                type: 'workspace',
+                participants: (response as any).chat.participants || [],
+                last_message: (response as any).chat.latest_message?.content || 'Start a team conversation',
+                updated_at: (response as any).chat.last_message_at || new Date().toISOString(),
+                created_at: (response as any).chat.created_at || new Date().toISOString(),
+                unread_count: 0,
+                workspace: selectedWorkspace
+              };
+            } else {
+              Alert.alert('Error', 'Failed to create workspace chat');
+              return;
+            }
+          } catch (error) {
+            console.error('Failed to create workspace chat:', error);
+            Alert.alert('Error', 'Failed to create workspace chat');
+            return;
+          }
           break;
           
         case 'user_direct':
@@ -1930,16 +2075,35 @@ export default function ChatsScreen() {
             Alert.alert('Error', 'Please select a user to message');
             return;
           }
-          newChat = {
-            id: Date.now(),
-            title: `Chat with ${selectedUser.username}`,
-            type: 'user_direct',
-            participants: [selectedUser],
-            last_message: 'Start a conversation',
-            updated_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            unread_count: 0
-          };
+          
+          // Create user direct chat using web endpoint (same as web chat.tsx)
+          try {
+            const response = await api.startUserChat({
+              type: 'direct',
+              user_id: selectedUser.id
+            });
+            
+            if (response.success && (response as any).chat) {
+              // Web chat.tsx returns: { success: true, chat: Chat, existing: boolean }
+              newChat = {
+                id: (response as any).chat.id,
+                title: (response as any).chat.display_name || `Chat with ${selectedUser.username}`,
+                type: 'user_direct',
+                participants: (response as any).chat.participants || [selectedUser],
+                last_message: (response as any).chat.latest_message?.content || 'Start a conversation',
+                updated_at: (response as any).chat.last_message_at || new Date().toISOString(),
+                created_at: (response as any).chat.created_at || new Date().toISOString(),
+                unread_count: 0
+              };
+            } else {
+              Alert.alert('Error', 'Failed to create direct chat');
+              return;
+            }
+          } catch (error) {
+            console.error('Failed to create direct chat:', error);
+            Alert.alert('Error', 'Failed to create direct chat');
+            return;
+          }
           break;
           
         case 'bookmark_focused':
@@ -1988,43 +2152,18 @@ export default function ChatsScreen() {
 
   const formatMessageTime = (dateString: string) => {
     try {
-      // Handle different timestamp formats from backend
-      let timestamp = dateString;
+      // Dates from backend are in UTC (with 'Z' suffix)
+      // JavaScript's new Date() automatically converts UTC to local timezone
+      const date = new Date(dateString);
       
-      // Debug: Log the original timestamp
-      if (__DEV__) {
-        // console.log('🕐 Formatting message time:', { original: dateString, type: typeof dateString });
-      }
-      
-      // If timestamp doesn't have timezone info, treat as local time
-      if (timestamp && !timestamp.includes('Z') && !timestamp.includes('+') && !timestamp.includes('-', 10)) {
-        // Don't add Z - treat as local time to avoid timezone conversion issues
-        // The backend timestamps might already be in local time
-      }
-      
-      const date = new Date(timestamp);
       if (isNaN(date.getTime())) {
-        // Fallback: try parsing as ISO string without timezone
-        const fallbackDate = new Date(dateString);
-        if (isNaN(fallbackDate.getTime())) {
-          if (__DEV__) {
-            console.log('❌ Failed to parse timestamp:', dateString);
-          }
-          return 'Invalid Date';
+        if (__DEV__) {
+          console.log('❌ Failed to parse timestamp:', dateString);
         }
-        return fallbackDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return 'Invalid Date';
       }
       
-      // Debug: Log the parsed date
-      if (__DEV__) {
-        // console.log('🕐 Parsed message date:', {
-        //   original: dateString,
-        //   parsed: date.toISOString(),
-        //   local: date.toLocaleString(),
-        //   formatted: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        // });
-      }
-      
+      // Format using local time (already converted from UTC by new Date())
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } catch (error) {
       if (__DEV__) {
@@ -2036,42 +2175,18 @@ export default function ChatsScreen() {
 
   const formatChatTime = (dateString: string) => {
     try {
-      // Handle different timestamp formats from backend
-      let timestamp = dateString;
+      // Dates from backend are in UTC (with 'Z' suffix)
+      // JavaScript's new Date() automatically converts UTC to local timezone
+      const date = new Date(dateString);
       
-      // Debug: Log the original timestamp
-      if (__DEV__) {
-        // console.log('🕐 Formatting chat time:', { original: dateString, type: typeof dateString });
-      }
-      
-      // If timestamp doesn't have timezone info, treat as local time
-      if (timestamp && !timestamp.includes('Z') && !timestamp.includes('+') && !timestamp.includes('-', 10)) {
-        // Don't add Z - treat as local time to avoid timezone conversion issues
-        // The backend timestamps might already be in local time
-      }
-      
-      const date = new Date(timestamp);
       if (isNaN(date.getTime())) {
-        // Fallback: try parsing as ISO string without timezone
-        const fallbackDate = new Date(dateString);
-        if (isNaN(fallbackDate.getTime())) {
-          if (__DEV__) {
-            console.log('❌ Failed to parse chat timestamp:', dateString);
-          }
-          return 'Unknown';
+        if (__DEV__) {
+          console.log('❌ Failed to parse chat timestamp:', dateString);
         }
-        return formatRelativeDate(fallbackDate);
+        return 'Unknown';
       }
       
-      // Debug: Log the parsed date
-      if (__DEV__) {
-        // console.log('🕐 Parsed chat date:', {
-        //   original: dateString,
-        //   parsed: date.toISOString(),
-        //   local: date.toLocaleString()
-        // });
-      }
-      
+      // Format using local time (already converted from UTC by new Date())
       return formatRelativeDate(date);
     } catch (error) {
       if (__DEV__) {
@@ -2084,28 +2199,12 @@ export default function ChatsScreen() {
   const formatRelativeDate = (date: Date) => {
     const now = new Date();
     
-    // Debug: Log the dates being compared
-    if (__DEV__) {
-      // console.log('🕐 Comparing dates:', {
-      //   now: now.toISOString(),
-      //   date: date.toISOString(),
-      //   nowLocal: now.toLocaleString(),
-      //   dateLocal: date.toLocaleString()
-      // });
-    }
-    
-    // Check if the date is in the future (which would indicate a timezone issue)
+    // Calculate difference in minutes (both dates are in local timezone)
     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
     
-    // If the date is in the future, it might be a timezone issue
-    if (diffInMinutes < 0) {
-      if (__DEV__) {
-        console.log('⚠️ Date is in the future, possible timezone issue:', {
-          date: date.toISOString(),
-          diffInMinutes: diffInMinutes
-        });
-      }
-      // For future dates, show the actual date instead of relative time
+    // If the date is in the future (more than 1 minute), show the actual date
+    // This handles edge cases where dates might be slightly in the future due to clock skew
+    if (diffInMinutes < -1) {
       const currentYear = now.getFullYear();
       const dateYear = date.getFullYear();
       
@@ -2195,26 +2294,26 @@ export default function ChatsScreen() {
     const safeUnreadCount = Number(item.unread_count || 0);
 
     return (
-      <TouchableOpacity style={styles.chatItem} onPress={() => selectChat(item)}>
-        <View style={[styles.chatAvatar, { backgroundColor: `${color}20` }]}>
+      <TouchableOpacity style={dynamicStyles.chatItem} onPress={() => selectChat(item)}>
+        <View style={[dynamicStyles.chatAvatar, { backgroundColor: `${color}20` }]}>
           <Ionicons name={iconName} size={24} color={color} />
         </View>
-        <View style={styles.chatContent}>
-          <View style={styles.chatItemHeader}>
-            <Text style={styles.chatTitle} numberOfLines={1}>
+        <View style={dynamicStyles.chatContent}>
+          <View style={dynamicStyles.chatItemHeader}>
+            <Text style={dynamicStyles.chatTitle} numberOfLines={1}>
               {safeTitle}
             </Text>
-            <Text style={styles.chatTime}>
+            <Text style={dynamicStyles.chatTime}>
               {formatChatTime(safeUpdatedAt)}
             </Text>
           </View>
-          <View style={styles.chatFooter}>
-            <Text style={styles.lastMessage} numberOfLines={2}>
+          <View style={dynamicStyles.chatFooter}>
+            <Text style={dynamicStyles.lastMessage} numberOfLines={2}>
               {safeLastMessage}
             </Text>
             {safeUnreadCount > 0 && (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadText}>
+              <View style={dynamicStyles.unreadBadge}>
+                <Text style={dynamicStyles.unreadText}>
                   {String(safeUnreadCount)}
                 </Text>
               </View>
@@ -2225,17 +2324,119 @@ export default function ChatsScreen() {
     );
   };
 
+  // Helper function to render message content with proper list formatting
+  const renderMessageContent = (content: string, isOwnMessage: boolean) => {
+    const lines = content.split('\n');
+    const elements: React.ReactNode[] = [];
+    let currentList: { type: 'bullet' | 'numbered' | null; items: string[] } = { type: null, items: [] };
+    
+    const flushList = () => {
+      if (currentList.items.length > 0) {
+        if (currentList.type === 'bullet') {
+          elements.push(
+            <View key={`list-${elements.length}`} style={{ marginVertical: 4 }}>
+              {currentList.items.map((item, idx) => (
+                <View key={idx} style={{ flexDirection: 'row', marginBottom: 4, paddingLeft: 4 }}>
+                  <Text style={[
+                    dynamicStyles.messageText,
+                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
+                    { marginRight: 8 }
+                  ]}>•</Text>
+                  <Text style={[
+                    dynamicStyles.messageText,
+                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
+                    { flex: 1 }
+                  ]}>{item.trim()}</Text>
+                </View>
+              ))}
+            </View>
+          );
+        } else if (currentList.type === 'numbered') {
+          elements.push(
+            <View key={`list-${elements.length}`} style={{ marginVertical: 4 }}>
+              {currentList.items.map((item, idx) => (
+                <View key={idx} style={{ flexDirection: 'row', marginBottom: 4, paddingLeft: 4 }}>
+                  <Text style={[
+                    dynamicStyles.messageText,
+                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
+                    { marginRight: 8, minWidth: 20 }
+                  ]}>{idx + 1}.</Text>
+                  <Text style={[
+                    dynamicStyles.messageText,
+                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
+                    { flex: 1 }
+                  ]}>{item.trim()}</Text>
+                </View>
+              ))}
+            </View>
+          );
+        }
+        currentList = { type: null, items: [] };
+      }
+    };
+
+    lines.forEach((line, lineIdx) => {
+      const trimmedLine = line.trim();
+      
+      // Check for bullet list item (- or *)
+      if (/^[-*]\s+/.test(trimmedLine)) {
+        if (currentList.type !== 'bullet') {
+          flushList();
+          currentList.type = 'bullet';
+        }
+        currentList.items.push(trimmedLine.replace(/^[-*]\s+/, ''));
+        return;
+      }
+      
+      // Check for numbered list item (1. 2. etc.)
+      if (/^\d+\.\s+/.test(trimmedLine)) {
+        if (currentList.type !== 'numbered') {
+          flushList();
+          currentList.type = 'numbered';
+        }
+        currentList.items.push(trimmedLine.replace(/^\d+\.\s+/, ''));
+        return;
+      }
+      
+      // Not a list item - flush current list and add as regular text
+      flushList();
+      
+      if (trimmedLine) {
+        elements.push(
+          <Text 
+            key={`line-${lineIdx}`}
+            style={[
+              dynamicStyles.messageText,
+              isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
+              lineIdx > 0 ? { marginTop: 4 } : {}
+            ]}
+          >
+            {line}
+          </Text>
+        );
+      } else if (lineIdx < lines.length - 1) {
+        // Empty line (but not the last one) - add spacing
+        elements.push(<View key={`spacer-${lineIdx}`} style={{ height: 4 }} />);
+      }
+    });
+    
+    // Flush any remaining list
+    flushList();
+    
+    return <View>{elements}</View>;
+  };
+
   const renderMessageItem = ({ item }: { item: ChatMessage }) => {
     // Handle processing message (negative ID indicates processing)
     if (item.id === -1) {
       return (
         <View style={[
-          styles.messageContainer,
-          styles.otherMessage
+          dynamicStyles.messageContainer,
+          dynamicStyles.otherMessage
         ]}>
           <View style={[
-            styles.messageBubble,
-            styles.otherBubble
+            dynamicStyles.messageBubble,
+            dynamicStyles.otherBubble
           ]}>
             <ProcessingMessageDisplay
               isProcessing={true}
@@ -2244,8 +2445,8 @@ export default function ChatsScreen() {
               onComplete={() => {}}
             />
             <Text style={[
-              styles.messageTime,
-              styles.otherMessageTime
+              dynamicStyles.messageTime,
+              dynamicStyles.otherMessageTime
             ]}>
               {formatMessageTime(item.created_at)}
             </Text>
@@ -2256,22 +2457,17 @@ export default function ChatsScreen() {
 
     return (
       <View style={[
-        styles.messageContainer,
-        item.is_own_message ? styles.ownMessage : styles.otherMessage
+        dynamicStyles.messageContainer,
+        item.is_own_message ? dynamicStyles.ownMessage : dynamicStyles.otherMessage
       ]}>
         <View style={[
-          styles.messageBubble,
-          item.is_own_message ? styles.ownBubble : styles.otherBubble
+          dynamicStyles.messageBubble,
+          item.is_own_message ? dynamicStyles.ownBubble : dynamicStyles.otherBubble
         ]}>
+          {renderMessageContent(item.content, item.is_own_message)}
           <Text style={[
-            styles.messageText,
-            item.is_own_message ? styles.ownMessageText : styles.otherMessageText
-          ]}>
-            {item.content}
-          </Text>
-          <Text style={[
-            styles.messageTime,
-            item.is_own_message ? styles.ownMessageTime : styles.otherMessageTime
+            dynamicStyles.messageTime,
+            item.is_own_message ? dynamicStyles.ownMessageTime : dynamicStyles.otherMessageTime
           ]}>
             {formatMessageTime(item.created_at)}
           </Text>
@@ -2282,27 +2478,27 @@ export default function ChatsScreen() {
 
   const renderChatsList = () => {
     return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Quick Chat</Text>
-        <TouchableOpacity style={styles.newChatButton} onPress={() => setShowNewChatModal(true)}>
-          <Ionicons name="add" size={24} color="#007AFF" />
+    <SafeAreaView style={dynamicStyles.container} edges={['top']}>
+      <View style={dynamicStyles.header}>
+        <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
+        <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
+          <Ionicons name="add" size={20} color="#007AFF" />
         </TouchableOpacity>
       </View>
 
-      {/* Search Box with Quick Chat Types */}
-      <View style={styles.searchInputContainer}>
-        <View style={styles.searchInputContainer}>
-          <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+      {/* Search Box with Chat Types */}
+      <View style={dynamicStyles.searchInputContainer}>
+        <View style={dynamicStyles.searchInputContainer}>
+          <Ionicons name="search" size={20} color="#666" style={dynamicStyles.searchIcon} />
           <TextInput
-            style={styles.searchInput}
+            style={dynamicStyles.searchInput}
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholder="Search chats..."
             placeholderTextColor="#999"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchIcon}>
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={dynamicStyles.searchIcon}>
               <Ionicons name="close-circle" size={20} color="#666" />
             </TouchableOpacity>
           )}
@@ -2310,9 +2506,9 @@ export default function ChatsScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.loadingContainer}>
+        <View style={dynamicStyles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading chats...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading chats...</Text>
         </View>
       ) : (
         <FlatList
@@ -2322,7 +2518,7 @@ export default function ChatsScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
-          style={styles.chatsList}
+          style={dynamicStyles.chatsList}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ flexGrow: 1 }}
           onTouchStart={() => setShowQuickChatTypes(false)}
@@ -2333,19 +2529,19 @@ export default function ChatsScreen() {
   };
 
   const renderChatMessages = () => (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       {/* Chat Header */}
-      <View style={styles.chatHeader}>
+      <View style={dynamicStyles.chatHeader}>
         <TouchableOpacity 
-          style={styles.backButton} 
+          style={dynamicStyles.backButton} 
           onPress={() => setSelectedChat(null)}
         >
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
         
-        <View style={styles.chatHeaderInfo}>
-          <Text style={styles.chatTitle}>{selectedChat?.title || 'Chat'}</Text>
-          <Text style={styles.chatSubtitle}>
+        <View style={dynamicStyles.chatHeaderInfo}>
+          <Text style={dynamicStyles.chatTitle}>{selectedChat?.title || 'Chat'}</Text>
+          <Text style={dynamicStyles.chatSubtitle}>
             {selectedChat?.type === 'ai_assistant' ? 'Chat Assistant' : 
              selectedChat?.type === 'document_focused' ? 'Document Chat' :
              selectedChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
@@ -2357,7 +2553,7 @@ export default function ChatsScreen() {
         {/* Search Type Menu for AI Assistant */}
         {selectedChat?.type === 'ai_assistant' && (
           <TouchableOpacity 
-            style={styles.searchTypeButton} 
+            style={dynamicStyles.searchTypeButton} 
             onPress={handleSearchTypeMenuPress}
           >
             <Ionicons name="ellipsis-vertical" size={20} color="#666" />
@@ -2366,14 +2562,14 @@ export default function ChatsScreen() {
       </View>
 
       <KeyboardAvoidingView 
-        style={styles.chatContainer}
+        style={dynamicStyles.chatContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         {messagesLoading ? (
-          <View style={styles.loadingContainer}>
+          <View style={dynamicStyles.loadingContainer}>
             <ActivityIndicator size="large" color="#007AFF" />
-            <Text style={styles.loadingText}>Loading messages...</Text>
+            <Text style={dynamicStyles.loadingText}>Loading messages...</Text>
           </View>
         ) : (
           <>
@@ -2389,8 +2585,8 @@ export default function ChatsScreen() {
               } as ChatMessage] : messages}
               renderItem={renderMessageItem}
               keyExtractor={(item) => item.id.toString()}
-              style={styles.messagesList}
-              contentContainerStyle={styles.messagesContent}
+              style={dynamicStyles.messagesList}
+              contentContainerStyle={dynamicStyles.messagesContent}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
               }
@@ -2408,26 +2604,26 @@ export default function ChatsScreen() {
 
         {/* Selected Mention Display */}
         {selectedMention && (
-          <View style={styles.mentionDisplay}>
-            <View style={styles.mentionChip}>
+          <View style={dynamicStyles.mentionDisplay}>
+            <View style={dynamicStyles.mentionChip}>
               <Ionicons 
                 name={getMentionIcon(selectedMention.type) as keyof typeof Ionicons.glyphMap} 
                 size={16} 
                 color={getMentionColor(selectedMention.type)} 
               />
-              <Text style={styles.mentionText}>
+              <Text style={dynamicStyles.mentionText}>
                 {selectedMention.type}: {selectedMention.type === 'file' ? truncateFilename(selectedMention.name) : selectedMention.name}
               </Text>
-              <TouchableOpacity onPress={removeMention} style={styles.removeMentionButton}>
+              <TouchableOpacity onPress={removeMention} style={dynamicStyles.removeMentionButton}>
                 <Ionicons name="close" size={16} color="#666" />
               </TouchableOpacity>
             </View>
           </View>
         )}
 
-        {/* Quick Chat Types Dropdown */}
+        {/* Chat Types Dropdown */}
         {showQuickChatTypes && selectedChat?.type === 'ai_assistant' && (
-          <View style={styles.quickChatTypesContainer}>
+          <View style={dynamicStyles.quickChatTypesContainer}>
             {(['ai_assistant', 'workspace', 'user_direct', 'bookmark_focused'] as const).map((type, index, array) => {
               const typeInfo = getChatTypeInfo(type);
               const isLastItem = index === array.length - 1;
@@ -2435,17 +2631,17 @@ export default function ChatsScreen() {
                 <TouchableOpacity
                   key={`quick-chat-${type}`}
                   style={[
-                    styles.quickChatTypeItem,
+                    dynamicStyles.quickChatTypeItem,
                     isLastItem && { borderBottomWidth: 0 }
                   ]}
                   onPress={() => createQuickChat(type)}
                 >
-                  <View style={[styles.quickChatTypeIcon, { backgroundColor: `${typeInfo.color}20` }]}>
+                  <View style={[dynamicStyles.quickChatTypeIcon, { backgroundColor: `${typeInfo.color}20` }]}>
                     <Ionicons name={typeInfo.icon} size={20} color={typeInfo.color} />
                   </View>
-                  <View style={styles.quickChatTypeContent}>
-                    <Text style={styles.quickChatTypeName}>{typeInfo.name}</Text>
-                    <Text style={styles.quickChatTypeDescription}>{typeInfo.description}</Text>
+                  <View style={dynamicStyles.quickChatTypeContent}>
+                    <Text style={dynamicStyles.quickChatTypeName}>{typeInfo.name}</Text>
+                    <Text style={dynamicStyles.quickChatTypeDescription}>{typeInfo.description}</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -2453,39 +2649,39 @@ export default function ChatsScreen() {
           </View>
         )}
 
-        <View style={styles.inputContainer}>
+        <View style={dynamicStyles.inputContainer}>
           {/* Inline Mention Dropdown - Above text input */}
           {showMentionModal && (
-            <View style={styles.mentionDropdown}>
+            <View style={dynamicStyles.mentionDropdown}>
               <FlatList
                 data={mentionResults}
                 keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
                 renderItem={({ item }) => (
                   <TouchableOpacity
-                    style={styles.mentionDropdownItem}
+                    style={dynamicStyles.mentionDropdownItem}
                     onPress={() => selectMention(item)}
                   >
-                    <View style={[styles.mentionDropdownIcon, { backgroundColor: `${getMentionColor(item.type)}20` }]}>
+                    <View style={[dynamicStyles.mentionDropdownIcon, { backgroundColor: `${getMentionColor(item.type)}20` }]}>
                       <Ionicons 
                         name={getMentionIcon(item.type) as keyof typeof Ionicons.glyphMap} 
                         size={16} 
                         color={getMentionColor(item.type)} 
                       />
                     </View>
-                    <View style={styles.mentionDropdownContent}>
-                      <Text style={styles.mentionDropdownTitle}>
+                    <View style={dynamicStyles.mentionDropdownContent}>
+                      <Text style={dynamicStyles.mentionDropdownTitle}>
                         {item.type === 'file' ? truncateFilename(item.name) : item.name}
                       </Text>
-                      <Text style={styles.mentionDropdownSubtitle}>{item.subtitle}</Text>
+                      <Text style={dynamicStyles.mentionDropdownSubtitle}>{item.subtitle}</Text>
                     </View>
-                    <Text style={styles.mentionDropdownType}>{item.type}</Text>
+                    <Text style={dynamicStyles.mentionDropdownType}>{item.type}</Text>
                   </TouchableOpacity>
                 )}
-                style={styles.mentionDropdownList}
+                style={dynamicStyles.mentionDropdownList}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
-                  <View style={styles.mentionDropdownEmpty}>
-                    <Text style={styles.mentionDropdownEmptyText}>
+                  <View style={dynamicStyles.mentionDropdownEmpty}>
+                    <Text style={dynamicStyles.mentionDropdownEmptyText}>
                       {mentionQuery.trim() ? 'No results found' : 'Type to search...'}
                     </Text>
                   </View>
@@ -2495,12 +2691,13 @@ export default function ChatsScreen() {
           )}
           
           {/* Text input and send button row */}
-          <View style={styles.inputRow}>
+          <View style={dynamicStyles.inputRow}>
             <TextInput
-              style={[styles.messageInput, { height: Math.max(20, Math.min(80, textInputHeight)) }]}
+              style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
               value={newMessage}
               onChangeText={handleMentionInput}
               placeholder="Ask about documents, meeting transcripts, or @ to mention..."
+              placeholderTextColor={colors.textSecondary}
               multiline
               maxLength={1000}
               onContentSizeChange={(event) => {
@@ -2517,9 +2714,9 @@ export default function ChatsScreen() {
             >
               <TouchableOpacity
                 style={[
-                  styles.sendButton, 
-                  sendingMessage ? styles.sendButtonProcessing : styles.sendButtonNormal,
-                  (!newMessage.trim() && !sendingMessage) && styles.sendButtonDisabled
+                  dynamicStyles.sendButton, 
+                  sendingMessage ? dynamicStyles.sendButtonProcessing : dynamicStyles.sendButtonNormal,
+                  (!newMessage.trim() && !sendingMessage) && dynamicStyles.sendButtonDisabled
                 ]}
                 onPress={sendingMessage ? stopProcessing : sendMessage}
                 disabled={!newMessage.trim() && !sendingMessage}
@@ -2544,12 +2741,12 @@ export default function ChatsScreen() {
       animationType="slide"
       presentationStyle="pageSheet"
     >
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
           <TouchableOpacity onPress={() => setShowNewChatModal(false)}>
             <Text style={{ color: '#007AFF', fontSize: 16 }}>Cancel</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>New Chat</Text>
+          <Text style={dynamicStyles.headerTitle}>New Chat</Text>
           <TouchableOpacity onPress={createNewChat}>
             <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>Create</Text>
           </TouchableOpacity>
@@ -2569,13 +2766,13 @@ export default function ChatsScreen() {
           <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Chat Type</Text>
           
           <TouchableOpacity 
-            style={[styles.optionItem, newChatType === 'ai_assistant' && styles.selectedOption]}
+            style={[dynamicStyles.optionItem, newChatType === 'ai_assistant' && dynamicStyles.selectedOption]}
             onPress={() => setNewChatType('ai_assistant')}
           >
             <Ionicons name="chatbubbles" size={24} color="#007AFF" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.optionTitle}>Chat Assistant</Text>
-              <Text style={styles.optionSubtitle}>Chat with AI about your documents and meeting transcripts</Text>
+              <Text style={dynamicStyles.optionTitle}>Chat Assistant</Text>
+              <Text style={dynamicStyles.optionSubtitle}>Chat with AI about your documents and meeting transcripts</Text>
             </View>
             {newChatType === 'ai_assistant' && (
               <Ionicons name="checkmark" size={24} color="#007AFF" />
@@ -2583,13 +2780,13 @@ export default function ChatsScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.optionItem, newChatType === 'document_focused' && styles.selectedOption]}
+            style={[dynamicStyles.optionItem, newChatType === 'document_focused' && dynamicStyles.selectedOption]}
             onPress={() => setNewChatType('document_focused')}
           >
             <Ionicons name="document-text" size={24} color="#34C759" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.optionTitle}>Document Focus</Text>
-              <Text style={styles.optionSubtitle}>Ask questions about a specific document</Text>
+              <Text style={dynamicStyles.optionTitle}>Document Focus</Text>
+              <Text style={dynamicStyles.optionSubtitle}>Ask questions about a specific document</Text>
             </View>
             {newChatType === 'document_focused' && (
               <Ionicons name="checkmark" size={24} color="#34C759" />
@@ -2597,13 +2794,13 @@ export default function ChatsScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.optionItem, newChatType === 'workspace' && styles.selectedOption]}
+            style={[dynamicStyles.optionItem, newChatType === 'workspace' && dynamicStyles.selectedOption]}
             onPress={() => setNewChatType('workspace')}
           >
             <Ionicons name="people" size={24} color="#FF9500" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.optionTitle}>Workspace Chat</Text>
-              <Text style={styles.optionSubtitle}>Message all team members in a workspace</Text>
+              <Text style={dynamicStyles.optionTitle}>Workspace Chat</Text>
+              <Text style={dynamicStyles.optionSubtitle}>Message all team members in a workspace</Text>
             </View>
             {newChatType === 'workspace' && (
               <Ionicons name="checkmark" size={24} color="#FF9500" />
@@ -2611,13 +2808,13 @@ export default function ChatsScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.optionItem, newChatType === 'user_direct' && styles.selectedOption]}
+            style={[dynamicStyles.optionItem, newChatType === 'user_direct' && dynamicStyles.selectedOption]}
             onPress={() => setNewChatType('user_direct')}
           >
             <Ionicons name="person" size={24} color="#FF3B30" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.optionTitle}>Direct Message</Text>
-              <Text style={styles.optionSubtitle}>Send a private message to another user</Text>
+              <Text style={dynamicStyles.optionTitle}>Direct Message</Text>
+              <Text style={dynamicStyles.optionSubtitle}>Send a private message to another user</Text>
             </View>
             {newChatType === 'user_direct' && (
               <Ionicons name="checkmark" size={24} color="#FF3B30" />
@@ -2625,13 +2822,13 @@ export default function ChatsScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.optionItem, newChatType === 'bookmark_focused' && styles.selectedOption]}
+            style={[dynamicStyles.optionItem, newChatType === 'bookmark_focused' && dynamicStyles.selectedOption]}
             onPress={() => setNewChatType('bookmark_focused')}
           >
             <Ionicons name="bookmark" size={24} color="#AF52DE" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.optionTitle}>Bookmark Collection</Text>
-              <Text style={styles.optionSubtitle}>Chat about a specific bookmark collection</Text>
+              <Text style={dynamicStyles.optionTitle}>Bookmark Collection</Text>
+              <Text style={dynamicStyles.optionSubtitle}>Chat about a specific bookmark collection</Text>
             </View>
             {newChatType === 'bookmark_focused' && (
               <Ionicons name="checkmark" size={24} color="#AF52DE" />
@@ -2644,10 +2841,10 @@ export default function ChatsScreen() {
               <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select Document</Text>
               
               {/* Search for documents */}
-              <View style={styles.searchInputContainer}>
-                <Ionicons name="search" size={16} color="#666" style={styles.searchIcon} />
+              <View style={dynamicStyles.searchInputContainer}>
+                <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
-                  style={[styles.searchInput, { fontSize: 14 }]}
+                  style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search documents..."
                   placeholderTextColor="#999"
                 />
@@ -2657,13 +2854,13 @@ export default function ChatsScreen() {
                 {filteredDocuments.map((doc) => (
                   <TouchableOpacity
                     key={doc.id}
-                    style={[styles.optionItem, selectedDocument?.id === doc.id && styles.selectedOption]}
+                    style={[dynamicStyles.optionItem, selectedDocument?.id === doc.id && dynamicStyles.selectedOption]}
                     onPress={() => setSelectedDocument(doc)}
                   >
                     <Ionicons name="document" size={20} color="#666" />
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.optionTitle}>{doc.name}</Text>
-                      <Text style={styles.optionSubtitle}>{doc.type} • {doc.size}</Text>
+                      <Text style={dynamicStyles.optionTitle}>{doc.name}</Text>
+                      <Text style={dynamicStyles.optionSubtitle}>{doc.type} • {doc.size}</Text>
                     </View>
                     {selectedDocument?.id === doc.id && (
                       <Ionicons name="checkmark" size={20} color="#34C759" />
@@ -2680,10 +2877,10 @@ export default function ChatsScreen() {
               <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select Workspace</Text>
               
               {/* Search for workspaces */}
-              <View style={styles.searchInputContainer}>
-                <Ionicons name="search" size={16} color="#666" style={styles.searchIcon} />
+              <View style={dynamicStyles.searchInputContainer}>
+                <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
-                  style={[styles.searchInput, { fontSize: 14 }]}
+                  style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search workspaces..."
                   placeholderTextColor="#999"
                 />
@@ -2693,13 +2890,13 @@ export default function ChatsScreen() {
                 {filteredWorkspaces.map((workspace) => (
                   <TouchableOpacity
                     key={workspace.id}
-                    style={[styles.optionItem, selectedWorkspace?.id === workspace.id && styles.selectedOption]}
+                    style={[dynamicStyles.optionItem, selectedWorkspace?.id === workspace.id && dynamicStyles.selectedOption]}
                     onPress={() => setSelectedWorkspace(workspace)}
                   >
                     <Ionicons name="business" size={20} color="#FF9500" />
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.optionTitle}>{workspace.name}</Text>
-                      <Text style={styles.optionSubtitle}>{workspace.member_count} members</Text>
+                      <Text style={dynamicStyles.optionTitle}>{workspace.name}</Text>
+                      <Text style={dynamicStyles.optionSubtitle}>{workspace.member_count} members</Text>
                     </View>
                     {selectedWorkspace?.id === workspace.id && (
                       <Ionicons name="checkmark" size={20} color="#FF9500" />
@@ -2716,10 +2913,10 @@ export default function ChatsScreen() {
               <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select User</Text>
               
               {/* Search for users */}
-              <View style={styles.searchInputContainer}>
-                <Ionicons name="search" size={16} color="#666" style={styles.searchIcon} />
+              <View style={dynamicStyles.searchInputContainer}>
+                <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
-                  style={[styles.searchInput, { fontSize: 14 }]}
+                  style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search users..."
                   placeholderTextColor="#999"
                 />
@@ -2732,13 +2929,13 @@ export default function ChatsScreen() {
                   filteredUsers.map((user) => (
                     <TouchableOpacity
                       key={user.id}
-                      style={[styles.optionItem, selectedUser?.id === user.id && styles.selectedOption]}
+                      style={[dynamicStyles.optionItem, selectedUser?.id === user.id && dynamicStyles.selectedOption]}
                       onPress={() => setSelectedUser(user)}
                     >
                       <Ionicons name="person-circle" size={20} color="#FF3B30" />
                       <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={styles.optionTitle}>{user.username}</Text>
-                        <Text style={styles.optionSubtitle}>{user.email}</Text>
+                        <Text style={dynamicStyles.optionTitle}>{user.username}</Text>
+                        <Text style={dynamicStyles.optionSubtitle}>{user.email}</Text>
                       </View>
                       {selectedUser?.id === user.id && (
                         <Ionicons name="checkmark" size={20} color="#FF3B30" />
@@ -2756,10 +2953,10 @@ export default function ChatsScreen() {
               <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select Bookmark Collection</Text>
               
               {/* Search for bookmarks */}
-              <View style={styles.searchInputContainer}>
-                <Ionicons name="search" size={16} color="#666" style={styles.searchIcon} />
+              <View style={dynamicStyles.searchInputContainer}>
+                <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
-                  style={[styles.searchInput, { fontSize: 14 }]}
+                  style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search bookmarks..."
                   placeholderTextColor="#999"
                 />
@@ -2769,13 +2966,13 @@ export default function ChatsScreen() {
                 {filteredBookmarks.map((bookmark) => (
                   <TouchableOpacity
                     key={bookmark.id}
-                    style={[styles.optionItem, selectedBookmark?.id === bookmark.id && styles.selectedOption]}
+                    style={[dynamicStyles.optionItem, selectedBookmark?.id === bookmark.id && dynamicStyles.selectedOption]}
                     onPress={() => setSelectedBookmark(bookmark)}
                   >
                     <Ionicons name="bookmark" size={20} color="#AF52DE" />
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.optionTitle}>{bookmark.name}</Text>
-                      <Text style={styles.optionSubtitle}>{bookmark.file_count} files • {bookmark.description}</Text>
+                      <Text style={dynamicStyles.optionTitle}>{bookmark.name}</Text>
+                      <Text style={dynamicStyles.optionSubtitle}>{bookmark.file_count} files • {bookmark.description}</Text>
                     </View>
                     {selectedBookmark?.id === bookmark.id && (
                       <Ionicons name="checkmark" size={20} color="#AF52DE" />
@@ -2800,6 +2997,402 @@ export default function ChatsScreen() {
     setShowSearchTypeMenu(!showSearchTypeMenu);
   };
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+      paddingTop: 0,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    headerTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: colors.text,
+    },
+    newChatButton: {
+      padding: 4,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      marginTop: 6,
+      color: colors.textSecondary,
+    },
+    chatsList: {
+      flex: 1,
+    },
+    chatItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    chatAvatar: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: colors.surface,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 10,
+    },
+    chatContent: {
+      flex: 1,
+    },
+    chatItemHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 3,
+    },
+    chatTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.text,
+      flex: 1,
+    },
+    chatTime: {
+      fontSize: 11,
+      color: colors.textSecondary,
+    },
+    chatFooter: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    lastMessage: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      flex: 1,
+    },
+    unreadBadge: {
+      backgroundColor: '#007AFF',
+      borderRadius: 8,
+      minWidth: 18,
+      height: 18,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginLeft: 6,
+    },
+    unreadText: {
+      color: '#fff',
+      fontSize: 11,
+      fontWeight: 'bold',
+    },
+    chatHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.card,
+    },
+    backButton: {
+      padding: 6,
+      marginRight: 6,
+    },
+    chatHeaderInfo: {
+      flex: 1,
+    },
+    chatSubtitle: {
+      fontSize: 11,
+      color: colors.textSecondary,
+    },
+    searchTypeButton: {
+      padding: 6,
+    },
+    chatContainer: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    messagesList: {
+      flex: 1,
+    },
+    messagesContent: {
+      paddingVertical: 10,
+    },
+    messageContainer: {
+      paddingHorizontal: 16,
+      paddingVertical: 4,
+    },
+    ownMessage: {
+      alignItems: 'flex-end',
+    },
+    otherMessage: {
+      alignItems: 'flex-start',
+    },
+    messageBubble: {
+      maxWidth: '80%',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 16,
+      marginVertical: 2,
+      overflow: 'hidden',
+      flexShrink: 1,
+    },
+    ownBubble: {
+      backgroundColor: '#007AFF',
+    },
+    otherBubble: {
+      backgroundColor: colors.surface,
+    },
+    messageText: {
+      fontSize: 14,
+      lineHeight: 20,
+      flexWrap: 'wrap',
+      wordWrap: 'break-word',
+      maxWidth: '100%',
+    },
+    ownMessageText: {
+      color: '#fff',
+    },
+    otherMessageText: {
+      color: colors.text,
+    },
+    messageTime: {
+      fontSize: 11,
+      marginTop: 4,
+    },
+    ownMessageTime: {
+      color: 'rgba(255, 255, 255, 0.7)',
+    },
+    otherMessageTime: {
+      color: colors.textSecondary,
+    },
+    inputContainer: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      backgroundColor: colors.card,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      minHeight: 48,
+    },
+    inputRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+    },
+    messageInput: {
+      flex: 1,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 18,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      fontSize: 14,
+      backgroundColor: colors.surface,
+      color: colors.text,
+      minHeight: 40,
+      maxHeight: 120,
+    },
+    sendButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: '#007AFF',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginLeft: 6,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    searchTypeMenuContainer: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 8,
+      minWidth: 150,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.25,
+      shadowRadius: 8,
+      elevation: 8,
+    },
+    searchTypeMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 8,
+    },
+    selectedSearchTypeItem: {
+      backgroundColor: colors.surface,
+    },
+    searchTypeText: {
+      fontSize: 16,
+      color: colors.text,
+      fontWeight: '500',
+    },
+    selectedSearchTypeText: {
+      color: '#007AFF',
+    },
+    // Modal styles
+    optionItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      marginBottom: 4,
+    },
+    selectedOption: {
+      backgroundColor: colors.surface,
+    },
+    optionTitle: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: colors.text,
+      marginBottom: 2,
+    },
+    optionSubtitle: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    searchInputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      marginBottom: 12,
+    },
+    searchInput: {
+      flex: 1,
+      paddingVertical: 8,
+      fontSize: 14,
+      color: colors.text,
+    },
+    searchIcon: {
+      marginRight: 8,
+    },
+    mentionDisplay: {
+      marginBottom: 8,
+    },
+    mentionChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 16,
+      alignSelf: 'flex-start',
+    },
+    mentionText: {
+      fontSize: 12,
+      color: colors.text,
+      marginLeft: 6,
+      marginRight: 6,
+    },
+    removeMentionButton: {
+      padding: 2,
+    },
+    quickChatTypesContainer: {
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      paddingVertical: 8,
+    },
+    quickChatTypeItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    quickChatTypeIcon: {
+      marginRight: 12,
+    },
+    quickChatTypeContent: {
+      flex: 1,
+    },
+    quickChatTypeName: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: colors.text,
+    },
+    quickChatTypeDescription: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    mentionDropdown: {
+      position: 'absolute',
+      bottom: 52,
+      left: 0,
+      right: 0,
+      maxHeight: 200,
+      backgroundColor: colors.card,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    mentionDropdownList: {
+      maxHeight: 200,
+    },
+    mentionDropdownItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    mentionDropdownIcon: {
+      marginRight: 12,
+    },
+    mentionDropdownContent: {
+      flex: 1,
+    },
+    mentionDropdownTitle: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: colors.text,
+    },
+    mentionDropdownSubtitle: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    mentionDropdownType: {
+      fontSize: 10,
+      color: colors.textSecondary,
+      textTransform: 'uppercase',
+    },
+    mentionDropdownEmpty: {
+      padding: 16,
+      alignItems: 'center',
+    },
+    mentionDropdownEmptyText: {
+      fontSize: 14,
+      color: colors.textSecondary,
+    },
+    sendButtonNormal: {
+      backgroundColor: '#007AFF',
+    },
+    sendButtonProcessing: {
+      backgroundColor: '#999',
+    },
+    sendButtonDisabled: {
+      backgroundColor: '#ccc',
+    },
+  }), [colors]);
+
   // Show chat list or individual chat based on selection
   return (
     <>
@@ -2813,21 +3406,21 @@ export default function ChatsScreen() {
         onRequestClose={() => setShowSearchTypeMenu(false)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={dynamicStyles.modalOverlay}
           activeOpacity={1}
           onPress={() => setShowSearchTypeMenu(false)}
         >
-          <View style={styles.searchTypeMenuContainer}>
+          <View style={dynamicStyles.searchTypeMenuContainer}>
             {(['exact', 'refined', 'expanded'] as const).map((type) => {
               const isSelected = selectedSearchType === type;
               
               return (
                 <TouchableOpacity
                   key={type}
-                  style={[styles.searchTypeMenuItem, isSelected && styles.selectedSearchTypeItem]}
+                  style={[dynamicStyles.searchTypeMenuItem, isSelected && dynamicStyles.selectedSearchTypeItem]}
                   onPress={() => handleSearchTypeSelect(type)}
                 >
-                  <Text style={[styles.searchTypeText, isSelected && styles.selectedSearchTypeText]}>
+                  <Text style={[dynamicStyles.searchTypeText, isSelected && dynamicStyles.selectedSearchTypeText]}>
                     {type.charAt(0).toUpperCase() + type.slice(1)}
                   </Text>
                   {isSelected && (
@@ -2864,7 +3457,7 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   newChatButton: {
-    padding: 6,
+    padding: 4,
   },
   loadingContainer: {
     flex: 1,
@@ -3379,54 +3972,5 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 8,
     textAlign: 'center',
-  },
-  progressContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    marginTop: 16,
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  progressTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  progressSubtitle: {
-    fontSize: 12,
-    color: '#666',
-  },
-  progressBarContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  progressBar: {
-    width: '100%',
-    height: 8,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#007AFF',
-  },
-  progressPercentage: {
-    fontSize: 12,
-    color: '#333',
-    marginLeft: 8,
-  },
-  progressMessage: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
   },
 }); 

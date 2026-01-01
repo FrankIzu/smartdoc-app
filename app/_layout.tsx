@@ -19,6 +19,7 @@ import Toast from 'react-native-toast-message';
 import GlobalProgressBar from '../components/GlobalProgressBar';
 import NetworkIndicator from '../components/NetworkIndicator';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
+import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { useProgressStore } from '../services/progressService';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
 import { AuthProvider, useAuth } from './context/auth';
@@ -28,10 +29,11 @@ SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
+  const { isDark } = useTheme();
 
   return (
     <>
-      <StatusBar style="auto" />
+      <StatusBar style={isDark ? "light" : "dark"} />
       {/* Persistent Network Indicator */}
       <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
         <NetworkIndicator compact persistent />
@@ -84,11 +86,13 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <Enhanced2FAAuthProvider>
-            <AuthWrapper />
-          </Enhanced2FAAuthProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <Enhanced2FAAuthProvider>
+              <AuthWrapper />
+            </Enhanced2FAAuthProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

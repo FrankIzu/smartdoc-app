@@ -6,7 +6,7 @@ export default function BookmarksLayout() {
       <Stack.Screen 
         name="manage" 
         options={{ 
-          title: 'Manage Bookmarks',
+          title: 'Bookmarks',
           headerShown: false // We handle our own header in the screen
         }} 
       />

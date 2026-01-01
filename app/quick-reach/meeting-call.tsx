@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -13,6 +13,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useAuth } from '../context/auth';
 
@@ -35,7 +36,11 @@ interface Meeting {
 export default function MeetingCallScreen() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
+  const colors = useThemeColors();
   const isAuthenticated = !!user;
+  
+  console.log('🔄 MeetingCallScreen rendered, isAuthenticated:', isAuthenticated);
+  
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [upcomingMeetings, setUpcomingMeetings] = useState<Meeting[]>([]);
   const [ongoingMeetings, setOngoingMeetings] = useState<Meeting[]>([]);
@@ -48,14 +53,19 @@ export default function MeetingCallScreen() {
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteMessage, setInviteMessage] = useState('');
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !hasLoadedOnce) {
+      console.log('📱 Initial load triggered by authentication');
+      setHasLoadedOnce(true);
       loadMeetings();
-    } else {
+    } else if (!isAuthenticated) {
       setLoading(false);
+    } else if (hasLoadedOnce) {
+      console.log('📱 Skipping duplicate load - already loaded once');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, hasLoadedOnce]);
 
   const loadMeetings = async () => {
     if (!isAuthenticated) {
@@ -68,40 +78,129 @@ export default function MeetingCallScreen() {
     try {
       setLoading(true);
       
-      // Load previous user meetings from database using mobile API
-      const response = await apiClient.getMeetings();
+      // Load meetings and assets in parallel
+      const [meetingsResponse, assetsResponse] = await Promise.all([
+        apiClient.getMeetings(),
+        apiClient.getMeetingAssets()
+      ]);
       
-      if (response.success && response.data) {
-        const allMeetings = response.data.meetings || [];
+      // Track which meetings have assets (for potential future use like badges/indicators)
+      // Use title as primary identifier since IDs might not match (HMS ID vs DB ID)
+      let meetingsWithAssetsTitles = new Set<string>();
+      let meetingsWithAssetsIds = new Set<string>();
+      
+      if (assetsResponse.success && assetsResponse.data) {
+        // Check top-level assets array (this is the main source of assets)
+        if (assetsResponse.data.assets && Array.isArray(assetsResponse.data.assets)) {
+          console.log(`📱 Processing ${assetsResponse.data.assets.length} assets from top-level assets array`);
+          assetsResponse.data.assets.forEach((asset: any, index: number) => {
+            // Extract meeting title from asset (try multiple property names)
+            const title = (asset.meeting_title || asset.title || asset.meetingTitle || '').toLowerCase().trim();
+            if (title) {
+              meetingsWithAssetsTitles.add(title);
+              if (index < 3) { // Log first 3 for debugging
+                console.log(`📱 Asset ${index} title: "${title}"`);
+              }
+            }
+            // Extract meeting ID from asset (try multiple property names)
+            const meetingId = asset.meeting_id || asset.meetingId || asset.meeting_id;
+            if (meetingId) {
+              meetingsWithAssetsIds.add(String(meetingId));
+              if (index < 3) { // Log first 3 for debugging
+                console.log(`📱 Asset ${index} meetingId: "${meetingId}"`);
+              }
+            }
+          });
+        }
         
-        // Sort meetings by date (most recent first)
+        // Also check meetings array for nested assets (if they exist)
+        if (assetsResponse.data.meetings && Array.isArray(assetsResponse.data.meetings)) {
+          assetsResponse.data.meetings.forEach((meeting: any) => {
+            const hasAssets = meeting.assets && Array.isArray(meeting.assets) && meeting.assets.length > 0;
+            if (hasAssets) {
+              // Add title for matching (normalize to lowercase for comparison)
+              const title = (meeting.title || meeting.meeting_title || '').toLowerCase().trim();
+              if (title) {
+                meetingsWithAssetsTitles.add(title);
+              }
+              // Also add IDs for potential matching
+              const meetingId = meeting.id || meeting.meeting_id || meeting.meetingId;
+              if (meetingId) {
+                meetingsWithAssetsIds.add(String(meetingId));
+              }
+            }
+          });
+        }
+      }
+      
+      console.log('📱 Meeting titles with assets:', Array.from(meetingsWithAssetsTitles));
+      console.log('📱 Meeting IDs with assets:', Array.from(meetingsWithAssetsIds));
+      
+      if (meetingsResponse.success && meetingsResponse.data) {
+        const allMeetings = meetingsResponse.data.meetings || [];
+        
+        console.log(`📱 Processing ${allMeetings.length} meetings from backend`);
+        
+        // Sort meetings by date (most recent first) BEFORE deduplication
         const sortedMeetings = allMeetings.sort((a: Meeting, b: Meeting) => {
           const dateA = new Date(a.startTime || a.createdAt || 0).getTime();
           const dateB = new Date(b.startTime || b.createdAt || 0).getTime();
           return dateB - dateA;
         });
         
-        setMeetings(sortedMeetings);
+        // Deduplicate meetings by title - keep only the most recent occurrence of each unique meeting name
+        const uniqueMeetingsMap = new Map<string, Meeting>();
+        const duplicatesFound: string[] = [];
+        
+        sortedMeetings.forEach((meeting: Meeting, index: number) => {
+          const normalizedTitle = (meeting.title || '').toLowerCase().trim();
+          
+          if (!normalizedTitle) {
+            console.warn(`📱 Meeting at index ${index} has no title, skipping`);
+            return;
+          }
+          
+          // Only keep the first occurrence (most recent due to prior sorting)
+          if (!uniqueMeetingsMap.has(normalizedTitle)) {
+            uniqueMeetingsMap.set(normalizedTitle, meeting);
+            if (index < 5) {
+              console.log(`📱 Adding unique meeting "${meeting.title}" (${meeting.startTime || meeting.createdAt})`);
+            }
+          } else {
+            duplicatesFound.push(`"${meeting.title}" (${meeting.startTime || meeting.createdAt})`);
+            if (duplicatesFound.length <= 5) {
+              console.log(`📱 Skipping duplicate: "${meeting.title}" (${meeting.startTime || meeting.createdAt})`);
+            }
+          }
+        });
+        
+        const uniqueMeetings = Array.from(uniqueMeetingsMap.values());
+        console.log(`📱 Deduplicated ${duplicatesFound.length} duplicate meetings`);
+        console.log(`📱 Showing ${uniqueMeetings.length} unique meetings (deduplicated from ${allMeetings.length} total)`);
+        
+        setMeetings(uniqueMeetings);
         
         // Filter meetings by status
-        const upcoming = sortedMeetings.filter((m: Meeting) => 
+        const upcoming = uniqueMeetings.filter((m: Meeting) => 
           m.status === 'scheduled' || m.status === 'created'
         );
-        const ongoing = sortedMeetings.filter((m: Meeting) => 
+        const ongoing = uniqueMeetings.filter((m: Meeting) => 
           m.status === 'active'
         );
         
         setUpcomingMeetings(upcoming);
         setOngoingMeetings(ongoing);
         
-        console.log(`📱 Loaded ${sortedMeetings.length} meetings from database:`, {
-          total: sortedMeetings.length,
+        console.log(`📱 Loaded ${uniqueMeetings.length} unique meetings:`, {
+          total: uniqueMeetings.length,
           upcoming: upcoming.length,
-          ongoing: ongoing.length
+          ongoing: ongoing.length,
+          meetingsWithAssets: meetingsWithAssetsTitles.size,
+          duplicatesRemoved: allMeetings.length - uniqueMeetings.length
         });
         
         // Debug: Log the actual status values from backend
-        console.log('📱 Meeting statuses from backend:', sortedMeetings.map((m: Meeting) => ({
+        console.log('📱 Meeting statuses from backend:', uniqueMeetings.map((m: Meeting) => ({
           title: m.title,
           status: m.status,
           startTime: m.startTime,
@@ -165,6 +264,7 @@ export default function MeetingCallScreen() {
   };
 
   const handleRefresh = useCallback(() => {
+    console.log('📱 Manual refresh triggered');
     setRefreshing(true);
     loadMeetings();
   }, []);
@@ -389,9 +489,301 @@ export default function MeetingCallScreen() {
     });
   };
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    backButton: {
+      padding: 8,
+      marginRight: 8,
+    },
+    headerSpacer: {
+      width: 40,
+    },
+    headerTitle: {
+      fontSize: 24,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    refreshButton: {
+      padding: 8,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 40,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    quickActions: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 20,
+      backgroundColor: colors.card,
+      marginBottom: 8,
+      gap: 12,
+    },
+    actionButton: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 12,
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      minHeight: 70,
+      minWidth: 90,
+      maxWidth: 120,
+    },
+    actionButtonText: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.text,
+      textAlign: 'center',
+    },
+    meetingsList: {
+      padding: 20,
+    },
+    section: {
+      marginBottom: 24,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 12,
+    },
+    horizontalList: {
+      paddingRight: 20,
+    },
+    meetingCard: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+      marginRight: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
+      elevation: 1,
+      minWidth: 280,
+    },
+    ongoingMeeting: {
+      borderColor: '#34C759',
+      borderWidth: 2,
+    },
+    meetingHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    meetingTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+      flex: 1,
+      marginRight: 8,
+    },
+    statusBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+    },
+    statusOngoing: {
+      backgroundColor: '#34C759',
+    },
+    statusScheduled: {
+      backgroundColor: '#007AFF',
+    },
+    statusCreated: {
+      backgroundColor: '#FF9500',
+    },
+    statusEnded: {
+      backgroundColor: '#8E8E93',
+    },
+    statusText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#fff',
+    },
+    meetingDetails: {
+      marginBottom: 12,
+    },
+    meetingHost: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginBottom: 4,
+    },
+    meetingTime: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginBottom: 8,
+    },
+    meetingMeta: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    meetingMetaCompact: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      flexWrap: 'wrap',
+    },
+    meetingTimeCompact: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      fontWeight: '500',
+    },
+    detailText: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    detailTextCompact: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    meetingActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 12,
+    },
+    actionIcon: {
+      padding: 8,
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+    },
+    emptyState: {
+      alignItems: 'center',
+      padding: 40,
+      marginTop: 40,
+    },
+    emptyStateText: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: 16,
+      textAlign: 'center',
+    },
+    emptyStateSubtext: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginTop: 8,
+      textAlign: 'center',
+      lineHeight: 20,
+    },
+    createFirstButton: {
+      marginTop: 20,
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      backgroundColor: '#007AFF',
+      borderRadius: 8,
+    },
+    createFirstButtonText: {
+      color: '#fff',
+      fontWeight: '600',
+      fontSize: 16,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    joinModalContainer: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      marginHorizontal: 20,
+      width: '90%',
+      maxWidth: 400,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 5,
+    },
+    modalContainer: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    cancelButton: {
+      fontSize: 16,
+      color: '#007AFF',
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    joinButton: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#007AFF',
+    },
+    joinButtonDisabled: {
+      color: colors.textLight,
+    },
+    modalContent: {
+      padding: 20,
+    },
+    inputLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 8,
+      marginTop: 16,
+    },
+    input: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      fontSize: 16,
+      backgroundColor: colors.surface,
+      color: colors.text,
+    },
+    textArea: {
+      height: 80,
+      textAlignVertical: 'top',
+    },
+  }), [colors]);
+
   const renderMeetingCard = ({ item }: { item: Meeting }) => (
     <TouchableOpacity
-      style={[styles.meetingCard, item.status === 'active' && styles.ongoingMeeting]}
+      style={[dynamicStyles.meetingCard, item.status === 'active' && dynamicStyles.ongoingMeeting]}
       onPress={() => viewMeetingAssets(item)}
       onLongPress={() => {
         const isLive = item.status === 'active';
@@ -414,77 +806,87 @@ export default function MeetingCallScreen() {
         );
       }}
     >
-      <View style={styles.meetingHeader}>
-        <Text style={styles.meetingTitle} numberOfLines={1}>{item.title}</Text>
+      <View style={dynamicStyles.meetingHeader}>
+        <Text style={dynamicStyles.meetingTitle} numberOfLines={1}>{item.title}</Text>
         <View 
           style={[
-            styles.statusBadge, 
-            item.status === 'active' ? styles.statusOngoing : 
-            item.status === 'ended' ? styles.statusEnded :
-            item.status === 'created' ? styles.statusCreated :
-            styles.statusScheduled
+            dynamicStyles.statusBadge, 
+            item.status === 'active' ? dynamicStyles.statusOngoing : 
+            item.status === 'ended' ? dynamicStyles.statusEnded :
+            item.status === 'created' ? dynamicStyles.statusCreated :
+            dynamicStyles.statusScheduled
           ]}
         >
-          <Text style={styles.statusText}>
+          <Text style={dynamicStyles.statusText}>
             {item.status.toUpperCase()}
           </Text>
         </View>
       </View>
       
-      <View style={styles.meetingDetails}>
-        <Text style={styles.meetingHost} numberOfLines={1}>Host: {item.host}</Text>
-        <Text style={styles.meetingTime}>{formatMeetingTime(item.startTime)}</Text>
-        <View style={styles.meetingMeta}>
-          <Text style={styles.detailText} numberOfLines={1}>👥 {item.participants}</Text>
-          <Text style={styles.detailText} numberOfLines={1}>ID: {item.meetingId}</Text>
+      <View style={dynamicStyles.meetingDetails}>
+        <Text style={dynamicStyles.meetingHost} numberOfLines={1}>Host: {item.host}</Text>
+        <View style={dynamicStyles.meetingMetaCompact}>
+          <Text style={dynamicStyles.meetingTimeCompact}>{formatMeetingTime(item.startTime)}</Text>
+          <Text style={dynamicStyles.detailTextCompact}>👥 {item.participants}</Text>
+          <Text style={dynamicStyles.detailTextCompact} numberOfLines={1}>ID: {item.meetingId}</Text>
         </View>
       </View>
 
-      <View style={styles.meetingActions}>
+      <View style={dynamicStyles.meetingActions}>
         <TouchableOpacity
-          style={styles.actionIcon}
+          style={dynamicStyles.actionIcon}
           onPress={(e) => {
             e.stopPropagation();
             joinMeeting(item);
           }}
         >
-          <Ionicons name="videocam" size={20} color="#007AFF" />
+          <Ionicons name="videocam" size={16} color="#007AFF" />
         </TouchableOpacity>
         
         {(item.status === 'active') && (
           <TouchableOpacity
-            style={styles.actionIcon}
+            style={dynamicStyles.actionIcon}
             onPress={(e) => {
               e.stopPropagation();
               endMeeting(item);
             }}
           >
-            <Ionicons name="stop-circle" size={20} color="#FF3B30" />
+            <Ionicons name="stop-circle" size={16} color="#FF3B30" />
           </TouchableOpacity>
         )}
         
         <TouchableOpacity
-          style={styles.actionIcon}
+          style={dynamicStyles.actionIcon}
           onPress={(e) => {
             e.stopPropagation();
             setSelectedMeeting(item);
             setShowInviteModal(true);
           }}
         >
-          <Ionicons name="person-add" size={20} color="#34C759" />
+          <Ionicons name="person-add" size={16} color="#34C759" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={dynamicStyles.actionIcon}
+          onPress={(e) => {
+            e.stopPropagation();
+            deleteMeeting(item);
+          }}
+        >
+          <Ionicons name="trash" size={16} color="#FF3B30" />
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
 
   const renderEmptyState = (title: string, subtitle: string) => (
-    <View style={styles.emptyState}>
-      <Ionicons name="videocam-off-outline" size={48} color="#999" />
-      <Text style={styles.emptyStateText}>{title}</Text>
-      <Text style={styles.emptyStateSubtext}>{subtitle}</Text>
+    <View style={dynamicStyles.emptyState}>
+      <Ionicons name="videocam-off-outline" size={48} color={colors.textLight} />
+      <Text style={dynamicStyles.emptyStateText}>{title}</Text>
+      <Text style={dynamicStyles.emptyStateSubtext}>{subtitle}</Text>
       {title.includes('meeting') && (
-        <TouchableOpacity style={styles.createFirstButton} onPress={createMeeting}>
-          <Text style={styles.createFirstButtonText}>Schedule Your First Meeting</Text>
+        <TouchableOpacity style={dynamicStyles.createFirstButton} onPress={createMeeting}>
+          <Text style={dynamicStyles.createFirstButtonText}>Schedule Your First Meeting</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -493,25 +895,25 @@ export default function MeetingCallScreen() {
   // Show authentication required message if not logged in
   if (!isAuthenticated) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Meeting Call</Text>
-          <View style={styles.headerSpacer} />
+          <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
+          <View style={dynamicStyles.headerSpacer} />
         </View>
-        <View style={styles.loadingContainer}>
-          <Ionicons name="lock-closed" size={64} color="#999" />
-          <Text style={styles.loadingText}>Authentication Required</Text>
-          <Text style={[styles.loadingText, { fontSize: 16, color: '#666', marginTop: 8 }]}>
+        <View style={dynamicStyles.loadingContainer}>
+          <Ionicons name="lock-closed" size={64} color={colors.textLight} />
+          <Text style={dynamicStyles.loadingText}>Authentication Required</Text>
+          <Text style={[dynamicStyles.loadingText, { fontSize: 16, marginTop: 8 }]}>
             Please log in to view your meetings
           </Text>
           <TouchableOpacity 
-            style={[styles.actionButton, { marginTop: 20 }]} 
+            style={[dynamicStyles.actionButton, { marginTop: 20 }]} 
             onPress={() => router.push('/(auth)/sign-in')}
           >
-            <Text style={styles.actionButtonText}>Sign In</Text>
+            <Text style={dynamicStyles.actionButtonText}>Sign In</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -520,31 +922,31 @@ export default function MeetingCallScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Meeting Call</Text>
-          <View style={styles.headerSpacer} />
+          <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
+          <View style={dynamicStyles.headerSpacer} />
         </View>
-        <View style={styles.loadingContainer}>
+        <View style={dynamicStyles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading meetings...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading meetings...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+    <SafeAreaView style={dynamicStyles.container}>
+      <View style={dynamicStyles.header}>
+        <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Meeting Call</Text>
+        <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
         <TouchableOpacity
-          style={styles.refreshButton}
+          style={dynamicStyles.refreshButton}
           onPress={handleRefresh}
           disabled={refreshing}
         >
@@ -553,52 +955,52 @@ export default function MeetingCallScreen() {
       </View>
 
       {/* Quick Actions */}
-      <View style={styles.quickActions}>
-        <TouchableOpacity style={styles.actionButton} onPress={createMeeting}>
-          <Ionicons name="add-circle" size={32} color="#007AFF" />
-          <Text style={styles.actionButtonText}>Create</Text>
+      <View style={dynamicStyles.quickActions}>
+        <TouchableOpacity style={dynamicStyles.actionButton} onPress={createMeeting}>
+          <Ionicons name="add-circle" size={24} color="#007AFF" />
+          <Text style={dynamicStyles.actionButtonText}>Create</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.actionButton} onPress={() => setShowJoinModal(true)}>
-          <Ionicons name="enter" size={32} color="#34C759" />
-          <Text style={styles.actionButtonText}>Join</Text>
+        <TouchableOpacity style={dynamicStyles.actionButton} onPress={() => setShowJoinModal(true)}>
+          <Ionicons name="enter" size={24} color="#34C759" />
+          <Text style={dynamicStyles.actionButtonText}>Join</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.actionButton} onPress={scheduleMeeting}>
-          <Ionicons name="calendar" size={32} color="#FF9500" />
-          <Text style={styles.actionButtonText}>Schedule</Text>
+        <TouchableOpacity style={dynamicStyles.actionButton} onPress={scheduleMeeting}>
+          <Ionicons name="calendar" size={24} color="#FF9500" />
+          <Text style={dynamicStyles.actionButtonText}>Schedule</Text>
         </TouchableOpacity>
       </View>
 
       <FlatList
-        data={meetings}
+        data={[]}
         renderItem={renderMeetingCard}
         keyExtractor={(item) => item.id}
         refreshing={refreshing}
         onRefresh={handleRefresh}
-        contentContainerStyle={styles.meetingsList}
+        contentContainerStyle={dynamicStyles.meetingsList}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={() => (
           <View>
             {/* Ongoing Meetings */}
             {ongoingMeetings.length > 0 && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Live Meetings ({ongoingMeetings.length})</Text>
+              <View style={dynamicStyles.section}>
+                <Text style={dynamicStyles.sectionTitle}>Live Meetings ({ongoingMeetings.length})</Text>
                 <FlatList
                   data={ongoingMeetings}
                   renderItem={renderMeetingCard}
                   keyExtractor={(item) => item.id}
                   horizontal
                   showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.horizontalList}
+                  contentContainerStyle={dynamicStyles.horizontalList}
                 />
               </View>
             )}
 
             {/* Upcoming Meetings */}
             {upcomingMeetings.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Upcoming Meetings ({upcomingMeetings.length})</Text>
+              <View style={dynamicStyles.section}>
+                <Text style={dynamicStyles.sectionTitle}>Upcoming Meetings ({upcomingMeetings.length})</Text>
                 <FlatList
                   data={upcomingMeetings.slice(0, 3)}
                   renderItem={renderMeetingCard}
@@ -612,10 +1014,10 @@ export default function MeetingCallScreen() {
 
             {/* Recent Meetings */}
             {meetings.filter(m => m.status === 'ended').length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Recent Meetings</Text>
+              <View style={dynamicStyles.section}>
+                <Text style={dynamicStyles.sectionTitle}>Recent Meetings</Text>
                 <FlatList
-                  data={meetings.filter(m => m.status === 'ended').slice(0, 5)}
+                  data={meetings.filter(m => m.status === 'ended')}
                   renderItem={renderMeetingCard}
                   keyExtractor={(item) => item.id}
                   scrollEnabled={false}
@@ -633,31 +1035,32 @@ export default function MeetingCallScreen() {
         transparent={true}
         onRequestClose={() => setShowJoinModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.joinModalContainer}>
-            <View style={styles.modalHeader}>
+        <View style={dynamicStyles.modalOverlay}>
+          <View style={dynamicStyles.joinModalContainer}>
+            <View style={dynamicStyles.modalHeader}>
               <TouchableOpacity onPress={() => setShowJoinModal(false)}>
-                <Text style={styles.cancelButton}>Cancel</Text>
+                <Text style={dynamicStyles.cancelButton}>Cancel</Text>
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>Join Meeting</Text>
+              <Text style={dynamicStyles.modalTitle}>Join Meeting</Text>
               <TouchableOpacity 
                 onPress={joinMeetingById}
                 disabled={!meetingId.trim()}
               >
                 <Text style={[
-                  styles.joinButton,
-                  !meetingId.trim() && styles.joinButtonDisabled
+                  dynamicStyles.joinButton,
+                  !meetingId.trim() && dynamicStyles.joinButtonDisabled
                 ]}>
                   Join
                 </Text>
               </TouchableOpacity>
             </View>
             
-            <View style={styles.modalContent}>
-              <Text style={styles.inputLabel}>Meeting ID</Text>
+            <View style={dynamicStyles.modalContent}>
+              <Text style={dynamicStyles.inputLabel}>Meeting ID</Text>
               <TextInput
-                style={styles.input}
+                style={dynamicStyles.input}
                 placeholder="Enter meeting ID"
+                placeholderTextColor={colors.textLight}
                 value={meetingId}
                 onChangeText={setMeetingId}
                 autoFocus
@@ -665,10 +1068,11 @@ export default function MeetingCallScreen() {
                 autoCapitalize="none"
               />
               
-              <Text style={styles.inputLabel}>Passcode (Optional)</Text>
+              <Text style={dynamicStyles.inputLabel}>Passcode (Optional)</Text>
               <TextInput
-                style={styles.input}
+                style={dynamicStyles.input}
                 placeholder="Enter meeting passcode"
+                placeholderTextColor={colors.textLight}
                 value={meetingPassword}
                 onChangeText={setMeetingPassword}
                 secureTextEntry
@@ -686,30 +1090,31 @@ export default function MeetingCallScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowInviteModal(false)}
       >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer}>
+          <View style={dynamicStyles.modalHeader}>
             <TouchableOpacity onPress={() => setShowInviteModal(false)}>
-              <Text style={styles.cancelButton}>Cancel</Text>
+              <Text style={dynamicStyles.cancelButton}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Invite to Meeting</Text>
+            <Text style={dynamicStyles.modalTitle}>Invite to Meeting</Text>
             <TouchableOpacity 
               onPress={inviteToMeeting}
               disabled={!inviteEmail.trim()}
             >
               <Text style={[
-                styles.joinButton,
-                !inviteEmail.trim() && styles.joinButtonDisabled
+                dynamicStyles.joinButton,
+                !inviteEmail.trim() && dynamicStyles.joinButtonDisabled
               ]}>
                 Send
               </Text>
             </TouchableOpacity>
           </View>
           
-          <View style={styles.modalContent}>
-            <Text style={styles.inputLabel}>Email Address</Text>
+          <View style={dynamicStyles.modalContent}>
+            <Text style={dynamicStyles.inputLabel}>Email Address</Text>
             <TextInput
-              style={styles.input}
+              style={dynamicStyles.input}
               placeholder="Enter email address"
+              placeholderTextColor={colors.textLight}
               value={inviteEmail}
               onChangeText={setInviteEmail}
               autoFocus
@@ -717,10 +1122,11 @@ export default function MeetingCallScreen() {
               autoCapitalize="none"
             />
             
-            <Text style={styles.inputLabel}>Message (Optional)</Text>
+            <Text style={dynamicStyles.inputLabel}>Message (Optional)</Text>
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[dynamicStyles.input, dynamicStyles.textArea]}
               placeholder="Add a personal message..."
+              placeholderTextColor={colors.textLight}
               value={inviteMessage}
               onChangeText={setInviteMessage}
               multiline
@@ -733,278 +1139,3 @@ export default function MeetingCallScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-  },
-  backButton: {
-    padding: 8,
-    marginRight: 8,
-  },
-  headerSpacer: {
-    width: 40, // Same width as back button to center title
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#212529',
-  },
-  refreshButton: {
-    padding: 8,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
-  },
-  quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    backgroundColor: '#fff',
-    marginBottom: 8,
-    gap: 12,
-  },
-  actionButton: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 12,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    minHeight: 70,
-    minWidth: 90,
-    maxWidth: 120,
-  },
-  actionButtonText: {
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#495057',
-    textAlign: 'center',
-  },
-  meetingsList: {
-    padding: 20,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#212529',
-    marginBottom: 12,
-  },
-  horizontalList: {
-    paddingRight: 20,
-  },
-  meetingCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-    minWidth: 280,
-  },
-  ongoingMeeting: {
-    borderColor: '#34C759',
-    borderWidth: 2,
-  },
-  meetingHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  meetingTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212529',
-    flex: 1,
-    marginRight: 8,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusOngoing: {
-    backgroundColor: '#34C759',
-  },
-  statusScheduled: {
-    backgroundColor: '#007AFF',
-  },
-  statusCreated: {
-    backgroundColor: '#FF9500',
-  },
-  statusEnded: {
-    backgroundColor: '#8E8E93',
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  meetingDetails: {
-    marginBottom: 12,
-  },
-  meetingHost: {
-    fontSize: 14,
-    color: '#495057',
-    marginBottom: 4,
-  },
-  meetingTime: {
-    fontSize: 14,
-    color: '#6c757d',
-    marginBottom: 8,
-  },
-  meetingMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  detailText: {
-    fontSize: 12,
-    color: '#6c757d',
-  },
-  meetingActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-  },
-  actionIcon: {
-    padding: 8,
-    borderRadius: 6,
-    backgroundColor: '#f8f9fa',
-  },
-  emptyState: {
-    alignItems: 'center',
-    padding: 40,
-    marginTop: 40,
-  },
-  emptyStateText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#495057',
-    marginTop: 16,
-    textAlign: 'center',
-  },
-  emptyStateSubtext: {
-    fontSize: 14,
-    color: '#6c757d',
-    marginTop: 8,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  createFirstButton: {
-    marginTop: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-  },
-  createFirstButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  joinModalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginHorizontal: 20,
-    width: '90%',
-    maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-  },
-  cancelButton: {
-    fontSize: 16,
-    color: '#007AFF',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#212529',
-  },
-  joinButton: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  joinButtonDisabled: {
-    color: '#adb5bd',
-  },
-  modalContent: {
-    padding: 20,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#495057',
-    marginBottom: 8,
-    marginTop: 16,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-});

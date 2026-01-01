@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -14,6 +14,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useAuth } from '../context/auth';
 
@@ -30,6 +31,7 @@ interface Bookmark {
 export default function ManageBookmarksScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const colors = useThemeColors();
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -38,7 +40,7 @@ export default function ManageBookmarksScreen() {
   const [newBookmarkDescription, setNewBookmarkDescription] = useState('');
   const [selectedColor, setSelectedColor] = useState('#007AFF');
 
-  const colors = [
+  const bookmarkColors = [
     '#007AFF', '#34C759', '#FF9500', '#FF3B30', 
     '#AF52DE', '#5856D6', '#8E44AD', '#E74C3C'
   ];
@@ -139,25 +141,246 @@ export default function ManageBookmarksScreen() {
     });
   };
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    headerTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    addButton: {
+      padding: 4,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      marginTop: 8,
+      color: colors.textSecondary,
+    },
+    content: {
+      flex: 1,
+      padding: 16,
+    },
+    emptyState: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingVertical: 64,
+    },
+    emptyStateTitle: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    emptyStateDescription: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      lineHeight: 20,
+      marginBottom: 24,
+    },
+    createFirstButton: {
+      backgroundColor: '#007AFF',
+      paddingVertical: 12,
+      paddingHorizontal: 24,
+      borderRadius: 8,
+    },
+    createFirstButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    bookmarkCard: {
+      backgroundColor: colors.card,
+      borderRadius: 8,
+      padding: 16,
+      marginBottom: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.1,
+      shadowRadius: 2,
+      elevation: 2,
+    },
+    bookmarkHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    bookmarkActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: 'auto',
+    },
+    chevron: {
+      marginLeft: 8,
+    },
+    bookmarkColorIndicator: {
+      width: 16,
+      height: 16,
+      borderRadius: 8,
+      marginRight: 12,
+    },
+    bookmarkInfo: {
+      flex: 1,
+    },
+    bookmarkName: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    bookmarkDescription: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginBottom: 4,
+    },
+    bookmarkMeta: {
+      fontSize: 12,
+      color: colors.textLight,
+    },
+    deleteButton: {
+      padding: 8,
+    },
+    modalOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    modalContainer: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      width: '100%',
+      maxWidth: 400,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    modalContent: {
+      padding: 20,
+    },
+    inputLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 8,
+      marginTop: 16,
+    },
+    textInput: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      padding: 12,
+      fontSize: 16,
+      color: colors.text,
+      backgroundColor: colors.surface,
+    },
+    textArea: {
+      height: 80,
+      textAlignVertical: 'top',
+    },
+    colorPicker: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+      marginTop: 8,
+    },
+    colorOption: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    selectedColorOption: {
+      borderColor: colors.text,
+    },
+    modalActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      padding: 20,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      gap: 12,
+    },
+    cancelButton: {
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    cancelButtonText: {
+      color: colors.textSecondary,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    createButton: {
+      backgroundColor: '#007AFF',
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderRadius: 8,
+    },
+    createButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '600',
+    },
+  }), [colors]);
+
   const renderBookmarkItem = ({ item }: { item: Bookmark }) => (
     <TouchableOpacity 
-      style={styles.bookmarkCard}
+      style={dynamicStyles.bookmarkCard}
       onPress={() => handleBookmarkPress(item)}
     >
-      <View style={styles.bookmarkHeader}>
-        <View style={[styles.bookmarkColorIndicator, { backgroundColor: item.color }]} />
-        <View style={styles.bookmarkInfo}>
-          <Text style={styles.bookmarkName}>{item.name}</Text>
+      <View style={dynamicStyles.bookmarkHeader}>
+        <View style={[dynamicStyles.bookmarkColorIndicator, { backgroundColor: item.color }]} />
+        <View style={dynamicStyles.bookmarkInfo}>
+          <Text style={dynamicStyles.bookmarkName}>{item.name}</Text>
           {item.description && (
-            <Text style={styles.bookmarkDescription}>{item.description}</Text>
+            <Text style={dynamicStyles.bookmarkDescription}>{item.description}</Text>
           )}
-          <Text style={styles.bookmarkMeta}>
+          <Text style={dynamicStyles.bookmarkMeta}>
             {item.file_count} file{item.file_count !== 1 ? 's' : ''}
           </Text>
         </View>
-        <View style={styles.bookmarkActions}>
+        <View style={dynamicStyles.bookmarkActions}>
           <TouchableOpacity
-            style={styles.deleteButton}
+            style={dynamicStyles.deleteButton}
             onPress={(e) => {
               e.stopPropagation();
               handleDeleteBookmark(item);
@@ -165,7 +388,7 @@ export default function ManageBookmarksScreen() {
           >
             <Ionicons name="trash-outline" size={20} color="#FF3B30" />
           </TouchableOpacity>
-          <Ionicons name="chevron-forward" size={20} color="#C7C7CC" style={styles.chevron} />
+          <Ionicons name="chevron-forward" size={20} color={colors.textLight} style={dynamicStyles.chevron} />
         </View>
       </View>
     </TouchableOpacity>
@@ -175,9 +398,9 @@ export default function ManageBookmarksScreen() {
     <TouchableOpacity
       key={color}
       style={[
-        styles.colorOption,
+        dynamicStyles.colorOption,
         { backgroundColor: color },
-        selectedColor === color && styles.selectedColorOption
+        selectedColor === color && dynamicStyles.selectedColorOption
       ]}
       onPress={() => setSelectedColor(color)}
     >
@@ -189,31 +412,31 @@ export default function ManageBookmarksScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Manage Bookmarks</Text>
+          <Text style={dynamicStyles.headerTitle}>Bookmarks</Text>
           <View style={{ width: 24 }} />
         </View>
-        <View style={styles.loadingContainer}>
+        <View style={dynamicStyles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading bookmarks...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading bookmarks...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={dynamicStyles.container}>
+      <View style={dynamicStyles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Manage Bookmarks</Text>
+        <Text style={dynamicStyles.headerTitle}>Manage Bookmarks</Text>
         <TouchableOpacity
-          style={styles.addButton}
+          style={dynamicStyles.addButton}
           onPress={() => setShowCreateModal(true)}
         >
           <Ionicons name="add" size={24} color="#007AFF" />
@@ -221,21 +444,21 @@ export default function ManageBookmarksScreen() {
       </View>
 
       <ScrollView 
-        style={styles.content}
+        style={dynamicStyles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {bookmarks.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="bookmark-outline" size={64} color="#C7C7CC" />
-            <Text style={styles.emptyStateTitle}>No bookmarks yet</Text>
-            <Text style={styles.emptyStateDescription}>
+          <View style={dynamicStyles.emptyState}>
+            <Ionicons name="bookmark-outline" size={64} color={colors.textLight} />
+            <Text style={dynamicStyles.emptyStateTitle}>No bookmarks yet</Text>
+            <Text style={dynamicStyles.emptyStateDescription}>
               Create your first bookmark to organize your documents
             </Text>
             <TouchableOpacity
-              style={styles.createFirstButton}
+              style={dynamicStyles.createFirstButton}
               onPress={() => setShowCreateModal(true)}
             >
-              <Text style={styles.createFirstButtonText}>Create Bookmark</Text>
+              <Text style={dynamicStyles.createFirstButtonText}>Create Bookmark</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -251,54 +474,54 @@ export default function ManageBookmarksScreen() {
 
       {/* Create Bookmark Modal */}
       {showCreateModal && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Create Bookmark</Text>
+        <View style={dynamicStyles.modalOverlay}>
+          <View style={dynamicStyles.modalContainer}>
+            <View style={dynamicStyles.modalHeader}>
+              <Text style={dynamicStyles.modalTitle}>Create Bookmark</Text>
               <TouchableOpacity onPress={() => setShowCreateModal(false)}>
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.modalContent}>
-              <Text style={styles.inputLabel}>Name *</Text>
+            <View style={dynamicStyles.modalContent}>
+              <Text style={dynamicStyles.inputLabel}>Name *</Text>
               <TextInput
-                style={styles.textInput}
+                style={dynamicStyles.textInput}
                 value={newBookmarkName}
                 onChangeText={setNewBookmarkName}
                 placeholder="Enter bookmark name"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textLight}
               />
 
-              <Text style={styles.inputLabel}>Description</Text>
+              <Text style={dynamicStyles.inputLabel}>Description</Text>
               <TextInput
-                style={[styles.textInput, styles.textArea]}
+                style={[dynamicStyles.textInput, dynamicStyles.textArea]}
                 value={newBookmarkDescription}
                 onChangeText={setNewBookmarkDescription}
                 placeholder="Enter description (optional)"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textLight}
                 multiline
                 numberOfLines={3}
               />
 
-              <Text style={styles.inputLabel}>Color</Text>
-              <View style={styles.colorPicker}>
-                {colors.map(renderColorOption)}
+              <Text style={dynamicStyles.inputLabel}>Color</Text>
+              <View style={dynamicStyles.colorPicker}>
+                {bookmarkColors.map(renderColorOption)}
               </View>
             </View>
 
-            <View style={styles.modalActions}>
+            <View style={dynamicStyles.modalActions}>
               <TouchableOpacity
-                style={styles.cancelButton}
+                style={dynamicStyles.cancelButton}
                 onPress={() => setShowCreateModal(false)}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={dynamicStyles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.createButton}
+                style={dynamicStyles.createButton}
                 onPress={handleCreateBookmark}
               >
-                <Text style={styles.createButtonText}>Create</Text>
+                <Text style={dynamicStyles.createButtonText}>Create</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -308,222 +531,3 @@ export default function ManageBookmarksScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000',
-  },
-  addButton: {
-    padding: 4,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 8,
-    color: '#666',
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 64,
-  },
-  emptyStateTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#000',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyStateDescription: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  createFirstButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-  },
-  createFirstButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  bookmarkCard: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  bookmarkHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  bookmarkActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginLeft: 'auto',
-  },
-  chevron: {
-    marginLeft: 8,
-  },
-  bookmarkColorIndicator: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  bookmarkInfo: {
-    flex: 1,
-  },
-  bookmarkName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000',
-    marginBottom: 4,
-  },
-  bookmarkDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  bookmarkMeta: {
-    fontSize: 12,
-    color: '#999',
-  },
-  deleteButton: {
-    padding: 8,
-  },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    width: '100%',
-    maxWidth: 400,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000',
-  },
-  modalContent: {
-    padding: 20,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000',
-    marginBottom: 8,
-    marginTop: 16,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    color: '#000',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  colorPicker: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 8,
-  },
-  colorOption: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  selectedColorOption: {
-    borderColor: '#000',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    gap: 12,
-  },
-  cancelButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  cancelButtonText: {
-    color: '#666',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  createButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  createButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});

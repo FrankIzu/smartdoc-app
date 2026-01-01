@@ -11,6 +11,17 @@ export default function ProcessScanScreen() {
   const [currentImage, setCurrentImage] = useState(imageUri);
   const [enhancementLevel, setEnhancementLevel] = useState('auto');
 
+  // Check if imageUri is valid
+  React.useEffect(() => {
+    if (!imageUri) {
+      Alert.alert(
+        'No Image',
+        'No image was provided. Please scan or select an image first.',
+        [{ text: 'OK', onPress: () => router.back() }]
+      );
+    }
+  }, [imageUri]);
+
   const handleClose = () => {
     if (processing) {
       Alert.alert('Processing', 'Image is being processed. Are you sure you want to cancel?', [
@@ -119,8 +130,12 @@ export default function ProcessScanScreen() {
           style={styles.image}
           resizeMode="contain"
           onError={(error) => {
-            console.error('Image load error:', error);
-            Alert.alert('Error', 'Failed to load image');
+            console.error('Image load error:', error.nativeEvent?.error || error);
+            Alert.alert(
+              'Error', 
+              'Failed to load image. Please try scanning again.',
+              [{ text: 'OK', onPress: () => router.back() }]
+            );
           }}
         />
       </View>

@@ -1,10 +1,13 @@
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Linking,
     Platform,
     ScrollView,
     StyleSheet,
@@ -78,6 +81,8 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
   const { user, logout } = useEnhanced2FAAuth();
+  const { theme, setTheme } = useTheme();
+  const colors = useThemeColors();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [loading, setLoading] = useState(true);
@@ -134,7 +139,7 @@ export default function SettingsScreen() {
 
       // Set default preferences since we don't have a specific endpoint yet
       const defaultPreferences: UserPreferences = {
-        theme: 'light',
+        theme: theme, // Use current theme from context
         notifications: {
           push_enabled: true,
           email_enabled: true,
@@ -275,15 +280,15 @@ export default function SettingsScreen() {
     }
 
     return (
-      <TouchableOpacity style={styles.infoItem} onPress={onPress} disabled={!onPress}>
-        <View style={styles.settingIcon}>
-          <Ionicons name={icon as any} size={20} color="#666" />
+      <TouchableOpacity style={dynamicStyles.infoItem} onPress={onPress} disabled={!onPress}>
+        <View style={dynamicStyles.settingIcon}>
+          <Ionicons name={icon as any} size={20} color={colors.textSecondary} />
         </View>
-        <View style={styles.settingContent}>
-          <Text style={styles.settingTitle}>{title}</Text>
-          <Text style={styles.settingValue}>{value}</Text>
+        <View style={dynamicStyles.settingContent}>
+          <Text style={dynamicStyles.settingTitle}>{title}</Text>
+          <Text style={dynamicStyles.settingValue}>{value}</Text>
         </View>
-        {onPress && <Ionicons name="chevron-forward" size={20} color="#666" />}
+        {onPress && <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />}
       </TouchableOpacity>
     );
   };
@@ -335,16 +340,16 @@ export default function SettingsScreen() {
     }
 
     return (
-      <View style={styles.section}>
-        <TouchableOpacity style={styles.sectionHeader} onPress={onToggle}>
-          <Text style={[styles.sectionTitle, isDanger && styles.dangerText]}>{title}</Text>
+      <View style={dynamicStyles.section}>
+        <TouchableOpacity style={dynamicStyles.sectionHeader} onPress={onToggle}>
+          <Text style={[dynamicStyles.sectionTitle, isDanger && dynamicStyles.dangerText]}>{title}</Text>
           <Ionicons 
             name={isExpanded ? "chevron-up" : "chevron-down"} 
             size={20} 
-            color={isDanger ? "#FF3B30" : "#666"} 
+            color={isDanger ? "#FF3B30" : colors.textSecondary} 
           />
         </TouchableOpacity>
-        {isExpanded && <View style={styles.sectionContent}>{children}</View>}
+        {isExpanded && <View style={dynamicStyles.sectionContent}>{children}</View>}
       </View>
     );
   };
@@ -400,8 +405,8 @@ export default function SettingsScreen() {
     };
 
     return (
-      <View style={[styles.statusIndicator, { backgroundColor: colors[status] }]}>
-        <Text style={styles.statusText}>{symbols[status]}</Text>
+      <View style={[dynamicStyles.statusIndicator, { backgroundColor: colors[status] }]}>
+        <Text style={dynamicStyles.statusText}>{symbols[status]}</Text>
       </View>
     );
   };
@@ -434,48 +439,359 @@ export default function SettingsScreen() {
     const isDisabled = disabled || status === 'placeholder';
     
     return (
-      <View style={[styles.settingItem, isDisabled && styles.disabledItem]} key={feature}>
-      <View style={styles.settingIcon}>
-          <Ionicons name={icon as any} size={20} color={isDisabled ? "#ccc" : "#666"} />
+      <View style={[dynamicStyles.settingItem, isDisabled && dynamicStyles.disabledItem]} key={feature}>
+      <View style={dynamicStyles.settingIcon}>
+          <Ionicons name={icon as any} size={20} color={isDisabled ? colors.textLight : colors.textSecondary} />
       </View>
-      <View style={styles.settingContent}>
-          <View style={styles.settingTitleRow}>
-            <Text style={[styles.settingTitle, isDisabled && styles.disabledText]}>{title}</Text>
+      <View style={dynamicStyles.settingContent}>
+          <View style={dynamicStyles.settingTitleRow}>
+            <Text style={[dynamicStyles.settingTitle, isDisabled && dynamicStyles.disabledText]}>{title}</Text>
             <StatusIndicator status={status} />
           </View>
           {subtitle && (
-            <Text style={[styles.settingSubtitle, isDisabled && styles.disabledText]}>{subtitle}</Text>
+            <Text style={[dynamicStyles.settingSubtitle, isDisabled && dynamicStyles.disabledText]}>{subtitle}</Text>
           )}
       </View>
       <Switch
         value={value}
         onValueChange={onToggle}
           disabled={isDisabled}
-          trackColor={{ false: '#E5E5EA', true: '#34C759' }}
+          trackColor={{ false: colors.border, true: '#34C759' }}
           thumbColor={value ? '#fff' : '#fff'}
       />
     </View>
   );
   };
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: colors.headerBackground,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    headerTitle: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: colors.text,
+    },
+    scrollView: {
+      flex: 1,
+    },
+    section: {
+      backgroundColor: colors.sectionBackground,
+      marginTop: 20,
+    },
+    sectionTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+      flex: 1,
+    },
+    dangerTitle: {
+      color: '#FF3B30',
+    },
+    profileCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    profileIcon: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: '#007AFF',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 16,
+    },
+    profileInfo: {
+      flex: 1,
+    },
+    profileName: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    profileEmail: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginBottom: 8,
+    },
+    adminBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#FF6B35',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+      alignSelf: 'flex-start',
+    },
+    adminText: {
+      fontSize: 12,
+      color: '#fff',
+      fontWeight: '600',
+      marginLeft: 4,
+    },
+    settingItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    disabledSetting: {
+      opacity: 0.5,
+    },
+    infoItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    dangerItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    settingIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 16,
+    },
+    settingContent: {
+      flex: 1,
+    },
+    settingTitle: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.text,
+      marginBottom: 2,
+    },
+    settingSubtitle: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      lineHeight: 16,
+    },
+    settingValue: {
+      fontSize: 14,
+      color: '#007AFF',
+      fontWeight: '500',
+    },
+    dangerText: {
+      color: '#FF3B30',
+      fontWeight: '600',
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: colors.background,
+    },
+    loadingText: {
+      marginTop: 12,
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    collapsibleHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: colors.surface,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    testButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      marginVertical: 8,
+      backgroundColor: colors.surface,
+      borderRadius: 8,
+      marginHorizontal: 20,
+    },
+    testButtonText: {
+      fontSize: 14,
+      color: '#007AFF',
+      fontWeight: '500',
+      marginLeft: 12,
+    },
+    actionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      marginVertical: 4,
+      backgroundColor: colors.surface,
+      borderRadius: 8,
+      marginHorizontal: 20,
+    },
+    actionButtonText: {
+      fontSize: 14,
+      color: '#007AFF',
+      fontWeight: '500',
+      marginLeft: 12,
+    },
+    dangerButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      marginVertical: 4,
+      backgroundColor: '#fff5f5',
+      borderRadius: 8,
+      marginHorizontal: 20,
+    },
+    dangerButtonText: {
+      fontSize: 14,
+      color: '#FF3B30',
+      fontWeight: '500',
+      marginLeft: 12,
+    },
+    deviceInfoSection: {
+      marginTop: 16,
+      marginHorizontal: 20,
+      padding: 16,
+      backgroundColor: colors.surface,
+      borderRadius: 8,
+    },
+    deviceInfoTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    deviceInfoText: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      marginBottom: 4,
+    },
+    settingTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    statusIndicator: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: '#64748b',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 8,
+    },
+    statusText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#fff',
+    },
+    implementationNote: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 4,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: colors.surface,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    sectionContent: {
+      paddingTop: 0,
+    },
+    disabledItem: {
+      opacity: 0.5,
+    },
+    disabledText: {
+      color: colors.textLight,
+    },
+    themeOptions: {
+      paddingHorizontal: 20,
+      paddingBottom: 16,
+      gap: 12,
+    },
+    themeOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 12,
+      borderRadius: 8,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    themeOptionActive: {
+      backgroundColor: '#e3f2fd',
+      borderColor: '#007AFF',
+      borderWidth: 2,
+    },
+    themeIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 6,
+      borderWidth: 1,
+      marginRight: 12,
+      overflow: 'hidden',
+    },
+    themeIconInner: {
+      width: '100%',
+      height: '100%',
+    },
+    themeOptionText: {
+      flex: 1,
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.text,
+    },
+    themeOptionTextActive: {
+      color: '#007AFF',
+      fontWeight: '600',
+    },
+  }), [colors]);
+
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading settings...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading settings...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Settings</Text>
+    <SafeAreaView style={dynamicStyles.container}>
+      <View style={dynamicStyles.header}>
+        <Text style={dynamicStyles.headerTitle}>Settings</Text>
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView style={dynamicStyles.scrollView} showsVerticalScrollIndicator={false}>
 
         {/* Notifications Section */}
         {preferences && (
@@ -637,7 +953,7 @@ export default function SettingsScreen() {
 
           {biometricAvailable && (
             <TouchableOpacity 
-              style={styles.testButton} 
+              style={dynamicStyles.testButton} 
               onPress={async () => {
                 try {
                   const success = await deviceSecurityService.authenticateWithBiometrics('Test biometric authentication');
@@ -649,15 +965,15 @@ export default function SettingsScreen() {
                 }
               }}
             >
-              <View style={styles.settingIcon}>
+              <View style={dynamicStyles.settingIcon}>
                 <Ionicons name="finger-print" size={20} color="#007AFF" />
               </View>
-              <Text style={styles.testButtonText}>Test Biometric Authentication</Text>
+              <Text style={dynamicStyles.testButtonText}>Test Biometric Authentication</Text>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity 
-            style={styles.actionButton} 
+            style={dynamicStyles.actionButton} 
             onPress={async () => {
               try {
                 const score = await deviceSecurityService.calculateRiskScore();
@@ -673,14 +989,14 @@ export default function SettingsScreen() {
               }
             }}
           >
-            <View style={styles.settingIcon}>
+            <View style={dynamicStyles.settingIcon}>
               <Ionicons name="analytics" size={20} color="#007AFF" />
             </View>
-            <Text style={styles.actionButtonText}>Check Security Risk Score</Text>
+            <Text style={dynamicStyles.actionButtonText}>Check Security Risk Score</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={styles.actionButton} 
+            style={dynamicStyles.actionButton} 
             onPress={async () => {
               try {
                 const response = await api.getRegisteredDevices();
@@ -713,14 +1029,14 @@ export default function SettingsScreen() {
               }
             }}
           >
-            <View style={styles.settingIcon}>
+            <View style={dynamicStyles.settingIcon}>
               <Ionicons name="phone-portrait" size={20} color="#007AFF" />
             </View>
-            <Text style={styles.actionButtonText}>View Registered Devices</Text>
+            <Text style={dynamicStyles.actionButtonText}>View Registered Devices</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={styles.dangerButton} 
+            style={dynamicStyles.dangerButton} 
             onPress={() => {
               Alert.alert(
                 'Clear All Device Trust',
@@ -751,19 +1067,19 @@ export default function SettingsScreen() {
               );
             }}
           >
-            <View style={styles.settingIcon}>
+            <View style={dynamicStyles.settingIcon}>
               <Ionicons name="trash" size={20} color="#FF3B30" />
             </View>
-            <Text style={styles.dangerButtonText}>Clear All Device Trust</Text>
+            <Text style={dynamicStyles.dangerButtonText}>Clear All Device Trust</Text>
           </TouchableOpacity>
 
           {deviceInfo && (
-            <View style={styles.deviceInfoSection}>
-              <Text style={styles.deviceInfoTitle}>Device Information</Text>
-              <Text style={styles.deviceInfoText}>Device ID: {deviceInfo.deviceId.substring(0, 12)}...</Text>
-              <Text style={styles.deviceInfoText}>Platform: {deviceInfo.platform}</Text>
-              <Text style={styles.deviceInfoText}>OS Version: {deviceInfo.osVersion}</Text>
-              <Text style={styles.deviceInfoText}>App Version: {deviceInfo.appVersion}</Text>
+            <View style={dynamicStyles.deviceInfoSection}>
+              <Text style={dynamicStyles.deviceInfoTitle}>Device Information</Text>
+              <Text style={dynamicStyles.deviceInfoText}>Device ID: {deviceInfo.deviceId.substring(0, 12)}...</Text>
+              <Text style={dynamicStyles.deviceInfoText}>Platform: {deviceInfo.platform}</Text>
+              <Text style={dynamicStyles.deviceInfoText}>OS Version: {deviceInfo.osVersion}</Text>
+              <Text style={dynamicStyles.deviceInfoText}>App Version: {deviceInfo.appVersion}</Text>
             </View>
           )}
         </CollapsibleSection>
@@ -858,6 +1174,54 @@ export default function SettingsScreen() {
             isExpanded={expandedSections.display}
             onToggle={() => toggleSection('display')}
           >
+            {/* Theme Selector */}
+            <View style={dynamicStyles.settingItem}>
+              <View style={dynamicStyles.settingIcon}>
+                <Ionicons name="color-palette-outline" size={20} color={colors.textSecondary} />
+              </View>
+              <View style={dynamicStyles.settingContent}>
+                <Text style={dynamicStyles.settingTitle}>Theme</Text>
+                <Text style={dynamicStyles.settingSubtitle}>Choose your preferred color scheme</Text>
+              </View>
+            </View>
+            <View style={dynamicStyles.themeOptions}>
+              <TouchableOpacity
+                style={[dynamicStyles.themeOption, theme === 'light' && dynamicStyles.themeOptionActive]}
+                onPress={() => setTheme('light')}
+              >
+                <View style={[dynamicStyles.themeIcon, { backgroundColor: '#ffffff', borderColor: '#e0e0e0' }]}>
+                  <View style={[dynamicStyles.themeIconInner, { backgroundColor: '#f5f5f5' }]} />
+                </View>
+                <Text style={[dynamicStyles.themeOptionText, theme === 'light' && dynamicStyles.themeOptionTextActive]}>
+                  Light
+                </Text>
+                {theme === 'light' && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.themeOption, theme === 'dark' && dynamicStyles.themeOptionActive]}
+                onPress={() => setTheme('dark')}
+              >
+                <View style={[dynamicStyles.themeIcon, { backgroundColor: '#1a1a1a', borderColor: '#333' }]}>
+                  <View style={[dynamicStyles.themeIconInner, { backgroundColor: '#2a2a2a' }]} />
+                </View>
+                <Text style={[dynamicStyles.themeOptionText, theme === 'dark' && dynamicStyles.themeOptionTextActive]}>
+                  Dark
+                </Text>
+                {theme === 'dark' && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.themeOption, theme === 'system' && dynamicStyles.themeOptionActive]}
+                onPress={() => setTheme('system')}
+              >
+                <View style={[dynamicStyles.themeIcon, { backgroundColor: '#ffffff', borderColor: '#e0e0e0' }]}>
+                  <View style={[dynamicStyles.themeIconInner, { backgroundColor: '#1a1a1a', width: '50%' }]} />
+                </View>
+                <Text style={[dynamicStyles.themeOptionText, theme === 'system' && dynamicStyles.themeOptionTextActive]}>
+                  System
+                </Text>
+                {theme === 'system' && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
+              </TouchableOpacity>
+            </View>
             <EnhancedSettingItem
               icon="resize-outline"
               title="Show File Sizes"
@@ -1028,21 +1392,21 @@ export default function SettingsScreen() {
           {/* User Profile Info */}
           {profile && (
             <>
-              <View style={styles.profileCard}>
-                <View style={styles.profileIcon}>
+              <View style={dynamicStyles.profileCard}>
+                <View style={dynamicStyles.profileIcon}>
                   <Ionicons name="person" size={32} color="#fff" />
                 </View>
-                <View style={styles.profileInfo}>
-                  <Text style={styles.profileName}>
+                <View style={dynamicStyles.profileInfo}>
+                  <Text style={dynamicStyles.profileName}>
                     {profile.first_name || profile.last_name
                       ? `${profile.first_name} ${profile.last_name}`.trim()
                       : profile.username}
                   </Text>
-                  <Text style={styles.profileEmail}>{profile.email}</Text>
+                  <Text style={dynamicStyles.profileEmail}>{profile.email}</Text>
                   {profile.is_admin && (
-                    <View style={styles.adminBadge}>
+                    <View style={dynamicStyles.adminBadge}>
                       <Ionicons name="shield" size={12} color="#fff" />
-                      <Text style={styles.adminText}>Admin</Text>
+                      <Text style={dynamicStyles.adminText}>Admin</Text>
                     </View>
                   )}
                 </View>
@@ -1067,15 +1431,15 @@ export default function SettingsScreen() {
           )}
           
           <TouchableOpacity 
-            style={styles.dangerItem}
+            style={dynamicStyles.dangerItem}
             onPress={handleSignOut}
           >
-            <View style={styles.settingIcon}>
+            <View style={dynamicStyles.settingIcon}>
               <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
             </View>
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingTitle, styles.dangerText]}>Sign Out</Text>
-              <Text style={styles.settingSubtitle}>Sign out of your account</Text>
+            <View style={dynamicStyles.settingContent}>
+              <Text style={[dynamicStyles.settingTitle, dynamicStyles.dangerText]}>Sign Out</Text>
+              <Text style={dynamicStyles.settingSubtitle}>Sign out of your account</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#FF3B30" />
           </TouchableOpacity>
@@ -1084,273 +1448,3 @@ export default function SettingsScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  section: {
-    backgroundColor: '#fff',
-    marginTop: 20,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    flex: 1,
-  },
-  dangerTitle: {
-    color: '#FF3B30',
-  },
-  profileCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  profileIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#007AFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  profileInfo: {
-    flex: 1,
-  },
-  profileName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  profileEmail: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
-  },
-  adminBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FF6B35',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    alignSelf: 'flex-start',
-  },
-  adminText: {
-    fontSize: 12,
-    color: '#fff',
-    fontWeight: '600',
-    marginLeft: 4,
-  },
-  settingItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  disabledSetting: {
-    opacity: 0.5,
-  },
-  infoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  dangerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  settingIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  settingContent: {
-    flex: 1,
-  },
-  settingTitle: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 2,
-  },
-  settingSubtitle: {
-    fontSize: 12,
-    color: '#666',
-    lineHeight: 16,
-  },
-  settingValue: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
-  },
-  dangerText: {
-    color: '#FF3B30',
-    fontWeight: '600',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#666',
-  },
-  collapsibleHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#f8f9fa',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  testButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    marginVertical: 8,
-    backgroundColor: '#f0f8ff',
-    borderRadius: 8,
-    marginHorizontal: 20,
-  },
-  testButtonText: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
-    marginLeft: 12,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    marginVertical: 4,
-    backgroundColor: '#f0f8ff',
-    borderRadius: 8,
-    marginHorizontal: 20,
-  },
-  actionButtonText: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
-    marginLeft: 12,
-  },
-  dangerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    marginVertical: 4,
-    backgroundColor: '#fff5f5',
-    borderRadius: 8,
-    marginHorizontal: 20,
-  },
-  dangerButtonText: {
-    fontSize: 14,
-    color: '#FF3B30',
-    fontWeight: '500',
-    marginLeft: 12,
-  },
-  deviceInfoSection: {
-    marginTop: 16,
-    marginHorizontal: 20,
-    padding: 16,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-  },
-  deviceInfoTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  deviceInfoText: {
-    fontSize: 12,
-    color: '#666',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    marginBottom: 4,
-  },
-  settingTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  statusIndicator: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#64748b',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  implementationNote: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#f8f9fa',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  sectionContent: {
-    paddingTop: 0,
-  },
-  disabledItem: {
-    opacity: 0.5,
-  },
-  disabledText: {
-    color: '#ccc',
-  },
-}); 

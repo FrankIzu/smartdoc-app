@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -13,6 +13,7 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
@@ -43,6 +44,7 @@ function DashboardScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
   const { uploadFromGallery, uploadFromDocuments } = useFileStore();
+  const colors = useThemeColors();
   const isAuthenticated = !!user;
   const [stats, setStats] = useState({
     totalDocuments: 0,
@@ -363,19 +365,19 @@ function DashboardScreen() {
     onPress?: () => void;
     badge?: number;
   }) => (
-    <TouchableOpacity style={[styles.statCard, { borderLeftColor: color }]} onPress={onPress}>
-      <View style={styles.statContent}>
-        <View style={styles.statHeader}>
+    <TouchableOpacity style={[dynamicStyles.statCard, { borderLeftColor: color }]} onPress={onPress}>
+      <View style={dynamicStyles.statContent}>
+        <View style={dynamicStyles.statHeader}>
           <View style={{ position: 'relative' }}>
             <Ionicons name={icon as any} size={24} color={color} />
             {badge != null && badge > 0 ? (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{badge > 99 ? '99+' : String(badge)}</Text>
+              <View style={dynamicStyles.badge}>
+                <Text style={dynamicStyles.badgeText}>{badge > 99 ? '99+' : String(badge)}</Text>
               </View>
             ) : null}
           </View>
         </View>
-        <Text style={styles.statTitle}>{title}</Text>
+        <Text style={dynamicStyles.statTitle}>{title}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -388,29 +390,29 @@ function DashboardScreen() {
     onPress: () => void;
     isNew?: boolean;
   }) => (
-    <TouchableOpacity style={styles.quickActionCard} onPress={onPress}>
-      <View style={[styles.quickActionIcon, { backgroundColor: color }]}>
+    <TouchableOpacity style={dynamicStyles.quickActionCard} onPress={onPress}>
+      <View style={[dynamicStyles.quickActionIcon, { backgroundColor: color }]}>
         <Ionicons name={icon as any} size={28} color="#fff" />
-        {isNew ? <View style={styles.newBadge}><Text style={styles.newBadgeText}>NEW</Text></View> : null}
+        {isNew ? <View style={dynamicStyles.newBadge}><Text style={dynamicStyles.newBadgeText}>NEW</Text></View> : null}
       </View>
-      <View style={styles.quickActionContent}>
-        <Text style={styles.quickActionTitle}>{title}</Text>
-        <Text style={styles.quickActionSubtitle}>{subtitle}</Text>
+      <View style={dynamicStyles.quickActionContent}>
+        <Text style={dynamicStyles.quickActionTitle}>{title}</Text>
+        <Text style={dynamicStyles.quickActionSubtitle}>{subtitle}</Text>
       </View>
       <Ionicons name="chevron-forward" size={20} color="#ccc" />
     </TouchableOpacity>
   );
 
   const ActivityItem = ({ activity, onPress }: { activity: RecentActivity; onPress?: () => void }) => (
-    <TouchableOpacity style={styles.activityItem} onPress={onPress}>
-      <View style={[styles.activityIcon, { backgroundColor: getActivityColor(activity.type) }]}>
+    <TouchableOpacity style={dynamicStyles.activityItem} onPress={onPress}>
+      <View style={[dynamicStyles.activityIcon, { backgroundColor: getActivityColor(activity.type) }]}>
         <Ionicons name={activity.icon as any} size={16} color="#fff" />
       </View>
-      <View style={styles.activityContent}>
-        <Text style={styles.activityTitle}>{activity.title}</Text>
-        <Text style={styles.activitySubtitle}>{activity.subtitle}</Text>
+      <View style={dynamicStyles.activityContent}>
+        <Text style={dynamicStyles.activityTitle}>{activity.title}</Text>
+        <Text style={dynamicStyles.activitySubtitle}>{activity.subtitle}</Text>
       </View>
-      <Text style={styles.activityTime}>{formatTimeAgo(activity.timestamp)}</Text>
+      <Text style={dynamicStyles.activityTime}>{formatTimeAgo(activity.timestamp)}</Text>
     </TouchableOpacity>
   );
 
@@ -515,7 +517,8 @@ function DashboardScreen() {
         setShowUploadOptions(true);
         break;
       case 'chat':
-        router.push('/(tabs)/chats');
+        // Navigate to user chat screen (user-to-user and workspace chats ONLY)
+        router.push('/user-chat');
         break;
       case 'form':
         router.push('/forms/create');
@@ -615,399 +618,10 @@ function DashboardScreen() {
     }, 1000); // Update every second
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* Connection Status Banner */}
-      {connectionStatus && !connectionStatus.success && (
-        <View style={styles.connectionBanner}>
-          <Ionicons name="warning" size={20} color="#f59e0b" />
-          <Text style={styles.connectionBannerText}>
-            {connectionStatus.message.includes('CORS') 
-              ? 'CORS Error: Please configure backend for web development'
-              : 'Connection Error: Check if backend is running'
-            }
-          </Text>
-        </View>
-      )}
-      
-      {/* Welcome Message for Non-Authenticated Users */}
-      {!user && (
-        <View style={styles.welcomeContainer}>
-          <View style={styles.welcomeCard}>
-            <Ionicons name="person-circle-outline" size={48} color="#007AFF" />
-            <Text style={styles.welcomeTitle}>Welcome to GrabDocs</Text>
-            <Text style={styles.welcomeSubtitle}>
-              Sign in to access your documents and see your personalized dashboard
-            </Text>
-            <TouchableOpacity
-              style={styles.welcomeButton}
-              onPress={() => router.push('/(auth)')}
-            >
-              <Text style={styles.welcomeButtonText}>Sign In</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      <ScrollView
-        style={styles.scrollView}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Image 
-              source={require('../../assets/images/grabdocs-logo-name.png')} 
-              style={styles.logoWithName}
-              resizeMode="contain"
-            />
-          </View>
-          <View style={styles.headerActions}>
-            {!user ? (
-              <TouchableOpacity
-                style={styles.headerButton}
-                onPress={() => router.push('/(auth)')}
-              >
-                <Ionicons name="log-in-outline" size={24} color="#007AFF" />
-              </TouchableOpacity>
-            ) : (
-              <>
-                <TouchableOpacity
-                  style={styles.headerButton}
-                  onPress={handleNotificationPress}
-                >
-                  <View style={{ position: 'relative' }}>
-                    <Ionicons name="notifications-outline" size={24} color="#007AFF" />
-                    {stats.unreadNotifications > 0 ? (
-                      <View style={styles.headerBadge}>
-                        <Text style={styles.headerBadgeText}>{String(stats.unreadNotifications)}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.headerButton}
-                  onPress={() => router.push('/(tabs)/settings')}
-                >
-                  <Ionicons name="person-circle" size={32} color="#007AFF" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.headerButton, refreshing && styles.refreshingButton]}
-                  onPress={onRefresh}
-                  disabled={refreshing}
-                >
-                  <Ionicons 
-                    name="refresh" 
-                    size={24} 
-                    color={refreshing ? "#999" : "#007AFF"} 
-                  />
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-
-
-        {/* Stats Cards */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statsRow}>
-            <StatCard
-              key="stat-files"
-              title="Quick Files"
-              value={stats.totalDocuments}
-              icon="folder"
-              color="#007AFF"
-              onPress={() => router.push('/(tabs)/documents')}
-            />
-            <StatCard
-              key="stat-forms"
-              title="Quick Forms"
-              value={stats.totalForms}
-              icon="document-text"
-              color="#34C759"
-              onPress={() => router.push('/forms/create')}
-              badge={stats.formResponses}
-            />
-          </View>
-          <View style={styles.statsRow}>
-            <StatCard
-              key="stat-analytics"
-              title="Analytics"
-              value={stats.recentAnalytics || 0}
-              icon="analytics"
-              color="#FF9500"
-              onPress={() => router.push('/analytics/dashboard')}
-            />
-            <StatCard
-              key="stat-chats"
-              title="Quick Chats"
-              value={stats.chatSessions}
-              icon="chatbubbles"
-              color="#AF52DE"
-              onPress={() => router.push('/(tabs)/chats')}
-            />
-          </View>
-        </View>
-
-        {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickActionsContainer}>
-            <QuickActionCard
-              key="action-upload"
-              title="Upload Document"
-              subtitle="Add documents to your library"
-              icon="cloud-upload"
-              color="#34C759"
-              onPress={() => handleQuickAction('upload')}
-            />
-            <QuickActionCard
-              key="action-meeting-call"
-              title="Quick Reach"
-              subtitle="Join or start a meeting"
-              icon="call"
-              color="#007AFF"
-              onPress={() => handleQuickAction('meeting-call')}
-              isNew={true}
-            />
-            <QuickActionCard
-              key="action-upload-links"
-              title="Quick Links"
-              subtitle="Create links to receive files"
-              icon="link"
-              color="#8E44AD"
-              onPress={() => handleQuickAction('upload-links')}
-            />
-            <QuickActionCard
-              key="action-workspaces"
-              title="Workspaces"
-              subtitle="Collaborate with your team"
-              icon="people"
-              color="#5856D6"
-              onPress={() => handleQuickAction('workspaces')}
-            />
-            <QuickActionCard
-              key="action-bookmarks"
-              title="Manage Bookmarks"
-              subtitle="Organize your documents"
-              icon="bookmark"
-              color="#FF9500"
-              onPress={() => handleQuickAction('bookmarks')}
-            />
-          </View>
-        </View>
-
-        {/* Recent Activity */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Activity</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/settings')}>
-              <Text style={styles.seeAllText}>See All</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.activityContainer}>
-            {recentActivities.length > 0 ? (
-              recentActivities.map((activity, index) => (
-                <ActivityItem 
-                  key={`activity-${activity.id || `fallback-${index}`}-${index}-${Date.now()}-${Math.random()}`} 
-                  activity={activity} 
-                  onPress={() => handleActivityPress(activity)}
-                />
-              ))
-            ) : (
-              <View style={styles.emptyState}>
-                <Ionicons name="document-text-outline" size={48} color="#ccc" />
-                <Text style={styles.emptyStateText}>No recent activity</Text>
-                <Text style={styles.emptyStateSubtext}>Start by uploading documents</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* AI Insights */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>AI Insights</Text>
-          <View style={styles.insightsContainer}>
-            <TouchableOpacity key="insight-suggestions" style={styles.insightCard} onPress={() => router.push('/(tabs)/settings')}>
-              <View style={styles.insightIcon}>
-                <Ionicons name="bulb" size={24} color="#FF9500" />
-              </View>
-              <View style={styles.insightContent}>
-                <Text style={styles.insightTitle}>Smart Suggestions</Text>
-                <Text style={styles.insightText}>
-                  {stats.totalDocuments > 0 
-                    ? "Consider organizing your documents by categories for better search results."
-                    : "Upload your first document to get started with AI-powered insights."
-                  }
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="#ccc" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity key="insight-trends" style={styles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
-              <View style={styles.insightIcon}>
-                <Ionicons name="trending-up" size={24} color="#34C759" />
-              </View>
-              <View style={styles.insightContent}>
-                <Text style={styles.insightTitle}>Usage Trends</Text>
-                <Text style={styles.insightText}>
-                  {stats.chatSessions > 0
-                    ? `You've had ${stats.chatSessions} AI conversations. Keep exploring your documents!`
-                    : "Start a chat session to ask questions about your documents."
-                  }
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="#ccc" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Add some padding at the bottom for better scrolling */}
-        <View style={{ height: 100 }} />
-      </ScrollView>
-
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => {
-          Alert.alert(
-            'Quick Actions',
-            'Choose an action:',
-            [
-              {
-                text: 'Upload File',
-                onPress: () => setShowUploadOptions(true),
-              },
-              {
-                text: 'Scan Document',
-                onPress: () => router.push('/documents/process-scan'),
-              },
-              {
-                text: 'Create Form',
-                onPress: () => router.push('/forms/create'),
-              },
-              {
-                text: 'Test Progress Bar',
-                onPress: handleTestProgress,
-              },
-              {
-                text: 'Cancel',
-                style: 'cancel',
-              },
-            ]
-          );
-        }}
-      >
-        <Ionicons name="add" size={28} color="#fff" />
-      </TouchableOpacity>
-
-      {/* Upload Options Modal */}
-      <Modal
-        visible={showUploadOptions}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => {
-          setShowUploadOptions(false);
-          // Only reset upload state if not in the middle of opening a picker
-          if (isUploading && !isOpeningPicker) {
-            // console.log('🔄 Modal closed, resetting upload state');
-            setUploadStateWithTimeout(false);
-          } else if (isOpeningPicker) {
-            // console.log('🔄 Modal closed while opening picker, keeping upload state active');
-          }
-        }}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setShowUploadOptions(false);
-            // Only reset upload state if not in the middle of opening a picker
-            if (isUploading && !isOpeningPicker) {
-              // console.log('🔄 Modal overlay pressed, resetting upload state');
-              setUploadStateWithTimeout(false);
-            } else if (isOpeningPicker) {
-              // console.log('🔄 Modal overlay pressed while opening picker, keeping upload state active');
-            }
-          }}
-        >
-          <TouchableOpacity
-            style={styles.uploadOptionsContainer}
-            activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.uploadOptionsHeader}>
-              <Text style={styles.uploadOptionsTitle}>Upload Document</Text>
-              <TouchableOpacity onPress={() => setShowUploadOptions(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.uploadOptionsContent}>
-              <TouchableOpacity
-                style={[styles.uploadOption, isUploading && styles.uploadOptionDisabled]}
-                onPress={() => {
-                  // console.log('📁 Files button pressed in modal');
-                  handleUploadFromFiles();
-                }}
-                disabled={isUploading}
-              >
-                <View style={[styles.uploadOptionIcon, { backgroundColor: '#007AFF' }]}>
-                  <Ionicons name="document" size={24} color="#fff" />
-                </View>
-                <View style={styles.uploadOptionText}>
-                  <Text style={styles.uploadOptionTitle}>Files</Text>
-                  <Text style={styles.uploadOptionSubtitle}>Upload from your device</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.uploadOption}
-                onPress={handleUploadFromCamera}
-              >
-                <View style={[styles.uploadOptionIcon, { backgroundColor: '#FF9500' }]}>
-                  <Ionicons name="camera" size={24} color="#fff" />
-                </View>
-                <View style={styles.uploadOptionText}>
-                  <Text style={styles.uploadOptionTitle}>Camera</Text>
-                  <Text style={styles.uploadOptionSubtitle}>Take a photo or scan document</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.uploadOption, isUploading && styles.uploadOptionDisabled]}
-                onPress={() => {
-                  // console.log('🖼️ Gallery button pressed in modal');
-                  handleUploadFromGallery();
-                }}
-                disabled={isUploading}
-              >
-                <View style={[styles.uploadOptionIcon, { backgroundColor: '#5856D6' }]}>
-                  <Ionicons name="images" size={24} color="#fff" />
-                </View>
-                <View style={styles.uploadOptionText}>
-                  <Text style={styles.uploadOptionTitle}>Images Gallery</Text>
-                  <Text style={styles.uploadOptionSubtitle}>Upload from your photo gallery</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-    </SafeAreaView>
-  );
-}
-
-const styles = StyleSheet.create({
+  const dynamicStyles = useMemo(() => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+      backgroundColor: colors.background,
   },
   scrollView: {
     flex: 1,
@@ -1019,6 +633,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 6,
+    backgroundColor: colors.background,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -1027,19 +642,18 @@ const styles = StyleSheet.create({
   },
   logoWithName: {
     height: 32,
-    width: 120, // Adjust width to accommodate logo + text
+      width: 120,
   },
   welcomeText: {
     fontSize: 14,
-    color: '#666',
+      color: colors.textSecondary,
   },
   userNameText: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#333',
+      color: colors.text,
     marginTop: 2,
   },
-
   statsContainer: {
     padding: 12,
   },
@@ -1049,7 +663,7 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#fff',
+      backgroundColor: colors.card,
     borderRadius: 8,
     padding: 12,
     marginHorizontal: 4,
@@ -1072,11 +686,11 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#333',
+      color: colors.text,
   },
   statTitle: {
     fontSize: 11,
-    color: '#666',
+      color: colors.textSecondary,
     textTransform: 'uppercase',
     fontWeight: '600',
   },
@@ -1092,7 +706,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+      color: colors.text,
   },
   seeAllText: {
     fontSize: 13,
@@ -1105,7 +719,7 @@ const styles = StyleSheet.create({
   quickActionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+      backgroundColor: colors.card,
     padding: 12,
     borderRadius: 8,
     shadowColor: '#000',
@@ -1128,15 +742,15 @@ const styles = StyleSheet.create({
   quickActionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+      color: colors.text,
     marginBottom: 2,
   },
   quickActionSubtitle: {
     fontSize: 12,
-    color: '#666',
+      color: colors.textSecondary,
   },
   activityContainer: {
-    backgroundColor: '#fff',
+      backgroundColor: colors.card,
     borderRadius: 8,
     overflow: 'hidden',
   },
@@ -1145,7 +759,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+      borderBottomColor: colors.border,
   },
   activityIcon: {
     width: 28,
@@ -1161,20 +775,20 @@ const styles = StyleSheet.create({
   activityTitle: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#333',
+      color: colors.text,
     marginBottom: 2,
   },
   activitySubtitle: {
     fontSize: 11,
-    color: '#666',
+      color: colors.textSecondary,
   },
   activityTime: {
     fontSize: 11,
-    color: '#999',
+      color: colors.textLight,
   },
   insightCard: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+      backgroundColor: colors.card,
     padding: 12,
     borderRadius: 8,
     shadowColor: '#000',
@@ -1190,12 +804,12 @@ const styles = StyleSheet.create({
   insightTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+      color: colors.text,
     marginBottom: 3,
   },
   insightText: {
     fontSize: 12,
-    color: '#666',
+      color: colors.textSecondary,
     lineHeight: 18,
   },
   insightsContainer: {
@@ -1217,12 +831,12 @@ const styles = StyleSheet.create({
   emptyStateText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+      color: colors.text,
     marginBottom: 6,
   },
   emptyStateSubtext: {
     fontSize: 12,
-    color: '#666',
+      color: colors.textSecondary,
   },
   headerActions: {
     flexDirection: 'row',
@@ -1266,7 +880,7 @@ const styles = StyleSheet.create({
   },
   welcomeContainer: {
     padding: 16,
-    backgroundColor: '#fff',
+      backgroundColor: colors.card,
     borderRadius: 8,
     margin: 16,
     shadowColor: '#000',
@@ -1282,13 +896,13 @@ const styles = StyleSheet.create({
   welcomeTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#333',
+      color: colors.text,
     marginTop: 15,
     textAlign: 'center',
   },
   welcomeSubtitle: {
     fontSize: 14,
-    color: '#666',
+      color: colors.textSecondary,
     marginTop: 5,
     textAlign: 'center',
   },
@@ -1353,7 +967,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
-  // Upload options modal styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1361,7 +974,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   uploadOptionsContainer: {
-    backgroundColor: '#fff',
+      backgroundColor: colors.card,
     borderRadius: 20,
     width: '90%',
     maxWidth: 400,
@@ -1378,12 +991,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
+      borderBottomColor: colors.border,
   },
   uploadOptionsTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#333',
+      color: colors.text,
   },
   uploadOptionsContent: {
     padding: 16,
@@ -1394,7 +1007,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+      borderBottomColor: colors.border,
   },
   uploadOptionDisabled: {
     opacity: 0.5,
@@ -1414,14 +1027,404 @@ const styles = StyleSheet.create({
   uploadOptionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+      color: colors.text,
   },
   uploadOptionSubtitle: {
     fontSize: 12,
-    color: '#666',
+      color: colors.textSecondary,
     marginTop: 2,
   },
-});
+  }), [colors]);
+
+  return (
+    <SafeAreaView style={dynamicStyles.container}>
+      {/* Connection Status Banner */}
+      {connectionStatus && !connectionStatus.success && (
+        <View style={dynamicStyles.connectionBanner}>
+          <Ionicons name="warning" size={20} color="#f59e0b" />
+          <Text style={dynamicStyles.connectionBannerText}>
+            {connectionStatus.message.includes('CORS') 
+              ? 'CORS Error: Please configure backend for web development'
+              : 'Connection Error: Check if backend is running'
+            }
+          </Text>
+        </View>
+      )}
+      
+      {/* Welcome Message for Non-Authenticated Users */}
+      {!user && (
+        <View style={dynamicStyles.welcomeContainer}>
+          <View style={dynamicStyles.welcomeCard}>
+            <Ionicons name="person-circle-outline" size={48} color="#007AFF" />
+            <Text style={dynamicStyles.welcomeTitle}>Welcome to GrabDocs</Text>
+            <Text style={dynamicStyles.welcomeSubtitle}>
+              Sign in to access your documents and see your personalized dashboard
+            </Text>
+            <TouchableOpacity
+              style={dynamicStyles.welcomeButton}
+              onPress={() => router.push('/(auth)')}
+            >
+              <Text style={dynamicStyles.welcomeButtonText}>Sign In</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <ScrollView
+        style={dynamicStyles.scrollView}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={dynamicStyles.header}>
+          <View style={dynamicStyles.headerLeft}>
+            <Image 
+              source={require('../../assets/images/grabdocs-brand-app-images/png/name-transparent.png')} 
+              style={dynamicStyles.logoWithName}
+              resizeMode="contain"
+            />
+          </View>
+          <View style={dynamicStyles.headerActions}>
+            {!user ? (
+              <TouchableOpacity
+                style={dynamicStyles.headerButton}
+                onPress={() => router.push('/(auth)')}
+              >
+                <Ionicons name="log-in-outline" size={24} color="#007AFF" />
+              </TouchableOpacity>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={dynamicStyles.headerButton}
+                  onPress={handleNotificationPress}
+                >
+                  <View style={{ position: 'relative' }}>
+                    <Ionicons name="notifications-outline" size={24} color="#007AFF" />
+                    {stats.unreadNotifications > 0 ? (
+                      <View style={dynamicStyles.headerBadge}>
+                        <Text style={dynamicStyles.headerBadgeText}>{String(stats.unreadNotifications)}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={dynamicStyles.headerButton}
+                  onPress={() => router.push('/(tabs)/settings')}
+                >
+                  <Ionicons name="person-circle" size={32} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
+                  onPress={onRefresh}
+                  disabled={refreshing}
+                >
+                  <Ionicons 
+                    name="refresh" 
+                    size={24} 
+                    color={refreshing ? "#999" : "#007AFF"} 
+                  />
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+
+
+        {/* Stats Cards */}
+        <View style={dynamicStyles.statsContainer}>
+          <View style={dynamicStyles.statsRow}>
+            <StatCard
+              key="stat-files"
+              title="Files"
+              value={stats.totalDocuments}
+              icon="folder"
+              color="#007AFF"
+              onPress={() => router.push('/(tabs)/documents')}
+            />
+            <StatCard
+              key="stat-forms"
+              title="Forms"
+              value={stats.totalForms}
+              icon="document-text"
+              color="#34C759"
+              onPress={() => router.push('/forms/create')}
+              badge={stats.formResponses}
+            />
+          </View>
+          <View style={dynamicStyles.statsRow}>
+            <StatCard
+              key="stat-analytics"
+              title="Analytics"
+              value={stats.recentAnalytics || 0}
+              icon="analytics"
+              color="#FF9500"
+              onPress={() => router.push('/analytics/dashboard')}
+            />
+            <StatCard
+              key="stat-chats"
+              title="ChatGD"
+              value={stats.chatSessions}
+              icon="chatbubbles"
+              color="#AF52DE"
+              onPress={() => router.push('/(tabs)/chats')}
+            />
+          </View>
+        </View>
+
+        {/* Quick Actions */}
+        <View style={dynamicStyles.section}>
+          <Text style={dynamicStyles.sectionTitle}>Quick Actions</Text>
+          <View style={dynamicStyles.quickActionsContainer}>
+            <QuickActionCard
+              key="action-upload"
+              title="Upload Document"
+              subtitle="Add documents to your library"
+              icon="cloud-upload"
+              color="#34C759"
+              onPress={() => handleQuickAction('upload')}
+            />
+            <QuickActionCard
+              key="action-chat"
+              title="Chat"
+              subtitle="Message your team members"
+              icon="chatbubbles"
+              color="#FF2D55"
+              onPress={() => handleQuickAction('chat')}
+            />
+            <QuickActionCard
+              key="action-meeting-call"
+              title="Reach"
+              subtitle="Join or start a meeting"
+              icon="call"
+              color="#007AFF"
+              onPress={() => handleQuickAction('meeting-call')}
+              isNew={true}
+            />
+            <QuickActionCard
+              key="action-upload-links"
+              title="Links"
+              subtitle="Create links to receive files"
+              icon="link"
+              color="#8E44AD"
+              onPress={() => handleQuickAction('upload-links')}
+            />
+            <QuickActionCard
+              key="action-workspaces"
+              title="Workspaces"
+              subtitle="Collaborate with your team"
+              icon="people"
+              color="#5856D6"
+              onPress={() => handleQuickAction('workspaces')}
+            />
+            <QuickActionCard
+              key="action-bookmarks"
+              title="Bookmarks"
+              subtitle="Organize your documents"
+              icon="bookmark"
+              color="#FF9500"
+              onPress={() => handleQuickAction('bookmarks')}
+            />
+          </View>
+        </View>
+
+        {/* Recent Activity */}
+        <View style={dynamicStyles.section}>
+          <View style={dynamicStyles.sectionHeader}>
+            <Text style={dynamicStyles.sectionTitle}>Recent Activity</Text>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/settings')}>
+              <Text style={dynamicStyles.seeAllText}>See All</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={dynamicStyles.activityContainer}>
+            {recentActivities.length > 0 ? (
+              recentActivities.map((activity, index) => (
+                <ActivityItem 
+                  key={`activity-${activity.id || `fallback-${index}`}-${index}-${Date.now()}-${Math.random()}`} 
+                  activity={activity} 
+                  onPress={() => handleActivityPress(activity)}
+                />
+              ))
+            ) : (
+              <View style={dynamicStyles.emptyState}>
+                <Ionicons name="document-text-outline" size={48} color="#ccc" />
+                <Text style={dynamicStyles.emptyStateText}>No recent activity</Text>
+                <Text style={dynamicStyles.emptyStateSubtext}>Start by uploading documents</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* AI Insights */}
+        <View style={dynamicStyles.section}>
+          <Text style={dynamicStyles.sectionTitle}>AI Insights</Text>
+          <View style={dynamicStyles.insightsContainer}>
+            <TouchableOpacity key="insight-suggestions" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/settings')}>
+              <View style={dynamicStyles.insightIcon}>
+                <Ionicons name="bulb" size={24} color="#FF9500" />
+              </View>
+              <View style={dynamicStyles.insightContent}>
+                <Text style={dynamicStyles.insightTitle}>Smart Suggestions</Text>
+                <Text style={dynamicStyles.insightText}>
+                  {stats.totalDocuments > 0 
+                    ? "Consider organizing your documents by categories for better search results."
+                    : "Upload your first document to get started with AI-powered insights."
+                  }
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#ccc" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity key="insight-trends" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
+              <View style={dynamicStyles.insightIcon}>
+                <Ionicons name="trending-up" size={24} color="#34C759" />
+              </View>
+              <View style={dynamicStyles.insightContent}>
+                <Text style={dynamicStyles.insightTitle}>Usage Trends</Text>
+                <Text style={dynamicStyles.insightText}>
+                  {stats.chatSessions > 0
+                    ? `You've had ${stats.chatSessions} AI conversations. Keep exploring your documents!`
+                    : "Start a chat session to ask questions about your documents."
+                  }
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#ccc" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Add some padding at the bottom for better scrolling */}
+        <View style={{ height: 100 }} />
+      </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity
+        style={dynamicStyles.fab}
+        onPress={() => {
+          Alert.alert(
+            'Quick Actions',
+            'Choose an action:',
+            [
+              {
+                text: 'Upload File',
+                onPress: () => setShowUploadOptions(true),
+              },
+              {
+                text: 'Scan Document',
+                onPress: () => router.push('/scanner'),
+              },
+              {
+                text: 'Cancel',
+                style: 'cancel',
+              },
+            ]
+          );
+        }}
+      >
+        <Ionicons name="add" size={28} color="#fff" />
+      </TouchableOpacity>
+
+      {/* Upload Options Modal */}
+      <Modal
+        visible={showUploadOptions}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => {
+          setShowUploadOptions(false);
+          // Only reset upload state if not in the middle of opening a picker
+          if (isUploading && !isOpeningPicker) {
+            // console.log('🔄 Modal closed, resetting upload state');
+            setUploadStateWithTimeout(false);
+          } else if (isOpeningPicker) {
+            // console.log('🔄 Modal closed while opening picker, keeping upload state active');
+          }
+        }}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowUploadOptions(false);
+            // Only reset upload state if not in the middle of opening a picker
+            if (isUploading && !isOpeningPicker) {
+              // console.log('🔄 Modal overlay pressed, resetting upload state');
+              setUploadStateWithTimeout(false);
+            } else if (isOpeningPicker) {
+              // console.log('🔄 Modal overlay pressed while opening picker, keeping upload state active');
+            }
+          }}
+        >
+          <TouchableOpacity
+            style={dynamicStyles.uploadOptionsContainer}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={dynamicStyles.uploadOptionsHeader}>
+              <Text style={dynamicStyles.uploadOptionsTitle}>Upload Document</Text>
+              <TouchableOpacity onPress={() => setShowUploadOptions(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={dynamicStyles.uploadOptionsContent}>
+              <TouchableOpacity
+                style={[dynamicStyles.uploadOption, isUploading && dynamicStyles.uploadOptionDisabled]}
+                onPress={() => {
+                  // console.log('📁 Files button pressed in modal');
+                  handleUploadFromFiles();
+                }}
+                disabled={isUploading}
+              >
+                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#007AFF' }]}>
+                  <Ionicons name="document" size={24} color="#fff" />
+                </View>
+                <View style={dynamicStyles.uploadOptionText}>
+                  <Text style={dynamicStyles.uploadOptionTitle}>Files</Text>
+                  <Text style={dynamicStyles.uploadOptionSubtitle}>Upload from your device</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={dynamicStyles.uploadOption}
+                onPress={handleUploadFromCamera}
+              >
+                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#FF9500' }]}>
+                  <Ionicons name="camera" size={24} color="#fff" />
+                </View>
+                <View style={dynamicStyles.uploadOptionText}>
+                  <Text style={dynamicStyles.uploadOptionTitle}>Camera</Text>
+                  <Text style={dynamicStyles.uploadOptionSubtitle}>Take a photo or scan document</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[dynamicStyles.uploadOption, isUploading && dynamicStyles.uploadOptionDisabled]}
+                onPress={() => {
+                  // console.log('🖼️ Gallery button pressed in modal');
+                  handleUploadFromGallery();
+                }}
+                disabled={isUploading}
+              >
+                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#5856D6' }]}>
+                  <Ionicons name="images" size={24} color="#fff" />
+                </View>
+                <View style={dynamicStyles.uploadOptionText}>
+                  <Text style={dynamicStyles.uploadOptionTitle}>Images Gallery</Text>
+                  <Text style={dynamicStyles.uploadOptionSubtitle}>Upload from your photo gallery</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
 
 // Export memoized component to prevent unnecessary re-renders
 export default React.memo(DashboardScreen); 

@@ -14,6 +14,17 @@ export const Colors = {
     icon: '#687076',
     tabIconDefault: '#687076',
     tabIconSelected: tintColorLight,
+    // Extended colors for components
+    card: '#ffffff',
+    surface: '#f8f9fa',
+    border: '#e0e0e0',
+    borderLight: '#f0f0f0',
+    textSecondary: '#666666',
+    textLight: '#999999',
+    headerBackground: '#ffffff',
+    sectionBackground: '#ffffff',
+    itemBackground: '#ffffff',
+    inputBackground: '#f8f8f8',
   },
   dark: {
     text: '#ECEDEE',
@@ -22,8 +33,19 @@ export const Colors = {
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
+    // Extended colors for components
+    card: '#1f1f1f',
+    surface: '#2a2a2a',
+    border: '#333333',
+    borderLight: '#3a3a3a',
+    textSecondary: '#9BA1A6',
+    textLight: '#687076',
+    headerBackground: '#1a1a1a',
+    sectionBackground: '#1f1f1f',
+    itemBackground: '#2a2a2a',
+    inputBackground: '#2a2a2a',
   },
-  // Main color palette for components
+  // Main color palette for components (theme-independent)
   primary: '#2563eb',
   primaryLight: '#dbeafe',
   primaryDark: '#1d4ed8',
@@ -33,25 +55,21 @@ export const Colors = {
   error: '#ef4444',
   info: '#0ea5e9',
   
-  // Backgrounds
-  background: '#ffffff',
-  card: '#f8fafc',
-  surface: '#ffffff',
-  
-  // Text colors
-  text: '#1f2937',
-  textSecondary: '#64748b',
-  textLight: '#9ca3af',
-  
-  // UI colors
-  border: '#e2e8f0',
-  borderLight: '#f1f5f9',
-  white: '#ffffff',
-  black: '#000000',
-  
-  // Status colors
+  // Status colors (theme-independent)
   online: '#22c55e',
   offline: '#64748b',
   away: '#f59e0b',
   busy: '#ef4444',
+  
+  // Legacy colors (kept for backward compatibility)
+  background: '#ffffff',
+  card: '#f8fafc',
+  surface: '#ffffff',
+  text: '#1f2937',
+  textSecondary: '#64748b',
+  textLight: '#9ca3af',
+  border: '#e2e8f0',
+  borderLight: '#f1f5f9',
+  white: '#ffffff',
+  black: '#000000',
 };

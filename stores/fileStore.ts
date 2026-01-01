@@ -154,14 +154,11 @@ export const useFileStore = create<FileStore>((set, get) => ({
             status: 'completed',
           });
           
-          // For mobile uploads, we don't immediately add to files list
-          // The files will be refreshed from the server
-          // This prevents duplicate entries and ensures we get the processed file data
-          
-          // Refresh the files list to show the newly uploaded file
-          setTimeout(() => {
-            get().fetchFiles(1); // Refresh files list
-          }, 1000);
+          // For mobile uploads, immediately reload files to show them with 'pending' status
+          // This matches the web behavior where files appear quickly with pending status
+          console.log('📁 Upload complete, immediately reloading files to show pending status...');
+          // Reload immediately (no delay) to show files with pending status
+          get().fetchFiles(1); // Refresh files list immediately
           
           // Remove global progress after a delay
           setTimeout(() => {

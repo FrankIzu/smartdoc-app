@@ -9,6 +9,7 @@ import {
     Modal,
     Platform,
     ScrollView,
+    Share,
     StyleSheet,
     Switch,
     Text,
@@ -322,18 +323,14 @@ export default function FormBuilderScreen() {
     }
 
     try {
-      // Call the backend API to download CSV
-      const csvContent = await apiService.downloadFormResponsesCSV(parseInt(params.formId as string));
+      // Generate CSV content for download
+      const csvContent = generateCSVContent(responses);
       
-      // Use Expo Sharing to share the CSV file
-      const { shareAsync } = await import('expo-sharing');
-      const { writeAsStringAsync, documentDirectory } = await import('expo-file-system');
-      
-      const fileName = `form_responses_${params.formId}_${new Date().toISOString().split('T')[0]}.csv`;
-      const fileUri = `${documentDirectory}${fileName}`;
-      
-      await writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
-      await shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Download Form Responses' });
+      // Use React Native Share to share the CSV format
+      await Share.share({
+        message: csvContent,
+        title: 'Form Responses CSV',
+      });
     } catch (error: any) {
       console.error('Error downloading CSV:', error);
       Alert.alert('Error', 'Failed to download CSV file');
@@ -370,6 +367,59 @@ export default function FormBuilderScreen() {
     return [header, ...rows].join('\n');
   };
 
+  const generateTableContent = (responsesData: any[]) => {
+    if (responsesData.length === 0) return '';
+    
+    // Get all unique field names from all responses
+    const allFields = new Set<string>();
+    responsesData.forEach(response => {
+      const data = response.response_data || response.data || {};
+      Object.keys(data).forEach(key => allFields.add(key));
+    });
+    
+    const fields = Array.from(allFields);
+    const headers = ['Response ID', 'Submitted At', ...fields];
+    
+    // Calculate column widths for better alignment
+    const colWidths = headers.map((header, idx) => {
+      let maxWidth = header.length;
+      responsesData.forEach((response, rowIdx) => {
+        const data = response.response_data || response.data || {};
+        const submittedAt = new Date(response.submitted_at || response.created_at || Date.now()).toLocaleString();
+        let value = '';
+        if (idx === 0) value = String(rowIdx + 1);
+        else if (idx === 1) value = submittedAt;
+        else value = String(data[fields[idx - 2]] || '');
+        if (value.length > maxWidth) maxWidth = value.length;
+      });
+      return Math.min(maxWidth, 30); // Cap at 30 chars
+    });
+    
+    // Create formatted header row
+    const headerRow = headers.map((header, idx) => header.padEnd(colWidths[idx])).join(' | ');
+    const separator = headers.map((_, idx) => '-'.repeat(colWidths[idx])).join('-+-');
+    
+    // Create formatted data rows
+    const dataRows = responsesData.map((response, index) => {
+      const data = response.response_data || response.data || {};
+      const submittedAt = new Date(response.submitted_at || response.created_at || Date.now()).toLocaleString();
+      
+      const values = [
+        String(index + 1),
+        submittedAt,
+        ...fields.map(field => String(data[field] || ''))
+      ];
+      
+      return values.map((val, idx) => {
+        // Truncate long values
+        const truncated = val.length > colWidths[idx] ? val.substring(0, colWidths[idx] - 3) + '...' : val;
+        return truncated.padEnd(colWidths[idx]);
+      }).join(' | ');
+    });
+    
+    return [headerRow, separator, ...dataRows].join('\n');
+  };
+
   const copyToClipboard = async (text: string) => {
     try {
       // In a real implementation, you'd use expo-clipboard
@@ -386,20 +436,13 @@ export default function FormBuilderScreen() {
     }
 
     try {
-      // Call the backend API to get CSV content
-      const csvContent = await apiService.downloadFormResponsesCSV(parseInt(params.formId as string));
+      // Generate table-formatted content for better readability
+      const tableContent = generateTableContent(responses);
       
-      // Use Expo Sharing to share the CSV file
-      const { shareAsync } = await import('expo-sharing');
-      const { writeAsStringAsync, documentDirectory } = await import('expo-file-system');
-      
-      const fileName = `form_responses_${params.formId}_${new Date().toISOString().split('T')[0]}.csv`;
-      const fileUri = `${documentDirectory}${fileName}`;
-      
-      await writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
-      await shareAsync(fileUri, { 
-        mimeType: 'text/csv', 
-        dialogTitle: `Share Form Responses (${responses.length} responses)` 
+      // Use React Native Share to share the formatted table
+      await Share.share({
+        message: tableContent,
+        title: `Share Form Responses (${responses.length} responses)`,
       });
     } catch (error: any) {
       console.error('Error sharing responses:', error);

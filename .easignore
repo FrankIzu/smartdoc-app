@@ -59,6 +59,8 @@ user_2/
 # Python files (not needed for mobile build)
 *.py
 manager-francis/
+# Allow brand images from manager-francis to be included
+!manager-francis/frontend/public/cdn-site/grabdocs-brand/
 db_scripts/
 check_*.py
 debug_*.py

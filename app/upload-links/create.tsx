@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import { useRouter } from 'expo-router';
+import React, { useMemo, useState } from 'react';
 import {
     Alert,
     ScrollView,
@@ -11,10 +12,12 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 
 export default function CreateUploadLinkScreen() {
   const router = useRouter();
+  const colors = useThemeColors();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('7');
@@ -97,42 +100,217 @@ export default function CreateUploadLinkScreen() {
     { label: '100 uploads', value: '100' },
   ];
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 16,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    title: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    placeholder: {
+      width: 24,
+    },
+    content: {
+      flex: 1,
+    },
+    section: {
+      backgroundColor: colors.card,
+      marginTop: 8,
+      padding: 16,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 16,
+    },
+    inputGroup: {
+      marginBottom: 20,
+    },
+    label: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    required: {
+      color: '#FF3B30',
+    },
+    input: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: colors.text,
+    },
+    textArea: {
+      height: 80,
+      textAlignVertical: 'top',
+    },
+    switchRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    switchInfo: {
+      flex: 1,
+      marginRight: 12,
+    },
+    switchLabel: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    switchDescription: {
+      fontSize: 14,
+      color: colors.textSecondary,
+    },
+    optionsContainer: {
+      marginTop: 12,
+    },
+    optionsLabel: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: colors.text,
+      marginBottom: 12,
+    },
+    optionsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 16,
+    },
+    optionButton: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    selectedOption: {
+      borderColor: '#007AFF',
+      backgroundColor: '#E3F2FD',
+    },
+    optionText: {
+      fontSize: 14,
+      color: colors.text,
+    },
+    selectedOptionText: {
+      color: '#007AFF',
+      fontWeight: '600',
+    },
+    customInputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    customLabel: {
+      fontSize: 14,
+      color: colors.text,
+    },
+    customInput: {
+      flex: 1,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+      color: colors.text,
+    },
+    infoBox: {
+      flexDirection: 'row',
+      backgroundColor: colors.surface,
+      padding: 16,
+      borderRadius: 8,
+      margin: 16,
+      borderLeftWidth: 4,
+      borderLeftColor: '#007AFF',
+    },
+    infoText: {
+      flex: 1,
+      marginLeft: 12,
+      fontSize: 14,
+      color: colors.textSecondary,
+      lineHeight: 20,
+    },
+    footer: {
+      padding: 16,
+      backgroundColor: colors.card,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    createButton: {
+      backgroundColor: '#007AFF',
+      paddingVertical: 16,
+      borderRadius: 8,
+      alignItems: 'center',
+    },
+    disabledButton: {
+      opacity: 0.5,
+    },
+    createButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '600',
+    },
+  }), [colors]);
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={dynamicStyles.container}>
+      <View style={dynamicStyles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>Create Upload Link</Text>
-        <View style={styles.placeholder} />
+        <Text style={dynamicStyles.title}>Create Upload Link</Text>
+        <View style={dynamicStyles.placeholder} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Basic Information</Text>
+      <ScrollView style={dynamicStyles.content} showsVerticalScrollIndicator={false}>
+        <View style={dynamicStyles.section}>
+          <Text style={dynamicStyles.sectionTitle}>Basic Information</Text>
           
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Link Name <Text style={styles.required}>*</Text>
+          <View style={dynamicStyles.inputGroup}>
+            <Text style={dynamicStyles.label}>
+              Link Name <Text style={dynamicStyles.required}>*</Text>
             </Text>
             <TextInput
-              style={styles.input}
+              style={dynamicStyles.input}
               value={name}
               onChangeText={setName}
               placeholder="e.g., Client Documents, Team Reports"
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textLight}
               maxLength={100}
             />
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Description (Optional)</Text>
+          <View style={dynamicStyles.inputGroup}>
+            <Text style={dynamicStyles.label}>Description (Optional)</Text>
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[dynamicStyles.input, dynamicStyles.textArea]}
               value={description}
               onChangeText={setDescription}
               placeholder="Describe what files should be uploaded..."
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textLight}
               multiline
               numberOfLines={3}
               maxLength={500}
@@ -140,41 +318,41 @@ export default function CreateUploadLinkScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Expiration Settings</Text>
+        <View style={dynamicStyles.section}>
+          <Text style={dynamicStyles.sectionTitle}>Expiration Settings</Text>
           
-          <View style={styles.switchRow}>
-            <View style={styles.switchInfo}>
-              <Text style={styles.switchLabel}>Set Expiration Date</Text>
-              <Text style={styles.switchDescription}>
+          <View style={dynamicStyles.switchRow}>
+            <View style={dynamicStyles.switchInfo}>
+              <Text style={dynamicStyles.switchLabel}>Set Expiration Date</Text>
+              <Text style={dynamicStyles.switchDescription}>
                 Link will become inactive after this period
               </Text>
             </View>
             <Switch
               value={hasExpiration}
               onValueChange={setHasExpiration}
-              trackColor={{ false: '#e5e5e5', true: '#007AFF' }}
+              trackColor={{ false: colors.border, true: '#007AFF' }}
               thumbColor="#fff"
             />
           </View>
 
           {hasExpiration && (
-            <View style={styles.optionsContainer}>
-              <Text style={styles.optionsLabel}>Expires in:</Text>
-              <View style={styles.optionsGrid}>
+            <View style={dynamicStyles.optionsContainer}>
+              <Text style={dynamicStyles.optionsLabel}>Expires in:</Text>
+              <View style={dynamicStyles.optionsGrid}>
                 {expirationOptions.map((option) => (
                   <TouchableOpacity
                     key={option.value}
                     style={[
-                      styles.optionButton,
-                      expiresInDays === option.value && styles.selectedOption,
+                      dynamicStyles.optionButton,
+                      expiresInDays === option.value && dynamicStyles.selectedOption,
                     ]}
                     onPress={() => setExpiresInDays(option.value)}
                   >
                     <Text
                       style={[
-                        styles.optionText,
-                        expiresInDays === option.value && styles.selectedOptionText,
+                        dynamicStyles.optionText,
+                        expiresInDays === option.value && dynamicStyles.selectedOptionText,
                       ]}
                     >
                       {option.label}
@@ -183,56 +361,56 @@ export default function CreateUploadLinkScreen() {
                 ))}
               </View>
               
-              <View style={styles.customInputContainer}>
-                <Text style={styles.customLabel}>Or custom days:</Text>
+              <View style={dynamicStyles.customInputContainer}>
+                <Text style={dynamicStyles.customLabel}>Or custom days:</Text>
                 <TextInput
-                  style={styles.customInput}
+                  style={dynamicStyles.customInput}
                   value={expiresInDays}
                   onChangeText={setExpiresInDays}
                   keyboardType="numeric"
                   placeholder="7"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textLight}
                 />
               </View>
             </View>
           )}
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Upload Limits</Text>
+        <View style={dynamicStyles.section}>
+          <Text style={dynamicStyles.sectionTitle}>Upload Limits</Text>
           
-          <View style={styles.switchRow}>
-            <View style={styles.switchInfo}>
-              <Text style={styles.switchLabel}>Set Upload Limit</Text>
-              <Text style={styles.switchDescription}>
+          <View style={dynamicStyles.switchRow}>
+            <View style={dynamicStyles.switchInfo}>
+              <Text style={dynamicStyles.switchLabel}>Set Upload Limit</Text>
+              <Text style={dynamicStyles.switchDescription}>
                 Maximum number of files that can be uploaded
               </Text>
             </View>
             <Switch
               value={hasUploadLimit}
               onValueChange={setHasUploadLimit}
-              trackColor={{ false: '#e5e5e5', true: '#007AFF' }}
+              trackColor={{ false: colors.border, true: '#007AFF' }}
               thumbColor="#fff"
             />
           </View>
 
           {hasUploadLimit && (
-            <View style={styles.optionsContainer}>
-              <Text style={styles.optionsLabel}>Maximum uploads:</Text>
-              <View style={styles.optionsGrid}>
+            <View style={dynamicStyles.optionsContainer}>
+              <Text style={dynamicStyles.optionsLabel}>Maximum uploads:</Text>
+              <View style={dynamicStyles.optionsGrid}>
                 {uploadLimitOptions.map((option) => (
                   <TouchableOpacity
                     key={option.value}
                     style={[
-                      styles.optionButton,
-                      maxUploads === option.value && styles.selectedOption,
+                      dynamicStyles.optionButton,
+                      maxUploads === option.value && dynamicStyles.selectedOption,
                     ]}
                     onPress={() => setMaxUploads(option.value)}
                   >
                     <Text
                       style={[
-                        styles.optionText,
-                        maxUploads === option.value && styles.selectedOptionText,
+                        dynamicStyles.optionText,
+                        maxUploads === option.value && dynamicStyles.selectedOptionText,
                       ]}
                     >
                       {option.label}
@@ -241,37 +419,37 @@ export default function CreateUploadLinkScreen() {
                 ))}
               </View>
               
-              <View style={styles.customInputContainer}>
-                <Text style={styles.customLabel}>Or custom limit:</Text>
+              <View style={dynamicStyles.customInputContainer}>
+                <Text style={dynamicStyles.customLabel}>Or custom limit:</Text>
                 <TextInput
-                  style={styles.customInput}
+                  style={dynamicStyles.customInput}
                   value={maxUploads}
                   onChangeText={setMaxUploads}
                   keyboardType="numeric"
                   placeholder="10"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textLight}
                 />
               </View>
             </View>
           )}
         </View>
 
-        <View style={styles.infoBox}>
+        <View style={dynamicStyles.infoBox}>
           <Ionicons name="information-circle" size={20} color="#007AFF" />
-          <Text style={styles.infoText}>
+          <Text style={dynamicStyles.infoText}>
             Once created, you can share the upload link via email or copy it to share manually. 
             Recipients can upload files without needing an account.
           </Text>
         </View>
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={dynamicStyles.footer}>
         <TouchableOpacity
-          style={[styles.createButton, loading && styles.disabledButton]}
+          style={[dynamicStyles.createButton, loading && dynamicStyles.disabledButton]}
           onPress={handleCreate}
           disabled={loading}
         >
-          <Text style={styles.createButtonText}>
+          <Text style={dynamicStyles.createButtonText}>
             {loading ? 'Creating...' : 'Create Upload Link'}
           </Text>
         </TouchableOpacity>
@@ -279,180 +457,3 @@ export default function CreateUploadLinkScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  placeholder: {
-    width: 24,
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
-  section: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 16,
-  },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 8,
-  },
-  required: {
-    color: '#FF3B30',
-  },
-  input: {
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    color: '#333',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  switchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  switchInfo: {
-    flex: 1,
-    marginRight: 16,
-  },
-  switchLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 4,
-  },
-  switchDescription: {
-    fontSize: 14,
-    color: '#666',
-  },
-  optionsContainer: {
-    marginTop: 8,
-  },
-  optionsLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 12,
-  },
-  optionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginHorizontal: -4,
-  },
-  optionButton: {
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    margin: 4,
-  },
-  selectedOption: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  optionText: {
-    fontSize: 14,
-    color: '#333',
-  },
-  selectedOptionText: {
-    color: '#fff',
-  },
-  customInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  customLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginRight: 12,
-  },
-  customInput: {
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 8,
-    padding: 8,
-    fontSize: 14,
-    color: '#333',
-    width: 80,
-    textAlign: 'center',
-  },
-  infoBox: {
-    backgroundColor: '#f0f8ff',
-    borderWidth: 1,
-    borderColor: '#b3d9ff',
-    borderRadius: 8,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 16,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#007AFF',
-    marginLeft: 8,
-    flex: 1,
-    lineHeight: 20,
-  },
-  footer: {
-    padding: 16,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e5e5e5',
-  },
-  createButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  disabledButton: {
-    backgroundColor: '#ccc',
-  },
-  createButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-}); 

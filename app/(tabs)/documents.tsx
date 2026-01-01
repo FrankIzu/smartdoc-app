@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
+    Animated,
     FlatList,
     Modal,
     RefreshControl,
@@ -17,6 +18,7 @@ import DocumentViewer from '../../components/DocumentViewer';
 import ExternalFilePicker from '../../components/ExternalFilePicker';
 import LoadingDots from '../../components/LoadingDots';
 import QuickFormViewer from '../../components/QuickFormViewer';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
@@ -29,7 +31,7 @@ interface Document {
   type: string; // Now supports more specific types like 'docx', 'xlsx', 'pptx', 'txt', etc.
   size: string;
   uploadDate: Date;
-  status: 'processed' | 'processing' | 'error';
+  status: 'processed' | 'processing' | 'pending' | 'error';
   tags: string[];
   category?: string;
   formData?: any; // Store original form data for form-specific actions
@@ -50,15 +52,20 @@ interface ApiDocument {
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
-type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'unknown';
+type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'invoice' | 'meeting_notes' | 'meeting_chat' | 'meeting_summary' | 'spreadsheet' | 'picture' | 'pending' | 'unknown';
 
 export default function QuickFilesScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { user } = useAuth();
+  const colors = useThemeColors();
   const { uploadFromGallery } = useFileStore();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadTime, setLastLoadTime] = useState<number>(0);
+  
+  // Get workspaceId from route params if provided
+  const workspaceId = params.workspaceId ? Number(params.workspaceId) : undefined;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('date');
@@ -93,16 +100,20 @@ export default function QuickFilesScreen() {
 
   const CACHE_DURATION = 30000; // 30 seconds cache
   const AUTO_REFRESH_INTERVAL = 60000; // Auto-refresh every 60 seconds
+  
+  // Polling for pending files (classification polling)
+  const classificationPollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const handleGalleryUpload = async () => {
     try {
-      console.log('🖼️ Starting gallery upload from quick files screen...');
+      console.log('🖼️ Starting gallery upload from files screen...');
       
       const success = await uploadFromGallery();
       if (success) {
-        Alert.alert('Success', 'Photos uploaded successfully!');
-        // Refresh documents list
-        loadDocuments(true); // Force refresh
+        // Immediately reload files to show them with pending status
+        console.log('📁 Upload complete, immediately reloading files to show pending status...');
+        loadDocuments(true); // Force refresh immediately
+        // Don't show alert immediately - files will appear with pending status
       } else {
         // Get the error from the file store
         const fileStore = useFileStore.getState();
@@ -120,7 +131,8 @@ export default function QuickFilesScreen() {
   };
 
   const getFileIcon = (type: string, status: string, category?: string) => {
-    if (status === 'processing') return 'time-outline';
+    // Show spinning icon for pending or processing status
+    if (status === 'pending' || status === 'processing') return 'time-outline';
     if (status === 'error') return 'alert-circle-outline';
     
     // Handle form type specifically
@@ -132,6 +144,9 @@ export default function QuickFilesScreen() {
         case 'receipt':
         case 'receipts':
           return 'receipt-outline'; // Receipt-specific icon
+        case 'invoice':
+        case 'invoices':
+          return 'document-text-outline'; // Invoice icon (document with text)
         case 'form':
         case 'forms':
           return 'clipboard-outline'; // Form-specific icon (clipboard for forms)
@@ -141,6 +156,21 @@ export default function QuickFilesScreen() {
         case 'transcript':
         case 'transcripts':
           return 'mic-outline'; // Microphone icon for transcripts
+        case 'meeting_notes':
+        case 'meeting_upload':
+          return 'document-text-outline'; // Document icon for meeting notes
+        case 'meeting_chat':
+          return 'chatbubbles-outline'; // Chat bubbles icon for meeting chat
+        case 'meeting_summary':
+        case 'ai_summary':
+          return 'sparkles-outline'; // Sparkles icon for AI summaries
+        case 'spreadsheet':
+        case 'spreadsheets':
+          return 'grid-outline'; // Grid icon for spreadsheets
+        case 'picture':
+        case 'image':
+        case 'images':
+          return 'image-outline'; // Image icon for pictures
         case 'unknown':
           return 'help-circle-outline';
       }
@@ -174,6 +204,9 @@ export default function QuickFilesScreen() {
         case 'receipt':
         case 'receipts':
           return '#10b981'; // Emerald green for receipts
+        case 'invoice':
+        case 'invoices':
+          return '#2563eb'; // Blue for invoices
         case 'form':
         case 'forms':
           return '#3b82f6'; // Blue for forms
@@ -183,6 +216,21 @@ export default function QuickFilesScreen() {
         case 'transcript':
         case 'transcripts':
           return '#8b5cf6'; // Purple for transcripts
+        case 'meeting_notes':
+        case 'meeting_upload':
+          return '#a855f7'; // Violet for meeting notes
+        case 'meeting_chat':
+          return '#3b82f6'; // Blue for meeting chat
+        case 'meeting_summary':
+        case 'ai_summary':
+          return '#10b981'; // Green for AI summaries
+        case 'spreadsheet':
+        case 'spreadsheets':
+          return '#10b981'; // Green for spreadsheets
+        case 'picture':
+        case 'image':
+        case 'images':
+          return '#ec4899'; // Pink for pictures/images
         case 'unknown':
           return '#64748b'; // Gray for unknown
       }
@@ -204,9 +252,14 @@ export default function QuickFilesScreen() {
     
     // Map backend file_kind values to frontend categories
     switch (kind) {
+      case 'pending':
+        return 'pending';
       case 'receipt':
       case 'receipts':
         return 'receipts';
+      case 'invoice':
+      case 'invoices':
+        return 'invoice';
       case 'form':
       case 'forms':
         return 'forms';
@@ -216,10 +269,61 @@ export default function QuickFilesScreen() {
       case 'transcript':
       case 'transcripts':
         return 'transcripts';
+      case 'meeting_notes':
+      case 'meeting_upload':
+        return 'meeting_notes';
+      case 'meeting_chat':
+        return 'meeting_chat';
+      case 'meeting_summary':
+      case 'ai_summary':
+        return 'meeting_summary';
+      case 'spreadsheet':
+      case 'spreadsheets':
+        return 'spreadsheet';
+      case 'picture':
+      case 'image':
+      case 'images':
+        return 'picture';
       default:
         return 'unknown';
     }
   };
+
+  // Calculate which categories have files
+  const availableCategories = useMemo(() => {
+    const categoryCounts = new Map<FilterOption, number>();
+    
+    // Always include 'all' if there are any documents
+    if (documents.length > 0) {
+      categoryCounts.set('all', documents.length);
+    }
+    
+    // Count files by category
+    documents.forEach(doc => {
+      // Check for pending status first
+      if (doc.status === 'pending') {
+        categoryCounts.set('pending', (categoryCounts.get('pending') || 0) + 1);
+      }
+      
+      // Count by normalized category (but skip if it's pending, as we already counted it)
+      const category = normalizeCategory(doc.category) as FilterOption;
+      if (category !== 'pending') {
+        categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
+      }
+    });
+    
+    // Return only categories that have at least one file, sorted with 'all' first
+    const categories = Array.from(categoryCounts.entries())
+      .filter(([_, count]) => count > 0)
+      .map(([category]) => category);
+    
+    // Sort: 'all' first, then alphabetically
+    return categories.sort((a, b) => {
+      if (a === 'all') return -1;
+      if (b === 'all') return 1;
+      return a.localeCompare(b);
+    });
+  }, [documents]);
 
   // Memoized filtered and sorted documents for better performance
   const filteredAndSortedDocuments = useMemo(() => {
@@ -236,23 +340,39 @@ export default function QuickFilesScreen() {
     }
 
     // Apply category filter
-        if (filterBy !== 'all') {
+    if (filterBy !== 'all') {
       filtered = filtered.filter(doc => {
         const category = doc.category?.toLowerCase() || 'unknown';
-          switch (filterBy) {
+        switch (filterBy) {
           case 'documents':
             return category === 'documents';
-            case 'receipts':
+          case 'receipts':
             return category === 'receipts';
-            case 'forms':
+          case 'forms':
             return category === 'forms';
-            case 'unknown':
+          case 'transcripts':
+            return category === 'transcripts';
+          case 'invoice':
+            return category === 'invoice';
+          case 'meeting_notes':
+            return category === 'meeting_notes';
+          case 'meeting_chat':
+            return category === 'meeting_chat';
+          case 'meeting_summary':
+            return category === 'meeting_summary';
+          case 'spreadsheet':
+            return category === 'spreadsheet';
+          case 'picture':
+            return category === 'picture';
+          case 'pending':
+            return category === 'pending' || doc.status === 'pending';
+          case 'unknown':
             return category === 'unknown';
-            default:
+          default:
             return true;
-          }
-      });
         }
+      });
+    }
         
     // Apply sorting
     filtered.sort((a, b) => {
@@ -277,8 +397,9 @@ export default function QuickFilesScreen() {
   const loadDocuments = useCallback(async (forceRefresh = false) => {
     const now = Date.now();
     
-    // Check cache first (unless force refresh)
-    if (!forceRefresh && apiCache && 
+    // Check cache first (unless force refresh or workspaceId is present)
+    // Skip cache when workspaceId is present to avoid showing wrong workspace files
+    if (!forceRefresh && !workspaceId && apiCache && 
         (now - apiCache.timestamp) < CACHE_DURATION &&
         apiCache.searchQuery === searchQuery &&
         apiCache.filterBy === filterBy) {
@@ -335,7 +456,7 @@ export default function QuickFilesScreen() {
         } catch (err) {
           console.warn('Documents endpoint failed, trying files endpoint:', err);
           try {
-            const filesPromise = apiClient.getFiles(1, 50);
+            const filesPromise = apiClient.getFiles(1, 50, undefined, undefined, workspaceId);
             const filesTimeout = new Promise((_, reject) => 
               setTimeout(() => reject(new Error('API timeout')), 10000)
             );
@@ -387,13 +508,21 @@ export default function QuickFilesScreen() {
         if (Array.isArray(docsArray)) {
           const mappedDocs = docsArray.map((doc: ApiDocument) => {
             const originalName = doc.original_filename || doc.filename || 'Untitled';
+            // Determine status: pending if file_kind is 'pending' or processing_status is 'pending'/'processing'
+            const isPending = doc.file_kind?.toLowerCase() === 'pending' || 
+                             doc.processing_status === 'pending' || 
+                             doc.processing_status === 'processing';
+            const status = isPending ? 'pending' as const : 
+                          doc.processing_status === 'error' ? 'error' as const :
+                          'processed' as const;
+            
             return {
               id: String(doc.id),
               name: removeFileExtension(originalName),
               type: getFileTypeFromExtension(doc.original_filename || doc.filename),
               size: formatFileSize(doc.file_size),
               uploadDate: new Date(doc.created_at),
-              status: 'processed' as const,
+              status: status,
               tags: [],
               category: normalizeCategory(doc.file_kind),
             };
@@ -472,9 +601,9 @@ export default function QuickFilesScreen() {
 
   useEffect(() => {
     if (user) {
-      loadDocuments();
+      loadDocuments(true); // Force refresh when workspaceId changes
     }
-  }, [user, loadDocuments]);
+  }, [user, workspaceId, loadDocuments]);
 
   // Monitor document status changes to show completion indicators
   useEffect(() => {
@@ -502,8 +631,59 @@ export default function QuickFilesScreen() {
     return () => clearInterval(interval);
   }, [user, loadDocuments]);
 
+  // Polling for pending files (classification polling)
+  useEffect(() => {
+    // Check if there are any pending files
+    const hasPendingFiles = documents.some(doc => doc.status === 'pending');
+    
+    if (hasPendingFiles) {
+      // Start polling for file updates
+      if (!classificationPollingIntervalRef.current) {
+        console.log('🔄 Starting classification polling for pending files...');
+        classificationPollingIntervalRef.current = setInterval(async () => {
+          try {
+            // Reload files to check for updated file_kind
+            await loadDocuments(true); // Force refresh
+            
+            // Check current documents state after reload
+            setDocuments(currentDocs => {
+              const stillPending = currentDocs.some(doc => doc.status === 'pending');
+              
+              if (!stillPending) {
+                // No more pending files, stop polling
+                console.log('✅ All files processed, stopping classification polling');
+                if (classificationPollingIntervalRef.current) {
+                  clearInterval(classificationPollingIntervalRef.current);
+                  classificationPollingIntervalRef.current = null;
+                }
+              }
+              
+              return currentDocs; // Return unchanged, loadDocuments already updated it
+            });
+          } catch (error) {
+            console.error('Error polling for file updates:', error);
+          }
+        }, 3000); // Poll every 3 seconds
+      }
+    } else {
+      // No pending files, stop polling if it's running
+      if (classificationPollingIntervalRef.current) {
+        console.log('🛑 No pending files, stopping classification polling');
+        clearInterval(classificationPollingIntervalRef.current);
+        classificationPollingIntervalRef.current = null;
+      }
+    }
+    
+    return () => {
+      if (classificationPollingIntervalRef.current) {
+        clearInterval(classificationPollingIntervalRef.current);
+        classificationPollingIntervalRef.current = null;
+      }
+    };
+  }, [documents, loadDocuments]);
+
   const handleDocumentPress = async (document: Document) => {
-    if (document.status === 'processing') {
+    if (document.status === 'processing' || document.status === 'pending') {
       Alert.alert('Document Processing', `"${document.name}" is still being processed. Please wait a few moments and try again.`);
       return;
     }
@@ -702,8 +882,8 @@ export default function QuickFilesScreen() {
   };
 
   const shouldShowStatusIndicator = (document: Document) => {
-    // Show for files that are currently processing
-    if (document.status === 'processing') {
+    // Show for files that are currently processing or pending
+    if (document.status === 'processing' || document.status === 'pending') {
       return true;
     }
     
@@ -722,8 +902,10 @@ export default function QuickFilesScreen() {
       const success = await fileStore.uploadFromDocuments();
       
       if (success) {
-        Alert.alert('Success', 'Files uploaded successfully!');
-        loadDocuments(true); // Refresh documents list
+        // Immediately reload files to show them with pending status
+        console.log('📁 Upload complete, immediately reloading files to show pending status...');
+        loadDocuments(true); // Refresh documents list immediately
+        // Don't show alert immediately - files will appear with pending status
       }
     } catch (error) {
       console.error('Document upload error:', error);
@@ -732,32 +914,63 @@ export default function QuickFilesScreen() {
   };
 
 
+  // Component for document icon with spinning animation for pending files
+  const DocumentIcon = React.memo(({ item }: { item: Document }) => {
+    const spinAnim = useRef(new Animated.Value(0)).current;
+    const isPending = item.status === 'pending' || item.status === 'processing';
+    
+    useEffect(() => {
+      if (isPending) {
+        // Start spinning animation
+        Animated.loop(
+          Animated.timing(spinAnim, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          })
+        ).start();
+      } else {
+        // Stop animation
+        spinAnim.setValue(0);
+      }
+    }, [isPending, spinAnim]);
+    
+    const spin = spinAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0deg', '360deg'],
+    });
+    
+    return (
+      <Animated.View style={[dynamicStyles.documentIcon, isPending && { transform: [{ rotate: spin }] }]}>
+        <Ionicons 
+          name={getFileIcon(item.type, item.status, item.category) as any} 
+          size={24} 
+          color={getTypeColor(item.type, item.category)} 
+        />
+      </Animated.View>
+    );
+  });
+
   const renderDocument = ({ item }: { item: Document }) => (
     <TouchableOpacity
-      style={styles.documentItem}
+      style={dynamicStyles.documentItem}
       onPress={() => handleDocumentPress(item)}
       onLongPress={(event) => handleKebabMenuPress(item, event)}
     >
-      <View style={styles.documentIcon}>
-          <Ionicons 
-            name={getFileIcon(item.type, item.status, item.category) as any} 
-            size={24} 
-          color={getTypeColor(item.type, item.category)} 
-          />
-        </View>
+      <DocumentIcon item={item} />
       
-        <View style={styles.documentInfo}>
-        <Text style={styles.documentName} numberOfLines={2}>
+        <View style={dynamicStyles.documentInfo}>
+        <Text style={dynamicStyles.documentName} numberOfLines={2}>
             {item.name}
           </Text>
-        <Text style={styles.documentMeta}>
+        <Text style={dynamicStyles.documentMeta}>
           {item.size} • {item.uploadDate.toLocaleDateString()}
             </Text>
         </View>
         
         {/* Kebab Menu Button */}
         <TouchableOpacity
-          style={styles.kebabButton}
+          style={dynamicStyles.kebabButton}
           onPress={(event) => {
             event.stopPropagation();
             handleKebabMenuPress(item, event);
@@ -765,56 +978,352 @@ export default function QuickFilesScreen() {
         >
           <Ionicons name="ellipsis-vertical" size={20} color="#666" />
         </TouchableOpacity>
-        
-      {shouldShowStatusIndicator(item) && (
-        <View style={styles.documentActions}>
-          <View style={[styles.statusIndicator, { backgroundColor: getStatusColor(item.status) }]} />
-        </View>
-      )}
     </TouchableOpacity>
   );
 
   const FilterButton = ({ option, label }: { option: FilterOption; label: string }) => (
     <TouchableOpacity
-      style={[styles.filterButton, filterBy === option && styles.filterButtonActive]}
+      style={[dynamicStyles.filterButton, filterBy === option && dynamicStyles.filterButtonActive]}
       onPress={() => setFilterBy(option)}
     >
-      <Text style={[styles.filterButtonText, filterBy === option && styles.filterButtonTextActive]}>
+      <Text style={[dynamicStyles.filterButtonText, filterBy === option && dynamicStyles.filterButtonTextActive]}>
         {label}
       </Text>
     </TouchableOpacity>
   );
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 16,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    headerTitleContainer: {
+      flex: 1,
+    },
+    headerTitle: {
+      fontSize: 24,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    autoRefreshIndicator: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 2,
+    },
+    autoRefreshText: {
+      fontSize: 12,
+      color: '#007AFF',
+      marginLeft: 4,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    headerButton: {
+      padding: 8,
+    },
+    refreshingButton: {
+      opacity: 0.5,
+    },
+    searchContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.card,
+      marginHorizontal: 16,
+      marginTop: 16,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    searchIcon: {
+      marginRight: 8,
+    },
+    searchInput: {
+      flex: 1,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: colors.text,
+    },
+    filtersContainer: {
+      marginTop: 16,
+    },
+    filtersContent: {
+      paddingHorizontal: 16,
+    },
+    filterButton: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      marginRight: 8,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+    },
+    filterButtonActive: {
+      backgroundColor: '#007AFF',
+    },
+    filterButtonText: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: colors.textSecondary,
+    },
+    filterButtonTextActive: {
+      color: '#fff',
+    },
+    sortContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+    },
+    sortLabel: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginRight: 8,
+    },
+    sortButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+    },
+    sortButtonText: {
+      fontSize: 14,
+      color: colors.text,
+      marginRight: 4,
+    },
+    documentsList: {
+      flex: 1,
+      paddingHorizontal: 12,
+    },
+    documentItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.card,
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 8,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 2,
+      elevation: 2,
+    },
+    documentIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 10,
+    },
+    documentInfo: {
+      flex: 1,
+    },
+    documentName: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 2,
+    },
+    documentMeta: {
+      fontSize: 11,
+      color: colors.textSecondary,
+    },
+    documentActions: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      marginTop: 8,
+      marginRight: 8,
+    },
+    statusIndicator: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 5,
+    },
+    emptyContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingVertical: 64,
+    },
+    emptyText: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.textSecondary,
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    emptySubtext: {
+      fontSize: 14,
+      color: colors.textLight,
+      textAlign: 'center',
+      maxWidth: 250,
+    },
+    uploadButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#007AFF',
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      borderRadius: 8,
+      marginTop: 16,
+    },
+    uploadButtonText: {
+      color: '#fff',
+      fontWeight: '600',
+      marginLeft: 8,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingVertical: 64,
+    },
+    loadingText: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: 16,
+    },
+    loadingSubtext: {
+      fontSize: 14,
+      color: colors.textLight,
+      marginTop: 4,
+    },
+    kebabButton: {
+      padding: 6,
+      marginLeft: 6,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    kebabMenuContainer: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 8,
+      minWidth: 150,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.25,
+      shadowRadius: 8,
+      elevation: 8,
+    },
+    kebabMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 8,
+    },
+    kebabMenuText: {
+      fontSize: 16,
+      color: colors.text,
+      marginLeft: 12,
+      fontWeight: '500',
+    },
+    bookmarkModalContainer: {
+      backgroundColor: colors.card,
+      borderRadius: 20,
+      width: '90%',
+      maxWidth: 400,
+      maxHeight: '80%',
+      overflow: 'hidden',
+    },
+    bookmarkModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    bookmarkModalTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    bookmarkModalContent: {
+      padding: 16,
+    },
+    bookmarkList: {
+      padding: 16,
+    },
+    bookmarkItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    bookmarkColor: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      marginRight: 12,
+    },
+    bookmarkName: {
+      flex: 1,
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.text,
+    },
+    bookmarkItemText: {
+      fontSize: 16,
+      color: colors.text,
+      marginLeft: 12,
+      flex: 1,
+    },
+  }), [colors]);
+
   // Loading state with bouncing dots
   if (loading && documents.length === 0) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Quick Files</Text>
-          <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.headerButton}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
+          <Text style={dynamicStyles.headerTitle}>Files</Text>
+          <View style={dynamicStyles.headerActions}>
+            <TouchableOpacity style={dynamicStyles.headerButton}>
               <Ionicons name="cloud-upload" size={24} color="#007AFF" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerButton}>
+            <TouchableOpacity style={dynamicStyles.headerButton}>
               <Ionicons name="camera" size={24} color="#007AFF" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerButton}>
+            <TouchableOpacity style={dynamicStyles.headerButton}>
               <Ionicons name="images" size={24} color="#5856D6" />
             </TouchableOpacity>
           </View>
         </View>
         
-        <View style={styles.loadingContainer}>
+        <View style={dynamicStyles.loadingContainer}>
           <LoadingDots size={12} color="#007AFF" duration={800} />
-          <Text style={styles.loadingText}>Loading your quick files...</Text>
-          <Text style={styles.loadingSubtext}>This will only take a moment</Text>
+          <Text style={dynamicStyles.loadingText}>Loading your files...</Text>
+          <Text style={dynamicStyles.loadingSubtext}>This will only take a moment</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={dynamicStyles.container}>
       {/* Error message display */}
       {error && (
         <View style={{ backgroundColor: '#fee2e2', padding: 12, margin: 12, borderRadius: 8 }}>
@@ -823,37 +1332,37 @@ export default function QuickFilesScreen() {
       )}
       
       {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Quick Files</Text>
+      <View style={dynamicStyles.header}>
+        <View style={dynamicStyles.headerTitleContainer}>
+          <Text style={dynamicStyles.headerTitle}>Files</Text>
           {isAutoRefreshing && (
-            <View style={styles.autoRefreshIndicator}>
+            <View style={dynamicStyles.autoRefreshIndicator}>
               <Ionicons name="sync" size={16} color="#007AFF" />
-              <Text style={styles.autoRefreshText}>Syncing...</Text>
+              <Text style={dynamicStyles.autoRefreshText}>Syncing...</Text>
             </View>
           )}
         </View>
-        <View style={styles.headerActions}>
+        <View style={dynamicStyles.headerActions}>
           <TouchableOpacity 
-            style={styles.headerButton}
+            style={dynamicStyles.headerButton}
             onPress={handleUploadFromFiles}
           >
             <Ionicons name="document" size={24} color="#007AFF" />
           </TouchableOpacity>
           <TouchableOpacity 
-            style={styles.headerButton}
+            style={dynamicStyles.headerButton}
             onPress={() => router.push('/scanner')}
           >
             <Ionicons name="camera" size={24} color="#007AFF" />
           </TouchableOpacity>
           <TouchableOpacity 
-            style={styles.headerButton}
+            style={dynamicStyles.headerButton}
             onPress={handleGalleryUpload}
           >
             <Ionicons name="images" size={24} color="#5856D6" />
           </TouchableOpacity>
           <TouchableOpacity 
-            style={[styles.headerButton, refreshing && styles.refreshingButton]}
+            style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
             onPress={onRefresh}
             disabled={refreshing}
           >
@@ -867,11 +1376,11 @@ export default function QuickFilesScreen() {
       </View>
 
       {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+      <View style={dynamicStyles.searchContainer}>
+        <Ionicons name="search" size={20} color="#666" style={dynamicStyles.searchIcon} />
         <TextInput
-          style={styles.searchInput}
-          placeholder="Search quick files, tags, or categories..."
+          style={dynamicStyles.searchInput}
+          placeholder="Search files, tags, or categories..."
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -883,31 +1392,41 @@ export default function QuickFilesScreen() {
       </View>
 
       {/* Filters */}
-      <View style={styles.filtersContainer}>
+      <View style={dynamicStyles.filtersContainer}>
         <FlatList
           horizontal
           showsHorizontalScrollIndicator={false}
-          data={[
-            { option: 'all' as FilterOption, label: 'All' },
-            { option: 'documents' as FilterOption, label: 'Documents' },
-            { option: 'receipts' as FilterOption, label: 'Receipts' },
-            { option: 'forms' as FilterOption, label: 'Forms' },
-            { option: 'transcripts' as FilterOption, label: 'Transcripts' },
-            { option: 'unknown' as FilterOption, label: 'Unknown' },
-          ]}
+          data={availableCategories.map(category => {
+            const labels: Record<FilterOption, string> = {
+              'all': 'All',
+              'documents': 'Documents',
+              'receipts': 'Receipts',
+              'invoice': 'Invoices',
+              'forms': 'Forms',
+              'transcripts': 'Transcripts',
+              'meeting_notes': 'Meeting Notes',
+              'meeting_chat': 'Meeting Chat',
+              'meeting_summary': 'AI Summary',
+              'spreadsheet': 'Spreadsheets',
+              'picture': 'Pictures',
+              'pending': 'Pending',
+              'unknown': 'Unknown',
+            };
+            return { option: category, label: labels[category] || category };
+          })}
           renderItem={({ item }) => (
             <FilterButton option={item.option} label={item.label} />
           )}
           keyExtractor={(item) => item.option}
-          contentContainerStyle={styles.filtersContent}
+          contentContainerStyle={dynamicStyles.filtersContent}
         />
       </View>
 
       {/* Sort Options */}
-      <View style={styles.sortContainer}>
-        <Text style={styles.sortLabel}>Sort by:</Text>
+      <View style={dynamicStyles.sortContainer}>
+        <Text style={dynamicStyles.sortLabel}>Sort by:</Text>
         <TouchableOpacity
-          style={styles.sortButton}
+          style={dynamicStyles.sortButton}
           onPress={() => {
             Alert.alert('Sort Options', 'Choose sorting option:', [
               { text: 'Name', onPress: () => setSortBy('name') },
@@ -918,28 +1437,28 @@ export default function QuickFilesScreen() {
             ]);
           }}
         >
-          <Text style={styles.sortButtonText}>
+          <Text style={dynamicStyles.sortButtonText}>
             {sortBy.charAt(0).toUpperCase() + sortBy.slice(1)}
           </Text>
           <Ionicons name="chevron-down" size={16} color="#666" />
         </TouchableOpacity>
       </View>
 
-      {/* Quick Files List */}
+      {/* Files List */}
       <FlatList
         data={filteredAndSortedDocuments}
         renderItem={renderDocument}
         keyExtractor={(item) => item.id}
-        style={styles.documentsList}
+        style={dynamicStyles.documentsList}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
+          <View style={dynamicStyles.emptyContainer}>
             <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-            <Text style={styles.emptyText}>
-              {searchQuery ? 'No quick files match your search' : 'No quick files yet'}
+            <Text style={dynamicStyles.emptyText}>
+              {searchQuery ? 'No files match your search' : 'No files yet'}
             </Text>
-            <Text style={styles.emptySubtext}>
+            <Text style={dynamicStyles.emptySubtext}>
               {searchQuery 
                 ? 'Try adjusting your search terms or filters to find what you\'re looking for' 
                 : 'Start by uploading your first file using the upload button above'
@@ -947,11 +1466,11 @@ export default function QuickFilesScreen() {
             </Text>
             {!searchQuery && (
               <TouchableOpacity 
-                style={styles.uploadButton}
+                style={dynamicStyles.uploadButton}
                 onPress={handleUploadFromFiles}
               >
                 <Ionicons name="document" size={20} color="#fff" />
-                <Text style={styles.uploadButtonText}>Upload Files</Text>
+                <Text style={dynamicStyles.uploadButtonText}>Upload Files</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1001,63 +1520,63 @@ export default function QuickFilesScreen() {
         onRequestClose={handleCloseKebabMenu}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={dynamicStyles.modalOverlay}
           activeOpacity={1}
           onPress={handleCloseKebabMenu}
         >
-          <View style={styles.kebabMenuContainer}>
+          <View style={dynamicStyles.kebabMenuContainer}>
             <TouchableOpacity
-              style={styles.kebabMenuItem}
+              style={dynamicStyles.kebabMenuItem}
               onPress={handleViewDocument}
             >
               <Ionicons name="eye-outline" size={20} color="#007AFF" />
-              <Text style={styles.kebabMenuText}>View</Text>
+              <Text style={dynamicStyles.kebabMenuText}>View</Text>
             </TouchableOpacity>
             
             {/* Show View Responses option for forms */}
             {selectedDocumentForMenu?.type === 'form' && (
               <TouchableOpacity
-                style={styles.kebabMenuItem}
+                style={dynamicStyles.kebabMenuItem}
                 onPress={handleViewFormResponses}
               >
                 <Ionicons name="clipboard-outline" size={20} color="#8B5CF6" />
-                <Text style={styles.kebabMenuText}>View Responses</Text>
+                <Text style={dynamicStyles.kebabMenuText}>View Responses</Text>
               </TouchableOpacity>
             )}
             
             <TouchableOpacity
-              style={styles.kebabMenuItem}
+              style={dynamicStyles.kebabMenuItem}
               onPress={handleShareDocument}
             >
               <Ionicons name="share-outline" size={20} color="#10B981" />
-              <Text style={styles.kebabMenuText}>Share</Text>
+              <Text style={dynamicStyles.kebabMenuText}>Share</Text>
             </TouchableOpacity>
             
             <TouchableOpacity
-              style={styles.kebabMenuItem}
+              style={dynamicStyles.kebabMenuItem}
               onPress={() => {
                 console.log('🗑️ Delete button pressed in kebab menu');
                 handleDeleteDocument();
               }}
             >
               <Ionicons name="trash-outline" size={20} color="#EF4444" />
-              <Text style={[styles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
+              <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.kebabMenuItem}
+              style={dynamicStyles.kebabMenuItem}
               onPress={handleChatDocument}
             >
               <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
-              <Text style={styles.kebabMenuText}>Chat</Text>
+              <Text style={dynamicStyles.kebabMenuText}>Chat</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.kebabMenuItem}
+              style={dynamicStyles.kebabMenuItem}
               onPress={handleShowBookmarkModal}
             >
               <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
-              <Text style={styles.kebabMenuText}>Add to Bookmark</Text>
+              <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -1071,13 +1590,13 @@ export default function QuickFilesScreen() {
         onRequestClose={() => setShowBookmarkModal(false)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={dynamicStyles.modalOverlay}
           activeOpacity={1}
           onPress={() => setShowBookmarkModal(false)}
         >
-          <View style={styles.bookmarkModalContainer}>
-            <View style={styles.bookmarkModalHeader}>
-              <Text style={styles.bookmarkModalTitle}>Add to Bookmark</Text>
+          <View style={dynamicStyles.bookmarkModalContainer}>
+            <View style={dynamicStyles.bookmarkModalHeader}>
+              <Text style={dynamicStyles.bookmarkModalTitle}>Add to Bookmark</Text>
               <TouchableOpacity
                 onPress={() => setShowBookmarkModal(false)}
               >
@@ -1085,15 +1604,15 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             </View>
             
-            <View style={styles.bookmarkList}>
+            <View style={dynamicStyles.bookmarkList}>
               {bookmarks.map((bookmark) => (
                 <TouchableOpacity
                   key={bookmark.id}
-                  style={styles.bookmarkItem}
+                  style={dynamicStyles.bookmarkItem}
                   onPress={() => handleAddToBookmark(bookmark)}
                 >
-                  <View style={[styles.bookmarkColor, { backgroundColor: bookmark.color }]} />
-                  <Text style={styles.bookmarkName}>{bookmark.name}</Text>
+                  <View style={[dynamicStyles.bookmarkColor, { backgroundColor: bookmark.color }]} />
+                  <Text style={dynamicStyles.bookmarkName}>{bookmark.name}</Text>
                   <Ionicons name="chevron-forward" size={20} color="#ccc" />
                 </TouchableOpacity>
               ))}
@@ -1104,302 +1623,3 @@ export default function QuickFilesScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
-  },
-  headerTitleContainer: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#333',
-  },
-  autoRefreshIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  autoRefreshText: {
-    fontSize: 12,
-    color: '#007AFF',
-    marginLeft: 4,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  headerButton: {
-    padding: 8,
-  },
-  refreshingButton: {
-    opacity: 0.5,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    marginHorizontal: 16,
-    marginTop: 16,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#333',
-  },
-  filtersContainer: {
-    marginTop: 16,
-  },
-  filtersContent: {
-    paddingHorizontal: 16,
-  },
-  filterButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginRight: 8,
-    borderRadius: 20,
-    backgroundColor: '#f0f0f0',
-  },
-  filterButtonActive: {
-    backgroundColor: '#007AFF',
-  },
-  filterButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#666',
-  },
-  filterButtonTextActive: {
-    color: '#fff',
-  },
-  sortContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  sortLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginRight: 8,
-  },
-  sortButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#f0f0f0',
-  },
-  sortButtonText: {
-    fontSize: 14,
-    color: '#333',
-    marginRight: 4,
-  },
-  documentsList: {
-    flex: 1,
-    paddingHorizontal: 12,
-  },
-  documentItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  documentIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  documentInfo: {
-    flex: 1,
-  },
-  documentName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 2,
-  },
-  documentMeta: {
-    fontSize: 11,
-    color: '#666',
-  },
-  documentActions: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginTop: 8,
-    marginRight: 8,
-  },
-  statusIndicator: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 5,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 64,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-    maxWidth: 250,
-  },
-  uploadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginTop: 16,
-  },
-  uploadButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 64,
-  },
-  loadingText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginTop: 16,
-  },
-  loadingSubtext: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 4,
-  },
-  // Kebab menu styles
-  kebabButton: {
-    padding: 6,
-    marginLeft: 6,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  kebabMenuContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 8,
-    minWidth: 150,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  kebabMenuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  kebabMenuText: {
-    fontSize: 16,
-    color: '#333',
-    marginLeft: 12,
-    fontWeight: '500',
-  },
-  // Bookmark modal styles
-  bookmarkModalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    width: '90%',
-    maxWidth: 400,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  bookmarkModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
-  },
-  bookmarkModalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#333',
-  },
-  bookmarkList: {
-    padding: 16,
-  },
-  bookmarkItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  bookmarkColor: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    marginRight: 12,
-  },
-  bookmarkName: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-  },
-}); 

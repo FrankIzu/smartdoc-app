@@ -31,12 +31,13 @@ const getNetworkConfig = () => {
   console.log('🔧 Primary URL:', primaryUrl);
   console.log('🔧 Fallback URLs:', fallbackUrls);
   
-  // For development, always try multiple IPs
-  if (__DEV__) {
+  // For Expo Go (local testing), try multiple IPs
+  const isExpoGo = Constants.appOwnership === 'expo';
+  if (isExpoGo) {
     const allUrls = [
       primaryUrl,
       'http://127.0.0.1:5000',     // localhost fallback
-      'http://192.168.62.96:5000',  // Machine IP fallback
+      'http://192.168.1.5:5000',  // Machine IP fallback
     ];
     
     return {
@@ -68,18 +69,22 @@ export const API_BASE_URL = (() => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  // HARDCODED FOR DEVELOPMENT: Use the actual machine IP for mobile devices
-  if (__DEV__) {
-    const hardcodedUrl = 'http://192.168.62.96:5000';
-    console.log('🔧 FORCED API URL (hardcoded for development):', hardcodedUrl);
-    console.log('🔧 This overrides all other detection logic');
-    return hardcodedUrl;
+  // Check if we're in Expo Go (local testing only)
+  // Expo Go = local testing, use localhost
+  // Standalone app (dev or prod build) = use production
+  const isExpoGo = Constants.appOwnership === 'expo';
+  
+  if (isExpoGo) {
+    // Only use localhost when running in Expo Go for local testing
+    const localhostUrl = 'http://192.168.1.5:5000';
+    console.log('🔧 Using localhost API URL (Expo Go detected):', localhostUrl);
+    return localhostUrl;
   }
   
-  // Otherwise, use environment-based logic
-  const url = getApiBaseUrl();
-  console.log('🔧 Using API URL from environment detection:', url);
-  return url;
+  // For standalone apps (dev builds or production builds), use production
+  const productionUrl = 'https://api.grabdocs.com';
+  console.log('🔧 Using production API URL (standalone app detected):', productionUrl);
+  return productionUrl;
 })();
 
 // Network fallback configuration

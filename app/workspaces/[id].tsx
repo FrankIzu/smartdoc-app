@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     Alert,
     Modal,
@@ -12,6 +12,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
 
@@ -54,6 +55,7 @@ export default function WorkspaceDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
   const { user } = useAuth();
+  const colors = useThemeColors();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +66,10 @@ export default function WorkspaceDetailsScreen() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'members' | 'invitations'>('members');
   const [invitations, setInvitations] = useState<any[]>([]);
+  const [showInvitationKebab, setShowInvitationKebab] = useState(false);
+  const [selectedInvitation, setSelectedInvitation] = useState<any>(null);
+  const [showMemberActionSheet, setShowMemberActionSheet] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<WorkspaceMember | null>(null);
 
   const loadWorkspaceDetails = async () => {
     if (!user) return;
@@ -84,9 +90,42 @@ export default function WorkspaceDetailsScreen() {
           console.log('✅ Found workspace:', targetWorkspace.name);
           setWorkspace(targetWorkspace);
           
-          // For now, set empty members array since we don't have a members endpoint
-          // TODO: Implement workspace members endpoint in backend
-          setMembers([]);
+          // Load workspace members
+          try {
+            const membersResponse = await apiService.getWorkspaceMembers(Number(id));
+            if (membersResponse.success && membersResponse.data) {
+              const responseData = membersResponse.data;
+              
+              // Extract members - data.members contains the members array
+              const membersData = responseData.members || [];
+              console.log('✅ Loaded workspace members:', membersData.length);
+              setMembers(membersData);
+              
+              // Extract invitations - data.invitations contains the invitations array
+              const invitationsData = responseData.invitations || [];
+              console.log('✅ Loaded workspace invitations:', invitationsData.length);
+              setInvitations(invitationsData);
+            } else {
+              console.log('⚠️ No members data in response');
+              setMembers([]);
+              setInvitations([]);
+            }
+          } catch (error: any) {
+            // Handle 404 gracefully - endpoint might not be implemented yet
+            if (error.response?.status === 404) {
+              console.log('⚠️ Workspace members endpoint not found (404), endpoint may not be implemented yet');
+              setMembers([]);
+              setInvitations([]);
+            } else {
+              console.error('❌ Failed to load workspace members:', error);
+              // Don't show alert for 404, just log it
+              if (error.response?.status !== 404) {
+                Alert.alert('Error', error.message || 'Failed to load workspace members');
+              }
+              setMembers([]);
+              setInvitations([]);
+            }
+          }
         } else {
           console.log('❌ Workspace not found with ID:', id);
           Alert.alert(
@@ -150,28 +189,285 @@ export default function WorkspaceDetailsScreen() {
     }
   };
 
+  const handleExitWorkspace = () => {
+    if (!workspace || !user) return;
+
+    Alert.alert(
+      'Exit Workspace',
+      `Are you sure you want to exit "${workspace.name}"? You will lose access to this workspace.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Exit',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Find current user's member ID
+              const currentUserMember = members.find(m => m.user_id === user.id);
+              if (!currentUserMember) {
+                Alert.alert('Error', 'Could not find your membership in this workspace');
+                return;
+              }
+
+              const response = await apiService.removeWorkspaceMember(Number(id), currentUserMember.id);
+              if (response.success) {
+                Alert.alert('Success', 'You have exited the workspace', [
+                  { text: 'OK', onPress: () => router.back() }
+                ]);
+              } else {
+                Alert.alert('Error', response.message || 'Failed to exit workspace');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to exit workspace');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResendInvitation = async () => {
+    if (!selectedInvitation) return;
+    
+    setShowInvitationKebab(false);
+    
+    try {
+      const response = await apiService.resendWorkspaceInvitation(Number(id), selectedInvitation.id);
+      if (response.success) {
+        Alert.alert('Success', 'Invitation resent successfully');
+        loadWorkspaceDetails();
+      } else {
+        Alert.alert('Error', response.message || 'Failed to resend invitation');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to resend invitation');
+    }
+  };
+
+  const handleCancelInvitation = async () => {
+    if (!selectedInvitation) return;
+    
+    setShowInvitationKebab(false);
+    
+    Alert.alert(
+      'Cancel Invitation',
+      `Are you sure you want to cancel the invitation for ${selectedInvitation.email}?`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await apiService.cancelWorkspaceInvitation(Number(id), selectedInvitation.id);
+              if (response.success) {
+                Alert.alert('Success', 'Invitation cancelled');
+                loadWorkspaceDetails();
+              } else {
+                Alert.alert('Error', response.message || 'Failed to cancel invitation');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to cancel invitation');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleChangeMemberRole = async (newRole: 'owner' | 'admin' | 'member' | 'viewer') => {
+    if (!selectedMember) return;
+    
+    try {
+      const response = await apiService.updateWorkspaceMemberRole(Number(id), selectedMember.id, newRole);
+      if (response.success) {
+        Alert.alert('Success', `Member role updated to ${newRole}`);
+        loadWorkspaceDetails();
+        setSelectedMember(null);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to update member role');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update member role');
+    }
+  };
+
+  const handleShowRoleSelector = () => {
+    if (!selectedMember) return;
+    
+    const memberName = selectedMember.user?.username || selectedMember.user?.email || 'this member';
+    
+    Alert.alert(
+      'Change Role',
+      `Select new role for ${memberName}:`,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => setShowMemberActionSheet(false) },
+        { 
+          text: 'Viewer', 
+          onPress: () => {
+            handleChangeMemberRole('viewer');
+            setShowMemberActionSheet(false);
+          }
+        },
+        { 
+          text: 'Member', 
+          onPress: () => {
+            handleChangeMemberRole('member');
+            setShowMemberActionSheet(false);
+          }
+        },
+        { 
+          text: 'Admin', 
+          onPress: () => {
+            handleChangeMemberRole('admin');
+            setShowMemberActionSheet(false);
+          }
+        },
+        { 
+          text: 'Owner', 
+          onPress: () => {
+            handleChangeMemberRole('owner');
+            setShowMemberActionSheet(false);
+          }
+        },
+      ]
+    );
+  };
+
+  const handleRemoveMember = async () => {
+    if (!selectedMember) return;
+    
+    setShowMemberActionSheet(false);
+    
+    const memberName = selectedMember.user?.username || selectedMember.user?.email || 'this member';
+    
+    Alert.alert(
+      'Remove Member',
+      `Are you sure you want to remove ${memberName} from this workspace?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await apiService.removeWorkspaceMember(Number(id), selectedMember.user_id);
+              if (response.success) {
+                Alert.alert('Success', 'Member removed from workspace');
+                loadWorkspaceDetails();
+              } else {
+                Alert.alert('Error', response.message || 'Failed to remove member');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to remove member');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
+    headerTitle: { fontSize: 18, fontWeight: '600', color: colors.text, flex: 1, textAlign: 'center' },
+    loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    scrollView: { flex: 1 },
+    listContainer: { padding: 16 },
+    infoCard: { backgroundColor: colors.card, borderRadius: 12, padding: 20, margin: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
+    infoHeader: { flexDirection: 'row', alignItems: 'center' },
+    workspaceIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#E3F2FD', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+    workspaceInfo: { flex: 1 },
+    workspaceName: { fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 4 },
+    workspaceDescription: { fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: 8 },
+    workspaceMeta: { fontSize: 12, color: colors.textLight },
+    workspaceMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+    defaultTag: { backgroundColor: '#E3F2FD', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+    defaultText: { fontSize: 12, color: '#007AFF', fontWeight: '500' },
+    actionsSection: { paddingHorizontal: 16, marginBottom: 20 },
+    sectionTitle: { fontSize: 18, fontWeight: '600', color: colors.text, marginBottom: 12 },
+    actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    actionButton: { width: '47%', backgroundColor: colors.card, borderRadius: 8, padding: 12, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+    actionIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
+    actionText: { fontSize: 12, fontWeight: '600', color: colors.text, textAlign: 'center' },
+    section: { paddingHorizontal: 16, marginBottom: 24 },
+    sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+    sectionAction: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
+    tabContainer: { flexDirection: 'row', backgroundColor: colors.surface, borderRadius: 8, padding: 4, marginBottom: 16 },
+    tab: { flex: 1, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 6, alignItems: 'center' },
+    activeTab: { backgroundColor: colors.card, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+    tabText: { fontSize: 14, fontWeight: '500', color: colors.textSecondary },
+    activeTabText: { color: '#007AFF', fontWeight: '600' },
+    membersList: { backgroundColor: colors.card, borderRadius: 12, overflow: 'hidden' },
+    memberItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
+    memberAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+    memberInfo: { flex: 1 },
+    memberName: { fontSize: 16, fontWeight: '600', color: colors.text, marginBottom: 2 },
+    memberRole: { fontSize: 14, color: colors.textSecondary, textTransform: 'capitalize' },
+    memberActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    memberActionButton: { padding: 4 },
+    youBadge: { backgroundColor: '#E3F2FD', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+    youBadgeText: { fontSize: 12, color: '#007AFF', fontWeight: '600' },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center' },
+    kebabMenuContainer: { backgroundColor: colors.card, borderRadius: 12, padding: 8, minWidth: 200, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
+    kebabMenuItem: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 12 },
+    kebabMenuText: { fontSize: 16, color: colors.text },
+    actionSheetContainer: { backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, paddingBottom: 32, position: 'absolute', bottom: 0, left: 0, right: 0, shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
+    actionSheetItem: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
+    actionSheetItemDanger: { borderBottomWidth: 0 },
+    actionSheetText: { fontSize: 16, color: colors.text },
+    actionSheetCancel: { marginTop: 8, padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.border },
+    actionSheetCancelText: { fontSize: 16, color: colors.textSecondary, fontWeight: '600' },
+    emptyState: { alignItems: 'center', padding: 40 },
+    emptyStateText: { fontSize: 16, fontWeight: '600', color: colors.text, marginTop: 12, marginBottom: 4 },
+    emptyStateSubtext: { fontSize: 14, color: colors.textSecondary, textAlign: 'center' },
+    memberCard: { backgroundColor: colors.card, borderRadius: 12, padding: 16, marginBottom: 12 },
+    memberHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+    roleContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+    roleText: { fontSize: 12, color: colors.textSecondary, marginLeft: 4, textTransform: 'capitalize' },
+    memberEmail: { fontSize: 12, color: colors.textLight, marginTop: 2 },
+    joinedDate: { fontSize: 12, color: colors.textLight },
+    memberCount: { fontSize: 14, color: colors.textSecondary },
+    workspaceSlug: { fontSize: 14, color: '#007AFF', fontFamily: 'monospace' },
+    modalContainer: { flex: 1, backgroundColor: colors.background },
+    modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
+    modalTitle: { fontSize: 18, fontWeight: '600', color: colors.text },
+    modalCancel: { fontSize: 16, color: colors.textSecondary },
+    modalSave: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
+    modalSaveDisabled: { color: '#ccc' },
+    modalContent: { padding: 20 },
+    inputGroup: { marginBottom: 24 },
+    label: { fontSize: 16, fontWeight: '500', color: colors.text, marginBottom: 8 },
+    input: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: colors.text },
+    roleSelector: { flexDirection: 'row', gap: 12 },
+    roleOption: { flex: 1, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: 'center' },
+    roleOptionSelected: { borderColor: '#007AFF', backgroundColor: '#E3F2FD' },
+    roleOptionText: { fontSize: 14, color: colors.textSecondary },
+    roleOptionTextSelected: { color: '#007AFF', fontWeight: '600' },
+  }), [colors]);
+
   const renderMemberItem = ({ item: member }: { item: WorkspaceMember }) => (
-    <View style={styles.memberCard}>
-      <View style={styles.memberInfo}>
-        <View style={styles.memberHeader}>
-          <Text style={styles.memberName}>
+    <View style={dynamicStyles.memberCard}>
+      <View style={dynamicStyles.memberInfo}>
+        <View style={dynamicStyles.memberHeader}>
+          <Text style={dynamicStyles.memberName}>
             {member.user.first_name && member.user.last_name
               ? `${member.user.first_name} ${member.user.last_name}`
               : member.user.username}
           </Text>
-          <View style={styles.roleContainer}>
+          <View style={dynamicStyles.roleContainer}>
             <Ionicons 
               name={member.role === 'owner' ? 'star' : 
                     member.role === 'admin' ? 'shield' : 
                     member.role === 'member' ? 'person' : 'eye'} 
               size={14} 
-              color="#666" 
+              color={colors.textSecondary} 
             />
-            <Text style={styles.roleText}>{member.role}</Text>
+            <Text style={dynamicStyles.roleText}>{member.role}</Text>
           </View>
         </View>
-        <Text style={styles.memberEmail}>{member.user.email}</Text>
-        <Text style={styles.joinedDate}>
+        <Text style={dynamicStyles.memberEmail}>{member.user.email}</Text>
+        <Text style={dynamicStyles.joinedDate}>
           Joined {new Date(member.joined_at).toLocaleDateString()}
         </Text>
       </View>
@@ -180,16 +476,16 @@ export default function WorkspaceDetailsScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
           <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Workspace</Text>
+          <Text style={dynamicStyles.headerTitle}>Workspace</Text>
           <View style={{ width: 24 }} />
         </View>
-        <View style={styles.loadingContainer}>
-          <Text>Loading workspace...</Text>
+        <View style={dynamicStyles.loadingContainer}>
+          <Text style={{ color: colors.textSecondary }}>Loading workspace...</Text>
         </View>
       </SafeAreaView>
     );
@@ -197,12 +493,12 @@ export default function WorkspaceDetailsScreen() {
 
   if (!workspace) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
           <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Workspace Not Found</Text>
+          <Text style={dynamicStyles.headerTitle}>Workspace Not Found</Text>
           <View style={{ width: 24 }} />
         </View>
       </SafeAreaView>
@@ -210,52 +506,62 @@ export default function WorkspaceDetailsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={dynamicStyles.container}>
+      <View style={dynamicStyles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{workspace.name}</Text>
-        {workspace.can_invite && (
-          <TouchableOpacity onPress={() => setInviteModalVisible(true)}>
-            <Ionicons name="person-add" size={24} color="#007AFF" />
+        <Text style={dynamicStyles.headerTitle}>{workspace.name}</Text>
+        {workspace.user_role !== 'owner' && workspace.user_role !== 'admin' && (
+          <TouchableOpacity onPress={handleExitWorkspace}>
+            <Ionicons name="exit-outline" size={24} color="#FF3B30" />
           </TouchableOpacity>
         )}
+        {workspace.user_role === 'owner' || workspace.user_role === 'admin' ? (
+          <View style={{ width: 24 }} />
+        ) : null}
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView style={dynamicStyles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Workspace Info Card */}
-        <View style={styles.infoCard}>
-          <View style={styles.infoHeader}>
-            <View style={styles.workspaceIcon}>
+        <View style={dynamicStyles.infoCard}>
+          <View style={dynamicStyles.infoHeader}>
+            <View style={dynamicStyles.workspaceIcon}>
               <Ionicons name="business" size={24} color="#007AFF" />
             </View>
-            <View style={styles.workspaceInfo}>
-              <Text style={styles.workspaceName}>{workspace.name}</Text>
-              <Text style={styles.workspaceDescription}>{workspace.description || 'No description'}</Text>
-              <Text style={styles.workspaceMeta}>
-                {workspace.member_count} member{workspace.member_count !== 1 ? 's' : ''} • {workspace.user_role}
-              </Text>
+            <View style={dynamicStyles.workspaceInfo}>
+              <Text style={dynamicStyles.workspaceName}>{workspace.name}</Text>
+              <Text style={dynamicStyles.workspaceDescription}>{workspace.description || 'No description'}</Text>
+              <View style={dynamicStyles.workspaceMetaRow}>
+                <Text style={dynamicStyles.workspaceMeta}>
+                  {workspace.member_count} member{workspace.member_count !== 1 ? 's' : ''} • {workspace.user_role}
+                </Text>
+                {workspace.is_personal && (
+                  <View style={dynamicStyles.defaultTag}>
+                    <Text style={dynamicStyles.defaultText}>Default</Text>
+                  </View>
+                )}
+              </View>
             </View>
           </View>
         </View>
 
         {/* Action Buttons */}
-        <View style={styles.actionsSection}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.actionsGrid}>
+        <View style={dynamicStyles.actionsSection}>
+          <Text style={dynamicStyles.sectionTitle}>Quick Actions</Text>
+          <View style={dynamicStyles.actionsGrid}>
             <TouchableOpacity 
-              style={styles.actionButton} 
+              style={dynamicStyles.actionButton} 
               onPress={() => router.push('/quick-reach/meeting-call')}
             >
-              <View style={[styles.actionIcon, { backgroundColor: '#007AFF' }]}>
+              <View style={[dynamicStyles.actionIcon, { backgroundColor: '#007AFF' }]}>
                 <Ionicons name="videocam" size={24} color="#fff" />
               </View>
-              <Text style={styles.actionText}>Start Call</Text>
+              <Text style={dynamicStyles.actionText}>Start Call</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
-              style={styles.actionButton} 
+              style={dynamicStyles.actionButton} 
               onPress={() => {
                 // Add workspace context to chat
                 router.push({
@@ -276,62 +582,65 @@ export default function WorkspaceDetailsScreen() {
                 });
               }}
             >
-              <View style={[styles.actionIcon, { backgroundColor: '#34C759' }]}>
+              <View style={[dynamicStyles.actionIcon, { backgroundColor: '#34C759' }]}>
                 <Ionicons name="chatbubbles" size={24} color="#fff" />
               </View>
-              <Text style={styles.actionText}>Start Chat</Text>
+              <Text style={dynamicStyles.actionText}>Start Chat</Text>
             </TouchableOpacity>
 
             {workspace.can_invite && (
               <TouchableOpacity 
-                style={styles.actionButton} 
+                style={dynamicStyles.actionButton} 
                 onPress={() => setInviteModalVisible(true)}
               >
-                <View style={[styles.actionIcon, { backgroundColor: '#FF9500' }]}>
+                <View style={[dynamicStyles.actionIcon, { backgroundColor: '#FF9500' }]}>
                   <Ionicons name="person-add" size={24} color="#fff" />
                 </View>
-                <Text style={styles.actionText}>Send Invite</Text>
+                <Text style={dynamicStyles.actionText}>Send Invite</Text>
               </TouchableOpacity>
             )}
 
             <TouchableOpacity 
-              style={styles.actionButton} 
-              onPress={() => router.push('/(tabs)/documents')}
+              style={dynamicStyles.actionButton} 
+              onPress={() => router.push({
+                pathname: '/(tabs)/documents',
+                params: { workspaceId: id.toString() }
+              })}
             >
-              <View style={[styles.actionIcon, { backgroundColor: '#AF52DE' }]}>
+              <View style={[dynamicStyles.actionIcon, { backgroundColor: '#AF52DE' }]}>
                 <Ionicons name="folder-open" size={24} color="#fff" />
               </View>
-              <Text style={styles.actionText}>View Files</Text>
+              <Text style={dynamicStyles.actionText}>View Files</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Members and Invitations Tabs */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Team</Text>
+        <View style={dynamicStyles.section}>
+          <View style={dynamicStyles.sectionHeader}>
+            <Text style={dynamicStyles.sectionTitle}>Team</Text>
             {workspace.can_invite && (
               <TouchableOpacity onPress={() => setInviteModalVisible(true)}>
-                <Text style={styles.sectionAction}>Invite</Text>
+                <Text style={dynamicStyles.sectionAction}>Invite</Text>
               </TouchableOpacity>
             )}
           </View>
           
           {/* Tab Navigation */}
-          <View style={styles.tabContainer}>
+          <View style={dynamicStyles.tabContainer}>
             <TouchableOpacity
-              style={[styles.tab, activeTab === 'members' && styles.activeTab]}
+              style={[dynamicStyles.tab, activeTab === 'members' && dynamicStyles.activeTab]}
               onPress={() => setActiveTab('members')}
             >
-              <Text style={[styles.tabText, activeTab === 'members' && styles.activeTabText]}>
+              <Text style={[dynamicStyles.tabText, activeTab === 'members' && dynamicStyles.activeTabText]}>
                 Members ({workspace.member_count})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.tab, activeTab === 'invitations' && styles.activeTab]}
+              style={[dynamicStyles.tab, activeTab === 'invitations' && dynamicStyles.activeTab]}
               onPress={() => setActiveTab('invitations')}
             >
-              <Text style={[styles.tabText, activeTab === 'invitations' && styles.activeTabText]}>
+              <Text style={[dynamicStyles.tabText, activeTab === 'invitations' && dynamicStyles.activeTabText]}>
                 Invitations ({invitations.length})
               </Text>
             </TouchableOpacity>
@@ -340,50 +649,189 @@ export default function WorkspaceDetailsScreen() {
           {/* Tab Content */}
           {activeTab === 'members' ? (
             members.length > 0 ? (
-              <View style={styles.membersList}>
+              <View style={dynamicStyles.membersList}>
                 {members.map((member) => (
-                  <View key={member.id} style={styles.memberItem}>
-                    <View style={styles.memberAvatar}>
-                      <Ionicons name="person" size={20} color="#666" />
+                  <View key={member.id} style={dynamicStyles.memberItem}>
+                    <View style={dynamicStyles.memberAvatar}>
+                      <Ionicons name="person" size={20} color={colors.textSecondary} />
                     </View>
-                    <View style={styles.memberInfo}>
-                      <Text style={styles.memberName}>{member.user?.name || member.user?.email || 'Unknown User'}</Text>
-                      <Text style={styles.memberRole}>{member.role}</Text>
+                    <View style={dynamicStyles.memberInfo}>
+                      <Text style={dynamicStyles.memberName}>
+                        {member.user?.first_name && member.user?.last_name
+                          ? `${member.user.first_name} ${member.user.last_name}`
+                          : member.user?.username || member.user?.email || 'Unknown User'}
+                      </Text>
+                      <Text style={dynamicStyles.memberRole}>{member.role}</Text>
+                      {member.user?.email && (
+                        <Text style={dynamicStyles.memberEmail}>{member.user.email}</Text>
+                      )}
                     </View>
-                    {member.user_id === user?.id && (
-                      <View style={styles.youBadge}>
-                        <Text style={styles.youBadgeText}>You</Text>
-                      </View>
+                    <View style={dynamicStyles.memberActions}>
+                      {member.user_id === user?.id && (
+                        <View style={dynamicStyles.youBadge}>
+                          <Text style={dynamicStyles.youBadgeText}>You</Text>
+                        </View>
+                      )}
+                      {workspace?.can_manage && member.user_id !== user?.id && member.can_remove && (
+                        <TouchableOpacity
+                          style={dynamicStyles.memberActionButton}
+                          onPress={() => {
+                            setSelectedMember(member);
+                            setShowMemberActionSheet(true);
+                          }}
+                        >
+                          <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={dynamicStyles.emptyState}>
+                <Ionicons name="people-outline" size={48} color={colors.textLight} />
+                <Text style={dynamicStyles.emptyStateText}>No members found</Text>
+                <Text style={dynamicStyles.emptyStateSubtext}>Invite users to collaborate</Text>
+              </View>
+            )
+          ) : (
+            invitations.length > 0 ? (
+              <View style={dynamicStyles.membersList}>
+                {invitations.map((invitation: any) => (
+                  <View key={invitation.id || invitation.email} style={dynamicStyles.memberItem}>
+                    <View style={dynamicStyles.memberAvatar}>
+                      <Ionicons name="mail-outline" size={20} color={colors.textSecondary} />
+                    </View>
+                    <View style={dynamicStyles.memberInfo}>
+                      <Text style={dynamicStyles.memberName}>{invitation.email || invitation.user?.email || 'Unknown'}</Text>
+                      <Text style={dynamicStyles.memberRole}>{invitation.role || 'member'}</Text>
+                      {invitation.status && (
+                        <Text style={dynamicStyles.memberEmail}>Status: {invitation.status}</Text>
+                      )}
+                    </View>
+                    {workspace?.can_invite && (
+                      <TouchableOpacity
+                        style={dynamicStyles.memberActionButton}
+                        onPress={() => {
+                          setSelectedInvitation(invitation);
+                          setShowInvitationKebab(true);
+                        }}
+                      >
+                        <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+                      </TouchableOpacity>
                     )}
                   </View>
                 ))}
               </View>
             ) : (
-              <View style={styles.emptyState}>
-                <Ionicons name="people-outline" size={48} color="#ccc" />
-                <Text style={styles.emptyStateText}>No members found</Text>
-                <Text style={styles.emptyStateSubtext}>Invite users to collaborate</Text>
+              <View style={dynamicStyles.emptyState}>
+                <Ionicons name="mail-outline" size={48} color={colors.textLight} />
+                <Text style={dynamicStyles.emptyStateText}>No pending invitations</Text>
+                <Text style={dynamicStyles.emptyStateSubtext}>Invitations will appear here</Text>
               </View>
             )
-          ) : (
-            <View style={styles.emptyState}>
-              <Ionicons name="mail-outline" size={48} color="#ccc" />
-              <Text style={styles.emptyStateText}>No pending invitations</Text>
-              <Text style={styles.emptyStateSubtext}>Invitations will appear here</Text>
-            </View>
           )}
         </View>
 
         {/* Recent Activity Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          <View style={styles.emptyState}>
-            <Ionicons name="time-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyStateText}>No recent activity</Text>
-            <Text style={styles.emptyStateSubtext}>Activity will appear here</Text>
+        <View style={dynamicStyles.section}>
+          <Text style={dynamicStyles.sectionTitle}>Recent Activity</Text>
+          <View style={dynamicStyles.emptyState}>
+            <Ionicons name="time-outline" size={48} color={colors.textLight} />
+            <Text style={dynamicStyles.emptyStateText}>No recent activity</Text>
+            <Text style={dynamicStyles.emptyStateSubtext}>Activity will appear here</Text>
           </View>
         </View>
       </ScrollView>
+
+      {/* Invitation Kebab Menu */}
+      <Modal
+        visible={showInvitationKebab}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowInvitationKebab(false);
+          setSelectedInvitation(null);
+        }}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowInvitationKebab(false);
+            setSelectedInvitation(null);
+          }}
+        >
+          <View style={dynamicStyles.kebabMenuContainer}>
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={handleResendInvitation}
+            >
+              <Ionicons name="send-outline" size={20} color="#007AFF" />
+              <Text style={dynamicStyles.kebabMenuText}>Resend Invite</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={handleCancelInvitation}
+            >
+              <Ionicons name="close-circle-outline" size={20} color="#FF3B30" />
+              <Text style={[dynamicStyles.kebabMenuText, { color: '#FF3B30' }]}>Cancel Invite</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Member Action Sheet */}
+      <Modal
+        visible={showMemberActionSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShowMemberActionSheet(false);
+          setSelectedMember(null);
+        }}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowMemberActionSheet(false);
+            setSelectedMember(null);
+          }}
+        >
+          <View style={dynamicStyles.actionSheetContainer}>
+            <TouchableOpacity
+              style={dynamicStyles.actionSheetItem}
+              onPress={handleShowRoleSelector}
+            >
+              <Ionicons name="person-outline" size={20} color="#007AFF" />
+              <Text style={dynamicStyles.actionSheetText}>Change Role</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[dynamicStyles.actionSheetItem, dynamicStyles.actionSheetItemDanger]}
+              onPress={() => {
+                setShowMemberActionSheet(false);
+                handleRemoveMember();
+              }}
+            >
+              <Ionicons name="person-remove-outline" size={20} color="#FF3B30" />
+              <Text style={[dynamicStyles.actionSheetText, { color: '#FF3B30' }]}>Remove Member</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={dynamicStyles.actionSheetCancel}
+              onPress={() => {
+                setShowMemberActionSheet(false);
+                setSelectedMember(null);
+              }}
+            >
+              <Text style={dynamicStyles.actionSheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Invite Member Modal */}
       <Modal
@@ -392,55 +840,55 @@ export default function WorkspaceDetailsScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setInviteModalVisible(false)}
       >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer}>
+          <View style={dynamicStyles.modalHeader}>
             <TouchableOpacity onPress={() => setInviteModalVisible(false)}>
-              <Text style={styles.modalCancel}>Cancel</Text>
+              <Text style={dynamicStyles.modalCancel}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Invite Member</Text>
+            <Text style={dynamicStyles.modalTitle}>Invite Member</Text>
             <TouchableOpacity
               onPress={handleInviteMember}
               disabled={inviteLoading || !inviteEmail.trim()}
             >
               <Text style={[
-                styles.modalSave,
-                (inviteLoading || !inviteEmail.trim()) && styles.modalSaveDisabled
+                dynamicStyles.modalSave,
+                (inviteLoading || !inviteEmail.trim()) && dynamicStyles.modalSaveDisabled
               ]}>
                 {inviteLoading ? 'Sending...' : 'Send'}
               </Text>
             </TouchableOpacity>
           </View>
 
-          <View style={styles.modalContent}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email Address</Text>
+          <View style={dynamicStyles.modalContent}>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Email Address</Text>
               <TextInput
-                style={styles.input}
+                style={dynamicStyles.input}
                 value={inviteEmail}
                 onChangeText={setInviteEmail}
                 placeholder="Enter email address"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textLight}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
               />
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Role</Text>
-              <View style={styles.roleSelector}>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Role</Text>
+              <View style={dynamicStyles.roleSelector}>
                 {(['admin', 'member', 'viewer'] as const).map((role) => (
                   <TouchableOpacity
                     key={role}
                     style={[
-                      styles.roleOption,
-                      inviteRole === role && styles.roleOptionSelected
+                      dynamicStyles.roleOption,
+                      inviteRole === role && dynamicStyles.roleOptionSelected
                     ]}
                     onPress={() => setInviteRole(role)}
                   >
                     <Text style={[
-                      styles.roleOptionText,
-                      inviteRole === role && styles.roleOptionTextSelected
+                      dynamicStyles.roleOptionText,
+                      inviteRole === role && dynamicStyles.roleOptionTextSelected
                     ]}>
                       {role.charAt(0).toUpperCase() + role.slice(1)}
                     </Text>
@@ -454,83 +902,3 @@ export default function WorkspaceDetailsScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8f9fa' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  headerTitle: { fontSize: 18, fontWeight: '600', color: '#333', flex: 1, textAlign: 'center' },
-  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  scrollView: { flex: 1 },
-  listContainer: { padding: 16 },
-  
-  // Workspace Info Card
-  infoCard: { backgroundColor: '#fff', borderRadius: 12, padding: 20, margin: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
-  infoHeader: { flexDirection: 'row', alignItems: 'center' },
-  workspaceIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#E3F2FD', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
-  workspaceInfo: { flex: 1 },
-  workspaceName: { fontSize: 20, fontWeight: '700', color: '#333', marginBottom: 4 },
-  workspaceDescription: { fontSize: 14, color: '#666', lineHeight: 20, marginBottom: 8 },
-  workspaceMeta: { fontSize: 12, color: '#999' },
-  
-  // Actions Section
-  actionsSection: { paddingHorizontal: 16, marginBottom: 20 },
-  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#333', marginBottom: 12 },
-  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  actionButton: { width: '47%', backgroundColor: '#fff', borderRadius: 8, padding: 12, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
-  actionIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
-  actionText: { fontSize: 12, fontWeight: '600', color: '#333', textAlign: 'center' },
-  
-  // Section
-  section: { paddingHorizontal: 16, marginBottom: 24 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  sectionAction: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
-  
-  // Tabs
-  tabContainer: { flexDirection: 'row', backgroundColor: '#f0f0f0', borderRadius: 8, padding: 4, marginBottom: 16 },
-  tab: { flex: 1, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 6, alignItems: 'center' },
-  activeTab: { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
-  tabText: { fontSize: 14, fontWeight: '500', color: '#666' },
-  activeTabText: { color: '#007AFF', fontWeight: '600' },
-  
-  // Members
-  membersList: { backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden' },
-  memberItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  memberAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  memberInfo: { flex: 1 },
-  memberName: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 2 },
-  memberRole: { fontSize: 14, color: '#666', textTransform: 'capitalize' },
-  youBadge: { backgroundColor: '#E3F2FD', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  youBadgeText: { fontSize: 12, color: '#007AFF', fontWeight: '600' },
-  
-  // Empty State
-  emptyState: { alignItems: 'center', padding: 40 },
-  emptyStateText: { fontSize: 16, fontWeight: '600', color: '#333', marginTop: 12, marginBottom: 4 },
-  emptyStateSubtext: { fontSize: 14, color: '#666', textAlign: 'center' },
-  
-  // Legacy styles (keeping for compatibility)
-  memberCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12 },
-  memberHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  roleContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f0f0', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  roleText: { fontSize: 12, color: '#666', marginLeft: 4, textTransform: 'capitalize' },
-  memberEmail: { fontSize: 14, color: '#666', marginBottom: 4 },
-  joinedDate: { fontSize: 12, color: '#999' },
-  memberCount: { fontSize: 14, color: '#666' },
-  workspaceSlug: { fontSize: 14, color: '#007AFF', fontFamily: 'monospace' },
-  
-  // Modal styles
-  modalContainer: { flex: 1, backgroundColor: '#f8f9fa' },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  modalTitle: { fontSize: 18, fontWeight: '600', color: '#333' },
-  modalCancel: { fontSize: 16, color: '#666' },
-  modalSave: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
-  modalSaveDisabled: { color: '#ccc' },
-  modalContent: { padding: 20 },
-  inputGroup: { marginBottom: 24 },
-  label: { fontSize: 16, fontWeight: '500', color: '#333', marginBottom: 8 },
-  input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#333' },
-  roleSelector: { flexDirection: 'row', gap: 12 },
-  roleOption: { flex: 1, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff', alignItems: 'center' },
-  roleOptionSelected: { borderColor: '#007AFF', backgroundColor: '#E3F2FD' },
-  roleOptionText: { fontSize: 14, color: '#666' },
-  roleOptionTextSelected: { color: '#007AFF', fontWeight: '600' },
-}); 

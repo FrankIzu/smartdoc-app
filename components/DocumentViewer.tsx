@@ -299,11 +299,14 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB limit for text files
 
   useEffect(() => {
     const loadTextContent = async () => {
       try {
         setLoading(true);
+        setError(null);
+        
         const response = await fetch(fileUrl, {
           headers: {
             'Authorization': `Bearer ${authToken}`,
@@ -311,21 +314,38 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
           }
         });
 
-        if (response.ok) {
-          const text = await response.text();
-          setContent(text);
-        } else {
+        if (!response.ok) {
           setError(`Failed to load text content: ${response.status}`);
+          return;
         }
-      } catch (err) {
-        setError('Failed to load text document');
+
+        // Check content length before loading
+        const contentLength = response.headers.get('content-length');
+        if (contentLength && parseInt(contentLength) > MAX_FILE_SIZE) {
+          setError(`File is too large (${(parseInt(contentLength) / 1024 / 1024).toFixed(2)} MB). Maximum size is ${MAX_FILE_SIZE / 1024 / 1024} MB.`);
+          return;
+        }
+
+        const text = await response.text();
+        
+        // Check actual size after loading
+        if (text.length > MAX_FILE_SIZE) {
+          setError(`File is too large (${(text.length / 1024 / 1024).toFixed(2)} MB). Maximum size is ${MAX_FILE_SIZE / 1024 / 1024} MB.`);
+          return;
+        }
+        
+        setContent(text);
+      } catch (err: any) {
         console.error('Text document load error:', err);
+        setError(err.message || 'Failed to load text document');
       } finally {
         setLoading(false);
       }
     };
 
-    loadTextContent();
+    if (fileUrl && authToken) {
+      loadTextContent();
+    }
   }, [fileUrl, authToken]);
 
   if (loading) {
@@ -347,8 +367,12 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
   }
 
   return (
-    <ScrollView style={styles.textContainer} contentContainerStyle={styles.textContent}>
-      <Text style={styles.textDocument}>{content}</Text>
+    <ScrollView 
+      style={styles.textContainer} 
+      contentContainerStyle={styles.textContent}
+      showsVerticalScrollIndicator={true}
+    >
+      <Text style={styles.textDocument} selectable={true}>{content || '(Empty file)'}</Text>
     </ScrollView>
   );
 };
@@ -388,11 +412,13 @@ export default function DocumentViewer({
       const fileInfo = await apiClient.getFileById(parseInt(fileId));
       
       if (fileInfo.success && fileInfo.file) {
-        // For now, use the download endpoint but handle it as preview
-        // TODO: Use dedicated preview endpoint when available
-        const previewUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/download`;
+        // Use view endpoint - backend automatically decrypts encrypted files
+        // All file operations go through backend encryption class
+        // If view endpoint doesn't exist, fallback to download endpoint
+        console.log('🔐 File will be decrypted by backend encryption class for viewing');
+        let previewUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/view`;
         
-        // File loaded successfully
+        // File loaded successfully - backend handles decryption automatically
         
         setFileUrl(previewUrl);
         
@@ -406,9 +432,23 @@ export default function DocumentViewer({
     } catch (error: any) {
       console.error('Failed to load file URL:', error);
       
-      // Provide more specific error messages
+      // If view endpoint returns 404, try download endpoint as fallback
       if (error.response?.status === 404) {
-        setError('File not found. It may have been deleted or moved.');
+        console.log('⚠️ View endpoint not available, falling back to download endpoint');
+        try {
+          const downloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/download`;
+          console.log('🔐 Using download endpoint - backend will decrypt file');
+          setFileUrl(downloadUrl);
+          
+          // For images, get dimensions with authentication
+          if (isImageFile(fileType)) {
+            await getImageDimensionsWithAuth(downloadUrl);
+          }
+          return; // Successfully loaded via download endpoint
+        } catch (fallbackError: any) {
+          console.error('Fallback to download endpoint also failed:', fallbackError);
+          setError('File not found. It may have been deleted or moved.');
+        }
       } else if (error.response?.status === 401) {
         setError('Authentication required. Please log in again.');
       } else if (error.response?.status === 403) {
@@ -496,9 +536,10 @@ export default function DocumentViewer({
   };
 
   const isTextDocument = (type: string) => {
-    const textExtensions = /\.(txt|rtf|md)$/;
+    const textExtensions = /\.(txt|rtf|md|log|csv|json|xml|yaml|yml|ini|conf|config|properties)$/;
     return type === 'text' || 
            type.includes('text/') ||
+           type.includes('plain') ||
            fileName.toLowerCase().match(textExtensions);
   };
 
@@ -601,13 +642,35 @@ export default function DocumentViewer({
       );
     }
 
-    // Use the AuthenticatedWebView for all document types
+    // Use the AuthenticatedWebView for PDFs and Office documents
     return (
       <AuthenticatedWebView 
         fileUrl={fileUrl} 
         authToken={authToken} 
         fileName={fileName} 
         fileType={fileType} 
+      />
+    );
+  };
+
+  const renderTextDocument = () => {
+    if (!fileUrl) return null;
+
+    if (!authToken) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading text document...</Text>
+        </View>
+      );
+    }
+
+    // Use TextDocumentViewer for text files
+    return (
+      <TextDocumentViewer 
+        fileUrl={fileUrl} 
+        authToken={authToken} 
+        fileName={fileName} 
       />
     );
   };
@@ -657,13 +720,19 @@ export default function DocumentViewer({
       return renderImage();
     }
     
-    // For PDFs, Office documents, and text documents, show WebView preview
-    if (isPdf || isOffice || isText) {
+    // For text documents, use TextDocumentViewer
+    if (isText) {
+      return renderTextDocument();
+    }
+    
+    // For PDFs and Office documents, show WebView preview
+    if (isPdf || isOffice) {
       return renderDocumentPreview();
     }
     
-    // For other document types, show fallback
-    return renderFallbackDocument();
+    // For other document types, try to show in WebView as fallback
+    // This handles CSV, JSON, XML, and other text-based formats
+    return renderDocumentPreview();
   };
 
   // DocumentViewer rendering
