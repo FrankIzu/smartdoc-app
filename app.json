@@ -4,13 +4,13 @@
     "slug": "grabdocs",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light.png",
     "userInterfaceStyle": "automatic",
     "scheme": "grabdocs",
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#007AFF"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.grabdocs.mobile",
-      "buildNumber": "1",
+      "buildNumber": "3",
       "infoPlist": {
         "NSCameraUsageDescription": "GrabDocs needs access to your camera to scan documents and take photos.",
         "NSPhotoLibraryUsageDescription": "GrabDocs needs access to your photo library to upload existing documents and photos.",
@@ -31,9 +31,9 @@
     },
     "android": {
       "package": "com.grabdocs.mobile",
-      "versionCode": 1,
+      "versionCode": 3,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-512.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
@@ -65,12 +65,20 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/grabdocs-brand-app-images/favicon/favicon-48x48.png"
     },
     "plugins": [
       "expo-dev-client",
       "expo-router",
       "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.0"
+          }
+        }
+      ],
       [
         "expo-image-picker",
         {
