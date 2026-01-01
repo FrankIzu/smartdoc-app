@@ -1,0 +1,861 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+    Alert,
+    Clipboard,
+    FlatList,
+    Modal,
+    Platform,
+    RefreshControl,
+    Share,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
+import DocumentViewer from '../../components/DocumentViewer';
+import { apiService } from '../../services/api';
+import { useAuth } from '../context/auth';
+import { FRONTEND_URL } from '../../constants/Config';
+
+interface UploadLink {
+  id: number;
+  name: string;
+  description?: string;
+  token: string;
+  is_active: boolean;
+  expires_at?: string;
+  created_at: string;
+  upload_count: number;
+  max_uploads?: number;
+  url: string;
+  uploaded_files: UploadedFile[];
+}
+
+interface UploadedFile {
+  id: number;
+  file_id?: number; // File ID from the files table
+  filename: string;
+  original_filename?: string;
+  file_size: number;
+  file_type?: string; // Optional - may not be in backend response
+  file_kind?: string; // Optional - may not be in backend response
+  upload_date?: string; // Optional - backend uses created_at instead
+  created_at?: string; // Main date field from backend
+  status?: string;
+  sender_info?: any;
+}
+
+export default function UploadLinkDetailsScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const colors = useThemeColors();
+  const { id } = useLocalSearchParams();
+  const [uploadLink, setUploadLink] = useState<UploadLink | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [emails, setEmails] = useState('');
+  const [shareMessage, setShareMessage] = useState('');
+  const [shareLoading, setShareLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
+  const [showDocumentViewer, setShowDocumentViewer] = useState(false);
+
+  const loadUploadLink = async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    
+    try {
+      const response = await apiService.getUploadLink(Number(id));
+      if (response.success) {
+        setUploadLink(response.upload_link);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to load upload link');
+        router.back();
+      }
+    } catch (error: any) {
+      console.error('Load upload link error:', error);
+      Alert.alert('Error', error.message || 'Failed to load upload link');
+      router.back();
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user) {
+        loadUploadLink();
+      }
+    }, [user, id])
+  );
+
+  const handleRefresh = () => {
+    if (!user) return;
+    setRefreshing(true);
+    loadUploadLink();
+  };
+
+  const getFullUrl = (url: string): string => {
+    // Construct full URL if it's just a path
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    // Ensure the URL starts with / and prepend the frontend URL
+    const path = url.startsWith('/') ? url : `/${url}`;
+    return `${FRONTEND_URL}${path}`;
+  };
+
+  const handleCopyLink = async () => {
+    if (uploadLink) {
+      const fullUrl = getFullUrl(uploadLink.url);
+      Clipboard.setString(fullUrl);
+      Alert.alert('Copied', 'Upload link copied to clipboard');
+    }
+  };
+
+  const handleShareLink = async () => {
+    if (!uploadLink) return;
+    
+    try {
+      const fullUrl = getFullUrl(uploadLink.url);
+      const message = `Upload files using this link: ${fullUrl}\n\nLink: ${uploadLink.name}\n${uploadLink.description ? `Description: ${uploadLink.description}` : ''}`;
+      
+      if (Platform.OS === 'ios' || Platform.OS === 'android') {
+        await Share.share({
+          message,
+          url: fullUrl,
+          title: `Upload Link: ${uploadLink.name}`,
+        });
+      }
+    } catch (error) {
+      console.error('Share error:', error);
+    }
+  };
+
+  const handleEmailShare = () => {
+    setShareModalVisible(true);
+    setEmails('');
+    setShareMessage('');
+  };
+
+  const handleSendEmails = async () => {
+    if (!emails.trim()) {
+      Alert.alert('Error', 'Please enter at least one email address');
+      return;
+    }
+
+    const emailList = emails.split(',').map(email => email.trim()).filter(email => email);
+    
+    if (emailList.length === 0) {
+      Alert.alert('Error', 'Please enter valid email addresses');
+      return;
+    }
+
+    setShareLoading(true);
+    try {
+      const response = await apiService.shareUploadLink(Number(id), {
+        emails: emailList,
+        message: shareMessage.trim() || undefined,
+      });
+
+      if (response.success) {
+        Alert.alert('Success', `Upload link shared with ${emailList.length} recipient(s)`);
+        setShareModalVisible(false);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to share upload link');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to share upload link');
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleToggleActive = async () => {
+    if (!uploadLink) return;
+
+    try {
+      const response = await apiService.updateUploadLink(uploadLink.id, {
+        is_active: !uploadLink.is_active
+      });
+      
+      if (response.success) {
+        setUploadLink(prev => prev ? { ...prev, is_active: !prev.is_active } : null);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to update link');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update link');
+    }
+  };
+
+  const handleDeleteLink = () => {
+    if (!uploadLink) return;
+
+    Alert.alert(
+      'Delete Upload Link',
+      `Are you sure you want to delete "${uploadLink.name}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await apiService.deleteUploadLink(uploadLink.id);
+              if (response.success) {
+                router.back();
+              } else {
+                Alert.alert('Error', response.message || 'Failed to delete link');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete link');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const formatDate = (dateString: string | undefined) => {
+    if (!dateString) return 'Unknown date';
+    try {
+      const date = new Date(dateString);
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return 'Invalid date';
+      }
+      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (error) {
+      console.error('Date formatting error:', error, 'for dateString:', dateString);
+      return 'Invalid date';
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const isExpired = (expiresAt?: string) => {
+    if (!expiresAt) return false;
+    return new Date(expiresAt) < new Date();
+  };
+
+  const getFileTypeFromFilename = (filename: string): string => {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif'];
+    const pdfExts = ['pdf'];
+    const docExts = ['doc', 'docx'];
+    const xlsExts = ['xls', 'xlsx', 'csv'];
+    const pptExts = ['ppt', 'pptx'];
+    const textExts = ['txt', 'md', 'rtf'];
+    
+    if (imageExts.includes(ext)) return 'image';
+    if (pdfExts.includes(ext)) return 'application/pdf';
+    if (docExts.includes(ext)) return 'application/msword';
+    if (xlsExts.includes(ext)) return 'application/vnd.ms-excel';
+    if (pptExts.includes(ext)) return 'application/vnd.ms-powerpoint';
+    if (textExts.includes(ext)) return 'text/plain';
+    
+    return 'document';
+  };
+
+  const getFileIcon = (fileKind?: string, fileType?: string, filename?: string) => {
+    // Infer file type from filename if not provided
+    if (!fileType && filename) {
+      fileType = getFileTypeFromFilename(filename);
+    }
+    
+    if (!fileKind) {
+      // Fallback to file type
+      if (fileType?.includes('image')) return 'image';
+      if (fileType?.includes('pdf')) return 'document';
+      return 'document-text';
+    }
+    
+    const kind = fileKind.toLowerCase().trim();
+    switch (kind) {
+      case 'receipt':
+      case 'receipts':
+        return 'receipt-outline';
+      case 'invoice':
+      case 'invoices':
+        return 'document-text-outline';
+      case 'form':
+      case 'forms':
+        return 'clipboard-outline';
+      case 'document':
+      case 'documents':
+        return 'document-outline';
+      case 'transcript':
+      case 'transcripts':
+        return 'mic-outline';
+      case 'meeting_notes':
+      case 'meeting_upload':
+        return 'document-text-outline';
+      case 'meeting_chat':
+        return 'chatbubbles-outline';
+      case 'meeting_summary':
+      case 'ai_summary':
+        return 'sparkles-outline';
+      case 'spreadsheet':
+      case 'spreadsheets':
+        return 'grid-outline';
+      case 'picture':
+      case 'image':
+      case 'images':
+        return 'image-outline';
+      default:
+        return 'document-outline';
+    }
+  };
+
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 16,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    title: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    placeholder: {
+      width: 24,
+    },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    loadingText: {
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    errorText: {
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    listContainer: {
+      padding: 16,
+    },
+    linkCard: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+    },
+    linkHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    linkName: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      flex: 1,
+    },
+    statusBadge: {
+      backgroundColor: '#FF3B30',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 4,
+    },
+    statusText: {
+      fontSize: 12,
+      color: '#fff',
+      fontWeight: '600',
+    },
+    linkDescription: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginBottom: 12,
+    },
+    linkStats: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+    },
+    statItem: {
+      alignItems: 'center',
+    },
+    statValue: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    statLabel: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    linkUrl: {
+      fontSize: 12,
+      color: '#007AFF',
+      fontFamily: 'monospace',
+      marginTop: 8,
+    },
+    actionsCard: {
+      flexDirection: 'row',
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 12,
+      gap: 8,
+    },
+    actionButton: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderRadius: 8,
+      backgroundColor: colors.surface,
+    },
+    actionText: {
+      marginTop: 4,
+      fontSize: 12,
+      fontWeight: '500',
+      color: colors.text,
+    },
+    sectionHeader: {
+      marginBottom: 12,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    fileCard: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+    },
+    fileHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    fileIcon: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: colors.surface,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 12,
+    },
+    fileInfo: {
+      flex: 1,
+    },
+    fileName: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    fileMetadata: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    fileSize: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    fileSeparator: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    fileDate: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    fileBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.surface,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+      marginTop: 8,
+    },
+    fileBadgeText: {
+      fontSize: 12,
+      color: colors.text,
+      textTransform: 'capitalize',
+    },
+    emptyContainer: {
+      alignItems: 'center',
+      paddingVertical: 48,
+    },
+    emptyTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    emptyDescription: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      paddingHorizontal: 32,
+    },
+    modalContainer: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    modalCancelText: {
+      fontSize: 16,
+      color: '#007AFF',
+    },
+    modalSendText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#007AFF',
+    },
+    disabledText: {
+      color: colors.textLight,
+    },
+    modalContent: {
+      padding: 16,
+    },
+    inputGroup: {
+      marginBottom: 24,
+    },
+    label: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    input: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: colors.text,
+    },
+    textArea: {
+      height: 100,
+      textAlignVertical: 'top',
+    },
+  }), [colors]);
+
+  const handleFilePress = async (file: UploadedFile) => {
+    // Uploaded files from upload links are File records, so file.id is the File.id
+    // DocumentViewer uses apiClient.getFileById which calls /api/v1/mobile/file/{id}
+    // Backend decrypts files automatically through the /view endpoint
+    const fileId = file.file_id || file.id;
+    
+    // Use the same DocumentViewer as files - it handles decryption via backend
+    setSelectedFile(file);
+    setShowDocumentViewer(true);
+  };
+
+  const renderFile = ({ item }: { item: UploadedFile }) => {
+    // Use created_at if upload_date is not available
+    const dateField = item.upload_date || item.created_at || '';
+    
+    return (
+      <TouchableOpacity 
+        style={dynamicStyles.fileCard} 
+        onPress={() => handleFilePress(item)}
+        activeOpacity={0.7}
+      >
+        <View style={dynamicStyles.fileHeader}>
+          <View style={dynamicStyles.fileIcon}>
+            <Ionicons 
+              name={getFileIcon(item.file_kind, item.file_type, item.filename) as any}
+              size={24} 
+              color="#007AFF" 
+            />
+          </View>
+          <View style={dynamicStyles.fileInfo}>
+            <Text style={dynamicStyles.fileName}>{item.filename}</Text>
+            <View style={dynamicStyles.fileMetadata}>
+              <Text style={dynamicStyles.fileSize}>{formatFileSize(item.file_size)}</Text>
+              <Text style={dynamicStyles.fileSeparator}>•</Text>
+              <Text style={dynamicStyles.fileDate}>{formatDate(dateField)}</Text>
+            </View>
+          </View>
+        </View>
+        {item.file_kind && (
+          <View style={dynamicStyles.fileBadge}>
+            <Text style={dynamicStyles.fileBadgeText}>{item.file_kind}</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={dynamicStyles.title}>Upload Link</Text>
+          <View style={dynamicStyles.placeholder} />
+        </View>
+        <View style={dynamicStyles.centerContainer}>
+          <Text style={dynamicStyles.loadingText}>Loading upload link...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!uploadLink) {
+    return (
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={dynamicStyles.title}>Upload Link</Text>
+          <View style={dynamicStyles.placeholder} />
+        </View>
+        <View style={dynamicStyles.centerContainer}>
+          <Text style={dynamicStyles.errorText}>Upload link not found</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const expired = isExpired(uploadLink.expires_at);
+  const limitReached = uploadLink.max_uploads && uploadLink.upload_count >= uploadLink.max_uploads;
+
+  return (
+    <SafeAreaView style={dynamicStyles.container}>
+      <View style={dynamicStyles.header}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={dynamicStyles.title}>Upload Link</Text>
+        <TouchableOpacity onPress={handleDeleteLink}>
+          <Ionicons name="trash" size={24} color="#FF3B30" />
+        </TouchableOpacity>
+      </View>
+
+      <FlatList
+        data={uploadLink.uploaded_files}
+        renderItem={renderFile}
+        keyExtractor={(item) => `file-${item.id}`}
+        contentContainerStyle={dynamicStyles.listContainer}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#007AFF"
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <View>
+            {/* Link Info */}
+            <View style={dynamicStyles.linkCard}>
+              <View style={dynamicStyles.linkHeader}>
+                <Text style={dynamicStyles.linkName}>{uploadLink.name}</Text>
+                {(!uploadLink.is_active || expired || limitReached) && (
+                  <View style={dynamicStyles.statusBadge}>
+                    <Text style={dynamicStyles.statusText}>
+                      {!uploadLink.is_active ? 'Inactive' : 
+                       expired ? 'Expired' : 
+                       'Limit Reached'}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              
+              {uploadLink.description && (
+                <Text style={dynamicStyles.linkDescription}>{uploadLink.description}</Text>
+              )}
+
+              <View style={dynamicStyles.linkStats}>
+                <View style={dynamicStyles.statItem}>
+                  <Text style={dynamicStyles.statValue}>{uploadLink.upload_count}</Text>
+                  <Text style={dynamicStyles.statLabel}>
+                    {uploadLink.max_uploads ? `of ${uploadLink.max_uploads} uploads` : 'uploads'}
+                  </Text>
+                </View>
+                <View style={dynamicStyles.statItem}>
+                  <Text style={dynamicStyles.statValue}>
+                    {uploadLink.expires_at ? 
+                      formatDate(uploadLink.expires_at).split(' ')[0] : 
+                      '∞'
+                    }
+                  </Text>
+                  <Text style={dynamicStyles.statLabel}>
+                    {uploadLink.expires_at ? 'expires on' : 'never expires'}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={dynamicStyles.linkUrl}>{getFullUrl(uploadLink.url)}</Text>
+            </View>
+
+            {/* Actions */}
+            <View style={dynamicStyles.actionsCard}>
+              <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleCopyLink}>
+                <Ionicons name="copy" size={20} color="#007AFF" />
+                <Text style={dynamicStyles.actionText}>Copy Link</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleShareLink}>
+                <Ionicons name="share" size={20} color="#007AFF" />
+                <Text style={dynamicStyles.actionText}>Share</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleEmailShare}>
+                <Ionicons name="mail" size={20} color="#007AFF" />
+                <Text style={dynamicStyles.actionText}>Email</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleToggleActive}>
+                <Ionicons 
+                  name={uploadLink.is_active ? "pause" : "play"} 
+                  size={20} 
+                  color={uploadLink.is_active ? "#FF9500" : "#34C759"} 
+                />
+                <Text style={[dynamicStyles.actionText, { color: uploadLink.is_active ? "#FF9500" : "#34C759" }]}>
+                  {uploadLink.is_active ? 'Deactivate' : 'Activate'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Files Header */}
+            <View style={dynamicStyles.sectionHeader}>
+              <Text style={dynamicStyles.sectionTitle}>Uploaded Files ({uploadLink.uploaded_files.length})</Text>
+            </View>
+          </View>
+        }
+        ListEmptyComponent={
+          <View style={dynamicStyles.emptyContainer}>
+            <Ionicons name="cloud-upload" size={64} color={colors.textLight} />
+            <Text style={dynamicStyles.emptyTitle}>No Files Uploaded</Text>
+            <Text style={dynamicStyles.emptyDescription}>
+              Files uploaded through this link will appear here
+            </Text>
+          </View>
+        }
+      />
+
+      {/* Email Share Modal */}
+      <Modal
+        visible={shareModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShareModalVisible(false)}
+      >
+        <SafeAreaView style={dynamicStyles.modalContainer}>
+          <View style={dynamicStyles.modalHeader}>
+            <TouchableOpacity onPress={() => setShareModalVisible(false)}>
+              <Text style={dynamicStyles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={dynamicStyles.modalTitle}>Share via Email</Text>
+            <TouchableOpacity 
+              onPress={handleSendEmails}
+              disabled={shareLoading}
+            >
+              <Text style={[dynamicStyles.modalSendText, shareLoading && dynamicStyles.disabledText]}>
+                {shareLoading ? 'Sending...' : 'Send'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={dynamicStyles.modalContent}>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Email Addresses (comma separated)</Text>
+              <TextInput
+                style={[dynamicStyles.input, dynamicStyles.textArea]}
+                value={emails}
+                onChangeText={setEmails}
+                placeholder="john@example.com, jane@example.com"
+                placeholderTextColor={colors.textLight}
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Custom Message (Optional)</Text>
+              <TextInput
+                style={[dynamicStyles.input, dynamicStyles.textArea]}
+                value={shareMessage}
+                onChangeText={setShareMessage}
+                placeholder="Add a personal message..."
+                placeholderTextColor={colors.textLight}
+                multiline
+                numberOfLines={4}
+              />
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+      
+      {/* Document Viewer Modal - Same viewer as files, handles decryption via backend */}
+      {showDocumentViewer && selectedFile && (
+        <DocumentViewer
+          fileId={String(selectedFile.file_id || selectedFile.id)}
+          fileName={selectedFile.filename || selectedFile.original_filename || 'Untitled'}
+          fileType={selectedFile.file_type || getFileTypeFromFilename(selectedFile.filename || '')}
+          fileCategory={selectedFile.file_kind || ''}
+          onClose={() => {
+            setShowDocumentViewer(false);
+            setSelectedFile(null);
+          }}
+        />
+      )}
+    </SafeAreaView>
+  );
+}

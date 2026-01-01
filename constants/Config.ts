@@ -1,7 +1,79 @@
+import Constants from 'expo-constants';
 
-// API Configuration
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
-export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
+// API Configuration - Auto-detect based on environment
+export const API_BASE_URL = (() => {
+  // 1. Check explicit environment variable
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    console.log('📍 API URL: Using environment variable:', process.env.EXPO_PUBLIC_API_URL);
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+  
+  // 2. Check if we're in Expo Go (local testing only)
+  // Expo Go = local testing, use localhost
+  // Standalone app (dev or prod build) = use production
+  const isExpoGo = Constants.appOwnership === 'expo';
+  
+  console.log('📍 API URL Detection:', {
+    appOwnership: Constants.appOwnership,
+    isExpoGo,
+    __DEV__,
+  });
+  
+  if (isExpoGo) {
+    // Only use localhost when running in Expo Go for local testing
+    console.log('📍 API URL: Using localhost (Expo Go detected)');
+    return 'http://192.168.1.5:5000'; // Local development
+  }
+  
+  // 3. For standalone apps (dev builds or production builds), use production
+  console.log('📍 API URL: Using production (Standalone app detected)');
+  return 'https://api.grabdocs.com'; // Production Render backend
+})();
+
+export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || (__DEV__ ? 'development' : 'production');
+
+// OAuth Configuration - Platform-specific client IDs
+const GOOGLE_CLIENT_ID_WEB = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB || '';
+const GOOGLE_CLIENT_ID_ANDROID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID || '';
+const GOOGLE_CLIENT_ID_IOS = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS || '';
+
+// Select the appropriate client ID based on platform and environment
+export const GOOGLE_CLIENT_ID = (() => {
+  // For Expo Go development, always use web client ID
+  if (__DEV__) {
+    return GOOGLE_CLIENT_ID_WEB;
+  }
+  
+  // For production builds, use platform-specific client IDs
+  if (process.env.EXPO_OS === 'android') {
+    return GOOGLE_CLIENT_ID_ANDROID;
+  } else if (process.env.EXPO_OS === 'ios') {
+    return GOOGLE_CLIENT_ID_IOS;
+  }
+  
+  // Fallback to web client ID
+  return GOOGLE_CLIENT_ID_WEB;
+})();
+export const DROPBOX_CLIENT_ID = process.env.EXPO_PUBLIC_DROPBOX_APP_KEY || ''; // Dropbox App Key (same as Client ID)
+
+// Expo Development Server URL
+export const EXPO_DEV_URL = 'http://192.168.1.5:8082';
+
+// Frontend Web URL - Used for sharing links that should open in browser
+export const FRONTEND_URL = (() => {
+  // 1. Check explicit environment variable
+  if (process.env.EXPO_PUBLIC_FRONTEND_URL) {
+    return process.env.EXPO_PUBLIC_FRONTEND_URL;
+  }
+  
+  // 2. Auto-detect based on development mode
+  if (__DEV__) {
+    return 'http://localhost:3000'; // Local development web frontend
+  }
+  
+  // 3. Production fallback
+  return 'https://grabdocs.com'; // Production web frontend
+})();
 
 // App Configuration
 export const APP_NAME = process.env.EXPO_PUBLIC_APP_NAME || 'GrabDocs Mobile';
@@ -33,7 +105,7 @@ export const API_ENDPOINTS = {
   BATCH_AUTO_CATEGORIZE: '/api/files/batch-auto-categorize',
   EDIT_FILE: (id: number) => `/api/files/${id}/edit`,
   
-  // Chat
+  // Chat (AI Assistant)
   SMART_CHAT: '/api/chat/smart',
   SMART_CHAT_STREAM: '/api/chat/smart/stream',
   CHAT_HISTORY: '/api/chat/history',
@@ -41,6 +113,23 @@ export const API_ENDPOINTS = {
   NEW_CHAT: '/api/chat/new',
   UPDATE_CHAT: (id: number) => `/api/chat/history/${id}`,
   DELETE_CHAT: (id: number) => `/api/chat/history/${id}`,
+  
+  // User Chat - WEB ENDPOINTS (for web app only)
+  // NOTE: Mobile app uses /api/v1/mobile/user-chat/* endpoints (defined in services/api.ts MOBILE_ENDPOINTS)
+  // Mobile and web user chat are SEPARATED to avoid 403 errors
+  USER_CHATS: '/api/v1/web/user-chat/chats',
+  USER_CHAT_MESSAGES: (chatId: number) => `/api/v1/web/user-chat/chats/${chatId}/messages`,
+  USER_CHAT_SEND: (chatId: number) => `/api/v1/web/user-chat/chats/${chatId}/send`,
+  USER_CHAT_START: '/api/v1/web/user-chat/start-chat',
+  USER_CHAT_SEARCH_USERS: '/api/v1/web/user-chat/search-users',
+  
+  // User Chat - MOBILE ENDPOINTS (for mobile app only)
+  // Mobile app should use these via services/api.ts methods, not directly
+  USER_CHATS_MOBILE: '/api/v1/mobile/user-chat/chats',
+  USER_CHAT_MESSAGES_MOBILE: (chatId: number) => `/api/v1/mobile/user-chat/chats/${chatId}/messages`,
+  USER_CHAT_SEND_MOBILE: (chatId: number) => `/api/v1/mobile/user-chat/chats/${chatId}/send`,
+  USER_CHAT_START_MOBILE: '/api/v1/mobile/user-chat/start-chat',
+  USER_CHAT_SEARCH_USERS_MOBILE: '/api/v1/mobile/user-chat/search-users',
   
   // Forms
   FORMS: '/api/forms',
@@ -93,6 +182,16 @@ export const API_ENDPOINTS = {
   
   // Health
   HEALTH: '/health',
+  
+  // Mobile OAuth
+  MOBILE_GOOGLE_AUTH: '/api/v1/mobile/external-auth/googledrive',
+  MOBILE_DROPBOX_AUTH: '/api/v1/mobile/external-auth/dropbox',
+  MOBILE_DROPBOX_EXCHANGE: '/api/v1/mobile/external-auth/dropbox/exchange',
+  MOBILE_GOOGLE_EXCHANGE: '/api/v1/mobile/external-auth/googledrive/exchange',
+  
+  // External Files
+  EXTERNAL_DROPBOX_FILES: '/api/v1/mobile/external-files/dropbox',
+  EXTERNAL_GOOGLE_FILES: '/api/v1/mobile/external-files/googledrive',
 } as const;
 
 // Storage Keys
@@ -227,4 +326,36 @@ export const ANIMATION = {
   FAST: 150,
   NORMAL: 300,
   SLOW: 500,
-} as const; 
+} as const;
+
+const ENV = {
+  dev: {
+    apiUrl: 'http://localhost:5000',
+    stripePublishableKey: 'pk_test_your-stripe-test-publishable-key-here', // Replace with your test key
+  },
+  staging: {
+    apiUrl: 'https://your-staging-api.com',
+    stripePublishableKey: 'pk_test_your-stripe-test-publishable-key-here', // Replace with your test key
+  },
+  prod: {
+    apiUrl: 'https://your-production-api.com',
+    stripePublishableKey: 'pk_live_your-stripe-live-publishable-key-here', // Replace with your live key
+  },
+};
+
+function getEnvVars(env = Constants.expoConfig?.extra?.releaseChannel) {
+  // What is __DEV__ ?
+  // This variable is set to true when react-native is running in Dev mode.
+  // __DEV__ is true when run locally, but false when published.
+  if (process.env.NODE_ENV === 'development') {
+    return ENV.dev;
+  } else if (env === 'staging') {
+    return ENV.staging;
+  } else if (env === 'production') {
+    return ENV.prod;
+  } else {
+    return ENV.dev;
+  }
+}
+
+export default getEnvVars; 

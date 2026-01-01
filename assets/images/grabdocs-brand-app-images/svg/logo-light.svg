@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="1000" viewBox="0 0 3000 1000">
+  <!-- 
+    PLACEHOLDER: Replace with actual vector logo from Illustrator/Figma
+    
+    This is a valid SVG structure. Replace the content below with your actual
+    vector paths. Do NOT export SVG from raster images - must be true vectors.
+    
+    For light version: Use dark logo on light/transparent background
+  -->
+  <rect width="3000" height="1000" fill="#ffffff"/>
+  <text x="1500" y="500" font-family="Arial" font-size="36" fill="#666666" text-anchor="middle">
+    GrabDocs Logo (Light) - Replace with vector paths
+  </text>
+</svg>

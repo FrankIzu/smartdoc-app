@@ -1,28 +1,13 @@
 const { getDefaultConfig } = require('expo/metro-config');
-const path = require('path');
 
+/** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
 
-// Configure resolver for @ path mapping
+// Configure resolver to handle socket.io dependencies
+// This forces Metro to use CommonJS versions instead of ESM
 config.resolver = {
   ...config.resolver,
-  alias: {
-    '@': path.resolve(__dirname, '.'),
-  },
+  unstable_enablePackageExports: false, // Disable package exports to use main entry
 };
-
-// Add development proxy for web platform
-if (process.env.NODE_ENV === 'development') {
-  // This will only affect web development
-  config.server = {
-    ...config.server,
-    rewriteRequestUrl: (url) => {
-      if (url.startsWith('/api/')) {
-        return `http://192.168.1.3:5000${url}`;
-      }
-      return url;
-    },
-  };
-}
 
 module.exports = config; 

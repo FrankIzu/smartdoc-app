@@ -1,0 +1,609 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import {
+    ActivityIndicator,
+    FlatList,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { apiService } from '../../services/api';
+import { Form } from '../../types/form';
+
+interface FormTemplate {
+  id: number;
+  name: string;
+  description: string;
+  category: string;
+  fields: FormField[];
+  preview_data: any;
+}
+
+interface FormField {
+  id: string;
+  type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'date' | 'number';
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+  options?: string[];
+  validation?: any;
+}
+
+export default function CreateFormScreen() {
+  const router = useRouter();
+  const [templates, setTemplates] = useState<FormTemplate[]>([]);
+  const [userForms, setUserForms] = useState<Form[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'recent' | 'templates'>('templates');
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    await Promise.all([
+      loadFormTemplates(),
+      loadUserForms()
+    ]);
+  };
+
+  const loadUserForms = async () => {
+    try {
+      console.log('🔄 Loading user forms...');
+      const response = await apiService.getForms();
+      console.log('📋 API Response:', JSON.stringify(response, null, 2));
+      
+      if (response.success && response.forms) {
+        console.log('✅ Loaded user forms:', response.forms.length);
+        console.log('📝 Forms data:', response.forms);
+        setUserForms(response.forms);
+      } else {
+        console.log('❌ No user forms found:', response);
+        setUserForms([]);
+      }
+    } catch (error) {
+      console.error('❌ Failed to load user forms:', error);
+      setUserForms([]);
+    }
+  };
+
+  const loadFormTemplates = async () => {
+    try {
+      const response = await apiService.getFormTemplates();
+      
+      if (response.success && (response as any).templates) {
+        console.log('✅ Loaded form templates from database:', (response as any).templates.length);
+        
+        // Map backend response to frontend format
+        const mappedTemplates = (response as any).templates.map((template: any) => ({
+          id: template.id,
+          name: template.name,
+          description: template.description,
+          category: template.category || template.type,
+          fields: template.json_fields || [], // Map json_fields to fields
+          preview_data: template.preview_data || null
+        }));
+        
+        setTemplates(mappedTemplates);
+      } else {
+        console.log('❌ No templates found in database response:', response);
+        // Provide fallback templates if none exist in database
+        const fallbackTemplates: FormTemplate[] = [
+          {
+            id: 1,
+            name: 'Contact Form',
+            description: 'Basic contact form with name, email, and message fields',
+            category: 'contact',
+            fields: [
+              { id: '1', type: 'text' as const, label: 'Full Name', required: true },
+              { id: '2', type: 'email' as const, label: 'Email Address', required: true },
+              { id: '3', type: 'textarea' as const, label: 'Message', required: true }
+            ],
+            preview_data: null
+          },
+          {
+            id: 2,
+            name: 'Survey Form',
+            description: 'Multi-question survey with various field types',
+            category: 'survey',
+            fields: [
+              { id: '1', type: 'text' as const, label: 'Name', required: true },
+              { id: '2', type: 'radio' as const, label: 'How did you hear about us?', options: ['Social Media', 'Website', 'Referral', 'Other'], required: true },
+              { id: '3', type: 'select' as const, label: 'Age Range', options: ['18-25', '26-35', '36-45', '46+'], required: true },
+              { id: '4', type: 'textarea' as const, label: 'Additional Comments', required: false }
+            ],
+            preview_data: null
+          }
+        ];
+        setTemplates(fallbackTemplates);
+      }
+    } catch (error) {
+      console.error('❌ Failed to load form templates from database:', error);
+      // Provide fallback templates on error
+      const fallbackTemplates: FormTemplate[] = [
+        {
+          id: 1,
+          name: 'Contact Form',
+          description: 'Basic contact form with name, email, and message fields',
+          category: 'contact',
+          fields: [
+            { id: '1', type: 'text' as const, label: 'Full Name', required: true },
+            { id: '2', type: 'email' as const, label: 'Email Address', required: true },
+            { id: '3', type: 'textarea' as const, label: 'Message', required: true }
+          ],
+          preview_data: null
+        },
+        {
+          id: 2,
+          name: 'Survey Form',
+          description: 'Multi-question survey with various field types',
+          category: 'survey',
+          fields: [
+            { id: '1', type: 'text' as const, label: 'Name', required: true },
+            { id: '2', type: 'radio' as const, label: 'How did you hear about us?', options: ['Social Media', 'Website', 'Referral', 'Other'], required: true },
+            { id: '3', type: 'select' as const, label: 'Age Range', options: ['18-25', '26-35', '36-45', '46+'], required: true },
+            { id: '4', type: 'textarea' as const, label: 'Additional Comments', required: false }
+          ],
+          preview_data: null
+        }
+      ];
+      setTemplates(fallbackTemplates);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
+
+  const createBlankForm = () => {
+    router.push({
+      pathname: '/forms/builder',
+      params: {
+        templateId: 'blank',
+        templateName: 'Blank Form',
+        fields: JSON.stringify([])
+      }
+    });
+  };
+
+  const selectTemplate = (template: FormTemplate) => {
+    router.push({
+      pathname: '/forms/builder',
+      params: {
+        templateId: template.id.toString(),
+        templateName: template.name,
+        templateDescription: template.description,
+        fields: JSON.stringify(template.fields)
+      }
+    });
+  };
+
+  const selectUserForm = (form: Form) => {
+    router.push({
+      pathname: '/forms/builder',
+      params: {
+        templateId: 'user-form',
+        templateName: form.title,
+        templateDescription: form.description,
+        fields: JSON.stringify(form.json_fields),
+        formId: form.id.toString()
+      }
+    });
+  };
+
+  const getTemplateIcon = (category: string) => {
+    switch (category.toLowerCase()) {
+      case 'contact':
+        return 'mail';
+      case 'feedback':
+        return 'chatbubble-ellipses';
+      case 'survey':
+        return 'clipboard';
+      case 'registration':
+        return 'person-add';
+      case 'rsvp':
+        return 'calendar';
+      case 'order':
+        return 'bag';
+      default:
+        return 'document-text';
+    }
+  };
+
+  const getTemplateColor = (category: string, templateName?: string) => {
+    // Handle specific templates first
+    if (templateName) {
+      switch (templateName.toLowerCase()) {
+        case 'custom order form':
+          return '#27AE60';        // Green
+        case 'product order form':
+          return '#F39C12';        // Orange
+        default:
+          break;
+      }
+    }
+    
+    // Then handle by category
+    switch (category.toLowerCase()) {
+      case 'contact':
+        return '#007AFF';        // Blue
+      case 'feedback':
+        return '#FF6B35';        // Orange-Red
+      case 'survey':
+        return '#9B59B6';        // Purple
+      case 'registration':
+        return '#3498DB';        // Light Blue
+      case 'rsvp':
+        return '#E74C3C';        // Red
+      case 'order':
+        return '#27AE60';        // Green (fallback)
+      default:
+        return '#8E8E93';        // Gray
+    }
+  };
+
+  const renderTemplateItem = ({ item }: { item: FormTemplate }) => (
+    <TouchableOpacity style={styles.templateCard} onPress={() => selectTemplate(item)}>
+      <View style={[styles.templateIcon, { backgroundColor: getTemplateColor(item.category, item.name) + '20' }]}>
+        <Ionicons 
+          name={getTemplateIcon(item.category) as any} 
+          size={24} 
+          color={getTemplateColor(item.category, item.name)} 
+        />
+      </View>
+      <View style={styles.templateContent}>
+        <Text style={styles.templateName}>{item.name}</Text>
+        <Text style={styles.templateDescription}>{item.description}</Text>
+        <View style={styles.templateMeta}>
+          <View style={[styles.categoryBadge, { backgroundColor: getTemplateColor(item.category, item.name) }]}>
+            <Text style={styles.categoryText}>{item.category}</Text>
+          </View>
+          <Text style={styles.fieldsCount}>{(item.fields || []).length} fields</Text>
+        </View>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+    </TouchableOpacity>
+  );
+
+  const renderUserFormItem = ({ item }: { item: Form }) => (
+    <TouchableOpacity style={styles.templateCard} onPress={() => selectUserForm(item)}>
+      <View style={[styles.templateIcon, { backgroundColor: '#007AFF20' }]}>
+        <Ionicons 
+          name="document-text" 
+          size={24} 
+          color="#007AFF" 
+        />
+      </View>
+      <View style={styles.templateContent}>
+        <Text style={styles.templateName}>{item.title}</Text>
+        <Text style={styles.templateDescription}>{item.description || 'No description'}</Text>
+        <View style={styles.templateMeta}>
+          <View style={[styles.categoryBadge, { backgroundColor: '#007AFF' }]}>
+            <Text style={styles.categoryText}>My Form</Text>
+          </View>
+          <Text style={styles.fieldsCount}>
+            {item.json_fields?.length || 0} fields • {item.response_count || 0} responses
+          </Text>
+        </View>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+    </TouchableOpacity>
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Create Form</Text>
+          <View style={{ width: 24 }} />
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading templates...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Create Form</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      {/* Blank Form Option */}
+      <View style={styles.blankFormSection}>
+        <Text style={styles.sectionTitle}>Start Fresh</Text>
+        <TouchableOpacity style={styles.blankFormCard} onPress={createBlankForm}>
+          <View style={styles.blankFormIcon}>
+            <Ionicons name="add" size={32} color="#007AFF" />
+          </View>
+          <View style={styles.blankFormContent}>
+            <Text style={styles.blankFormTitle}>Create Blank Form</Text>
+            <Text style={styles.blankFormDescription}>
+              Start with an empty form and add your own fields
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Tab Navigation */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'templates' && styles.activeTab]} 
+          onPress={() => setActiveTab('templates')}
+        >
+          <Text style={[styles.tabText, activeTab === 'templates' && styles.activeTabText]}>
+            Templates
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'recent' && styles.activeTab]} 
+          onPress={() => setActiveTab('recent')}
+        >
+          <Text style={[styles.tabText, activeTab === 'recent' && styles.activeTabText]}>
+            My Forms
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Tab Content */}
+      <ScrollView 
+        style={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        {activeTab === 'templates' ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Choose Template</Text>
+            <Text style={styles.sectionSubtitle}>
+              Select a pre-built template to get started quickly
+            </Text>
+            
+            <FlatList
+              data={templates}
+              renderItem={renderTemplateItem}
+              keyExtractor={(item) => item.id.toString()}
+              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+            />
+          </View>
+        ) : (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Your Forms</Text>
+            <Text style={styles.sectionSubtitle}>
+              Continue working on your existing forms or create new ones based on them
+              {userForms.length > 0 && ` (${userForms.length} found)`}
+            </Text>
+            
+            {userForms.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="document-outline" size={48} color="#C7C7CC" />
+                <Text style={styles.emptyStateTitle}>No forms yet</Text>
+                <Text style={styles.emptyStateDescription}>
+                  Create your first form using a template or start with a blank form
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={userForms}
+                renderItem={renderUserFormItem}
+                keyExtractor={(item) => item.id.toString()}
+                scrollEnabled={false}
+                showsVerticalScrollIndicator={false}
+              />
+            )}
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 8,
+    color: '#666',
+  },
+  content: {
+    flex: 1,
+  },
+  blankFormSection: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  section: {
+    marginTop: 24,
+    paddingHorizontal: 16,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTab: {
+    borderBottomColor: '#007AFF',
+  },
+  tabText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#666',
+  },
+  activeTabText: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 32,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateDescription: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+  },
+  blankFormCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  blankFormIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 12,
+    backgroundColor: '#f0f8ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  blankFormContent: {
+    flex: 1,
+  },
+  blankFormTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 4,
+  },
+  blankFormDescription: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  templateCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  templateIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  templateContent: {
+    flex: 1,
+  },
+  templateName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 2,
+  },
+  templateDescription: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  templateMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  categoryBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  categoryText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#fff',
+  },
+  fieldsCount: {
+    fontSize: 11,
+    color: '#8E8E93',
+  },
+}); 
