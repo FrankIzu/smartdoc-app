@@ -55,7 +55,7 @@
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS": "603386649315-vp4revvrcgrcjme51ebuhbkbspl048l9.apps.googleusercontent.com",
         "EXPO_PUBLIC_DROPBOX_APP_KEY": "hmlhlh1h44gtth0"
       },
-      "prebuildCommand": "sh eas-debug.sh",
+      "prebuildCommand": "echo '=== DEBUG: PWD ===' && pwd && echo '=== DEBUG: Listing files ===' && ls -la && echo '=== DEBUG: index.js content ===' && cat index.js || echo 'index.js NOT FOUND'",
       "ios": {
         "resourceClass": "m-medium",
         "distribution": "store",
