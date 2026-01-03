@@ -1,6 +1,13 @@
 # EAS Build Ignore File
 # Exclude unnecessary files to reduce build size and upload time
 
+# DO NOT ignore index.js - it's the entry point!
+!index.js
+
+# Use CNG/Prebuild - let EAS generate native folders
+# This fixes the Metro bundler working directory issue
+/android
+
 # Development files
 node_modules/.cache
 .expo

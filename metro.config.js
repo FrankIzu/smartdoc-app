@@ -1,8 +1,16 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
+// Use the current directory as project root
+// EAS Build places the project in /home/expo/workingdir/build/
+// and index.js should be there
+const projectRoot = __dirname;
+const watchFolders = [projectRoot];
+
 /** @type {import('expo/metro-config').MetroConfig} */
-const config = getDefaultConfig(__dirname);
+const config = getDefaultConfig(projectRoot);
+config.watchFolders = watchFolders;
+config.projectRoot = projectRoot;
 
 // Configure resolver to handle socket.io dependencies
 // This forces Metro to use CommonJS versions instead of ESM
