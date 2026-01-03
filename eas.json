@@ -20,6 +20,9 @@
       },
       "ios": {
         "resourceClass": "m-medium"
+      },
+      "android": {
+        "resourceClass": "medium"
       }
     },
     "preview": {
@@ -39,7 +42,8 @@
         "resourceClass": "m-medium"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "resourceClass": "medium"
       }
     },
     "production": {
@@ -62,7 +66,8 @@
       },
       "android": {
         "buildType": "app-bundle",
-        "distribution": "store"
+        "distribution": "store",
+        "resourceClass": "medium"
       }
     },
     "minimal": {
@@ -75,7 +80,8 @@
         "distribution": "store"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "resourceClass": "medium"
       }
     },
     "test": {
