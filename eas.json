@@ -43,10 +43,7 @@
       }
     },
     "production": {
-      "node": {
-        "version": "20.18.1",
-        "command": "node --"
-      },
+      "node": "20.18.1",
       "prebuildCommand": "node eas-debug.js",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { execSync } = require('child_process');
+// This script ignores all command-line arguments to work with EAS prebuildCommand
 const fs = require('fs');
 
 console.log('=== DEBUG: PWD ===');
