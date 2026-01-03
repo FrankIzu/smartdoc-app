@@ -44,7 +44,7 @@
     },
     "production": {
       "node": "20.18.1",
-      "prebuildCommand": "node eas-debug.js",
+      "prebuildCommand": "bash eas-debug.sh",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "NODE_ENV": "production",
