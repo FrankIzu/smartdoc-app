@@ -33,13 +33,16 @@
       "package": "com.grabdocs.mobile",
       "versionCode": 3,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-512.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
+        "backgroundColor": "#ffffff",
+        "monochromeImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png"
       },
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
         "android.permission.RECORD_AUDIO",
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT"
@@ -76,6 +79,11 @@
         {
           "ios": {
             "deploymentTarget": "16.0"
+          },
+          "android": {
+            "minSdkVersion": 24,
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
           }
         }
       ],

@@ -1,8 +1,8 @@
 // import * as Crypto from 'expo-crypto'; // Temporarily disabled for build
 import * as Device from 'expo-device';
 import * as LocalAuthentication from 'expo-local-authentication';
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { secureStorage } from '../utils/storage';
 
 // Types and interfaces
 interface DeviceFingerprint {
@@ -57,6 +57,15 @@ const STORAGE_KEYS = {
   BIOMETRIC_CONFIG: 'biometric_config',
 } as const;
 
+// Web-compatible UUID generator
+function generateUUID(): string {
+  if (Platform.OS === 'web' && typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for platforms without crypto.randomUUID
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}-${Math.random().toString(36).substring(2, 15)}`;
+}
+
 class DeviceSecurityService {
   private deviceFingerprint: DeviceFingerprint | null = null;
   private biometricConfig: BiometricConfig | null = null;
@@ -70,17 +79,23 @@ class DeviceSecurityService {
 
     try {
       // Generate unique installation ID if not exists
-      let installationId = await SecureStore.getItemAsync('installation_id');
+      let installationId = await secureStorage.getItem('installation_id');
       if (!installationId) {
-        installationId = await Crypto.randomUUID();
-        await SecureStore.setItemAsync('installation_id', installationId);
+        installationId = generateUUID();
+        await secureStorage.setItem('installation_id', installationId);
       }
 
       const fingerprint: DeviceFingerprint = {
-        deviceId: Device.osInternalBuildId || Device.modelId || 'unknown',
-        deviceName: Device.deviceName || Device.modelName || 'Unknown Device',
+        deviceId: Platform.OS === 'web' 
+          ? `web-${navigator.userAgent.slice(0, 50)}` 
+          : (Device.osInternalBuildId || Device.modelId || 'unknown'),
+        deviceName: Platform.OS === 'web'
+          ? navigator.userAgent
+          : (Device.deviceName || Device.modelName || 'Unknown Device'),
         platform: Platform.OS,
-        osVersion: Device.osVersion || 'unknown',
+        osVersion: Platform.OS === 'web'
+          ? navigator.platform
+          : (Device.osVersion || 'unknown'),
         appVersion: '1.0.0', // Get from app.json in real implementation
         installationId,
         createdAt: new Date().toISOString(),
@@ -88,11 +103,25 @@ class DeviceSecurityService {
 
       // Cache and store
       this.deviceFingerprint = fingerprint;
-      await SecureStore.setItemAsync(STORAGE_KEYS.DEVICE_FINGERPRINT, JSON.stringify(fingerprint));
+      await secureStorage.setItem(STORAGE_KEYS.DEVICE_FINGERPRINT, JSON.stringify(fingerprint));
 
       return fingerprint;
     } catch (error) {
       console.error('Failed to generate device fingerprint:', error);
+      // On web, don't throw - return a basic fingerprint instead
+      if (Platform.OS === 'web') {
+        const fallbackFingerprint: DeviceFingerprint = {
+          deviceId: 'web-fallback',
+          deviceName: 'Web Browser',
+          platform: 'web',
+          osVersion: navigator.platform || 'unknown',
+          appVersion: '1.0.0',
+          installationId: generateUUID(),
+          createdAt: new Date().toISOString(),
+        };
+        this.deviceFingerprint = fallbackFingerprint;
+        return fallbackFingerprint;
+      }
       throw new Error('Device fingerprinting failed');
     }
   }
@@ -103,7 +132,7 @@ class DeviceSecurityService {
     }
 
     try {
-      const stored = await SecureStore.getItemAsync(STORAGE_KEYS.DEVICE_FINGERPRINT);
+      const stored = await secureStorage.getItem(STORAGE_KEYS.DEVICE_FINGERPRINT);
       if (stored) {
         this.deviceFingerprint = JSON.parse(stored);
         return this.deviceFingerprint!;
@@ -129,7 +158,7 @@ class DeviceSecurityService {
         authMethods: await this.getAvailableAuthMethods(),
       };
 
-      await SecureStore.setItemAsync(STORAGE_KEYS.DEVICE_TRUST, JSON.stringify(trustData));
+      await secureStorage.setItem(STORAGE_KEYS.DEVICE_TRUST, JSON.stringify(trustData));
       console.log(`Device trust set to: ${trustLevel} for ${duration} days`);
     } catch (error) {
       console.error('Failed to set device trust:', error);
@@ -139,20 +168,20 @@ class DeviceSecurityService {
 
   async getDeviceTrust(): Promise<DeviceTrust | null> {
     try {
-      const stored = await SecureStore.getItemAsync(STORAGE_KEYS.DEVICE_TRUST);
+      const stored = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TRUST);
       if (!stored) return null;
 
       const trust: DeviceTrust = JSON.parse(stored);
       
       // Check if trust has expired
       if (new Date() > new Date(trust.trustedUntil)) {
-        await SecureStore.deleteItemAsync(STORAGE_KEYS.DEVICE_TRUST);
+        await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TRUST);
         return null;
       }
 
       // Update last seen
       trust.lastSeen = new Date().toISOString();
-      await SecureStore.setItemAsync(STORAGE_KEYS.DEVICE_TRUST, JSON.stringify(trust));
+      await secureStorage.setItem(STORAGE_KEYS.DEVICE_TRUST, JSON.stringify(trust));
 
       return trust;
     } catch (error) {
@@ -163,7 +192,7 @@ class DeviceSecurityService {
 
   async revokeDeviceTrust(): Promise<void> {
     try {
-      await SecureStore.deleteItemAsync(STORAGE_KEYS.DEVICE_TRUST);
+      await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TRUST);
       console.log('Device trust revoked');
     } catch (error) {
       console.error('Failed to revoke device trust:', error);
@@ -175,6 +204,17 @@ class DeviceSecurityService {
   async initializeBiometrics(): Promise<BiometricConfig> {
     if (this.biometricConfig) {
       return this.biometricConfig;
+    }
+
+    // Biometrics not available on web
+    if (Platform.OS === 'web') {
+      const config: BiometricConfig = {
+        enabled: false,
+        types: [],
+        fallbackEnabled: false,
+      };
+      this.biometricConfig = config;
+      return config;
     }
 
     try {
@@ -200,7 +240,7 @@ class DeviceSecurityService {
       };
 
       this.biometricConfig = config;
-      await SecureStore.setItemAsync(STORAGE_KEYS.BIOMETRIC_CONFIG, JSON.stringify(config));
+      await secureStorage.setItem(STORAGE_KEYS.BIOMETRIC_CONFIG, JSON.stringify(config));
 
       console.log('🔐 Final biometric config:', config);
       return config;
@@ -215,6 +255,12 @@ class DeviceSecurityService {
   }
 
   async authenticateWithBiometrics(reason: string = 'Authenticate to access your account'): Promise<boolean> {
+    // Biometrics not available on web
+    if (Platform.OS === 'web') {
+      console.log('❌ Biometric authentication not available on web');
+      return false;
+    }
+
     try {
       const config = await this.initializeBiometrics();
       console.log('🔐 Biometric config:', config);
@@ -352,7 +398,7 @@ class DeviceSecurityService {
 
   async getUserPreferences(): Promise<User2FAPreferences> {
     try {
-      const stored = await SecureStore.getItemAsync(STORAGE_KEYS.USER_PREFERENCES);
+      const stored = await secureStorage.getItem(STORAGE_KEYS.USER_PREFERENCES);
       if (stored) {
         return JSON.parse(stored);
       }
@@ -365,7 +411,7 @@ class DeviceSecurityService {
 
   async setUserPreferences(prefs: User2FAPreferences): Promise<void> {
     try {
-      await SecureStore.setItemAsync(STORAGE_KEYS.USER_PREFERENCES, JSON.stringify(prefs));
+      await secureStorage.setItem(STORAGE_KEYS.USER_PREFERENCES, JSON.stringify(prefs));
     } catch (error) {
       console.error('Failed to save user preferences:', error);
       throw new Error('Failed to save preferences');
@@ -396,7 +442,7 @@ class DeviceSecurityService {
 
   private async getLastLoginData(): Promise<{ timestamp: string; location?: string } | null> {
     try {
-      const stored = await SecureStore.getItemAsync(STORAGE_KEYS.LAST_LOGIN);
+      const stored = await secureStorage.getItem(STORAGE_KEYS.LAST_LOGIN);
       return stored ? JSON.parse(stored) : null;
     } catch (error) {
       return null;
@@ -405,7 +451,7 @@ class DeviceSecurityService {
 
   async setLastLoginData(data: { timestamp: string; location?: string }): Promise<void> {
     try {
-      await SecureStore.setItemAsync(STORAGE_KEYS.LAST_LOGIN, JSON.stringify(data));
+      await secureStorage.setItem(STORAGE_KEYS.LAST_LOGIN, JSON.stringify(data));
     } catch (error) {
       console.warn('Failed to save last login data:', error);
     }
@@ -413,7 +459,7 @@ class DeviceSecurityService {
 
   private async getFailedAttemptsCount(): Promise<number> {
     try {
-      const stored = await SecureStore.getItemAsync(STORAGE_KEYS.FAILED_ATTEMPTS);
+      const stored = await secureStorage.getItem(STORAGE_KEYS.FAILED_ATTEMPTS);
       return stored ? parseInt(stored, 10) : 0;
     } catch (error) {
       return 0;
@@ -424,7 +470,7 @@ class DeviceSecurityService {
     const current = await this.getFailedAttemptsCount();
     const newCount = current + 1;
     try {
-      await SecureStore.setItemAsync(STORAGE_KEYS.FAILED_ATTEMPTS, newCount.toString());
+      await secureStorage.setItem(STORAGE_KEYS.FAILED_ATTEMPTS, newCount.toString());
     } catch (error) {
       console.warn('Failed to increment failed attempts:', error);
     }
@@ -433,7 +479,7 @@ class DeviceSecurityService {
 
   async resetFailedAttempts(): Promise<void> {
     try {
-      await SecureStore.deleteItemAsync(STORAGE_KEYS.FAILED_ATTEMPTS);
+      await secureStorage.removeItem(STORAGE_KEYS.FAILED_ATTEMPTS);
     } catch (error) {
       console.warn('Failed to reset failed attempts:', error);
     }
@@ -444,7 +490,9 @@ class DeviceSecurityService {
   async clearAllDeviceData(): Promise<void> {
     try {
       const keys = Object.values(STORAGE_KEYS);
-      await Promise.all(keys.map(key => SecureStore.deleteItemAsync(key).catch(() => {})));
+      await Promise.all(keys.map(key => secureStorage.removeItem(key).catch(() => {})));
+      // Also clear installation_id
+      await secureStorage.removeItem('installation_id').catch(() => {});
       
       this.deviceFingerprint = null;
       this.biometricConfig = null;

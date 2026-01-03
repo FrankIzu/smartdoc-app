@@ -1,19 +1,20 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Dimensions,
-    Image,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
+import { useThemeColors } from '../hooks/useThemeColors';
 import { apiClient } from '../services/api';
 import { secureStorage } from '../utils/storage';
 
@@ -127,6 +128,7 @@ const getDocumentTypeName = (fileName: string) => {
 
 // Authenticated WebView Component
 const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { fileUrl: string; authToken: string; fileName: string; fileType: string }) => {
+  const colors = useThemeColors();
   const [htmlContent, setHtmlContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +163,9 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
 
           if (response.ok) {
             const content = await response.text();
+            // Convert theme colors to hex for HTML
+            const bgColor = colors.isDark ? '#1c1c1e' : '#ffffff';
+            const textColor = colors.isDark ? '#ffffff' : '#000000';
             const html = `
               <!DOCTYPE html>
               <html>
@@ -172,14 +177,15 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
                       margin: 0; 
                       padding: 20px; 
                       font-family: Arial, sans-serif; 
-                      background: #fff;
-                      color: #333;
+                      background: ${bgColor};
+                      color: ${textColor};
                       line-height: 1.6;
                     }
                     pre { 
                       white-space: pre-wrap; 
                       word-wrap: break-word; 
                       font-family: monospace;
+                      color: ${textColor};
                     }
                   </style>
                 </head>
@@ -217,7 +223,7 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
     return (
       <View style={styles.errorContainer}>
         <Ionicons name="alert-circle" size={64} color="#FF3B30" />
-        <Text style={styles.errorText}>{error}</Text>
+        <Text style={dynamicStyles.errorText}>{error}</Text>
       </View>
     );
   }
@@ -361,18 +367,18 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
     return (
       <View style={styles.errorContainer}>
         <Ionicons name="alert-circle" size={64} color="#FF3B30" />
-        <Text style={styles.errorText}>{error}</Text>
+        <Text style={dynamicStyles.errorText}>{error}</Text>
       </View>
     );
   }
 
   return (
     <ScrollView 
-      style={styles.textContainer} 
+      style={dynamicStyles.textContainer} 
       contentContainerStyle={styles.textContent}
       showsVerticalScrollIndicator={true}
     >
-      <Text style={styles.textDocument} selectable={true}>{content || '(Empty file)'}</Text>
+      <Text style={dynamicStyles.textDocument} selectable={true}>{content || '(Empty file)'}</Text>
     </ScrollView>
   );
 };
@@ -384,11 +390,80 @@ export default function DocumentViewer({
   fileCategory,
   onClose
 }: DocumentViewerProps) {
+  const colors = useThemeColors();
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  
+  const dynamicStyles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    title: {
+      flex: 1,
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      textAlign: 'center',
+      marginHorizontal: 16,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    errorText: {
+      fontSize: 16,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginTop: 16,
+      marginBottom: 24,
+    },
+    placeholderText: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: colors.textSecondary,
+      marginTop: 16,
+    },
+    placeholderSubtext: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginTop: 8,
+      lineHeight: 20,
+      marginBottom: 24,
+    },
+    bottomContainer: {
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    textContainer: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    textDocument: {
+      fontSize: 16,
+      lineHeight: 24,
+      color: colors.text,
+      fontFamily: 'monospace',
+    },
+  });
 
   useEffect(() => {
     loadFileUrl();
@@ -637,7 +712,7 @@ export default function DocumentViewer({
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading document...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading document...</Text>
         </View>
       );
     }
@@ -660,7 +735,7 @@ export default function DocumentViewer({
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading text document...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading text document...</Text>
         </View>
       );
     }
@@ -679,8 +754,8 @@ export default function DocumentViewer({
     return (
       <View style={styles.placeholderContainer}>
         <Ionicons name="document-text-outline" size={64} color="#007AFF" />
-        <Text style={styles.placeholderText}>Document Preview</Text>
-        <Text style={styles.placeholderSubtext}>
+        <Text style={dynamicStyles.placeholderText}>Document Preview</Text>
+        <Text style={dynamicStyles.placeholderSubtext}>
           {fileName}{'\n'}
           Preview for this document type is not yet implemented.
         </Text>
@@ -693,7 +768,7 @@ export default function DocumentViewer({
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading file...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading file...</Text>
         </View>
       );
     }
@@ -702,7 +777,7 @@ export default function DocumentViewer({
       return (
         <View style={styles.errorContainer}>
           <Ionicons name="alert-circle" size={64} color="#FF3B30" />
-          <Text style={styles.errorText}>{error}</Text>
+          <Text style={dynamicStyles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={loadFileUrl}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
@@ -743,12 +818,12 @@ export default function DocumentViewer({
       animationType="slide"
       presentationStyle="fullScreen"
     >
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={dynamicStyles.container}>
+        <View style={dynamicStyles.header}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color="#007AFF" />
+            <Ionicons name="close" size={24} color={colors.primary} />
           </TouchableOpacity>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text style={dynamicStyles.title} numberOfLines={1}>
             {getViewerTitle()}
           </Text>
           <View style={styles.placeholder} />
@@ -759,7 +834,7 @@ export default function DocumentViewer({
         </View>
         
         {/* Bottom Close Button */}
-        <View style={styles.bottomContainer}>
+        <View style={dynamicStyles.bottomContainer}>
           <TouchableOpacity style={styles.bottomCloseButton} onPress={onClose}>
             <Ionicons name="close" size={24} color="#007AFF" />
           </TouchableOpacity>
@@ -772,7 +847,7 @@ export default function DocumentViewer({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    // backgroundColor removed - using dynamicStyles
   },
   header: {
     flexDirection: 'row',
@@ -781,8 +856,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    backgroundColor: '#fff',
+    // borderBottomColor removed - using dynamicStyles
+    // backgroundColor removed - using dynamicStyles
   },
   closeButton: {
     padding: 12,
@@ -792,7 +867,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
+    // color removed - using dynamicStyles
     textAlign: 'center',
     marginHorizontal: 16,
   },
@@ -810,7 +885,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: '#666',
+    // color removed - using dynamicStyles
   },
   errorContainer: {
     flex: 1,
@@ -820,7 +895,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: '#666',
+    // color removed - using dynamicStyles
     textAlign: 'center',
     marginTop: 16,
     marginBottom: 24,
@@ -857,7 +932,7 @@ const styles = StyleSheet.create({
   placeholderText: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#666',
+    // color removed - using dynamicStyles
     marginTop: 16,
   },
   placeholderSubtext: {
@@ -913,8 +988,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    backgroundColor: '#fff',
+    // borderTopColor removed - using dynamicStyles
+    // backgroundColor removed - using dynamicStyles
   },
   bottomCloseButton: {
     alignItems: 'center',
@@ -928,7 +1003,7 @@ const styles = StyleSheet.create({
   },
   textContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    // backgroundColor removed - using dynamicStyles
   },
   textContent: {
     padding: 16,
@@ -936,7 +1011,7 @@ const styles = StyleSheet.create({
   textDocument: {
     fontSize: 16,
     lineHeight: 24,
-    color: '#333',
+    // color removed - using dynamicStyles
     fontFamily: 'monospace',
   },
 });

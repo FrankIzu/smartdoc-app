@@ -2,49 +2,56 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-  Alert,
-  StyleSheet,
+  Alert, Platform, StyleSheet,
   Text,
   TouchableOpacity,
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { hmsBackendService } from './hmsBackendService';
 import { useAuth } from '../context/auth';
+import { hmsBackendService } from './hmsBackendService';
 
 // HMS package - enabled for local testing
 // All HMS functionality is handled via backend API calls
-console.log('📱 HMS Prebuilt Interface - Loading HMS package');
+// Note: HMS is native-only, skip imports on web platform and Expo Go
 
-// Import HMS components
+// Import HMS components (native platforms only)
 let HMSPrebuilt: any = null;
 let HMSConfig: any = null;
 
-try {
-  // Try to import HMS Room Kit (prebuilt UI) - requires native module
-  // For localhost testing, you need a development build
-  const roomKitPackage = require('@100mslive/react-native-room-kit');
-  if (roomKitPackage && roomKitPackage.HMSPrebuilt) {
-    HMSPrebuilt = roomKitPackage.HMSPrebuilt;
-    console.log('📱 HMS Room Kit (Prebuilt) loaded successfully');
-  } else {
-    console.log('📱 HMS Room Kit imported but HMSPrebuilt not found');
-  }
-  
-  // Also import HMS SDK for config if needed
+// Only try to import HMS on native platforms (not web) and in development builds (not Expo Go)
+// HMS requires native modules that don't work in Expo Go
+if (Platform.OS !== 'web') {
   try {
-    const hmsSDK = require('@100mslive/react-native-hms');
-    HMSConfig = hmsSDK.HMSConfig;
-  } catch (sdkError) {
-    console.log('📱 HMS SDK not available (optional)');
+    // Check if we're in Expo Go (HMS won't work)
+    const Constants = require('expo-constants').default;
+    const isExpoGo = Constants.appOwnership === 'expo';
+    
+    if (isExpoGo) {
+      // Silently skip HMS in Expo Go - it requires a development build
+      // The error will be handled gracefully in the component
+    } else {
+      // Try to import HMS Room Kit (prebuilt UI) - requires native module
+      // For localhost testing, you need a development build
+      const roomKitPackage = require('@100mslive/react-native-room-kit');
+      if (roomKitPackage && roomKitPackage.HMSPrebuilt) {
+        HMSPrebuilt = roomKitPackage.HMSPrebuilt;
+        console.log('📱 HMS Room Kit (Prebuilt) loaded successfully');
+      }
+      
+      // HMS SDK is a peer dependency of room-kit but not required for prebuilt UI
+      // Only import if needed for advanced configuration
+      try {
+        const hmsSDK = require('@100mslive/react-native-hms');
+        HMSConfig = hmsSDK.HMSConfig;
+      } catch (sdkError) {
+        // Silently ignore - SDK is optional
+      }
+    }
+  } catch (error: any) {
+    // Silently handle HMS import errors - expected in Expo Go
+    // The component will handle the missing module gracefully
   }
-} catch (error: any) {
-  console.log('📱 HMS Room Kit not available:', error?.message || error);
-  console.log('📱 This is expected if:');
-  console.log('   1. Package not installed: npm install @100mslive/react-native-room-kit');
-  console.log('   2. Dev build created before package install (rebuild needed)');
-  console.log('   3. Native module not properly linked');
-  // Will fall back to development mode UI
 }
 
 export default function HMSMeetingInterfaceScreen() {
@@ -187,7 +194,8 @@ export default function HMSMeetingInterfaceScreen() {
   }
 
   // 100ms Prebuilt Interface
-  if (HMSPrebuilt && HMSConfig && authToken) {
+  // Note: HMSConfig is not required - HMSPrebuilt works without it
+  if (HMSPrebuilt && authToken) {
     return (
       <SafeAreaView style={styles.container}>
         <HMSPrebuilt

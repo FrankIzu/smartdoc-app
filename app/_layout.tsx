@@ -8,6 +8,8 @@ LogBox.ignoreLogs([
   'expo-notifications: Android Push notifications',
   'expo-notifications functionality is not fully supported',
   'Linking requires a build-time setting',
+  'react-native-hms module was not found', // HMS is native-only, expected in Expo Go
+  '@100mslive/react-native-hms', // HMS module errors
 ]);
 
 import { SplashScreen, Stack } from 'expo-router';

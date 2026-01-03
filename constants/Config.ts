@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 // API Configuration - Auto-detect based on environment
 export const API_BASE_URL = (() => {
@@ -8,16 +9,27 @@ export const API_BASE_URL = (() => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  // 2. Check if we're in Expo Go (local testing only)
+  // 2. Check if running on web platform
+  const isWeb = Platform.OS === 'web';
+  
+  // 3. Check if we're in Expo Go (local testing only)
   // Expo Go = local testing, use localhost
   // Standalone app (dev or prod build) = use production
   const isExpoGo = Constants.appOwnership === 'expo';
   
   console.log('📍 API URL Detection:', {
+    platform: Platform.OS,
+    isWeb,
     appOwnership: Constants.appOwnership,
     isExpoGo,
     __DEV__,
   });
+  
+  // For web platform in development, use localhost (requires CORS configuration on backend)
+  if (isWeb && __DEV__) {
+    console.log('📍 API URL: Using localhost (Web platform in development)');
+    return 'http://localhost:5000'; // Local development - backend must allow CORS from http://localhost:8081
+  }
   
   if (isExpoGo) {
     // Only use localhost when running in Expo Go for local testing
@@ -25,7 +37,8 @@ export const API_BASE_URL = (() => {
     return 'http://192.168.1.5:5000'; // Local development
   }
   
-  // 3. For standalone apps (dev builds or production builds), use production
+  // 4. For standalone apps (dev builds or production builds), use production
+  // Note: Web in production will also use production URL (requires CORS configuration)
   console.log('📍 API URL: Using production (Standalone app detected)');
   return 'https://api.grabdocs.com'; // Production Render backend
 })();

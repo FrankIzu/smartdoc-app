@@ -4,6 +4,8 @@ const { spawn } = require('child_process');
 process.env.NODE_OPTIONS = '--import tsx/esm';
 
 // Start Expo with the tsx import
+// Note: Remove --ios flag to support both iOS and Android
+// If you need iOS-specific, use: npm run start:ios
 const expo = spawn('npx', ['expo', 'start', '--clear'], {
   stdio: 'inherit',
   shell: true
