@@ -867,16 +867,16 @@ function DashboardScreen() {
     bottom: 20,
     right: 20,
     backgroundColor: '#007AFF',
-    borderRadius: 32,
-    width: 64,
-    height: 64,
+    borderRadius: 24,
+    width: 48,
+    height: 48,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 6,
   },
   welcomeContainer: {
     padding: 16,
@@ -1322,7 +1322,7 @@ function DashboardScreen() {
           );
         }}
       >
-        <Ionicons name="add" size={28} color="#fff" />
+        <Ionicons name="add" size={20} color="#fff" />
       </TouchableOpacity>
 
       {/* Upload Options Modal */}

@@ -1,16 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService } from '../services/api';
 
 interface FormField {
@@ -43,9 +44,94 @@ export default function QuickFormViewer({
   formName,
   onClose
 }: QuickFormViewerProps) {
+  const colors = useThemeColors();
   const [formData, setFormData] = useState<FormData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  const dynamicStyles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    title: {
+      flex: 1,
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      textAlign: 'center',
+      marginHorizontal: 16,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    errorText: {
+      fontSize: 16,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginTop: 16,
+      marginBottom: 24,
+    },
+    formTitle: {
+      fontSize: 24,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    formDescription: {
+      fontSize: 16,
+      color: colors.textSecondary,
+      lineHeight: 22,
+      marginBottom: 12,
+    },
+    responseCount: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginLeft: 6,
+    },
+    fieldLabel: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    fieldPreview: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      backgroundColor: colors.card,
+    },
+    checkboxLabel: {
+      fontSize: 16,
+      color: colors.text,
+    },
+    placeholderText: {
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    formFooter: {
+      padding: 16,
+      backgroundColor: colors.card,
+      borderRadius: 8,
+      borderLeftWidth: 4,
+      borderLeftColor: colors.primary,
+    },
+    footerText: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      lineHeight: 20,
+    },
+  });
 
   useEffect(() => {
     loadFormData();
@@ -101,41 +187,41 @@ export default function QuickFormViewer({
           <Ionicons 
             name={getFieldIcon(item.type) as any} 
             size={16} 
-            color="#666" 
+            color={colors.textSecondary} 
             style={styles.fieldIcon}
           />
-          <Text style={styles.fieldLabel}>
+          <Text style={dynamicStyles.fieldLabel}>
             {item.label}
             {item.required && <Text style={styles.required}> *</Text>}
           </Text>
         </View>
         
-        <View style={styles.fieldPreview}>
+        <View style={dynamicStyles.fieldPreview}>
           {item.type === 'textarea' ? (
             <View style={styles.textareaPreview}>
-              <Text style={styles.placeholderText}>
+              <Text style={dynamicStyles.placeholderText}>
                 {item.placeholder || `Enter ${item.label.toLowerCase()}...`}
               </Text>
             </View>
           ) : item.type === 'select' || item.type === 'radio' ? (
             <View style={styles.selectPreview}>
-              <Text style={styles.placeholderText}>
+              <Text style={dynamicStyles.placeholderText}>
                 {item.options?.[0] || 'Select an option...'}
               </Text>
-              <Ionicons name="chevron-down" size={16} color="#999" />
+              <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
             </View>
           ) : item.type === 'checkbox' ? (
             <View style={styles.checkboxPreview}>
               <View style={styles.checkbox}>
-                <Ionicons name="checkmark" size={12} color="#007AFF" />
+                <Ionicons name="checkmark" size={12} color={colors.primary} />
               </View>
-              <Text style={styles.checkboxLabel}>
+              <Text style={dynamicStyles.checkboxLabel}>
                 {item.options?.[0] || 'Check this option'}
               </Text>
             </View>
           ) : (
             <View style={styles.inputPreview}>
-              <Text style={styles.placeholderText}>
+              <Text style={dynamicStyles.placeholderText}>
                 {item.placeholder || `Enter ${item.label.toLowerCase()}...`}
               </Text>
             </View>
@@ -148,17 +234,17 @@ export default function QuickFormViewer({
   if (loading) {
     return (
       <Modal visible={true} animationType="slide" presentationStyle="fullScreen">
-        <SafeAreaView style={styles.container}>
-          <View style={styles.header}>
+        <SafeAreaView style={dynamicStyles.container}>
+          <View style={dynamicStyles.header}>
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-              <Ionicons name="close" size={24} color="#007AFF" />
+              <Ionicons name="close" size={24} color={colors.primary} />
             </TouchableOpacity>
-            <Text style={styles.title}>Loading Form...</Text>
+            <Text style={dynamicStyles.title}>Loading Form...</Text>
             <View style={styles.placeholder} />
           </View>
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#007AFF" />
-            <Text style={styles.loadingText}>Loading form data...</Text>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={dynamicStyles.loadingText}>Loading form data...</Text>
           </View>
         </SafeAreaView>
       </Modal>
@@ -168,17 +254,17 @@ export default function QuickFormViewer({
   if (error || !formData) {
     return (
       <Modal visible={true} animationType="slide" presentationStyle="fullScreen">
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView style={dynamicStyles.container}>
           <View style={styles.header}>
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-              <Ionicons name="close" size={24} color="#007AFF" />
+              <Ionicons name="close" size={24} color={colors.primary} />
             </TouchableOpacity>
-            <Text style={styles.title}>Error</Text>
+            <Text style={dynamicStyles.title}>Error</Text>
             <View style={styles.placeholder} />
           </View>
           <View style={styles.errorContainer}>
             <Ionicons name="alert-circle" size={64} color="#FF3B30" />
-            <Text style={styles.errorText}>{error || 'Form not found'}</Text>
+            <Text style={dynamicStyles.errorText}>{error || 'Form not found'}</Text>
             <TouchableOpacity style={styles.retryButton} onPress={loadFormData}>
               <Text style={styles.retryButtonText}>Retry</Text>
             </TouchableOpacity>
@@ -195,7 +281,7 @@ export default function QuickFormViewer({
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <Ionicons name="close" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text style={dynamicStyles.title} numberOfLines={1}>
             {formData.name}
           </Text>
           <View style={styles.placeholder} />
@@ -204,14 +290,14 @@ export default function QuickFormViewer({
         <ScrollView style={styles.content}>
           <View style={styles.formContainer}>
             <View style={styles.formHeader}>
-              <Text style={styles.formTitle}>{formData.name}</Text>
+              <Text style={dynamicStyles.formTitle}>{formData.name}</Text>
               {formData.description ? (
-                <Text style={styles.formDescription}>{formData.description}</Text>
+                <Text style={dynamicStyles.formDescription}>{formData.description}</Text>
               ) : null}
               {formData.responseCount !== undefined && (
                 <View style={styles.responseCountContainer}>
-                  <Ionicons name="people" size={16} color="#666" />
-                  <Text style={styles.responseCount}>
+                  <Ionicons name="people" size={16} color={colors.textSecondary} />
+                  <Text style={dynamicStyles.responseCount}>
                     {formData.responseCount} response{formData.responseCount !== 1 ? 's' : ''}
                   </Text>
                 </View>
@@ -226,8 +312,8 @@ export default function QuickFormViewer({
               style={styles.fieldsList}
             />
             
-            <View style={styles.formFooter}>
-              <Text style={styles.footerText}>
+            <View style={dynamicStyles.formFooter}>
+              <Text style={dynamicStyles.footerText}>
                 This is a preview of your form. To edit or manage responses, use the form builder.
               </Text>
             </View>
@@ -239,29 +325,9 @@ export default function QuickFormViewer({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
+  // Static styles that don't need theme colors
   closeButton: {
     padding: 8,
-  },
-  title: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    textAlign: 'center',
-    marginHorizontal: 16,
   },
   placeholder: {
     width: 40,
@@ -271,26 +337,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
-  },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
   },
-  errorText: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 16,
-    marginBottom: 24,
-  },
   retryButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#007AFF', // Keep primary color
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
@@ -309,27 +363,10 @@ const styles = StyleSheet.create({
   formHeader: {
     marginBottom: 24,
   },
-  formTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 8,
-  },
-  formDescription: {
-    fontSize: 16,
-    color: '#666',
-    lineHeight: 22,
-    marginBottom: 12,
-  },
   responseCountContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 8,
-  },
-  responseCount: {
-    fontSize: 14,
-    color: '#666',
-    marginLeft: 6,
   },
   fieldsList: {
     marginBottom: 24,
@@ -345,19 +382,8 @@ const styles = StyleSheet.create({
   fieldIcon: {
     marginRight: 8,
   },
-  fieldLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
   required: {
     color: '#FF3B30',
-  },
-  fieldPreview: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    backgroundColor: '#f8f9fa',
   },
   inputPreview: {
     padding: 12,
@@ -385,31 +411,11 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderWidth: 2,
-    borderColor: '#007AFF',
+    borderColor: '#007AFF', // Keep primary color
     borderRadius: 4,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#007AFF', // Keep primary color
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-  },
-  checkboxLabel: {
-    fontSize: 16,
-    color: '#333',
-  },
-  placeholderText: {
-    fontSize: 16,
-    color: '#999',
-  },
-  formFooter: {
-    padding: 16,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#007AFF',
-  },
-  footerText: {
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 20,
   },
 });

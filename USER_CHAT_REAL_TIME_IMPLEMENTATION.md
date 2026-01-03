@@ -228,3 +228,4 @@ Socket URL is automatically set from `API_BASE_URL` in `constants/Config.ts`:
 - [ ] Multiple chats can be switched without issues
 - [ ] Sender names display correctly
 
+
