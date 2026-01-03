@@ -43,7 +43,11 @@
       }
     },
     "production": {
-      "node": "20.18.1",
+      "node": {
+        "version": "20.18.1",
+        "command": "node --"
+      },
+      "prebuildCommand": "node eas-debug.js",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "NODE_ENV": "production",
@@ -55,7 +59,6 @@
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS": "603386649315-vp4revvrcgrcjme51ebuhbkbspl048l9.apps.googleusercontent.com",
         "EXPO_PUBLIC_DROPBOX_APP_KEY": "hmlhlh1h44gtth0"
       },
-      "prebuildCommand": "node eas-debug.js",
       "ios": {
         "resourceClass": "m-medium",
         "distribution": "store",
