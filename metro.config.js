@@ -21,14 +21,31 @@ const config = getDefaultConfig(projectRoot);
 config.watchFolders = watchFolders;
 config.projectRoot = projectRoot;
 
-// Configure resolver to handle socket.io dependencies
+// Configure resolver to handle socket.io dependencies and entry point resolution
 // This forces Metro to use CommonJS versions instead of ESM
 const defaultResolver = config.resolver.resolveRequest;
 config.resolver = {
   ...config.resolver,
   unstable_enablePackageExports: false, // Disable package exports to use main entry
   // Resolve HMS native modules to empty stubs for web platform
+  // Also handle absolute path resolution for entry point
   resolveRequest: (context, moduleName, platform) => {
+    // Handle absolute paths - convert to relative if it's the entry point
+    if (moduleName && moduleName.startsWith('/') && moduleName.endsWith('index.js')) {
+      const relativePath = path.relative(projectRoot, moduleName);
+      if (fs.existsSync(moduleName)) {
+        // If absolute path exists, try resolving as relative path
+        const relativeModuleName = relativePath.startsWith('..') ? './index.js' : relativePath;
+        if (defaultResolver) {
+          try {
+            return defaultResolver(context, relativeModuleName, platform);
+          } catch (e) {
+            // Fall through to try absolute path resolution
+          }
+        }
+      }
+    }
+    
     // For web platform, stub HMS native modules
     if (platform === 'web') {
       if (
