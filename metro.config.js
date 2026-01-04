@@ -51,6 +51,44 @@ config.resolver = {
       }
     }
     
+    // Fix whatwg-fetch resolution - handle missing dist/fetch.umd.js
+    // On EAS Build, whatwg-fetch's prepare script may not run, causing dist files to be missing
+    if (moduleName === 'whatwg-fetch') {
+      const whatwgFetchPath = path.join(projectRoot, 'node_modules', 'whatwg-fetch');
+      const umdPath = path.join(whatwgFetchPath, 'dist', 'fetch.umd.js');
+      const jsPath = path.join(whatwgFetchPath, 'fetch.js');
+      
+      // Try default resolver first (handles normal case)
+      if (defaultResolver) {
+        try {
+          const result = defaultResolver(context, moduleName, platform);
+          // Verify the resolved file exists
+          if (result && result.filePath && fs.existsSync(result.filePath)) {
+            return result;
+          }
+        } catch (e) {
+          // Default resolver failed, try fallback
+        }
+      }
+      
+      // Fallback: If dist/fetch.umd.js doesn't exist, use fetch.js (module field)
+      if (fs.existsSync(jsPath)) {
+        return {
+          type: 'sourceFile',
+          filePath: jsPath,
+        };
+      }
+      
+      // Last resort: try to resolve fetch.js explicitly
+      if (defaultResolver) {
+        try {
+          return defaultResolver(context, path.join('whatwg-fetch', 'fetch.js'), platform);
+        } catch (e) {
+          // Will fall through to default error handling
+        }
+      }
+    }
+    
     // For web platform, stub HMS native modules
     if (platform === 'web') {
       if (
