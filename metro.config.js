@@ -21,26 +21,6 @@ const config = getDefaultConfig(projectRoot);
 config.watchFolders = watchFolders;
 config.projectRoot = projectRoot;
 
-// Patch Metro's Server._resolveRelativePath to handle absolute paths
-// This fixes the issue where expo export:embed passes absolute paths to Metro
-const MetroServer = require('metro/src/Server');
-if (MetroServer && MetroServer.prototype && MetroServer.prototype._resolveRelativePath) {
-  const originalResolveRelativePath = MetroServer.prototype._resolveRelativePath;
-  MetroServer.prototype._resolveRelativePath = function(entryPath) {
-    // If entry path is absolute and points to index.js in project root, convert to relative
-    if (entryPath && typeof entryPath === 'string' && entryPath.startsWith('/')) {
-      if (entryPath.endsWith('index.js') && fs.existsSync(entryPath)) {
-        const relativePath = path.relative(projectRoot, entryPath);
-        // If it's in the project root, use relative path
-        if (relativePath === 'index.js' || relativePath === './index.js') {
-          entryPath = './index.js';
-        }
-      }
-    }
-    return originalResolveRelativePath.call(this, entryPath);
-  };
-}
-
 // Note: The issue is that expo export:embed passes absolute paths to Metro's _resolveRelativePath
 // which expects relative paths. This is a known issue with Expo Router + EAS Build.
 // The workaround is to ensure package.json main field is correct (which it is: "./index.js")
@@ -91,12 +71,13 @@ config.resolver = {
   },
   // Configure blockList to exclude directories from watching
   // This reduces the number of files Metro needs to watch
+  // NOTE: We're IN /home/expo/workingdir/build/ on EAS, so don't block */build/*
   blockList: [
     // Exclude large directories that don't need to be watched
     /.*\/node_modules\/.*\/node_modules\/.*/,
     /.*\/\.git\/.*/,
     /.*\/dist\/.*/,
-    /.*\/build\/.*/,
+    // /.*\/build\/.*/, // Don't block build/ since we're in it on EAS
     /.*\/\.expo\/.*/,
     /.*\/android\/build\/.*/,
     /.*\/ios\/build\/.*/,
