@@ -21,6 +21,25 @@ const config = getDefaultConfig(projectRoot);
 config.watchFolders = watchFolders;
 config.projectRoot = projectRoot;
 
+// Ensure entry point is always resolved correctly
+// Metro sometimes receives absolute paths but needs relative paths
+config.server = config.server || {};
+config.server.enhanceMiddleware = (middleware) => {
+  return (req, res, next) => {
+    // Intercept requests for absolute entry paths and convert to relative
+    if (req.url && req.url.includes('index.js') && req.url.startsWith('/')) {
+      const absolutePath = req.url;
+      if (fs.existsSync(absolutePath)) {
+        const relativePath = path.relative(projectRoot, absolutePath);
+        if (relativePath === 'index.js') {
+          req.url = '/index.js';
+        }
+      }
+    }
+    return middleware(req, res, next);
+  };
+};
+
 // Configure resolver to handle socket.io dependencies and entry point resolution
 // This forces Metro to use CommonJS versions instead of ESM
 const defaultResolver = config.resolver.resolveRequest;
