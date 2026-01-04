@@ -4,9 +4,8 @@
 # DO NOT ignore index.js - it's the entry point!
 !index.js
 
-# Use CNG/Prebuild - let EAS generate native folders
-# This fixes the Metro bundler working directory issue
-/android
+# Keep android folder to use our custom Gradle config that fixes entry point resolution
+# /android
 
 # Development files
 node_modules/.cache

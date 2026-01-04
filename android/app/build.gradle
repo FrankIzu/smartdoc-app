@@ -9,7 +9,13 @@ def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
+    // Set root first so entry file can be resolved relative to it
+    root = rootDir.getAbsoluteFile().getParentFile()
+    
+    // Use Expo's script to resolve entry file - it handles Expo Router correctly
+    // Use relative path to avoid Metro resolver issues with absolute paths
+    def entryPath = ["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "relative"].execute(null, rootDir).text.trim()
+    entryFile = file(entryPath ?: "index.js")
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
     hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
@@ -22,7 +28,7 @@ react {
 
     /* Folders */
      //   The root of your project, i.e. where "package.json" lives. Default is '../..'
-    // root = file("../../")
+    //   Root is set above before entryFile resolution
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
     //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
