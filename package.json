@@ -19,7 +19,7 @@
     "web-serve": "serve web-build",
     "clean": "rm -rf node_modules/.cache",
     "lint": "expo lint",
-    "postinstall": "npx patch-package"
+    "postinstall": "npx patch-package && node scripts/ensure-whatwg-fetch.js"
   },
   "dependencies": {
     "@100mslive/react-native-hms": "^1.12.0",
@@ -89,6 +89,7 @@
     "react-redux": "^9.2.0",
     "redux": "^5.0.1",
     "socket.io-client": "^4.8.3",
+    "whatwg-fetch": "^3.6.20",
     "zustand": "^5.0.5"
   },
   "devDependencies": {

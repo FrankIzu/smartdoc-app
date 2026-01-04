@@ -58,33 +58,38 @@ config.resolver = {
       const umdPath = path.join(whatwgFetchPath, 'dist', 'fetch.umd.js');
       const jsPath = path.join(whatwgFetchPath, 'fetch.js');
       
-      // Try default resolver first (handles normal case)
-      if (defaultResolver) {
-        try {
-          const result = defaultResolver(context, moduleName, platform);
-          // Verify the resolved file exists
-          if (result && result.filePath && fs.existsSync(result.filePath)) {
-            return result;
+      // Check if dist/fetch.umd.js exists first
+      if (fs.existsSync(umdPath)) {
+        // File exists, use default resolver
+        if (defaultResolver) {
+          try {
+            return defaultResolver(context, moduleName, platform);
+          } catch (e) {
+            // If default resolver fails even though file exists, return the file directly
+            return {
+              type: 'sourceFile',
+              filePath: umdPath,
+            };
           }
-        } catch (e) {
-          // Default resolver failed, try fallback
         }
       }
       
-      // Fallback: If dist/fetch.umd.js doesn't exist, use fetch.js (module field)
+      // dist/fetch.umd.js doesn't exist, use fetch.js (module field) as fallback
       if (fs.existsSync(jsPath)) {
+        console.log('⚠️ whatwg-fetch: Using fetch.js fallback (dist/fetch.umd.js not found)');
         return {
           type: 'sourceFile',
           filePath: jsPath,
         };
       }
       
-      // Last resort: try to resolve fetch.js explicitly
+      // Last resort: try to resolve fetch.js via default resolver
       if (defaultResolver) {
         try {
-          return defaultResolver(context, path.join('whatwg-fetch', 'fetch.js'), platform);
+          return defaultResolver(context, 'whatwg-fetch/fetch.js', platform);
         } catch (e) {
-          // Will fall through to default error handling
+          // If all else fails, let the error propagate
+          console.error('❌ whatwg-fetch: All resolution attempts failed');
         }
       }
     }
