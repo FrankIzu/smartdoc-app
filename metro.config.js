@@ -21,24 +21,10 @@ const config = getDefaultConfig(projectRoot);
 config.watchFolders = watchFolders;
 config.projectRoot = projectRoot;
 
-// Ensure entry point is always resolved correctly
-// Metro sometimes receives absolute paths but needs relative paths
-config.server = config.server || {};
-config.server.enhanceMiddleware = (middleware) => {
-  return (req, res, next) => {
-    // Intercept requests for absolute entry paths and convert to relative
-    if (req.url && req.url.includes('index.js') && req.url.startsWith('/')) {
-      const absolutePath = req.url;
-      if (fs.existsSync(absolutePath)) {
-        const relativePath = path.relative(projectRoot, absolutePath);
-        if (relativePath === 'index.js') {
-          req.url = '/index.js';
-        }
-      }
-    }
-    return middleware(req, res, next);
-  };
-};
+// Note: The issue is that expo export:embed passes absolute paths to Metro's _resolveRelativePath
+// which expects relative paths. This is a known issue with Expo Router + EAS Build.
+// The workaround is to ensure package.json main field is correct (which it is: "./index.js")
+// and that Metro's resolver can handle the entry point correctly via the resolveRequest hook above.
 
 // Configure resolver to handle socket.io dependencies and entry point resolution
 // This forces Metro to use CommonJS versions instead of ESM
