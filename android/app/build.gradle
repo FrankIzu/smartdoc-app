@@ -15,7 +15,9 @@ react {
     // Use Expo's script to resolve entry file - it handles Expo Router correctly
     // Use relative path to avoid Metro resolver issues with absolute paths
     def entryPath = ["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "relative"].execute(null, rootDir).text.trim()
-    entryFile = file(entryPath ?: "index.js")
+    // Resolve entryFile relative to project root, not android/app directory
+    def entryFileRelative = entryPath ?: "index.js"
+    entryFile = new File(root, entryFileRelative)
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
     hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
