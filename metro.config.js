@@ -94,6 +94,40 @@ config.resolver = {
       }
     }
     
+    // Fix abort-controller resolution - handle dist/abort-controller path
+    // React Native imports abort-controller/dist/abort-controller but package.json main is dist/abort-controller
+    if (moduleName === 'abort-controller/dist/abort-controller' || moduleName === 'abort-controller/dist/abort-controller.js') {
+      const abortControllerPath = path.join(projectRoot, 'node_modules', 'abort-controller');
+      const distJsPath = path.join(abortControllerPath, 'dist', 'abort-controller.js');
+      const distUmdPath = path.join(abortControllerPath, 'dist', 'abort-controller.umd.js');
+      
+      // Try dist/abort-controller.js first (CommonJS)
+      if (fs.existsSync(distJsPath)) {
+        return {
+          type: 'sourceFile',
+          filePath: distJsPath,
+        };
+      }
+      
+      // Fallback to UMD version
+      if (fs.existsSync(distUmdPath)) {
+        console.log('⚠️ abort-controller: Using UMD fallback');
+        return {
+          type: 'sourceFile',
+          filePath: distUmdPath,
+        };
+      }
+      
+      // Try default resolver
+      if (defaultResolver) {
+        try {
+          return defaultResolver(context, 'abort-controller', platform);
+        } catch (e) {
+          console.error('❌ abort-controller: All resolution attempts failed');
+        }
+      }
+    }
+    
     // For web platform, stub HMS native modules
     if (platform === 'web') {
       if (
