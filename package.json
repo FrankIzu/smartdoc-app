@@ -19,6 +19,8 @@
     "web-serve": "serve web-build",
     "clean": "rm -rf node_modules/.cache",
     "lint": "expo lint",
+    "test:bundle": "npx expo export:embed --eager --platform android --dev false",
+    "test:bundle:ios": "npx expo export:embed --eager --platform ios --dev false",
     "postinstall": "npx patch-package && node scripts/ensure-whatwg-fetch.js"
   },
   "dependencies": {
