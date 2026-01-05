@@ -71,6 +71,7 @@
     "expo-symbols": "~1.0.8",
     "expo-system-ui": "~6.0.9",
     "expo-web-browser": "~15.0.10",
+    "is-arrayish": "^0.3.4",
     "lottie-react-native": "^7.3.4",
     "patch-package": "^8.0.1",
     "react": "19.1.0",
