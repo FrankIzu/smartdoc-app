@@ -21,6 +21,7 @@
     "lint": "expo lint",
     "test:bundle": "npx expo export:embed --eager --platform android --dev false",
     "test:bundle:ios": "npx expo export:embed --eager --platform ios --dev false",
+    "preflight": "node scripts/preflight-metro-check.js",
     "postinstall": "npx patch-package && node scripts/ensure-whatwg-fetch.js"
   },
   "dependencies": {
