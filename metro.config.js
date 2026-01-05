@@ -113,6 +113,36 @@ config.resolver = {
       }
     }
     
+    // Fix semver subpath exports - handle semver/functions/* paths
+    // react-native-reanimated requires semver/functions/satisfies which is a subpath export
+    if (moduleName && moduleName.startsWith('semver/')) {
+      // Try default resolver first (should handle package.json exports)
+      if (defaultResolver) {
+        try {
+          return defaultResolver(context, moduleName, platform);
+        } catch (e) {
+          // Fallback: try resolving the subpath as a direct file path
+          const semverPath = path.join(projectRoot, 'node_modules', 'semver');
+          const subPath = moduleName.replace('semver/', '');
+          const filePath = path.join(semverPath, subPath + '.js');
+          
+          if (fs.existsSync(filePath)) {
+            return {
+              type: 'sourceFile',
+              filePath: filePath,
+            };
+          }
+          
+          // Last resort: try resolving just 'semver'
+          try {
+            return defaultResolver(context, 'semver', platform);
+          } catch (e2) {
+            console.error('❌ semver: All resolution attempts failed for', moduleName);
+          }
+        }
+      }
+    }
+    
     // For web platform, stub HMS native modules
     if (platform === 'web') {
       if (
