@@ -96,7 +96,7 @@ config.resolver = {
     
     // Fix abort-controller resolution - handle dist/abort-controller path
     // React Native imports abort-controller/dist/abort-controller but package.json main is dist/abort-controller
-    if (moduleName === 'abort-controller/dist/abort-controller' || moduleName === 'abort-controller/dist/abort-controller.js') {
+    if (moduleName && moduleName.startsWith('abort-controller/dist/abort-controller')) {
       const abortControllerPath = path.join(projectRoot, 'node_modules', 'abort-controller');
       const distJsPath = path.join(abortControllerPath, 'dist', 'abort-controller.js');
       const distUmdPath = path.join(abortControllerPath, 'dist', 'abort-controller.umd.js');
@@ -118,7 +118,7 @@ config.resolver = {
         };
       }
       
-      // Try default resolver
+      // Try default resolver with just abort-controller
       if (defaultResolver) {
         try {
           return defaultResolver(context, 'abort-controller', platform);
