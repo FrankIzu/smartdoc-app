@@ -96,34 +96,19 @@ config.resolver = {
     
     // Fix abort-controller resolution - handle dist/abort-controller path
     // React Native imports abort-controller/dist/abort-controller but package.json main is dist/abort-controller
+    // Use default resolver with explicit path to let Metro handle watching properly
     if (moduleName && moduleName.startsWith('abort-controller/dist/abort-controller')) {
-      const abortControllerPath = path.join(projectRoot, 'node_modules', 'abort-controller');
-      const distJsPath = path.join(abortControllerPath, 'dist', 'abort-controller.js');
-      const distUmdPath = path.join(abortControllerPath, 'dist', 'abort-controller.umd.js');
-      
-      // Try dist/abort-controller.js first (CommonJS)
-      if (fs.existsSync(distJsPath)) {
-        return {
-          type: 'sourceFile',
-          filePath: distJsPath,
-        };
-      }
-      
-      // Fallback to UMD version
-      if (fs.existsSync(distUmdPath)) {
-        console.log('⚠️ abort-controller: Using UMD fallback');
-        return {
-          type: 'sourceFile',
-          filePath: distUmdPath,
-        };
-      }
-      
-      // Try default resolver with just abort-controller
+      // Try resolving with explicit .js extension first
       if (defaultResolver) {
         try {
-          return defaultResolver(context, 'abort-controller', platform);
+          return defaultResolver(context, 'abort-controller/dist/abort-controller.js', platform);
         } catch (e) {
-          console.error('❌ abort-controller: All resolution attempts failed');
+          // Fall back to resolving just abort-controller (uses package.json main)
+          try {
+            return defaultResolver(context, 'abort-controller', platform);
+          } catch (e2) {
+            console.error('❌ abort-controller: All resolution attempts failed');
+          }
         }
       }
     }
@@ -153,7 +138,9 @@ config.resolver = {
     // Exclude large directories that don't need to be watched
     /.*\/node_modules\/.*\/node_modules\/.*/,
     /.*\/\.git\/.*/,
-    /.*\/dist\/.*/,
+    // Don't block dist/ in node_modules - needed for abort-controller, whatwg-fetch, etc.
+    // Only block dist/ in project root (build artifacts)
+    /^(?!.*\/node_modules\/).*\/dist\/.*/,
     // /.*\/build\/.*/, // Don't block build/ since we're in it on EAS
     /.*\/\.expo\/.*/,
     /.*\/android\/build\/.*/,
