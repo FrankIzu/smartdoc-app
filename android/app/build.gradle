@@ -28,8 +28,9 @@ react {
     // Use Expo CLI to bundle the app, this ensures the Metro config
     // works correctly with Expo projects.
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
-    // Remove bundleCommand - let EAS Build handle bundling internally (fixes absolute path issue)
-    // bundleCommand = "export:embed"
+    // Use expo export:embed - EAS Build runs this in Bundle JavaScript phase
+    // The bundle is created before Gradle runs, so this should use the existing bundle
+    bundleCommand = "export:embed"
 
     /* Folders */
      //   The root of your project, i.e. where "package.json" lives. Default is '../..'
