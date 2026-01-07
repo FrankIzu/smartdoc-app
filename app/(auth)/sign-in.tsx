@@ -18,7 +18,9 @@ import {
 } from 'react-native';
 import { API_BASE_URL } from '../../constants/Config';
 import { googleAuthService } from '../../services/googleAuth';
+import { appleAuthService } from '../../services/appleAuth';
 import { useAuth } from '../context/auth';
+import * as AppleAuthentication from 'expo-apple-authentication';
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -30,15 +32,29 @@ export default function SignInScreen() {
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricType, setBiometricType] = useState('Biometric');
   const [needsOtp, setNeedsOtp] = useState(false);
+  const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
-  const { signIn, loading } = useAuth();
+  const { signIn, loading, refreshSession } = useAuth();
   const { loginWithBiometric } = useEnhanced2FAAuth();
 
   // Check biometric availability on component mount
   useEffect(() => {
     checkBiometricAvailability();
+    checkAppleSignInAvailability();
   }, []);
+
+  const checkAppleSignInAvailability = async () => {
+    if (Platform.OS === 'ios') {
+      try {
+        const available = await appleAuthService.isAvailableAsync();
+        setAppleSignInAvailable(available);
+      } catch (error) {
+        console.error('Error checking Apple Sign In availability:', error);
+        setAppleSignInAvailable(false);
+      }
+    }
+  };
 
   const checkBiometricAvailability = async () => {
     try {
@@ -95,19 +111,35 @@ export default function SignInScreen() {
         // If successful without OTP, navigation handled by auth context
         return;
       } catch (loginError: any) {
-        // If login fails due to enhanced security, check if user needs OTP
+        // Check if error is due to 2FA requirement
+        if (loginError.requires2FA) {
+          console.log('🔐 2FA required - navigating to OTP verification');
+          // Navigate to OTP verification screen with user info
+          router.push({
+            pathname: '/(auth)/otp-verification',
+            params: {
+              username: username,
+              method: loginError.preferredAuthMethod || 'phone',
+              identifier: loginError.identifier || username,
+              expiresIn: '600', // 10 minutes
+            }
+          });
+          return;
+        }
+        
+        // If login fails for other reasons, check if user needs OTP verification
         console.log('Initial login failed, checking if OTP verification is needed');
-      }
-
-      // Step 2: Check if user needs OTP verification
-      const shouldUseOtp = await checkUserForOtpVerification(username);
-      
-      if (shouldUseOtp) {
-        // Request OTP
-        await requestOtpForUser(username);
-      } else {
-        // If no OTP needed, show the login error
-        setError('Invalid username or password');
+        
+        // Step 2: Check if user needs OTP verification
+        const shouldUseOtp = await checkUserForOtpVerification(username);
+        
+        if (shouldUseOtp) {
+          // Request OTP
+          await requestOtpForUser(username);
+        } else {
+          // If no OTP needed, show the login error
+          setError(loginError.message || 'Invalid username or password');
+        }
       }
 
     } catch (error: any) {
@@ -214,6 +246,74 @@ export default function SignInScreen() {
     } catch (error: any) {
       console.error('Google sign-in error:', error);
       setError(error.message || 'Google sign-in failed');
+    }
+  };
+
+  // Handle Apple Sign-In
+  const handleAppleSignIn = async () => {
+    try {
+      setError('');
+      
+      // Use enhanced Apple Sign In with backend integration
+      const result = await appleAuthService.signInWithAppleEnhanced();
+      
+      if (result.success && result.user) {
+        // Format user data to match auth context expectations
+        const { secureStorage } = await import('../../utils/storage');
+        
+        // Format user data using consistent utility function
+        const backendUser = result.user;
+        const fullName = backendUser.first_name || backendUser.firstName
+          ? `${backendUser.first_name || backendUser.firstName || ''} ${backendUser.last_name || backendUser.lastName || ''}`.trim()
+          : '';
+        const displayName = fullName || backendUser.name || backendUser.username || backendUser.email || 'Apple User';
+        
+        const userData = {
+          id: (backendUser.id || backendUser.user_id || '').toString(),
+          email: backendUser.email || backendUser.username || '',
+          name: displayName,
+        };
+        
+        // Validate user data before storing
+        if (!userData.id) {
+          console.error('Invalid user data from Apple sign-in: missing ID', backendUser);
+          setError('Failed to retrieve user information. Please try again.');
+          return;
+        }
+        
+        // Email might be null if user chose to hide it - use a placeholder
+        if (!userData.email) {
+          userData.email = `apple-${userData.id}@grabdocs.app`;
+          console.warn('Apple user email hidden, using placeholder:', userData.email);
+        }
+        
+        console.log('💾 Storing Apple sign-in user data:', userData);
+        await secureStorage.setItem('user', JSON.stringify(userData));
+        await secureStorage.setItem('auth_token', 'session_token');
+        
+        // Refresh the auth context to pick up the new user
+        await refreshSession();
+        
+        // Small delay to ensure state propagation
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Navigate to main app
+        router.replace('/(tabs)');
+      } else {
+        if (result.requires2FA) {
+          // Handle 2FA requirement if needed
+          setError(result.message || 'Additional verification required');
+        } else {
+          setError(result.message || 'Apple sign-in failed');
+        }
+      }
+    } catch (error: any) {
+      console.error('Apple sign-in error:', error);
+      if (error.code === 'ERR_CANCELED' || error.message?.includes('canceled') || error.message?.includes('User cancelled')) {
+        // User cancelled - don't show error
+        return;
+      }
+      setError(error.message || 'Apple sign-in failed');
     }
   };
 
@@ -351,6 +451,17 @@ export default function SignInScreen() {
           >
             <Text style={styles.googleButtonText}>Continue with Google</Text>
           </TouchableOpacity>
+
+          {/* Apple Sign In - iOS only when available */}
+          {Platform.OS === 'ios' && appleSignInAvailable && (
+            <AppleAuthentication.AppleAuthenticationButton
+              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+              cornerRadius={12}
+              style={styles.appleButton}
+              onPress={handleAppleSignIn}
+            />
+          )}
 
           {/* Sign Up Link */}
           <View style={styles.signUpContainer}>
@@ -497,12 +608,17 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 16,
   },
   googleButtonText: {
     color: '#333',
     fontSize: 16,
     fontWeight: '500',
+  },
+  appleButton: {
+    width: '100%',
+    height: 50,
+    marginBottom: 32,
   },
   signUpContainer: {
     flexDirection: 'row',

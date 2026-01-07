@@ -1,6 +1,8 @@
 // 100ms Prebuilt Interface Implementation
+import { Audio } from 'expo-av';
+import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState, Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
 import {
   Alert, Platform, StyleSheet,
   Text,
@@ -8,11 +10,9 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { errorLogger } from '../../services/errorLogger';
 import { useAuth } from '../context/auth';
 import { hmsBackendService } from './hmsBackendService';
-import { errorLogger } from '../../services/errorLogger';
-import * as ImagePicker from 'expo-image-picker';
-import { Audio } from 'expo-av';
 
 // HMS package - enabled for local testing
 // All HMS functionality is handled via backend API calls

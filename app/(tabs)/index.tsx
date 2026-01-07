@@ -218,72 +218,85 @@ function DashboardScreen() {
         }
       }
       
-      // Load recent activities with robust error handling
+      // Load recent uploaded documents (last 5 from last 7 days)
       try {
-        // console.log('📈 Attempting to load recent activities...');
-        const activitiesResponse: any = await (apiClient as any).getRecentActivities(7, 10);
-        // console.log('📈 Recent activities response:', activitiesResponse);
+        // console.log('📈 Attempting to load recent uploaded documents...');
+        const filesResponse = await apiClient.getFiles(1, 100); // Get more files to filter
         
-        if (activitiesResponse && activitiesResponse.success) {
-          // Handle different response structures
-          const responseData = activitiesResponse.data || activitiesResponse;
-          const activities = Array.isArray(responseData) ? responseData : [];
+        if (filesResponse && filesResponse.success && filesResponse.data) {
+          const files = Array.isArray(filesResponse.data) ? filesResponse.data : [];
           
-          if (Array.isArray(activities) && activities.length > 0) {
-            // console.log('📈 Processing activities:', activities.length);
-            
-            const formattedActivities = activities.map((activity: any, index: number) => {
+          // Calculate date 7 days ago
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          
+          // Filter files uploaded in the last 7 days and limit to 5
+          const recentFiles = files
+            .filter((file: any) => {
+              if (!file.created_at) return false;
+              
+              const fileDate = new Date(file.created_at);
+              
+              // Check if file was uploaded in the last 7 days
+              return fileDate >= sevenDaysAgo && !isNaN(fileDate.getTime());
+            })
+            .sort((a: any, b: any) => {
+              // Sort by upload date, most recent first
+              const dateA = new Date(a.created_at);
+              const dateB = new Date(b.created_at);
+              return dateB.getTime() - dateA.getTime();
+            })
+            .slice(0, 5); // Limit to 5 most recent
+          
+          if (recentFiles.length > 0) {
+            // Format files as upload activities
+            const formattedActivities = recentFiles.map((file: any, index: number) => {
               try {
-                // console.log(`📈 Processing activity ${index}:`, activity);
-                // Ensure timestamp is always a valid Date object
                 let timestamp: Date;
                 try {
-                  if (activity.timestamp) {
-                    timestamp = new Date(activity.timestamp);
-                    // Check if the date is valid
-                    if (isNaN(timestamp.getTime())) {
-                      timestamp = new Date();
-                    }
-                  } else {
+                  timestamp = new Date(file.created_at);
+                  if (isNaN(timestamp.getTime())) {
                     timestamp = new Date();
                   }
                 } catch {
                   timestamp = new Date();
                 }
 
+                // Get filename from various possible fields
+                const fileName = file.original_filename || file.filename || file.name || 'Document';
+
                 return {
-                  id: activity.id || `fallback-${index}-${Date.now()}`,
-                  type: activity.type || 'unknown',
-                  title: activity.title || 'Activity',
-                  subtitle: activity.subtitle || 'No description',
+                  id: file.id?.toString() || `file-${index}-${Date.now()}`,
+                  type: 'upload' as const,
+                  title: 'File uploaded',
+                  subtitle: fileName,
                   timestamp,
-                  icon: activity.icon || 'document-outline'
+                  icon: 'document-outline'
                 };
-              } catch (activityError) {
-                // console.warn(`📈 Failed to process activity ${index}:`, activityError);
+              } catch (fileError) {
                 return {
                   id: `error-${index}-${Date.now()}`,
-                  type: 'unknown',
-                  title: 'Activity',
-                  subtitle: 'Processing error',
+                  type: 'upload' as const,
+                  title: 'File uploaded',
+                  subtitle: 'Unknown file',
                   timestamp: new Date(),
-                  icon: 'alert-outline'
+                  icon: 'document-outline'
                 };
               }
-            }).filter(Boolean); // Remove any null/undefined items
+            });
             
             // console.log('📈 Setting formatted activities:', formattedActivities);
             setRecentActivities(formattedActivities);
           } else {
-            // console.log('📈 No activities returned, using empty array');
+            // console.log('📈 No recent files found in last 7 days');
             setRecentActivities(defaultActivities);
           }
         } else {
-          // console.warn('📈 Recent activities API call succeeded but no valid data returned');
+          // console.warn('📈 Files API call succeeded but no valid data returned');
           setRecentActivities(defaultActivities);
         }
       } catch (error) {
-        // console.warn('📈 Recent activities failed, using empty array:', error);
+        // console.warn('📈 Recent files failed, using empty array:', error);
         setRecentActivities(defaultActivities);
       }
       
@@ -1233,8 +1246,8 @@ function DashboardScreen() {
         <View style={dynamicStyles.section}>
           <View style={dynamicStyles.sectionHeader}>
             <Text style={dynamicStyles.sectionTitle}>Recent Activity</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/settings')}>
-              <Text style={dynamicStyles.seeAllText}>See All</Text>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/documents')}>
+              <Text style={dynamicStyles.seeAllText}>View All</Text>
             </TouchableOpacity>
           </View>
           <View style={dynamicStyles.activityContainer}>

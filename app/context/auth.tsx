@@ -17,6 +17,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   forceReset: () => Promise<void>;
   loadRememberedCredentials: () => Promise<{ email: string; password: string; remember: boolean } | null>;
+  refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -78,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       'user_data',
       'authentication',
       'login_data',
+      'device_token', // Clear device token
     ];
     
     try {
@@ -117,8 +119,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       console.log('🔍 Full API response in auth:', JSON.stringify(response, null, 2));
       console.log('🔍 Response success:', response.success);
+      console.log('🔍 Response requires2FA:', (response as any).requires2FA);
       console.log('🔍 Response user:', response.user);
       console.log('🔍 Response session_info:', response.session_info);
+      
+      // Check if 2FA is required (even if success is true, backend may require OTP verification)
+      if ((response as any).requires2FA) {
+        console.log('🔐 2FA required - throwing error to trigger OTP flow');
+        const error: any = new Error((response as any).message || 'Please verify the code sent to your device');
+        error.requires2FA = true;
+        error.user = (response as any).user;
+        error.preferredAuthMethod = (response as any).preferredAuthMethod;
+        error.identifier = (response as any).identifier;
+        throw error;
+      }
       
       if (response.success) {
         // Store credentials if remember is enabled
@@ -279,8 +293,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Method to refresh session (useful after external auth like Apple/Google)
+  const refreshSession = async () => {
+    await checkSession();
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, forceReset, loadRememberedCredentials }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, forceReset, loadRememberedCredentials, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );

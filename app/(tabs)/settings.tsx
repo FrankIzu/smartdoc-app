@@ -2,8 +2,9 @@ import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter, useFocusEffect } from 'expo-router';
+import Constants from 'expo-constants';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -93,29 +94,68 @@ export default function SettingsScreen() {
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState(null);
 
-  // Collapsible sections state - only About and Account expanded by default
+  // Collapsible sections state - only About expanded by default
   const [expandedSections, setExpandedSections] = useState({
     notifications: false,
-    security: true,
+    security: false,
     fileManagement: false,
     uploadSettings: false,
     display: false,
     privacy: false,
     analytics: false,
     about: true,
-    account: true,
+    account: false,
   });
 
   const toggleSection = (section: keyof typeof expandedSections) => {
-    setExpandedSections(prev => ({
-      ...prev,
-      [section]: !prev[section]
-    }));
+    setExpandedSections(prev => {
+      const isCurrentlyExpanded = prev[section];
+      
+      // If clicking an already expanded section, collapse it
+      if (isCurrentlyExpanded) {
+        return {
+          ...prev,
+          [section]: false
+        };
+      }
+      
+      // If clicking a collapsed section, expand it and collapse all others
+      const newState: typeof expandedSections = {
+        notifications: false,
+        security: false,
+        fileManagement: false,
+        uploadSettings: false,
+        display: false,
+        privacy: false,
+        analytics: false,
+        about: false,
+        account: false,
+      };
+      newState[section] = true;
+      return newState;
+    });
   };
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // Auto-expand About section when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      setExpandedSections({
+        notifications: false,
+        security: false,
+        fileManagement: false,
+        uploadSettings: false,
+        display: false,
+        privacy: false,
+        analytics: false,
+        about: true, // Always expand About section on focus
+        account: false,
+      });
+    }, [])
+  );
 
   const loadSettings = async () => {
     try {
@@ -469,8 +509,8 @@ export default function SettingsScreen() {
       backgroundColor: colors.background,
     },
     header: {
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
       backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
@@ -485,7 +525,7 @@ export default function SettingsScreen() {
     },
     section: {
       backgroundColor: colors.sectionBackground,
-      marginTop: 20,
+      marginTop: 12,
     },
     sectionTitle: {
       fontSize: 16,
@@ -499,7 +539,7 @@ export default function SettingsScreen() {
     profileCard: {
       flexDirection: 'row',
       alignItems: 'center',
-      padding: 20,
+      padding: 16,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -544,8 +584,8 @@ export default function SettingsScreen() {
     settingItem: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -555,27 +595,27 @@ export default function SettingsScreen() {
     infoItem: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
     dangerItem: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
     settingIcon: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       backgroundColor: colors.surface,
       justifyContent: 'center',
       alignItems: 'center',
-      marginRight: 16,
+      marginRight: 12,
     },
     settingContent: {
       flex: 1,
@@ -615,8 +655,8 @@ export default function SettingsScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
       backgroundColor: colors.surface,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
@@ -716,14 +756,15 @@ export default function SettingsScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
       backgroundColor: colors.surface,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
     sectionContent: {
       paddingTop: 0,
+      paddingHorizontal: 0,
     },
     disabledItem: {
       opacity: 0.5,
@@ -732,8 +773,8 @@ export default function SettingsScreen() {
       color: colors.textLight,
     },
     themeOptions: {
-      paddingHorizontal: 20,
-      paddingBottom: 16,
+      paddingHorizontal: 16,
+      paddingBottom: 12,
       gap: 12,
     },
     themeOption: {
@@ -793,71 +834,16 @@ export default function SettingsScreen() {
 
       <ScrollView style={dynamicStyles.scrollView} showsVerticalScrollIndicator={false}>
 
-        {/* Notifications Section */}
-        {preferences && (
+        {/* Notifications Section - HIDDEN */}
+        {/* {preferences && (
           <CollapsibleSection
             title="Notifications"
             isExpanded={expandedSections.notifications}
             onToggle={() => toggleSection('notifications')}
           >
-            <EnhancedSettingItem
-              icon="notifications-outline"
-              title="Push Notifications"
-              subtitle="Receive notifications on your device"
-              value={preferences.notifications.push_enabled}
-              onToggle={(value) => togglePreference('notifications.push_enabled', value)}
-              feature="notifications.push_enabled"
-            />
-            <EnhancedSettingItem
-              icon="mail-outline"
-              title="Email Notifications"
-              subtitle="Receive notifications via email"
-              value={preferences.notifications.email_enabled}
-              onToggle={(value) => togglePreference('notifications.email_enabled', value)}
-              feature="notifications.email_enabled"
-            />
-            <EnhancedSettingItem
-              icon="cloud-upload-outline"
-              title="File Upload Notifications"
-              subtitle="Notify when files are uploaded"
-              value={preferences.notifications.file_upload}
-              onToggle={(value) => togglePreference('notifications.file_upload', value)}
-              feature="notifications.file_upload"
-            />
-            <EnhancedSettingItem
-              icon="settings-outline"
-              title="File Processing Notifications"
-              subtitle="Notify when files are processed"
-              value={preferences.notifications.file_processing}
-              onToggle={(value) => togglePreference('notifications.file_processing', value)}
-              feature="notifications.file_processing"
-            />
-            <EnhancedSettingItem
-              icon="clipboard-outline"
-              title="Form Response Notifications"
-              subtitle="Notify when forms receive responses"
-              value={preferences.notifications.form_responses}
-              onToggle={(value) => togglePreference('notifications.form_responses', value)}
-              feature="notifications.form_responses"
-            />
-            <EnhancedSettingItem
-              icon="link-outline"
-              title="Upload Link Activity"
-              subtitle="Notify when someone uses your upload links"
-              value={preferences.notifications.upload_link_activity}
-              onToggle={(value) => togglePreference('notifications.upload_link_activity', value)}
-              feature="notifications.upload_link_activity"
-            />
-            <EnhancedSettingItem
-              icon="people-outline"
-              title="Workspace Updates"
-              subtitle="Notify about workspace changes and invitations"
-              value={preferences.notifications.workspace_updates}
-              onToggle={(value) => togglePreference('notifications.workspace_updates', value)}
-              feature="notifications.workspace_updates"
-            />
+            ...
           </CollapsibleSection>
-        )}
+        )} */}
 
         {/* Enhanced 2FA Security Section */}
         <CollapsibleSection
@@ -951,7 +937,8 @@ export default function SettingsScreen() {
             feature="security.remember_2fa"
           />
 
-          {biometricAvailable && (
+          {/* Test Biometric Authentication - HIDDEN */}
+          {/* {biometricAvailable && (
             <TouchableOpacity 
               style={dynamicStyles.testButton} 
               onPress={async () => {
@@ -970,7 +957,7 @@ export default function SettingsScreen() {
               </View>
               <Text style={dynamicStyles.testButtonText}>Test Biometric Authentication</Text>
             </TouchableOpacity>
-          )}
+          )} */}
 
           <TouchableOpacity 
             style={dynamicStyles.actionButton} 
@@ -1000,32 +987,47 @@ export default function SettingsScreen() {
             onPress={async () => {
               try {
                 const response = await api.getRegisteredDevices();
-                if (response.success) {
-                  const devices = (response as any).devices || [];
-                  if (devices.length === 0) {
-                    Alert.alert(
-                      'Registered Devices',
-                      'No registered devices found',
-                      [{ text: 'OK' }]
-                    );
-                    return;
-                  }
-                  
-                  const deviceList = devices.map((device: any) => 
-                    `• ${device.deviceName || 'Unknown Device'}\n  ID: ${device.deviceId.substring(0, 12)}...\n  Last used: ${device.lastUsed ? new Date(device.lastUsed).toLocaleDateString() : 'Never'}\n  ${device.isActive ? '✅ Active' : '❌ Inactive'}`
-                  ).join('\n\n');
-                  
+                // Handle both response structures: direct data or wrapped in success response
+                const devices = (response as any).devices || (response as any).data?.devices || (Array.isArray(response) ? response : []);
+                
+                if (devices.length === 0) {
                   Alert.alert(
                     'Registered Devices',
-                    deviceList,
+                    'No registered devices found',
+                    [{ text: 'OK' }]
+                  );
+                  return;
+                }
+                
+                const deviceList = devices.map((device: any) => {
+                  const deviceId = device.deviceId || device.id || 'Unknown';
+                  const deviceName = device.deviceName || device.name || 'Unknown Device';
+                  const lastUsed = device.lastUsed || device.last_used || device.updated_at;
+                  const isActive = device.isActive !== undefined ? device.isActive : (device.is_active !== undefined ? device.is_active : true);
+                  
+                  return `• ${deviceName}\n  ID: ${deviceId.length > 12 ? deviceId.substring(0, 12) + '...' : deviceId}\n  Last used: ${lastUsed ? new Date(lastUsed).toLocaleDateString() : 'Never'}\n  ${isActive ? '✅ Active' : '❌ Inactive'}`;
+                }).join('\n\n');
+                
+                Alert.alert(
+                  'Registered Devices',
+                  deviceList,
+                  [{ text: 'OK' }]
+                );
+              } catch (error: any) {
+                console.error('Device retrieval error:', error);
+                const statusCode = error?.response?.status;
+                const errorMessage = error?.response?.data?.message || error?.message || 'Failed to retrieve registered devices';
+                
+                // Handle 404 specifically - endpoint not implemented
+                if (statusCode === 404) {
+                  Alert.alert(
+                    'Feature Not Available',
+                    'The device management feature is not yet available on this server. Please contact support if you need this functionality.',
                     [{ text: 'OK' }]
                   );
                 } else {
-                  Alert.alert('Error', response.message || 'Failed to retrieve devices');
+                  Alert.alert('Error', errorMessage);
                 }
-              } catch (error) {
-                console.error('Device retrieval error:', error);
-                Alert.alert('Error', 'Failed to retrieve registered devices');
               }
             }}
           >
@@ -1052,14 +1054,22 @@ export default function SettingsScreen() {
                         await deviceSecurityService.clearAllDeviceData();
                         
                         // Also clear from backend
-                        const response = await api.revokeAllDevices();
-                        if (response.success) {
-                          Alert.alert('Success', `Device trust cleared for ${response.revokedCount || 'all'} devices`);
-                        } else {
-                          Alert.alert('Success', 'Local device trust cleared');
+                        try {
+                          const response = await api.revokeAllDevices();
+                          if (response.success) {
+                            const count = response.count || response.revokedCount || 0;
+                            Alert.alert('Success', `Device trust cleared for ${count} device${count !== 1 ? 's' : ''}`);
+                          } else {
+                            Alert.alert('Success', 'Local device trust cleared');
+                          }
+                        } catch (apiError: any) {
+                          console.error('Failed to revoke devices on backend:', apiError);
+                          // Still show success for local clearing
+                          Alert.alert('Success', 'Local device trust cleared. Backend sync may have failed.');
                         }
                       } catch (error) {
-                        Alert.alert('Error', 'Failed to clear all device trust');
+                        console.error('Failed to clear device trust:', error);
+                        Alert.alert('Error', error instanceof Error ? error.message : 'Failed to clear all device trust');
                       }
                     },
                   },
@@ -1084,56 +1094,16 @@ export default function SettingsScreen() {
           )}
         </CollapsibleSection>
 
-        {/* File Management Section */}
-        {preferences && (
+        {/* File Management Section - HIDDEN */}
+        {/* {preferences && (
           <CollapsibleSection
             title="File Management"
             isExpanded={expandedSections.fileManagement}
             onToggle={() => toggleSection('fileManagement')}
           >
-            <EnhancedSettingItem
-              icon="sparkles-outline"
-              title="Auto Categorization"
-              subtitle="Automatically categorize uploaded files"
-              value={preferences.file_management.auto_categorization}
-              onToggle={(value) => togglePreference('file_management.auto_categorization', value)}
-              feature="file_management.auto_categorization"
-            />
-            <EnhancedSettingItem
-              icon="receipt-outline"
-              title="Auto Receipt Processing"
-              subtitle="Automatically extract data from receipts"
-              value={preferences.file_management.auto_receipt_processing}
-              onToggle={(value) => togglePreference('file_management.auto_receipt_processing', value)}
-              feature="file_management.auto_receipt_processing"
-            />
-            <EnhancedSettingItem
-              icon="eye-outline"
-              title="File Preview"
-              subtitle="Show file previews in lists"
-              value={preferences.file_management.file_preview}
-              onToggle={(value) => togglePreference('file_management.file_preview', value)}
-              feature="file_management.file_preview"
-            />
-            <EnhancedSettingItem
-              icon="cloud-outline"
-              title="Auto Backup"
-              subtitle="Automatically backup files to cloud"
-              value={preferences.file_management.auto_backup}
-              onToggle={(value) => togglePreference('file_management.auto_backup', value)}
-              feature="file_management.auto_backup"
-              adminOnly={true}
-            />
-            <EnhancedSettingItem
-              icon="image-outline"
-              title="Compress Images"
-              subtitle="Reduce image file sizes when uploading"
-              value={preferences.file_management.compress_images}
-              onToggle={(value) => togglePreference('file_management.compress_images', value)}
-              feature="file_management.compress_images"
-            />
+            ...
           </CollapsibleSection>
-        )}
+        )} */}
 
         {/* Upload Settings Section */}
         {preferences && (
@@ -1181,7 +1151,6 @@ export default function SettingsScreen() {
               </View>
               <View style={dynamicStyles.settingContent}>
                 <Text style={dynamicStyles.settingTitle}>Theme</Text>
-                <Text style={dynamicStyles.settingSubtitle}>Choose your preferred color scheme</Text>
               </View>
             </View>
             <View style={dynamicStyles.themeOptions}>
@@ -1323,7 +1292,15 @@ export default function SettingsScreen() {
           <InfoItem
             icon="information-circle-outline"
             title="App Version"
-            value="1.0.0 (Build 2025.1)"
+            value={(() => {
+              const appVersion = Constants.expoConfig?.version || '1.0.0';
+              const buildNumber = Platform.OS === 'ios' 
+                ? Constants.expoConfig?.ios?.buildNumber 
+                : Constants.expoConfig?.android?.versionCode;
+              return buildNumber 
+                ? `${appVersion} (Build ${buildNumber})`
+                : appVersion;
+            })()}
           />
           <InfoItem
             icon="help-circle-outline"
@@ -1392,7 +1369,13 @@ export default function SettingsScreen() {
           {/* User Profile Info */}
           {profile && (
             <>
-              <View style={dynamicStyles.profileCard}>
+              <TouchableOpacity 
+                style={dynamicStyles.profileCard}
+                onPress={() => Alert.alert('Subscription Plan', profile.is_admin 
+                  ? 'Enterprise Plan\n\n✓ Unlimited storage\n✓ Advanced analytics\n✓ Priority support\n✓ Admin features\n✓ Custom integrations'
+                  : 'Free Plan\n\n• 5GB storage\n• Basic features\n• Community support\n\nUpgrade to Pro for:\n✓ 100GB storage\n✓ Advanced features\n✓ Priority support'
+                )}
+              >
                 <View style={dynamicStyles.profileIcon}>
                   <Ionicons name="person" size={32} color="#fff" />
                 </View>
@@ -1403,6 +1386,9 @@ export default function SettingsScreen() {
                       : profile.username}
                   </Text>
                   <Text style={dynamicStyles.profileEmail}>{profile.email}</Text>
+                  <Text style={[dynamicStyles.profileEmail, { marginTop: 4, fontSize: 13, opacity: 0.8 }]}>
+                    Member since • {formatJoinDate(profile.created_at)} • {profile.is_admin ? "Enterprise" : "Free Plan"}
+                  </Text>
                   {profile.is_admin && (
                     <View style={dynamicStyles.adminBadge}>
                       <Ionicons name="shield" size={12} color="#fff" />
@@ -1410,25 +1396,46 @@ export default function SettingsScreen() {
                     </View>
                   )}
                 </View>
-        </View>
-
-              <InfoItem
-                icon="calendar-outline"
-                title="Member since"
-                value={formatJoinDate(profile.created_at)}
-              />
-              
-              <InfoItem
-                icon="card-outline"
-                title="Subscription Plan"
-                value={profile.is_admin ? "Enterprise" : "Free Plan"}
-                onPress={() => Alert.alert('Subscription Plan', profile.is_admin 
-                  ? 'Enterprise Plan\n\n✓ Unlimited storage\n✓ Advanced analytics\n✓ Priority support\n✓ Admin features\n✓ Custom integrations'
-                  : 'Free Plan\n\n• 5GB storage\n• Basic features\n• Community support\n\nUpgrade to Pro for:\n✓ 100GB storage\n✓ Advanced features\n✓ Priority support'
-                )}
-              />
+              </TouchableOpacity>
             </>
           )}
+          
+          <TouchableOpacity 
+            style={dynamicStyles.dangerItem}
+            onPress={() => {
+              Alert.alert(
+                'Delete Account',
+                'Are you sure you want to delete your account? This action is irreversible and will permanently delete all your data, documents, and account information.\n\nYou will be redirected to our data deletion request page.',
+                [
+                  { 
+                    text: 'Cancel', 
+                    style: 'cancel' 
+                  },
+                  {
+                    text: 'Continue',
+                    style: 'destructive',
+                    onPress: () => {
+                      const url = 'https://grabdocs.com/data-deletion-request';
+                      if (Platform.OS === 'web') {
+                        window.open(url, '_blank');
+                      } else {
+                        Linking.openURL(url);
+                      }
+                    }
+                  }
+                ]
+              );
+            }}
+          >
+            <View style={dynamicStyles.settingIcon}>
+              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+            </View>
+            <View style={dynamicStyles.settingContent}>
+              <Text style={[dynamicStyles.settingTitle, dynamicStyles.dangerText]}>Delete Account</Text>
+              <Text style={dynamicStyles.settingSubtitle}>Request account deletion</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#FF3B30" />
+          </TouchableOpacity>
           
           <TouchableOpacity 
             style={dynamicStyles.dangerItem}

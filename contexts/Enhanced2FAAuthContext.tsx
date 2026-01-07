@@ -202,6 +202,10 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       // Step 3: Regular login attempt
       console.log('🌐 Making API login request...');
       const deviceFingerprint = await deviceSecurityService.generateDeviceFingerprint();
+      
+      // Get stored device token if available (for trusted device check)
+      const storedDeviceToken = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TOKEN);
+      
       const loginData = {
         username: credentials.username,
         password: credentials.password,
@@ -213,12 +217,20 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         },
       };
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Platform': 'mobile',
+      };
+
+      // Include device token if available (for trusted device verification)
+      if (storedDeviceToken) {
+        headers['X-Device-Token'] = storedDeviceToken;
+        console.log('🔐 Including device token in login request');
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/v1/mobile/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Platform': 'mobile',
-        },
+        headers,
         credentials: 'include',
         body: JSON.stringify(loginData),
       });
@@ -228,8 +240,24 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       console.log('📊 API Response data:', result);
 
       if (result.success) {
+        // Check if 2FA is required even though success is true
+        if (result.requires2FA) {
+          console.log('🔐 2FA required - OTP sent, navigating to verification screen');
+          setAuthState(prev => ({ ...prev, isLoading: false }));
+          
+          // Return requires2FA flag so the UI can navigate to OTP screen
+          return {
+            success: false, // Set to false so UI knows login isn't complete
+            requires2FA: true,
+            authMethod: result.preferredAuthMethod || 'phone',
+            message: 'Please verify the code sent to your ' + (result.preferredAuthMethod === 'phone' ? 'phone' : 'email'),
+            user: result.user,
+            identifier: result.user?.masked_phone_number || result.user?.email,
+          };
+        }
+        
         console.log('✅ LOGIN SUCCESS');
-        // Login successful
+        // Login successful (no 2FA required)
         await deviceSecurityService.resetFailedAttempts();
         
         if (result.session_info?.deviceTrusted) {
@@ -253,6 +281,12 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         if (result.user) {
           await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
           console.log('💾 Stored user data');
+        }
+
+        // Store device token if device is trusted
+        if (result.deviceToken) {
+          await secureStorage.setItem(STORAGE_KEYS.DEVICE_TOKEN, result.deviceToken);
+          console.log('💾 Stored device token for trusted device');
         }
 
         setAuthState(prev => ({
@@ -703,7 +737,8 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       try {
         await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
         await secureStorage.removeItem(STORAGE_KEYS.USER_DATA);
-        console.log('💾 Cleared authentication data');
+        await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TOKEN); // Clear device token on logout
+        console.log('💾 Cleared authentication data and device token');
       } catch (error) {
         console.warn('Failed to clear auth data:', error);
       }

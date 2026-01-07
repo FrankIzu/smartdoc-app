@@ -193,7 +193,6 @@ export default function OtpVerificationScreen() {
         <Text style={styles.subtitle}>
           We&apos;ve sent a 6-digit code to your {getMethodText()}
         </Text>
-        <Text style={styles.identifier}>{params.identifier}</Text>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -318,13 +317,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     color: '#666',
-    marginBottom: 5,
-  },
-  identifier: {
-    fontSize: 16,
-    textAlign: 'center',
-    color: Colors.primary,
-    fontWeight: '600',
     marginBottom: 30,
   },
   errorText: {
