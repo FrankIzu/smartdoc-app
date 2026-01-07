@@ -6,6 +6,9 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpa
 import { Colors } from '../../constants/Colors';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { googleAuthService } from '../../services/googleAuth';
+import { appleAuthService } from '../../services/appleAuth';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { Platform } from 'react-native';
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -21,6 +24,14 @@ export default function SignUpScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
+
+  // Check Apple Sign In availability on mount
+  React.useEffect(() => {
+    if (Platform.OS === 'ios') {
+      appleAuthService.isAvailableAsync().then(setAppleSignInAvailable);
+    }
+  }, []);
 
   const handleSignUp = async () => {
     try {
@@ -94,6 +105,81 @@ export default function SignUpScreen() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google sign-up failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAppleSignUp = async () => {
+    try {
+      setError('');
+      setIsLoading(true);
+
+      if (!agreeToTerms) {
+        setError('Please agree to the Terms of Service and Privacy Policy before continuing');
+        return;
+      }
+
+      // Use Apple Auth service for sign-up
+      const result = await appleAuthService.signInWithAppleEnhanced();
+      
+      if (result.success) {
+        // Format and store user data
+        const { secureStorage } = await import('../../utils/storage');
+        const backendUser = result.user;
+        
+        // Format user data similar to sign-in
+        const fullName = backendUser.first_name || backendUser.firstName
+          ? `${backendUser.first_name || backendUser.firstName || ''} ${backendUser.last_name || backendUser.lastName || ''}`.trim()
+          : '';
+        const displayName = fullName || backendUser.name || backendUser.username || backendUser.email || 'Apple User';
+        
+        const userData = {
+          id: (backendUser.id || backendUser.user_id || '').toString(),
+          email: backendUser.email || backendUser.username || '',
+          name: displayName,
+        };
+        
+        // Validate user data
+        if (!userData.id) {
+          console.error('Invalid user data from Apple sign-up: missing ID', backendUser);
+          setError('Failed to create account. Please try again.');
+          return;
+        }
+        
+        // Email might be null if user chose to hide it - use a placeholder
+        if (!userData.email) {
+          userData.email = `apple-${userData.id}@grabdocs.app`;
+          console.warn('Apple user email hidden, using placeholder:', userData.email);
+        }
+        
+        await secureStorage.setItem('user', JSON.stringify(userData));
+        await secureStorage.setItem('auth_token', 'session_token');
+        
+        Alert.alert('Success', 'Account created with Apple successfully!');
+        
+        // Small delay to ensure state propagation
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        router.replace('/(tabs)');
+      } else if (result.requires2FA) {
+        Alert.alert(
+          '2FA Required',
+          result.message || 'Additional verification required. Please use phone verification.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Continue with Phone', onPress: () => router.push('/phone-login') },
+          ]
+        );
+      } else {
+        setError(result.message || 'Apple sign-up failed');
+      }
+    } catch (err: any) {
+      if (err.code === 'ERR_CANCELED' || err.message?.includes('canceled')) {
+        // User cancelled - don't show error
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Apple sign-up failed');
     } finally {
       setIsLoading(false);
     }
@@ -289,6 +375,17 @@ export default function SignUpScreen() {
           </Text>
         </TouchableOpacity>
 
+        {/* Apple Sign In - iOS only when available */}
+        {Platform.OS === 'ios' && appleSignInAvailable && (
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+            cornerRadius={12}
+            style={styles.appleButton}
+            onPress={handleAppleSignUp}
+          />
+        )}
+
         <View style={styles.footer}>
           <Text style={styles.footerText}>Already have an account? </Text>
           <Link href="/sign-in" style={styles.footerLink}>
@@ -443,6 +540,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 15,
     color: '#666',
     fontSize: 14,
+  },
+  appleButton: {
+    width: '100%',
+    height: 50,
+    marginBottom: 16,
   },
   googleButton: {
     width: '100%',

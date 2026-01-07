@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
       "resizeMode": "contain",
-      "backgroundColor": "#007AFF"
+      "backgroundColor": "#ffffff"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -18,7 +18,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.grabdocs.mobile",
-      "buildNumber": "3",
+      "buildNumber": "4",
+      "usesAppleSignIn": true,
+      "splash": {
+        "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff"
+      },
       "infoPlist": {
         "NSCameraUsageDescription": "GrabDocs needs access to your camera to scan documents and take photos.",
         "NSPhotoLibraryUsageDescription": "GrabDocs needs access to your photo library to upload existing documents and photos.",
@@ -26,7 +32,19 @@
         "NSMicrophoneUsageDescription": "GrabDocs needs access to your microphone for voice notes and audio features.",
         "NSFaceIDUsageDescription": "GrabDocs uses Face ID for secure and convenient authentication to access your account and documents.",
         "NSBiometricUsageDescription": "GrabDocs uses biometric authentication (Face ID or Touch ID) for secure and convenient access to your account and documents.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSExceptionDomains": {
+            "api.grabdocs.com": {
+              "NSExceptionAllowsInsecureHTTPLoads": false,
+              "NSIncludesSubdomains": true,
+              "NSExceptionRequiresForwardSecrecy": true,
+              "NSExceptionMinimumTLSVersion": "TLSv1.2",
+              "NSThirdPartyExceptionRequiresForwardSecrecy": false
+            }
+          }
+        }
       }
     },
     "android": {
@@ -105,6 +123,9 @@
         {
           "faceIDPermission": "GrabDocs uses Face ID for secure and convenient authentication to access your account and documents."
         }
+      ],
+      [
+        "expo-apple-authentication"
       ],
       "expo-secure-store"
     ],

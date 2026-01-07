@@ -132,6 +132,9 @@ const MOBILE_ENDPOINTS = {
   MEETING_DOWNLOAD: (meetingId: string, assetType: string) => `/api/v1/mobile/meetings/${meetingId}/download/${assetType}`,
   MEETING_DELETE_ASSETS: (meetingId: string) => `/api/v1/video/room/${meetingId}/delete-assets`,
   
+  // Error Logging
+  ERROR_LOG: '/api/v1/mobile/error-log',
+  
   // Configuration
   // CONFIG: '/api/v1/mobile/config', // Not available on backend
 } as const;
@@ -150,21 +153,41 @@ class ApiService {
                           Platform.OS === 'android' ? 'android' : 
                           'mobile'; // fallback for web or other platforms
     
+    // CRITICAL: Ensure baseURL is always HTTPS for production
+    // iOS requires HTTPS and backend enforces it
+    let validatedBaseURL = API_BASE_URL;
+    if (validatedBaseURL.includes('api.grabdocs.com') && !validatedBaseURL.startsWith('https://')) {
+      console.error('🚨 CRITICAL: API_BASE_URL is not HTTPS! Forcing HTTPS:', validatedBaseURL);
+      validatedBaseURL = validatedBaseURL.replace(/^http:\/\//, 'https://');
+    }
+    
     console.log('🔧 API Service Platform Config:', {
       platformOS: Platform.OS,
       isExpoGo,
       appOwnership: Constants.appOwnership,
       platformHeader,
-      baseURL: API_BASE_URL
+      baseURL: validatedBaseURL,
+      originalBaseURL: API_BASE_URL,
+      isHTTPS: validatedBaseURL.startsWith('https://'),
     });
     
+    // CRITICAL: Add X-Forwarded-Proto header for production HTTPS requests
+    // This helps backend detect original HTTPS even if proxy forwards as HTTP
+    const defaultHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Platform': platformHeader, // Send platform optimized for environment
+    };
+    
+    // Always set X-Forwarded-Proto for production API to help backend detect HTTPS
+    if (validatedBaseURL.startsWith('https://')) {
+      defaultHeaders['X-Forwarded-Proto'] = 'https';
+      defaultHeaders['X-Forwarded-Scheme'] = 'https';
+    }
+    
     this.client = axios.create({
-      baseURL: API_BASE_URL,
+      baseURL: validatedBaseURL,
       timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Platform': platformHeader, // Send platform optimized for environment
-      },
+      headers: defaultHeaders,
       withCredentials: true,
       // Enable cookie handling for session-based auth
       xsrfCookieName: 'XSRF-TOKEN',
@@ -177,6 +200,21 @@ class ApiService {
   private setupInterceptors() {
     this.client.interceptors.request.use(
       async (config) => {
+        // CRITICAL: Ensure HTTPS is always used for production API
+        // iOS requires HTTPS and backend enforces it
+        if (config.url && config.baseURL) {
+          const fullUrl = config.baseURL + config.url;
+          if (fullUrl.includes('api.grabdocs.com') && !fullUrl.startsWith('https://')) {
+            console.error('🚨 CRITICAL: HTTP detected for production API! Forcing HTTPS:', fullUrl);
+            // Force HTTPS for production URLs
+            if (config.baseURL.startsWith('http://')) {
+              config.baseURL = config.baseURL.replace(/^http:\/\//, 'https://');
+            }
+            const correctedUrl = config.baseURL + config.url;
+            console.log('✅ Corrected URL to HTTPS:', correctedUrl);
+          }
+        }
+        
         try {
           const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
           if (token) {
@@ -185,9 +223,35 @@ class ApiService {
           } else {
             console.log('🔐 No auth token found in storage');
           }
+          
+          // Include device token for trusted device verification (especially for login requests)
+          const deviceToken = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TOKEN);
+          if (deviceToken) {
+            config.headers['X-Device-Token'] = deviceToken;
+            console.log('🔐 Adding device token to request');
+          }
         } catch (error) {
           console.warn('Failed to get auth token:', error);
         }
+        
+        // CRITICAL: Ensure X-Forwarded-Proto header is set for production HTTPS requests
+        // This is essential when proxy/load balancer forwards HTTP but original was HTTPS
+        if (config.baseURL && config.baseURL.startsWith('https://')) {
+          config.headers['X-Forwarded-Proto'] = 'https';
+          config.headers['X-Forwarded-Scheme'] = 'https';
+        }
+        
+        // Log request details for debugging - show full URL
+        const fullRequestUrl = (config.baseURL || '') + (config.url || '');
+        console.log('🌐 API Request:', {
+          method: config.method?.toUpperCase(),
+          url: fullRequestUrl,
+          baseURL: config.baseURL,
+          endpoint: config.url,
+          isHTTPS: fullRequestUrl.startsWith('https://'),
+          hasForwardedProto: !!config.headers['X-Forwarded-Proto'],
+          forwardedProto: config.headers['X-Forwarded-Proto'],
+        });
         
         // Log request details for debugging
         // console.log('📡 API Request:', {
@@ -235,6 +299,7 @@ class ApiService {
     try {
       await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
       await secureStorage.removeItem(STORAGE_KEYS.USER_DATA);
+      await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TOKEN); // Clear device token on logout
     } catch (error) {
       console.warn('Failed to clear auth data:', error);
     }
@@ -252,6 +317,20 @@ class ApiService {
       const result = response.data;
       
       if (result.success) {
+        // Check if 2FA is required (backend sends OTP and requires verification)
+        if (result.requires2FA) {
+          console.log('🔐 2FA required - OTP sent, returning requires2FA flag');
+          return {
+            success: false, // Set to false so UI knows login isn't complete yet
+            requires2FA: true,
+            message: result.message || 'Please verify the code sent to your ' + (result.preferredAuthMethod === 'phone' ? 'phone' : 'email'),
+            user: result.user,
+            preferredAuthMethod: result.preferredAuthMethod,
+            identifier: result.user?.masked_phone_number || result.user?.email,
+          };
+        }
+        
+        // Login successful (no 2FA required)
         if (result.user) {
           await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
           console.log('💾 Stored mobile user data');
@@ -265,6 +344,12 @@ class ApiService {
           // Fallback to session_token for development
           await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
           console.log('💾 Stored fallback session_token');
+        }
+        
+        // Store device token if device is trusted
+        if (result.deviceToken) {
+          await secureStorage.setItem(STORAGE_KEYS.DEVICE_TOKEN, result.deviceToken);
+          console.log('💾 Stored device token for trusted device');
         }
         
         return {
@@ -1708,10 +1793,14 @@ class ApiService {
 
   async revokeAllDevices(): Promise<ApiResponse> {
     try {
+      console.log('🔄 Revoking all devices...');
       const response = await this.client.post('/api/v1/mobile/devices/revoke-all');
+      console.log('✅ Revoke all devices response:', response.data);
       return response.data;
     } catch (error: any) {
-      console.error('Revoke all devices failed:', error);
+      console.error('❌ Revoke all devices failed:', error);
+      console.error('❌ Error response:', error.response?.data);
+      console.error('❌ Error status:', error.response?.status);
       throw new Error(error.response?.data?.message || 'Failed to revoke all devices');
     }
   }

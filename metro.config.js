@@ -1,17 +1,148 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
+const fs = require('fs');
+
+// Debug: Log the current directory and check for index.js
+console.log('=== METRO CONFIG DEBUG ===');
+console.log('__dirname:', __dirname);
+console.log('process.cwd():', process.cwd());
+console.log('index.js exists:', fs.existsSync(path.join(__dirname, 'index.js')));
+console.log('package.json main:', require('./package.json').main);
+console.log('========================');
+
+// Use the current directory as project root
+// EAS Build places the project in /home/expo/workingdir/build/
+// and index.js should be there
+const projectRoot = __dirname;
+const watchFolders = [projectRoot];
 
 /** @type {import('expo/metro-config').MetroConfig} */
-const config = getDefaultConfig(__dirname);
+const config = getDefaultConfig(projectRoot);
+config.watchFolders = watchFolders;
+config.projectRoot = projectRoot;
 
-// Configure resolver to handle socket.io dependencies
+// Note: The issue is that expo export:embed passes absolute paths to Metro's _resolveRelativePath
+// which expects relative paths. This is a known issue with Expo Router + EAS Build.
+// The workaround is to ensure package.json main field is correct (which it is: "./index.js")
+// and that Metro's resolver can handle the entry point correctly via the resolveRequest hook above.
+
+// Configure resolver to handle socket.io dependencies and entry point resolution
 // This forces Metro to use CommonJS versions instead of ESM
 const defaultResolver = config.resolver.resolveRequest;
 config.resolver = {
   ...config.resolver,
   unstable_enablePackageExports: false, // Disable package exports to use main entry
   // Resolve HMS native modules to empty stubs for web platform
+  // Also handle absolute path resolution for entry point
   resolveRequest: (context, moduleName, platform) => {
+    // Handle absolute paths - convert to relative if it's the entry point
+    if (moduleName && moduleName.startsWith('/') && moduleName.endsWith('index.js')) {
+      const relativePath = path.relative(projectRoot, moduleName);
+      if (fs.existsSync(moduleName)) {
+        // If absolute path exists, try resolving as relative path
+        const relativeModuleName = relativePath.startsWith('..') ? './index.js' : relativePath;
+        if (defaultResolver) {
+          try {
+            return defaultResolver(context, relativeModuleName, platform);
+          } catch (e) {
+            // Fall through to try absolute path resolution
+          }
+        }
+      }
+    }
+    
+    // Fix whatwg-fetch resolution - handle missing dist/fetch.umd.js
+    // On EAS Build, whatwg-fetch's prepare script may not run, causing dist files to be missing
+    if (moduleName === 'whatwg-fetch') {
+      const whatwgFetchPath = path.join(projectRoot, 'node_modules', 'whatwg-fetch');
+      const umdPath = path.join(whatwgFetchPath, 'dist', 'fetch.umd.js');
+      const jsPath = path.join(whatwgFetchPath, 'fetch.js');
+      
+      // Check if dist/fetch.umd.js exists first
+      if (fs.existsSync(umdPath)) {
+        // File exists, use default resolver
+        if (defaultResolver) {
+          try {
+            return defaultResolver(context, moduleName, platform);
+          } catch (e) {
+            // If default resolver fails even though file exists, return the file directly
+            return {
+              type: 'sourceFile',
+              filePath: umdPath,
+            };
+          }
+        }
+      }
+      
+      // dist/fetch.umd.js doesn't exist, use fetch.js (module field) as fallback
+      if (fs.existsSync(jsPath)) {
+        console.log('⚠️ whatwg-fetch: Using fetch.js fallback (dist/fetch.umd.js not found)');
+        return {
+          type: 'sourceFile',
+          filePath: jsPath,
+        };
+      }
+      
+      // Last resort: try to resolve fetch.js via default resolver
+      if (defaultResolver) {
+        try {
+          return defaultResolver(context, 'whatwg-fetch/fetch.js', platform);
+        } catch (e) {
+          // If all else fails, let the error propagate
+          console.error('❌ whatwg-fetch: All resolution attempts failed');
+        }
+      }
+    }
+    
+    // Fix abort-controller resolution - handle dist/abort-controller path
+    // React Native imports abort-controller/dist/abort-controller but package.json main is dist/abort-controller
+    // Use default resolver with explicit path to let Metro handle watching properly
+    if (moduleName && moduleName.startsWith('abort-controller/dist/abort-controller')) {
+      // Try resolving with explicit .js extension first
+      if (defaultResolver) {
+        try {
+          return defaultResolver(context, 'abort-controller/dist/abort-controller.js', platform);
+        } catch (e) {
+          // Fall back to resolving just abort-controller (uses package.json main)
+          try {
+            return defaultResolver(context, 'abort-controller', platform);
+          } catch (e2) {
+            console.error('❌ abort-controller: All resolution attempts failed');
+          }
+        }
+      }
+    }
+    
+    // Fix semver subpath exports - handle semver/functions/* paths
+    // react-native-reanimated requires semver/functions/satisfies which is a subpath export
+    if (moduleName && moduleName.startsWith('semver/')) {
+      // Try default resolver first (should handle package.json exports)
+      if (defaultResolver) {
+        try {
+          return defaultResolver(context, moduleName, platform);
+        } catch (e) {
+          // Fallback: try resolving the subpath as a direct file path
+          const semverPath = path.join(projectRoot, 'node_modules', 'semver');
+          const subPath = moduleName.replace('semver/', '');
+          const filePath = path.join(semverPath, subPath + '.js');
+          
+          if (fs.existsSync(filePath)) {
+            return {
+              type: 'sourceFile',
+              filePath: filePath,
+            };
+          }
+          
+          // Last resort: try resolving just 'semver'
+          try {
+            return defaultResolver(context, 'semver', platform);
+          } catch (e2) {
+            console.error('❌ semver: All resolution attempts failed for', moduleName);
+          }
+        }
+      }
+    }
+    
     // For web platform, stub HMS native modules
     if (platform === 'web') {
       if (
@@ -32,12 +163,15 @@ config.resolver = {
   },
   // Configure blockList to exclude directories from watching
   // This reduces the number of files Metro needs to watch
+  // NOTE: We're IN /home/expo/workingdir/build/ on EAS, so don't block */build/*
   blockList: [
     // Exclude large directories that don't need to be watched
     /.*\/node_modules\/.*\/node_modules\/.*/,
     /.*\/\.git\/.*/,
-    /.*\/dist\/.*/,
-    /.*\/build\/.*/,
+    // Don't block dist/ in node_modules - needed for abort-controller, whatwg-fetch, etc.
+    // Only block dist/ in project root (build artifacts)
+    /^(?!.*\/node_modules\/).*\/dist\/.*/,
+    // /.*\/build\/.*/, // Don't block build/ since we're in it on EAS
     /.*\/\.expo\/.*/,
     /.*\/android\/build\/.*/,
     /.*\/ios\/build\/.*/,

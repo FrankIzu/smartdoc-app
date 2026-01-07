@@ -1,12 +1,25 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
+// Local Development Configuration - Single source of truth for local backend IP
+// Change this IP address to update the backend URL for local development
+export const LOCAL_DEV_IP = '192.168.1.5';
+export const LOCAL_DEV_PORT = 5000;
+export const LOCAL_DEV_URL = `http://${LOCAL_DEV_IP}:${LOCAL_DEV_PORT}`;
+
 // API Configuration - Auto-detect based on environment
 export const API_BASE_URL = (() => {
-  // 1. Check explicit environment variable
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    console.log('📍 API URL: Using environment variable:', process.env.EXPO_PUBLIC_API_URL);
-    return process.env.EXPO_PUBLIC_API_URL;
+  // 1. Check explicit environment variable (highest priority)
+  const envApiUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envApiUrl && envApiUrl.trim() !== '') {
+    // Ensure HTTPS for production URLs (not localhost)
+    let finalUrl = envApiUrl.trim();
+    if (finalUrl.includes('api.grabdocs.com') && !finalUrl.startsWith('https://')) {
+      console.warn('⚠️ API URL from env var is not HTTPS, forcing HTTPS:', finalUrl);
+      finalUrl = finalUrl.replace(/^http:\/\//, 'https://');
+    }
+    console.log('📍 API URL: Using environment variable:', finalUrl);
+    return finalUrl;
   }
   
   // 2. Check if running on web platform
@@ -15,14 +28,23 @@ export const API_BASE_URL = (() => {
   // 3. Check if we're in Expo Go (local testing only)
   // Expo Go = local testing, use localhost
   // Standalone app (dev or prod build) = use production
-  const isExpoGo = Constants.appOwnership === 'expo';
+  const appOwnership = Constants.appOwnership;
+  const isExpoGo = appOwnership === 'expo';
+  // For standalone apps, appOwnership can be 'standalone', null, or undefined
+  // Any value that's not 'expo' means it's a standalone app
   
   console.log('📍 API URL Detection:', {
     platform: Platform.OS,
     isWeb,
-    appOwnership: Constants.appOwnership,
+    appOwnership: appOwnership,
     isExpoGo,
+    isStandalone: !isExpoGo,
     __DEV__,
+    envApiUrl: envApiUrl || '(not set)',
+    expoConstants: {
+      appOwnership: Constants.appOwnership,
+      executionEnvironment: Constants.executionEnvironment,
+    }
   });
   
   // For web platform in development, use localhost (requires CORS configuration on backend)
@@ -31,16 +53,30 @@ export const API_BASE_URL = (() => {
     return 'http://localhost:5000'; // Local development - backend must allow CORS from http://localhost:8081
   }
   
+  // Only use localhost when explicitly running in Expo Go
+  // For dev builds installed on device, appOwnership should be 'standalone' or null
   if (isExpoGo) {
-    // Only use localhost when running in Expo Go for local testing
     console.log('📍 API URL: Using localhost (Expo Go detected)');
-    return 'http://192.168.1.5:5000'; // Local development
+    return LOCAL_DEV_URL; // Local development
   }
   
-  // 4. For standalone apps (dev builds or production builds), use production
-  // Note: Web in production will also use production URL (requires CORS configuration)
-  console.log('📍 API URL: Using production (Standalone app detected)');
-  return 'https://api.grabdocs.com'; // Production Render backend
+  // 4. For standalone apps (dev builds or production builds), ALWAYS use production
+  // This includes:
+  // - Dev builds installed on physical devices (appOwnership: 'standalone' or null)
+  // - Production builds (appOwnership: 'standalone')
+  // - Any app that's not Expo Go
+  // IMPORTANT: iOS dev builds installed on physical devices are standalone apps
+  // and should ALWAYS use production backend unless explicitly overridden
+  // CRITICAL: Always use HTTPS for production - iOS requires it
+  const productionUrl = 'https://api.grabdocs.com';
+  
+  if (Platform.OS === 'ios' && !isExpoGo) {
+    console.log('📍 API URL: Using production HTTPS (iOS standalone app detected):', productionUrl);
+    return productionUrl; // Production Render backend - MUST be HTTPS
+  }
+  
+  console.log('📍 API URL: Using production HTTPS (Standalone app detected):', productionUrl);
+  return productionUrl; // Production Render backend - MUST be HTTPS
 })();
 
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || (__DEV__ ? 'development' : 'production');
@@ -67,6 +103,14 @@ export const GOOGLE_CLIENT_ID = (() => {
   // Fallback to web client ID
   return GOOGLE_CLIENT_ID_WEB;
 })();
+
+// Apple Sign In Configuration
+export const APPLE_CLIENT_ID = process.env.EXPO_PUBLIC_APPLE_CLIENT_ID || 'com.grabdocs.mobile.service'; // Service ID for web/Android fallback
+export const APPLE_REDIRECT_URI = (() => {
+  // Use production redirect URI (matches Apple Developer Console configuration)
+  return 'https://api.grabdocs.com/auth/apple/callback';
+})();
+
 export const DROPBOX_CLIENT_ID = process.env.EXPO_PUBLIC_DROPBOX_APP_KEY || ''; // Dropbox App Key (same as Client ID)
 
 // Expo Development Server URL
@@ -214,6 +258,7 @@ export const STORAGE_KEYS = {
   THEME: 'theme',
   SETTINGS: 'settings',
   OFFLINE_QUEUE: 'offline_queue',
+  DEVICE_TOKEN: 'device_token',
 } as const;
 
 // File Upload Settings

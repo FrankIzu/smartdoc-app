@@ -9,7 +9,17 @@ def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
+    // Set root first so entry file can be resolved relative to it
+    root = rootDir.getAbsoluteFile().getParentFile()
+    
+    // Use Expo's script to resolve entry file - it handles Expo Router correctly
+    // Use relative path to avoid Metro resolver issues with absolute paths
+    def entryPath = ["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "relative"].execute(null, rootDir).text.trim()
+    // Resolve entryFile relative to project root, not android/app directory
+    // root is a DirectoryProperty, so we need to use file() with absolute path or relative to rootDir
+    def entryFileRelative = entryPath ?: "index.js"
+    def projectRootFile = rootDir.getAbsoluteFile().getParentFile()
+    entryFile = new File(projectRootFile, entryFileRelative)
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
     hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
@@ -18,11 +28,13 @@ react {
     // Use Expo CLI to bundle the app, this ensures the Metro config
     // works correctly with Expo projects.
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
+    // Use expo export:embed - EAS Build runs this in Bundle JavaScript phase
+    // The bundle is created before Gradle runs, so this should use the existing bundle
     bundleCommand = "export:embed"
 
     /* Folders */
      //   The root of your project, i.e. where "package.json" lives. Default is '../..'
-    // root = file("../../")
+    //   Root is set above before entryFile resolution
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
     //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
@@ -92,7 +104,7 @@ android {
         applicationId 'com.grabdocs.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
+        versionCode 4
         versionName "1.0.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

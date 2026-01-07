@@ -27,18 +27,41 @@ class HMSBackendService {
    */
   async generateAuthToken(request: HMSAuthTokenRequest): Promise<string> {
     try {
+      console.log('📱 [HMS] Requesting token from backend:', {
+        roomCode: request.roomCode,
+        userName: request.userName,
+        role: request.role
+      });
+      
       const response = await apiClient.client.post<HMSAuthTokenResponse>(
         '/api/v1/mobile/meetings/hms-token',
         request
       );
 
+      console.log('📱 [HMS] Backend response:', {
+        success: response.data.success,
+        hasToken: !!response.data.token,
+        tokenLength: response.data.token?.length || 0,
+        roomCode: response.data.roomCode,
+        message: response.data.message
+      });
+
       if (response.data.success && response.data.token) {
-        return response.data.token;
+        const token = response.data.token;
+        console.log('📱 [HMS] Token received successfully, length:', token.length);
+        console.log('📱 [HMS] Token preview:', token.substring(0, 50) + '...');
+        return token;
       } else {
+        console.error('📱 [HMS] Invalid response:', response.data);
         throw new Error(response.data.message || 'Failed to generate auth token');
       }
-    } catch (error) {
-      console.error('Failed to generate HMS auth token:', error);
+    } catch (error: any) {
+      console.error('📱 [HMS] Failed to generate auth token:', error);
+      console.error('📱 [HMS] Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status
+      });
       throw error;
     }
   }

@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { getBackendUrl, getNetworkFallbacks } from '../utils/networkUtils';
+import { LOCAL_DEV_IP, LOCAL_DEV_PORT, LOCAL_DEV_URL, API_BASE_URL as CONFIG_API_BASE_URL } from './Config';
 
 // Fix for EXPO_OS warning by providing proper platform detection
 export const EXPO_OS = Platform.OS;
@@ -37,7 +38,7 @@ const getNetworkConfig = () => {
     const allUrls = [
       primaryUrl,
       'http://127.0.0.1:5000',     // localhost fallback
-      'http://192.168.1.5:5000',  // Machine IP fallback
+      LOCAL_DEV_URL,                // Machine IP fallback (from Config.ts)
     ];
     
     return {
@@ -61,31 +62,9 @@ export const getApiBaseUrl = () => {
 // Debug logging to see which URL is being used
 export const DEBUG_API_URL = true;
 
-// Alternative: Use environment variable if available
-export const API_BASE_URL = (() => {
-  // Environment variable override (highest priority)
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    console.log('🔧 Using API URL from environment variable:', process.env.EXPO_PUBLIC_API_URL);
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-  
-  // Check if we're in Expo Go (local testing only)
-  // Expo Go = local testing, use localhost
-  // Standalone app (dev or prod build) = use production
-  const isExpoGo = Constants.appOwnership === 'expo';
-  
-  if (isExpoGo) {
-    // Only use localhost when running in Expo Go for local testing
-    const localhostUrl = 'http://192.168.1.5:5000';
-    console.log('🔧 Using localhost API URL (Expo Go detected):', localhostUrl);
-    return localhostUrl;
-  }
-  
-  // For standalone apps (dev builds or production builds), use production
-  const productionUrl = 'https://api.grabdocs.com';
-  console.log('🔧 Using production API URL (standalone app detected):', productionUrl);
-  return productionUrl;
-})();
+// Use API_BASE_URL from Config.ts as the single source of truth
+// This avoids duplication and ensures consistency across the app
+export const API_BASE_URL = CONFIG_API_BASE_URL;
 
 // Network fallback configuration
 export const NETWORK_FALLBACKS = getNetworkConfig().fallbacks;

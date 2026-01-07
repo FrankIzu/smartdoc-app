@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { LOCAL_DEV_IP, LOCAL_DEV_PORT, LOCAL_DEV_URL } from '../constants/Config';
 
 /**
  * Get the appropriate backend URL based on the current environment and platform
@@ -17,7 +18,7 @@ export const getBackendUrl = (): string => {
   // Expo Go = local testing, use localhost
   if (isExpoGo) {
     console.log('🔧 Using localhost API URL (Expo Go detected)');
-    return 'http://192.168.1.5:5000';
+    return LOCAL_DEV_URL;
   }
   
   // Standalone app (dev builds or production builds) = use production
@@ -41,7 +42,7 @@ const getLocalNetworkIP = (): string | null => {
   // For iOS simulator, use localhost
   if (Platform.OS === 'ios') {
     // For iOS development with physical device, use machine IP
-    return '192.168.1.5';
+    return LOCAL_DEV_IP;
   }
   
   // For web, use localhost
@@ -64,7 +65,7 @@ export const getNetworkFallbacks = (): string[] => {
   const isExpoGo = Constants.appOwnership === 'expo';
   if (isExpoGo) {
     const allIPs = [
-      '192.168.1.5',    // Primary machine IP for mobile devices
+      LOCAL_DEV_IP,     // Primary machine IP for mobile devices (from Config.ts)
       'localhost',       // Localhost fallback
       '127.0.0.1',      // Alternative localhost
       '10.0.2.2',       // Android emulator
@@ -73,7 +74,7 @@ export const getNetworkFallbacks = (): string[] => {
     // Remove the primary URL from fallbacks to avoid duplicates
     const fallbacks = allIPs
       .filter(ip => !primaryUrl.includes(ip))
-      .map(ip => `http://${ip}:5000`);
+      .map(ip => `http://${ip}:${LOCAL_DEV_PORT}`);
     
     console.log('🔧 Network fallbacks for Expo Go:', fallbacks);
     return fallbacks;

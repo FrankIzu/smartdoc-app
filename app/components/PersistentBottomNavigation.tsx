@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface TabItem {
   name: string;
@@ -41,6 +42,7 @@ export default function PersistentBottomNavigation() {
   const router = useRouter();
   const pathname = usePathname();
   const colorScheme = useColorScheme();
+  const insets = useSafeAreaInsets();
 
   // Hide navigation on auth screens
   const isAuthScreen = pathname.startsWith('/(auth)');
@@ -65,6 +67,7 @@ export default function PersistentBottomNavigation() {
       {
         backgroundColor: colorScheme === 'dark' ? '#1c1c1e' : '#fff',
         borderTopColor: colorScheme === 'dark' ? '#333' : '#e0e0e0',
+        paddingBottom: Math.max(insets.bottom, 5),
       }
     ]}>
       {tabs.map((tab) => {
@@ -105,9 +108,8 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     borderTopWidth: 1,
-    paddingBottom: 5,
     paddingTop: 5,
-    height: 60,
+    minHeight: 60,
   },
   tab: {
     flex: 1,
