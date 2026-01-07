@@ -1,7 +1,8 @@
 // Import polyfills for mobile compatibility
 import React, { useEffect } from 'react';
-import { LogBox, StyleSheet } from 'react-native';
+import { LogBox, StyleSheet, ErrorUtils } from 'react-native';
 import 'react-native-url-polyfill/auto';
+import { errorLogger } from '../services/errorLogger';
 
 // Only suppress specific development warnings that are known and non-critical
 LogBox.ignoreLogs([
@@ -40,7 +41,7 @@ function RootLayoutNav() {
       <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
         <NetworkIndicator compact persistent />
       </SafeAreaView>
-      <View style={styles.mainContainer}>
+      <View style={[styles.mainContainer, { backgroundColor: isDark ? '#151718' : '#fff' }]}>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -54,7 +55,9 @@ function RootLayoutNav() {
           <Stack.Screen name="scanner" options={{ headerShown: false }} />
           <Stack.Screen name="public-upload" options={{ headerShown: false }} />
         </Stack>
-        <PersistentBottomNavigation />
+        <View style={styles.bottomNavContainer}>
+          <PersistentBottomNavigation />
+        </View>
       </View>
       <Toast />
       <GlobalProgressBar
@@ -85,6 +88,56 @@ function AuthWrapper() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    // Set up global error handler for unhandled errors
+    const originalErrorHandler = ErrorUtils.getGlobalHandler();
+    
+    ErrorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
+      // Log to backend
+      errorLogger.logError(error, {
+        severity: isFatal ? 'critical' : 'error',
+        screenName: 'Global',
+        userAction: 'Unhandled Error',
+        errorType: 'UnhandledError',
+      });
+      
+      // Call original handler
+      if (originalErrorHandler) {
+        originalErrorHandler(error, isFatal);
+      }
+    });
+
+    // Set up global promise rejection handler
+    const unhandledRejectionHandler = (reason: any) => {
+      const error = reason instanceof Error 
+        ? reason 
+        : new Error(String(reason || 'Unhandled Promise Rejection'));
+      
+      errorLogger.logError(error, {
+        severity: 'error',
+        screenName: 'Global',
+        userAction: 'Unhandled Promise Rejection',
+        errorType: 'UnhandledPromiseRejection',
+      });
+    };
+
+    // Handle unhandled promise rejections
+    if (typeof global !== 'undefined' && global.Promise) {
+      const originalUnhandledRejection = global.onunhandledrejection;
+      global.onunhandledrejection = (event: any) => {
+        unhandledRejectionHandler(event?.reason);
+        if (originalUnhandledRejection) {
+          originalUnhandledRejection(event);
+        }
+      };
+    }
+
+    // Cleanup on unmount
+    return () => {
+      ErrorUtils.setGlobalHandler(originalErrorHandler);
+    };
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
@@ -113,5 +166,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end', // Align to the right
     paddingTop: 0, // Remove all top padding
     paddingRight: 8, // Add some padding from the right edge
+  },
+  bottomNavContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
   },
 }); 
