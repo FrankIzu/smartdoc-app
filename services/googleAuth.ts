@@ -3,6 +3,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 import { API_BASE_URL, GOOGLE_CLIENT_ID } from '../constants/Config';
 import { deviceSecurityService } from './deviceSecurity';
+import Constants from 'expo-constants';
 
 // Google OAuth configuration
 interface GoogleAuthConfig {
@@ -44,10 +45,40 @@ class GoogleAuthService {
   private discovery: AuthSession.DiscoveryDocument | null = null;
 
   constructor() {
-    // Use Expo's auth proxy for development (provides HTTPS URL that Google accepts)
-    const redirectUri = __DEV__ 
-      ? 'https://auth.expo.io/@anonymous/grabdocs' // Expo auth proxy with HTTPS
-      : 'https://api.grabdocs.com/auth/callback'; // Secure App Link for production
+    // Determine redirect URI based on environment
+    let redirectUri: string;
+    
+    if (__DEV__) {
+      // Development: Use Expo's auth proxy (HTTPS, works with Google)
+      redirectUri = AuthSession.makeRedirectUri({
+        useProxy: true, // Use Expo proxy for HTTPS in development
+        scheme: 'grabdocs',
+        path: 'auth/callback',
+      });
+    } else {
+      // Production: For native mobile apps, Google accepts custom URL schemes
+      // Custom schemes like 'grabdocs://' are valid for native apps (HTTPS not required)
+      // For web apps, HTTPS is required, but this is a mobile app
+      const isExpoGo = Constants.appOwnership === 'expo';
+      if (isExpoGo || Platform.OS === 'web') {
+        // Fallback for Expo Go or web - use HTTPS
+        redirectUri = AuthSession.makeRedirectUri({
+          useProxy: false,
+          scheme: 'grabdocs',
+          path: 'auth/callback',
+        });
+      } else {
+        // Production standalone app: Use custom scheme (valid for native mobile apps)
+        // Google accepts custom URL schemes for native mobile apps
+        // If you prefer HTTPS, you can use: 'https://api.grabdocs.com/auth/callback'
+        // but then the backend must handle the callback and redirect to the app
+        redirectUri = AuthSession.makeRedirectUri({
+          useProxy: false, // No proxy in production
+          scheme: 'grabdocs', // Custom scheme from app.json
+          path: 'auth/callback',
+        });
+      }
+    }
 
     // Initialize configuration
     this.config = {
@@ -57,6 +88,8 @@ class GoogleAuthService {
     };
 
     console.log('Google Auth initialized with redirect URI:', this.config.redirectUri);
+    console.log('Google Auth Client ID:', this.config.clientId ? 'Configured' : 'Missing');
+    console.log('Environment:', __DEV__ ? 'Development' : 'Production');
     
     // Only initialize on client-side (avoid SSR issues)
     if (Platform.OS !== 'web' || typeof window !== 'undefined') {
