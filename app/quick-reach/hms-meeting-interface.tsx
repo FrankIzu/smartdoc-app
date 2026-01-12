@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
 import {
-  Alert, Platform, StyleSheet,
+  Alert, Linking, Platform, StyleSheet,
   Text,
   TouchableOpacity,
   View
@@ -115,8 +115,68 @@ export default function HMSMeetingInterfaceScreen() {
   });
 
   useEffect(() => {
-    checkPermissions();
+    // Check permissions first, then initialize
+    const init = async () => {
+      console.log('📱 [HMS] Starting initialization sequence...');
+      try {
+        // Check permissions and get result directly
+        let permissionsOk = false;
+        if (Platform.OS === 'web') {
+          permissionsOk = true;
+          setPermissionsGranted(true);
+        } else {
+          // Check permissions directly
+          try {
+            const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
+            let audioStatus = { status: 'granted' as const };
+            try {
+              const audioPermission = await Audio.requestPermissionsAsync();
+              audioStatus = audioPermission;
+            } catch (audioError) {
+              console.warn('⚠️ [HMS] Could not request audio permissions:', audioError);
+            }
+            
+            permissionsOk = cameraStatus.status === 'granted' && audioStatus.status === 'granted';
+            setPermissionsGranted(permissionsOk);
+            
+            console.log('📱 [HMS] Permissions check result:', {
+              camera: cameraStatus.status,
+              audio: audioStatus.status,
+              granted: permissionsOk
+            });
+          } catch (permError) {
+            console.error('📱 [HMS] Error checking permissions:', permError);
+            permissionsOk = false;
+            setPermissionsGranted(false);
+          }
+        }
+        
+        // Initialize based on permissions
+        if (permissionsOk) {
+          console.log('✅ [HMS] Permissions granted, initializing...');
+          // Small delay to ensure state is set
+          setTimeout(() => {
     initializePrebuiltInterface();
+          }, 100);
+        } else {
+          console.warn('⚠️ [HMS] Permissions denied, showing error');
+          setIsLoading(false);
+          setError('Camera and microphone permissions are required. Please enable them in Settings.');
+        }
+      } catch (error: any) {
+        console.error('❌ [HMS] Initialization sequence error:', error);
+        setIsLoading(false);
+        setError('Failed to initialize meeting. Please try again.');
+        errorLogger.logError(error, {
+          severity: 'error',
+          screenName: 'HMSMeetingInterface',
+          userAction: 'Initialization Sequence',
+          errorType: 'HMSInitSequenceError',
+          userId: user?.id,
+        });
+      }
+    };
+    init();
   }, []);
 
   // Check camera and microphone permissions
@@ -202,10 +262,19 @@ export default function HMSMeetingInterfaceScreen() {
       setIsLoading(true);
       setError(null);
 
+      // Check permissions BEFORE initializing HMS
+      if (Platform.OS !== 'web' && permissionsGranted === false) {
+        console.warn('⚠️ [HMS] Cannot initialize - permissions denied');
+        setError('Camera and microphone permissions are required to join the meeting. Please enable them in Settings.');
+        setIsLoading(false);
+        return;
+      }
+
       // Check if meetingId is provided
       if (!meetingId) {
         console.error('❌ No meetingId provided to 100ms Prebuilt Interface');
         setError('No meeting ID provided. Please try joining the meeting again from the meeting list.');
+        setIsLoading(false);
         return;
       }
 
@@ -322,7 +391,7 @@ export default function HMSMeetingInterfaceScreen() {
         setIsLoading(false);
         return;
       }
-      
+
       // Log that we're about to render HMS (this requires native module)
       console.log('📱 HMS Prebuilt is available - will render native component');
       console.log('💡 NOTE: Changes to this component logic can use Fast Refresh');
@@ -331,10 +400,15 @@ export default function HMSMeetingInterfaceScreen() {
       // Set flag that HMS is initializing (will be cleared when component mounts)
       setHmsInitializing(true);
       
+      // Don't set isLoading to false yet - wait for HMS to actually render
+      // The loading overlay will show while hmsInitializing is true
+      console.log('✅ [HMS] Initialization complete, waiting for HMS to render...');
+      
     } catch (error: any) {
-      console.error('Failed to initialize 100ms Prebuilt Interface:', error);
+      console.error('❌ Failed to initialize 100ms Prebuilt Interface:', error);
       setError('Failed to initialize meeting interface. Please try again.');
       setHmsInitializing(false);
+      setIsLoading(false);
       errorLogger.logError(error, {
         severity: 'error',
         screenName: 'HMSMeetingInterface',
@@ -342,9 +416,9 @@ export default function HMSMeetingInterfaceScreen() {
         errorType: 'HMSInitializationFailed',
         userId: user?.id,
       });
-    } finally {
-      setIsLoading(false);
     }
+    // Note: We don't set isLoading to false here - let it stay true until HMS actually renders
+    // This prevents the blank screen issue
   };
 
   const handleLeaveMeeting = () => {
@@ -379,11 +453,17 @@ export default function HMSMeetingInterfaceScreen() {
     );
   }
 
-  if (isLoading) {
+  // Show loading if still initializing OR if we're waiting for HMS to render
+  if (isLoading || (hmsInitializing && !authToken)) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Initializing 100ms Prebuilt Interface...</Text>
+          {hmsInitializing && authToken && (
+            <Text style={[styles.loadingText, { marginTop: 8, fontSize: 14, opacity: 0.7 }]}>
+              Connecting to meeting...
+            </Text>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -528,6 +608,48 @@ export default function HMSMeetingInterfaceScreen() {
       );
     }
     
+    // Check permissions BEFORE rendering HMS
+    if (Platform.OS !== 'web' && permissionsGranted === false) {
+      console.warn('⚠️ [HMS] Cannot render - permissions denied');
+    return (
+      <SafeAreaView style={styles.container}>
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorTitle}>Permissions Required</Text>
+            <Text style={styles.errorMessage}>
+              Camera and microphone permissions are required to join the meeting.
+            </Text>
+            <Text style={[styles.errorMessage, { marginTop: 16, fontSize: 14, color: '#999' }]}>
+              Please enable camera and microphone permissions in your device settings and try again.
+            </Text>
+            <TouchableOpacity 
+              style={styles.retryButton} 
+              onPress={async () => {
+                await checkPermissions();
+                if (permissionsGranted) {
+                  initializePrebuiltInterface();
+                }
+              }}
+            >
+              <Text style={styles.retryButtonText}>Request Permissions</Text>
+            </TouchableOpacity>
+            {Platform.OS === 'ios' && (
+              <TouchableOpacity 
+                style={[styles.retryButton, { marginTop: 12, backgroundColor: '#007AFF' }]} 
+                onPress={async () => {
+                  await Linking.openSettings();
+                }}
+              >
+                <Text style={styles.retryButtonText}>Open Settings</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+              <Text style={styles.backButtonText}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
+      </SafeAreaView>
+    );
+    }
+
     try {
       // Final validation before rendering
       console.log('🔍 [HMS] FINAL VALIDATION BEFORE RENDERING:');
@@ -640,12 +762,38 @@ export default function HMSMeetingInterfaceScreen() {
                     <Text style={[styles.errorMessage, { marginTop: 16, fontSize: 14, color: '#999' }]}>
                       Please enable camera and microphone permissions in your device settings and try again.
                     </Text>
-                    <TouchableOpacity style={styles.retryButton} onPress={checkPermissions}>
-                      <Text style={styles.retryButtonText}>Check Permissions Again</Text>
+                    <TouchableOpacity 
+                      style={styles.retryButton} 
+                      onPress={async () => {
+                        // Request permissions again
+                        await checkPermissions();
+                        // Small delay to ensure state updates
+                        setTimeout(() => {
+                          if (permissionsGranted) {
+                            initializePrebuiltInterface();
+                          }
+                        }, 100);
+                      }}
+                    >
+                      <Text style={styles.retryButtonText}>Request Permissions</Text>
                     </TouchableOpacity>
+                    {Platform.OS === 'ios' && (
+                      <TouchableOpacity 
+                        style={[styles.retryButton, { marginTop: 12, backgroundColor: '#007AFF' }]} 
+                        onPress={async () => {
+                          await Linking.openSettings();
+                        }}
+                      >
+                        <Text style={styles.retryButtonText}>Open Settings</Text>
+                      </TouchableOpacity>
+                    )}
                     <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
                       <Text style={styles.backButtonText}>Go Back</Text>
                     </TouchableOpacity>
+                  </View>
+                ) : permissionsGranted === null ? (
+                  <View style={styles.loadingContainer}>
+                    <Text style={styles.loadingText}>Checking permissions...</Text>
                   </View>
                 ) : (
                   <HMSPrebuilt 
@@ -654,6 +802,7 @@ export default function HMSMeetingInterfaceScreen() {
                       console.log('✅ [HMS] onJoin callback fired - HMS joined successfully');
                       console.log('✅ [HMS] Join data:', data);
                       setHmsInitializing(false);
+                      setIsLoading(false); // Clear loading state when HMS joins
                       setHmsError(null);
                     }}
                     onError={(error: any) => {

@@ -3,27 +3,25 @@ import 'react-native-url-polyfill/auto';
 
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    KeyboardAvoidingView,
+    Platform,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { io, Socket } from 'socket.io-client';
+import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService as api } from '../services/api';
-import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
 
 interface ChatParticipant {
@@ -87,6 +85,7 @@ export default function UserChatScreen() {
   const socketRef = useRef<Socket | null>(null);
   const messagesListRef = useRef<FlatList>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [otherUserOnline, setOtherUserOnline] = useState(false);
 
   // Initialize socket connection
   useEffect(() => {
@@ -103,8 +102,15 @@ export default function UserChatScreen() {
     if (selectedChat && socketRef.current && !isNewChat) {
       // Leave previous room
       socketRef.current.emit('leave_chat', { chatId: selectedChat.id });
+      // Reset online status when leaving
+      setOtherUserOnline(false);
       // Join new room
       socketRef.current.emit('join_chat', { chatId: selectedChat.id });
+      // Request participant online status
+      socketRef.current.emit('get_chat_participants_status', { chatId: selectedChat.id });
+    } else {
+      // Reset when no chat is selected
+      setOtherUserOnline(false);
     }
   }, [selectedChat, isNewChat]);
 
@@ -166,15 +172,48 @@ export default function UserChatScreen() {
       socket.on('new_message', (data: any) => {
         console.log('📨 New message received:', data);
         if (data.chat_id === selectedChat?.id) {
+          // Check if this message is from the current user
+          // Use strict comparison and ensure userProfile is loaded
+          const isOwnMessage = !!(userProfile?.id && data.message.sender_id && data.message.sender_id === userProfile.id);
+          
+          console.log('🔍 Message ownership check:', {
+            sender_id: data.message.sender_id,
+            userProfile_id: userProfile?.id,
+            isOwnMessage,
+            message_id: data.message.id
+          });
+          
           const newMsg: ChatMessage = {
             id: data.message.id,
             content: data.message.content,
             sender: data.message.sender,
-            is_own_message: data.message.sender_id === userProfile?.id,
+            is_own_message: isOwnMessage,
             created_at: data.message.created_at,
           };
-          setMessages(prev => [...prev, newMsg]);
+          
+          // Prevent duplicates and update existing messages with correct ownership
+          setMessages(prev => {
+            const existingIndex = prev.findIndex(msg => msg.id === newMsg.id);
+            if (existingIndex !== -1) {
+              // Message exists - update it if ownership changed
+              const existing = prev[existingIndex];
+              if (existing.is_own_message !== newMsg.is_own_message) {
+                const updated = [...prev];
+                updated[existingIndex] = newMsg;
+                console.log('🔄 Updating existing message with correct ownership:', newMsg.id, 'from', existing.is_own_message, 'to', newMsg.is_own_message);
+                return updated;
+              }
+              console.log('⚠️ Duplicate message detected, skipping:', newMsg.id);
+              return prev;
+            }
+            return [...prev, newMsg];
+          });
           scrollToBottom();
+          
+          // If message is from another user, they're definitely online
+          if (!isOwnMessage) {
+            setOtherUserOnline(true);
+          }
         }
         
         // Update chat list
@@ -188,7 +227,35 @@ export default function UserChatScreen() {
       socket.on('user_typing', (data: any) => {
         if (data.chat_id === selectedChat?.id && data.user_id !== userProfile?.id) {
           console.log('⌨️ User typing:', data.username);
+          // If user is typing, they're definitely online
+          setOtherUserOnline(true);
           // You can add typing indicator here
+        }
+      });
+
+      // Listen for user online/offline events
+      socket.on('user_online', (data: any) => {
+        if (selectedChat && data.chat_id === selectedChat.id && data.user_id !== userProfile?.id) {
+          console.log('✅ User came online:', data.username);
+          setOtherUserOnline(true);
+        }
+      });
+
+      socket.on('user_offline', (data: any) => {
+        if (selectedChat && data.chat_id === selectedChat.id && data.user_id !== userProfile?.id) {
+          console.log('❌ User went offline:', data.username);
+          setOtherUserOnline(false);
+        }
+      });
+
+      // Listen for participant online status when joining chat
+      socket.on('chat_participants_status', (data: any) => {
+        if (selectedChat && data.chat_id === selectedChat.id) {
+          // Check if any other participant is online
+          const hasOnlineParticipant = data.participants?.some((p: any) => 
+            p.user_id !== userProfile?.id && p.is_online
+          );
+          setOtherUserOnline(hasOnlineParticipant || false);
         }
       });
 
@@ -315,10 +382,22 @@ export default function UserChatScreen() {
       }
     } catch (error: any) {
       console.error(`❌ Failed to load messages for chat ${chatId}:`, error.message || error);
-      // If chat doesn't exist, clear messages and show empty state
-      if (error.message?.includes('Chat not found') || error.message?.includes('404')) {
-        console.warn(`⚠️ Chat ${chatId} not found, clearing messages`);
+      // If chat doesn't exist, clear messages, refresh chat list, and navigate back
+      if (error.message?.includes('Chat not found') || 
+          error.message?.includes('404') || 
+          error.message?.includes('not found') ||
+          error.response?.status === 404) {
+        console.warn(`⚠️ Chat ${chatId} not found, refreshing chat list and clearing selection`);
         setMessages([]);
+        setSelectedChat(null);
+        setIsNewChat(false);
+        // Refresh the chat list to remove stale chat IDs
+        loadChats();
+        // Show user-friendly message
+        Alert.alert('Chat Not Found', 'This chat may have been deleted or you no longer have access to it.');
+      } else {
+        // Show error for other cases
+        Alert.alert('Error', error.message || 'Failed to load messages. Please try again.');
       }
     } finally {
       setMessagesLoading(false);
@@ -446,8 +525,15 @@ export default function UserChatScreen() {
           created_at: newMsg.created_at || new Date().toISOString()
         };
         
-        // Add message locally (socket will also broadcast it)
-        setMessages(prev => [...prev, messageObj]);
+        // Add message locally (socket will also broadcast it, but we prevent duplicates)
+        setMessages(prev => {
+          const messageExists = prev.some(msg => msg.id === messageObj.id);
+          if (messageExists) {
+            console.log('⚠️ Message already exists, skipping duplicate:', messageObj.id);
+            return prev;
+          }
+          return [...prev, messageObj];
+        });
         scrollToBottom();
         
         setChats(prev => prev.map(chat => 
@@ -457,9 +543,10 @@ export default function UserChatScreen() {
         ));
       }
       setNewMessage('');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to send message:', error);
-      Alert.alert('Error', 'Failed to send message');
+      const errorMessage = error?.message || 'Failed to send message. Please try again.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setSendingMessage(false);
     }
@@ -474,6 +561,76 @@ export default function UserChatScreen() {
     }
   };
 
+
+  const formatMessageTime = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      
+      if (isNaN(date.getTime())) {
+        return '';
+      }
+      
+      // Format as HH:MM (e.g., "2:30 PM" or "14:30")
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (error) {
+      return '';
+    }
+  };
+
+  const formatChatTime = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      
+      if (isNaN(date.getTime())) {
+        return 'Unknown';
+      }
+      
+      return formatRelativeDate(date);
+    } catch (error) {
+      return 'Unknown';
+    }
+  };
+
+  const formatRelativeDate = (date: Date) => {
+    const now = new Date();
+    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    
+    if (diffInMinutes < -1) {
+      const currentYear = now.getFullYear();
+      const dateYear = date.getFullYear();
+      
+      if (dateYear === currentYear) {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      } else {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+    }
+    
+    if (diffInMinutes < 1) return 'Now';
+    if (diffInMinutes < 60) return `${diffInMinutes}m`;
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h`;
+    
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (date.toDateString() === yesterday.toDateString()) {
+      return 'Yesterday';
+    }
+    
+    const weekAgo = new Date(now);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    if (date > weekAgo) {
+      return date.toLocaleDateString('en-US', { weekday: 'short' });
+    }
+    
+    const currentYear = now.getFullYear();
+    const dateYear = date.getFullYear();
+    
+    if (dateYear === currentYear) {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  };
 
   const filteredChats = useMemo(() => {
     if (!searchQuery.trim()) return chats;
@@ -514,13 +671,22 @@ export default function UserChatScreen() {
       paddingVertical: 8,
       backgroundColor: colors.card,
     },
-    searchInput: {
+    searchInputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
       backgroundColor: colors.surface,
       borderRadius: 8,
       paddingHorizontal: 12,
       paddingVertical: 8,
+    },
+    searchIcon: {
+      marginRight: 8,
+    },
+    searchInput: {
+      flex: 1,
       fontSize: 14,
       color: colors.text,
+      padding: 0,
     },
     chatsList: {
       flex: 1,
@@ -545,15 +711,32 @@ export default function UserChatScreen() {
     chatContent: {
       flex: 1,
     },
+    chatItemHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 3,
+    },
     chatTitle: {
       fontSize: 16,
       fontWeight: '600',
       color: colors.text,
-      marginBottom: 4,
+      flex: 1,
+    },
+    chatTime: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      marginLeft: 8,
+    },
+    chatFooter: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
     },
     lastMessage: {
       fontSize: 14,
       color: colors.textSecondary,
+      flex: 1,
     },
     emptyContainer: {
       flex: 1,
@@ -593,7 +776,8 @@ export default function UserChatScreen() {
     messageBubble: {
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 16,
+      borderRadius: 18,
+      marginVertical: 2,
     },
     myMessageBubble: {
       backgroundColor: '#007AFF',
@@ -602,7 +786,11 @@ export default function UserChatScreen() {
       backgroundColor: colors.surface,
     },
     messageText: {
-      fontSize: 14,
+      fontSize: 15,
+      lineHeight: 20,
+      flexWrap: 'wrap',
+      wordWrap: 'break-word',
+      maxWidth: '100%',
     },
     myMessageText: {
       color: '#fff',
@@ -610,11 +798,23 @@ export default function UserChatScreen() {
     otherMessageText: {
       color: colors.text,
     },
+    messageTime: {
+      fontSize: 11,
+      marginTop: 4,
+      alignSelf: 'flex-end',
+    },
+    myMessageTime: {
+      color: 'rgba(255, 255, 255, 0.7)',
+    },
+    otherMessageTime: {
+      color: colors.textSecondary,
+    },
     inputContainer: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-end',
       paddingHorizontal: 16,
       paddingVertical: 8,
+      paddingBottom: 4,
       borderTopWidth: 1,
       borderTopColor: colors.border,
       backgroundColor: colors.card,
@@ -625,7 +825,7 @@ export default function UserChatScreen() {
       borderRadius: 20,
       paddingHorizontal: 16,
       paddingVertical: 8,
-      fontSize: 14,
+      fontSize: 16,
       color: colors.text,
       marginRight: 8,
       minHeight: 40,
@@ -720,17 +920,23 @@ export default function UserChatScreen() {
       fontSize: 12,
       color: colors.textSecondary,
     },
-  }), [colors]);
+  }), [colors, insets]);
 
   if (isNewChat || selectedChat) {
     return (
-      <SafeAreaView style={dynamicStyles.container} edges={['top']}>
+      <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom']}>
         <View style={dynamicStyles.header}>
           <TouchableOpacity onPress={() => {
-            setSelectedChat(null);
-            setIsNewChat(false);
-            setSelectedRecipient(null);
-            setNewMessage('');
+            if (selectedChat || isNewChat) {
+              // If in a chat, go back to chat list
+              setSelectedChat(null);
+              setIsNewChat(false);
+              setSelectedRecipient(null);
+              setNewMessage('');
+            } else {
+              // If on chat list, go back to home
+              router.push('/(tabs)');
+            }
           }} style={dynamicStyles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
@@ -738,7 +944,7 @@ export default function UserChatScreen() {
             <Text style={dynamicStyles.headerTitle}>
               {isNewChat ? 'New Message' : selectedChat?.title || ''}
             </Text>
-            {!isNewChat && isConnected && (
+            {!isNewChat && isConnected && otherUserOnline && (
               <Text style={{ fontSize: 10, color: colors.textSecondary }}>Connected</Text>
             )}
             {isNewChat && selectedRecipient && (
@@ -777,6 +983,9 @@ export default function UserChatScreen() {
                     <View style={[dynamicStyles.messageBubble, item.is_own_message ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
                       <Text style={[dynamicStyles.messageText, item.is_own_message ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
                         {item.content}
+                      </Text>
+                      <Text style={[dynamicStyles.messageTime, item.is_own_message ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
+                        {formatMessageTime(item.created_at)}
                       </Text>
                     </View>
                   </View>
@@ -825,42 +1034,9 @@ export default function UserChatScreen() {
           </View>
         )}
 
-        {/* Mention Results - Show above input */}
-        {showMentionResults && mentionResults.length > 0 && (
-          <View style={dynamicStyles.mentionResultsContainer}>
-            <FlatList
-              data={mentionResults}
-              keyExtractor={(item, index) => `${item.type}-${item.data.id}-${index}`}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={dynamicStyles.mentionItem}
-                  onPress={() => handleSelectRecipient(item)}
-                >
-                  <View style={dynamicStyles.mentionAvatar}>
-                    <Ionicons
-                      name={item.type === 'workspace' ? 'people' : 'person'}
-                      size={20}
-                      color="#007AFF"
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={dynamicStyles.mentionName}>
-                      {item.type === 'user' ? item.data.username : item.data.name}
-                    </Text>
-                    {item.type === 'user' && item.data.email && (
-                      <Text style={dynamicStyles.mentionEmail}>{item.data.email}</Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              )}
-              style={{ maxHeight: 200 }}
-            />
-          </View>
-        )}
-
         <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={0}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
           <View style={dynamicStyles.inputContainer}>
             <TextInput
@@ -897,7 +1073,10 @@ export default function UserChatScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={dynamicStyles.backButton}>
+        <TouchableOpacity onPress={() => {
+          // Navigate back to home
+          router.push('/(tabs)');
+        }} style={dynamicStyles.backButton}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={dynamicStyles.headerTitle}>Messages</Text>
@@ -907,13 +1086,21 @@ export default function UserChatScreen() {
       </View>
 
       <View style={dynamicStyles.searchContainer}>
-        <TextInput
-          style={dynamicStyles.searchInput}
-          placeholder="Search conversations..."
-          placeholderTextColor={colors.textSecondary}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
+        <View style={dynamicStyles.searchInputContainer}>
+          <Ionicons name="search" size={20} color={colors.textSecondary} style={dynamicStyles.searchIcon} />
+          <TextInput
+            style={dynamicStyles.searchInput}
+            placeholder="Search conversations..."
+            placeholderTextColor={colors.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={dynamicStyles.searchIcon}>
+              <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {loading ? (
@@ -940,8 +1127,13 @@ export default function UserChatScreen() {
                 />
               </View>
               <View style={dynamicStyles.chatContent}>
-                <Text style={dynamicStyles.chatTitle}>{item.title}</Text>
-                <Text style={dynamicStyles.lastMessage} numberOfLines={1}>{item.last_message}</Text>
+                <View style={dynamicStyles.chatItemHeader}>
+                  <Text style={dynamicStyles.chatTitle} numberOfLines={1}>{item.title}</Text>
+                  <Text style={dynamicStyles.chatTime}>{formatChatTime(item.updated_at)}</Text>
+                </View>
+                <View style={dynamicStyles.chatFooter}>
+                  <Text style={dynamicStyles.lastMessage} numberOfLines={2}>{item.last_message}</Text>
+                </View>
               </View>
             </TouchableOpacity>
           )}

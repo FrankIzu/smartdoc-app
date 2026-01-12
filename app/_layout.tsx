@@ -1,8 +1,12 @@
 // Import polyfills for mobile compatibility
 import React, { useEffect } from 'react';
-import { LogBox, StyleSheet, ErrorUtils } from 'react-native';
+import { LogBox, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
+
+// ErrorUtils might be a global in some React Native versions, or imported
+// Try to get it from global if not available as import
+const ErrorUtils = (global as any).ErrorUtils || require('react-native').ErrorUtils;
 
 // Only suppress specific development warnings that are known and non-critical
 LogBox.ignoreLogs([
@@ -89,36 +93,62 @@ function AuthWrapper() {
 
 export default function RootLayout() {
   useEffect(() => {
+    // Check if ErrorUtils is available (may not be in all React Native versions)
+    if (typeof ErrorUtils === 'undefined' || !ErrorUtils) {
+      console.warn('⚠️ ErrorUtils is not available - skipping global error handler setup');
+      return;
+    }
+
     // Set up global error handler for unhandled errors
-    const originalErrorHandler = ErrorUtils.getGlobalHandler();
+    let originalErrorHandler: ((error: Error, isFatal?: boolean) => void) | undefined;
     
-    ErrorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
-      // Log to backend
-      errorLogger.logError(error, {
-        severity: isFatal ? 'critical' : 'error',
-        screenName: 'Global',
-        userAction: 'Unhandled Error',
-        errorType: 'UnhandledError',
+    try {
+      originalErrorHandler = ErrorUtils.getGlobalHandler?.();
+    } catch (err) {
+      console.warn('⚠️ Could not get original error handler:', err);
+    }
+    
+    try {
+      ErrorUtils.setGlobalHandler?.((error: Error, isFatal?: boolean) => {
+        // Try to log to backend, but don't let it crash the app
+        try {
+          errorLogger.logError(error, {
+            severity: isFatal ? 'critical' : 'error',
+            screenName: 'Global',
+            userAction: 'Unhandled Error',
+            errorType: 'UnhandledError',
+          });
+        } catch (logError) {
+          // If error logging fails, just log to console
+          console.error('Failed to log error to backend:', logError);
+        }
+        
+        // Call original handler
+        if (originalErrorHandler) {
+          originalErrorHandler(error, isFatal);
+        }
       });
-      
-      // Call original handler
-      if (originalErrorHandler) {
-        originalErrorHandler(error, isFatal);
-      }
-    });
+    } catch (err) {
+      console.warn('⚠️ Could not set global error handler:', err);
+    }
 
     // Set up global promise rejection handler
     const unhandledRejectionHandler = (reason: any) => {
-      const error = reason instanceof Error 
-        ? reason 
-        : new Error(String(reason || 'Unhandled Promise Rejection'));
-      
-      errorLogger.logError(error, {
-        severity: 'error',
-        screenName: 'Global',
-        userAction: 'Unhandled Promise Rejection',
-        errorType: 'UnhandledPromiseRejection',
-      });
+      try {
+        const error = reason instanceof Error 
+          ? reason 
+          : new Error(String(reason || 'Unhandled Promise Rejection'));
+        
+        errorLogger.logError(error, {
+          severity: 'error',
+          screenName: 'Global',
+          userAction: 'Unhandled Promise Rejection',
+          errorType: 'UnhandledPromiseRejection',
+        });
+      } catch (logError) {
+        // If error logging fails, just log to console
+        console.error('Failed to log promise rejection to backend:', logError);
+      }
     };
 
     // Handle unhandled promise rejections
@@ -126,15 +156,21 @@ export default function RootLayout() {
       const originalUnhandledRejection = global.onunhandledrejection;
       global.onunhandledrejection = (event: any) => {
         unhandledRejectionHandler(event?.reason);
-        if (originalUnhandledRejection) {
-          originalUnhandledRejection(event);
+        if (originalUnhandledRejection && typeof originalUnhandledRejection === 'function') {
+          (originalUnhandledRejection as any).call(global as any, event);
         }
       };
     }
 
     // Cleanup on unmount
     return () => {
-      ErrorUtils.setGlobalHandler(originalErrorHandler);
+      try {
+        if (ErrorUtils && ErrorUtils.setGlobalHandler && originalErrorHandler) {
+          ErrorUtils.setGlobalHandler(originalErrorHandler);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not restore original error handler:', err);
+      }
     };
   }, []);
 

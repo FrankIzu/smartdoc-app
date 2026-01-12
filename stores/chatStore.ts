@@ -4,7 +4,7 @@ import { ChatHistory, ChatMessage, ChatRequest, ChatState } from '../types';
 
 interface ChatStore extends ChatState {
   // Actions
-  fetchChatHistories: () => Promise<void>;
+  fetchChatHistories: (limit?: number, offset?: number) => Promise<void>;
   fetchChatConversation: (id: number) => Promise<void>;
   sendMessage: (request: ChatRequest) => Promise<boolean>;
   createNewChat: (title?: string) => Promise<number | null>;
@@ -23,15 +23,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   error: null,
 
   // Actions
-  fetchChatHistories: async () => {
+  fetchChatHistories: async (limit: number = 50, offset: number = 0) => {
     set({ isLoading: true, error: null });
     
     try {
-      const response = await apiService.getChatHistory();
+      const response = await apiService.getChatHistory(limit, offset);
       
       if (response.success && response.data) {
+        // Handle pagination: if offset is 0, replace; otherwise append
+        const currentHistories = get().histories;
+        const newHistories = offset === 0 
+          ? response.data 
+          : [...currentHistories, ...response.data];
+        
         set({
-          histories: response.data,
+          histories: newHistories,
           isLoading: false,
           error: null,
         });
@@ -57,30 +63,68 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       let messages: any[] | null = null;
 
-      // Primary: use the existing chat history endpoint (was working before)
+      // Primary: use the existing chat history endpoint
+      // CRITICAL: This function is only called for AI assistant chats from /api/v1/mobile/chat/history
+      // DO NOT use getChatMessages fallback as it calls the user-chat endpoint which will return 404 for AI chats
       try {
         const historyResponse = await apiService.getChatHistory();
         console.log('📜 Chat history response loaded');
         if (historyResponse && (historyResponse as any).success) {
           const histories = (historyResponse as any).data || [];
-          const match = histories.find((h: any) => h.id === id);
-          messages = match?.messages || [];
+          console.log(`📋 Total histories loaded: ${histories.length}`);
+          
+          const match = histories.find((h: any) => {
+            // Compare IDs robustly to handle string/number mismatches
+            const historyId = typeof h.id === 'string' ? parseInt(String(h.id), 10) : Number(h.id);
+            const targetId = typeof id === 'string' ? parseInt(String(id), 10) : Number(id);
+            return !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
+          });
+          
+          if (match) {
+            // Handle both new format (messages array) and existing format (conversation_data)
+            // Also check for nested data structures
+            let rawMessages = (match as any).messages || 
+                             (match as any).conversation_data || 
+                             (match as any).data?.messages ||
+                             (match as any).data?.conversation_data ||
+                             null;
+            
+            // If conversation_data is a string, try to parse it as JSON
+            if (typeof rawMessages === 'string' && rawMessages.trim().startsWith('[')) {
+              try {
+                rawMessages = JSON.parse(rawMessages);
+              } catch (e) {
+                console.warn('⚠️ Failed to parse conversation_data as JSON:', e);
+              }
+            }
+            
+            messages = Array.isArray(rawMessages) ? rawMessages : [];
+            
+            console.log(`✅ Found chat ${id} in history:`, {
+              hasMessages: !!(match as any).messages,
+              hasConversationData: !!(match as any).conversation_data,
+              hasDataMessages: !!(match as any).data?.messages,
+              rawMessagesType: typeof rawMessages,
+              rawMessagesIsArray: Array.isArray(rawMessages),
+              messagesCount: messages.length,
+              matchKeys: Object.keys(match),
+              sampleMatch: {
+                id: match.id,
+                title: (match as any).title,
+                hasMessages: !!(match as any).messages,
+                messagesLength: Array.isArray((match as any).messages) ? (match as any).messages.length : 'not array',
+                conversationDataType: typeof (match as any).conversation_data
+              }
+            });
+          } else {
+            console.log(`⚠️ Chat ${id} not found in history response. Available IDs:`, histories.slice(0, 10).map((h: any) => h.id));
+          }
+        } else {
+          console.error('❌ Chat history response invalid:', historyResponse);
         }
       } catch (e) {
-        console.warn('⚠️ getChatHistory failed, will try messages fallback');
-      }
-
-      // Fallback: dedicated chat messages endpoint if available
-      if (!messages || messages.length === 0) {
-        try {
-          const messagesResponse = await apiService.getChatMessages(id);
-          console.log('📨 Chat messages response (fallback):', messagesResponse);
-          if (messagesResponse && (messagesResponse as any).success) {
-            messages = (messagesResponse as any).data?.messages || (messagesResponse as any).data || [];
-          }
-        } catch (e) {
-          console.warn('⚠️ getChatMessages also failed');
-        }
+        console.error('❌ getChatHistory failed:', e);
+        // Don't use user-chat endpoint fallback - this is an AI chat
       }
 
       console.log('💬 Messages found:', Array.isArray(messages) ? messages.length : 0);

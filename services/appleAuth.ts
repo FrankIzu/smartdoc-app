@@ -288,33 +288,15 @@ class AppleAuthService {
         };
       }
 
-      // Step 2: Risk Assessment
-      const riskScore = await deviceSecurityService.calculateRiskScore();
-      const userPrefs = await deviceSecurityService.getUserPreferences();
-      const requiredAuthMethod = deviceSecurityService.determineRequiredAuthMethod(riskScore, userPrefs);
-
-      console.log(`Risk score: ${riskScore}, Required auth: ${requiredAuthMethod}`);
-
-      // Step 3: Enhanced Authentication (if needed)
-      if (requiredAuthMethod === 'BIOMETRIC_ONLY') {
-        const biometricSuccess = await deviceSecurityService.authenticateWithBiometrics(
-          'Verify your identity to complete Apple sign-in'
-        );
-
-        if (!biometricSuccess) {
-          return {
-            success: false,
-            message: 'Biometric authentication required',
-            requires2FA: true,
-            authMethod: 'BIOMETRIC',
-          };
-        }
-      }
-
-      // Step 4: Backend Login
+      // Step 2: Backend Login (Apple Sign-In already provides authentication)
+      // Skip enhanced 2FA for Apple Sign-In since Apple handles authentication
       const backendResult = await this.loginWithAppleToBackend(appleResult.user);
 
       if (backendResult.success) {
+        // Mark device as trusted after successful Apple sign-in
+        await deviceSecurityService.setDeviceTrust('trusted', 30);
+        await deviceSecurityService.resetFailedAttempts();
+        
         return {
           success: true,
           user: backendResult.user,
@@ -322,8 +304,9 @@ class AppleAuthService {
         };
       }
 
-      // Step 5: Handle 2FA requirement
-      if (backendResult.requires2FA || requiredAuthMethod.includes('SMS')) {
+      // Step 3: Handle 2FA requirement (only if backend explicitly requires it)
+      // Note: Apple Sign-In should generally not require additional 2FA
+      if (backendResult.requires2FA) {
         return {
           success: false,
           requires2FA: true,

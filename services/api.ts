@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import EventSource from 'react-native-sse';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
 
@@ -134,6 +135,7 @@ const MOBILE_ENDPOINTS = {
   
   // Error Logging
   ERROR_LOG: '/api/v1/mobile/error-log',
+  ERROR_LOGS: '/api/v1/mobile/error-logs', // GET endpoint to view error logs
   
   // Configuration
   // CONFIG: '/api/v1/mobile/config', // Not available on backend
@@ -882,16 +884,30 @@ class ApiService {
     signal?: AbortSignal,
     onChunk?: (type: string, data: any) => void
   ): Promise<void> {
+    // MOBILE: Use EventSource for SSE streaming (React Native doesn't support fetch streaming)
+    // WEB: Would use fetch with response.body.getReader() - but this is mobile-only code
+    
+    const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+    let eventSource: EventSource | null = null;
+    
     try {
-      console.log('💬 Sending streaming chat message');
-      console.log('🔐 Message and streaming response will be encrypted by backend encryption class');
+      console.log('💬 [MOBILE] Sending chat message via SSE streaming');
+      console.log('🔐 Message and response will be encrypted by backend encryption class');
+      
+      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+      
+      // Build payload
       const payload: any = { 
         message,
-        response_mode: 'flexible', // Use same response mode as web
-        preview_mode: true // Enable preview mode for streaming
+        response_mode: 'flexible',
+        stream: true, // Enable streaming (SSE)
+        preview_mode: true  // CRITICAL: Enable preview mode to match web behavior (same search logic)
       };
       
-      // Map filters to the same format as web
+      // Map filters
       if (filters) {
         if (filters.context_file_ids) {
           payload.context_file_ids = filters.context_file_ids;
@@ -908,205 +924,212 @@ class ApiService {
         if (filters.chat_history_id) {
           payload.chat_history_id = filters.chat_history_id;
         }
-        // Map other filter properties
         Object.keys(filters).forEach(key => {
           if (!['context_file_ids', 'context_bookmark_ids', 'context_transcript_ids', 'search_type', 'chat_history_id'].includes(key)) {
             payload[key] = filters[key];
           }
         });
       }
-
-      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      
+      // Get base URL
       const baseURL = this.client.defaults.baseURL || '';
+      const streamURL = `${baseURL}${MOBILE_ENDPOINTS.CHAT_SMART_STREAM}`;
       
-      // Use fetch for SSE streaming
-      const response = await fetch(`${baseURL}${MOBILE_ENDPOINTS.CHAT_SMART_STREAM}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify(payload),
-        signal
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      // Check if response is actually a stream
-      const contentType = response.headers.get('content-type');
-      console.log('🔍 Response content-type:', contentType);
+      console.log('📱 [MOBILE] Connecting to SSE stream with EventSource:', streamURL);
       
-      if (!contentType?.includes('text/event-stream')) {
-        console.log('⚠️ Server returned non-streaming response, falling back to regular chat');
-        // Fallback to regular chat API
-        try {
-          const fallbackResponse = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, {
-            message: message,
-            filters: filters
-          });
-          
-          if (onChunk) {
-            onChunk('fallback_response', {
-              type: 'fallback_response',
-              content: fallbackResponse.data.response || fallbackResponse.data.message || 'Response received'
-            });
-          }
-          return;
-        } catch (fallbackError: any) {
-          console.error('❌ Fallback also failed:', fallbackError);
-          if (onChunk) {
-            onChunk('error', {
-              type: 'error',
-              content: 'Unable to process your request. Please try again later.',
-              error: fallbackError.message
-            });
-          }
-          return;
-        }
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        console.error('❌ Response body is not readable, attempting fallback:', {
-          body: response.body,
-          status: response.status,
-          headers: response.headers
+      // MOBILE: Use fetch with manual SSE parsing (EventSource doesn't support POST)
+      if (isMobile) {
+        console.log('📱 [MOBILE] Using fetch with manual SSE parsing for POST request');
+        console.log('📱 [MOBILE] Payload:', JSON.stringify(payload).substring(0, 100));
+        
+        // Use fetch for POST request (EventSource only supports GET)
+        const response = await fetch(streamURL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'text/event-stream',
+          },
+          body: JSON.stringify(payload),
+          signal,
         });
         
-        // Try fallback when body is not readable
-        try {
-          const fallbackResponse = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, {
-            message: message,
-            filters: filters
-          });
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        console.log('✅ [MOBILE] Fetch response received, status:', response.status);
+        
+        // Parse SSE stream manually using response.text() which works in React Native
+        const reader = response.body?.getReader();
+        if (!reader) {
+          // Fallback: Read entire response as text (React Native limitation)
+          console.warn('⚠️ [MOBILE] response.body.getReader() not available, reading as text');
+          const text = await response.text();
+          console.log('📱 [MOBILE] Full response text length:', text.length);
           
-          if (onChunk) {
-            onChunk('fallback_response', {
-              type: 'fallback_response',
-              content: fallbackResponse.data.response || fallbackResponse.data.message || 'Response received'
-            });
+          // Parse SSE format manually
+          const lines = text.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.substring(6).trim();
+              if (dataStr) {
+                try {
+                  const data = JSON.parse(dataStr);
+                  console.log('📱 [MOBILE] Parsed SSE message:', data.type);
+                  
+                  if (data.type === 'status' && onChunk) {
+                    onChunk('status', data);
+                  } else if ((data.type === 'preview_chunk' || data.type === 'chunk' || data.type === 'refinement_chunk') && onChunk) {
+                    onChunk('chunk', {
+                      type: 'chunk',
+                      content: data.content,
+                      chunk_index: data.chunk_index,
+                      total_chunks: data.total_chunks,
+                      progress: data.progress,
+                      phase: data.phase || (data.type === 'preview_chunk' ? 'preview' : 'final')
+                    });
+                  } else if (data.type === 'complete' && onChunk) {
+                    console.log('📱 [MOBILE] Received complete event');
+                    onChunk('complete', {
+                      type: 'complete',
+                      response: data.response || '',
+                      citations: data.citations || [],
+                      chat_history_id: data.chat_history_id,
+                      metadata: data.metadata
+                    });
+                    return;
+                  } else if (data.type === 'error') {
+                    throw new Error(data.message || 'Chat processing error');
+                  }
+                } catch (parseError) {
+                  console.error('❌ [MOBILE] Error parsing SSE message:', parseError);
+                }
+              }
+            }
           }
           return;
-        } catch (fallbackError) {
-          console.error('❌ Fallback also failed:', fallbackError);
-          throw new Error('Response body is not readable and fallback failed');
         }
-      }
-
-      const decoder = new TextDecoder();
-      let incompleteLineBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          // console.log('📖 Stream done');
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-
-        for (let i = 0; i < lines.length; i++) {
-          let line = lines[i];
+        
+        // Use ReadableStream if available
+        console.log('✅ [MOBILE] Using ReadableStream for SSE parsing');
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        while (true) {
+          const { done, value } = await reader.read();
           
-          // If we have an incomplete line from before, prepend it
-          if (incompleteLineBuffer) {
-            line = incompleteLineBuffer + line;
-            incompleteLineBuffer = '';
+          if (done) {
+            console.log('📱 [MOBILE] Stream completed');
+            break;
           }
           
-          if (line.startsWith('data: ')) {
-            try {
-              const jsonStr = line.slice(6);
-              const data = JSON.parse(jsonStr);
-              // console.log('🔍 SSE data received:', data.type);
-              
-              // Call the onChunk callback with the data
-              if (onChunk) {
-                onChunk(data.type, data);
-              }
-            } catch (error) {
-              // Incomplete JSON - save for next iteration
-              if (i === lines.length - 1) {
-                incompleteLineBuffer = line;
-              } else {
-                console.error('Failed to parse SSE data:', error);
+          // Decode chunk and add to buffer
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process complete SSE messages (lines ending with \n\n)
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.substring(6).trim(); // Remove 'data: ' prefix
+              if (dataStr) {
+                try {
+                  const data = JSON.parse(dataStr);
+                  console.log('📱 [MOBILE] Received SSE message:', data.type);
+                  
+                  if (data.type === 'status' && onChunk) {
+                    onChunk('status', data);
+                  } else if ((data.type === 'preview_chunk' || data.type === 'chunk' || data.type === 'refinement_chunk') && onChunk) {
+                    onChunk('chunk', {
+                      type: 'chunk',
+                      content: data.content,
+                      chunk_index: data.chunk_index,
+                      total_chunks: data.total_chunks,
+                      progress: data.progress,
+                      phase: data.phase || (data.type === 'preview_chunk' ? 'preview' : 'final')
+                    });
+                  } else if (data.type === 'complete' && onChunk) {
+                    console.log('📱 [MOBILE] Received complete event');
+                    onChunk('complete', {
+                      type: 'complete',
+                      response: data.response || '',
+                      citations: data.citations || [],
+                      chat_history_id: data.chat_history_id,
+                      metadata: data.metadata
+                    });
+                    return; // Exit function
+                  } else if (data.type === 'error') {
+                    console.error('❌ [MOBILE] Received error event:', data);
+                    if (onChunk) {
+                      onChunk('error', {
+                        type: 'error',
+                        message: data.message || 'Chat processing error',
+                        error: data.error
+                      });
+                    }
+                    throw new Error(data.message || 'Chat processing error');
+                  }
+                } catch (parseError) {
+                  console.error('❌ [MOBILE] Error parsing SSE message:', parseError);
+                }
               }
             }
           }
         }
+        
+        return;
+      } else {
+        // WEB: Use fetch with response.body.getReader() (not implemented here, web has its own code)
+        throw new Error('Web streaming not implemented in this function - use web-specific code');
       }
+
     } catch (error: any) {
+      // Error handling
+      console.error('❌ [MOBILE] Chat stream error:', error);
+      
       if (error.name === 'AbortError') {
         throw error; // Re-throw abort errors to be handled by caller
       }
-      console.error('Chat stream failed:', error);
       
-      // Determine user-friendly error message based on error type
+      console.error('❌ [MOBILE] Chat stream failed:', error);
+      
+      // Determine user-friendly error message
       let userFriendlyMessage = 'Sorry, there was an issue processing your request.';
       
-      if (error.message?.includes('Network request timed out') || 
-          error.message?.includes('timeout') ||
-          error.message?.includes('ECONNABORTED') ||
-          error.message?.includes('TypeError: Network request timed out')) {
+      if (error.message?.includes('timeout') || error.message?.includes('Timeout')) {
         userFriendlyMessage = 'Connection timed out. Please check your internet connection and try again.';
-      } else if (error.message?.includes('Network Error') || 
-                 error.message?.includes('ERR_NETWORK') ||
-                 error.message?.includes('fetch')) {
+      } else if (error.message?.includes('Network Error') || error.message?.includes('ERR_NETWORK')) {
         userFriendlyMessage = 'Unable to connect to the server. Please check your internet connection.';
-      } else if (error.message?.includes('Response body is not readable')) {
-        userFriendlyMessage = 'The server response format is not supported. Trying alternative method...';
-      } else if (error.message?.includes('No response from server')) {
-        userFriendlyMessage = 'No response from server. Please check your connection and try again.';
       }
       
-      // If streaming fails, try to provide a fallback response
       if (onChunk) {
-        // Try fallback API call
-        try {
-          const fallbackResponse = await this.client.post(MOBILE_ENDPOINTS.CHAT_SEND, {
-            message: message,
-            filters: filters
-          });
-          
-          onChunk('fallback_response', {
-            type: 'fallback_response',
-            content: fallbackResponse.data.response || fallbackResponse.data.message || 'Response received'
-          });
-          return; // Success with fallback
-        } catch (fallbackError: any) {
-          console.error('❌ Fallback also failed:', fallbackError);
-          
-          // Determine fallback error message
-          let fallbackMessage = 'Unable to process your request. Please try again later.';
-          if (fallbackError.message?.includes('Network request timed out') || 
-              fallbackError.message?.includes('timeout') ||
-              fallbackError.message?.includes('TypeError: Network request timed out')) {
-            fallbackMessage = 'Connection timed out. Please check your internet connection and try again.';
-          } else if (fallbackError.message?.includes('Network Error') || 
-                     fallbackError.message?.includes('ERR_NETWORK')) {
-            fallbackMessage = 'Unable to connect to the server. Please check your internet connection.';
-          } else if (fallbackError.message?.includes('No response from server')) {
-            fallbackMessage = 'No response from server. Please check your connection and try again.';
-          }
-          
-          onChunk('error', { 
-            type: 'error', 
-            content: fallbackMessage,
-            error: fallbackError.message 
-          });
-        }
+        onChunk('error', {
+          type: 'error',
+          message: userFriendlyMessage,
+          error: error.message
+        });
       }
       
       throw new Error(error.message || 'Chat stream failed');
+    } finally {
+      // Cleanup EventSource
+      if (eventSource) {
+        try {
+          eventSource.close();
+        } catch (e) {
+          // Ignore close errors
+        }
+      }
     }
   }
 
-  async getChatHistory(): Promise<ApiResponse> {
+  async getChatHistory(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_HISTORY);
+      const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_HISTORY, {
+        params: { limit, offset }
+      });
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch chat history');
@@ -1323,7 +1346,28 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       console.error('Get chat messages error:', error);
-      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to fetch chat messages';
+      console.error('Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+        chatId: chatId
+      });
+      
+      let errorMessage = 'Failed to fetch chat messages';
+      
+      if (error.response?.status === 404) {
+        errorMessage = 'Chat not found. The chat may have been deleted or you may not have access.';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'You do not have permission to view messages in this chat.';
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       throw new Error(errorMessage);
     }
   }
@@ -1346,7 +1390,31 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       console.error('Send chat message error:', error);
-      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to send chat message';
+      console.error('Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
+      
+      let errorMessage = 'Failed to send message';
+      
+      if (error.response?.status === 500) {
+        errorMessage = error.response?.data?.error || 
+                      error.response?.data?.message || 
+                      'Server error. Please try again later.';
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Chat not found. Please refresh and try again.';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'You do not have permission to send messages in this chat.';
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       throw new Error(errorMessage);
     }
   }
@@ -1385,9 +1453,11 @@ class ApiService {
 
   // ==================== MOBILE BOOKMARKS ====================
   
-  async getBookmarks(): Promise<ApiResponse> {
+  async getBookmarks(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.BOOKMARKS);
+      const response = await this.client.get(MOBILE_ENDPOINTS.BOOKMARKS, {
+        params: { limit, offset }
+      });
       return response.data;
     } catch (error: any) {
       console.error('Get bookmarks error:', error);
@@ -1467,11 +1537,13 @@ class ApiService {
 
   // ==================== MOBILE WORKSPACES ====================
   
-  async getMobileWorkspaces(): Promise<ApiResponse> {
+  async getMobileWorkspaces(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {
       console.log('🔄 Loading workspaces from:', MOBILE_ENDPOINTS.WORKSPACES);
-      // Use proper mobile endpoint
-      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACES);
+      // Use proper mobile endpoint with pagination
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACES, {
+        params: { limit, offset }
+      });
       return response.data;
     } catch (error: any) {
       // console.error('❌ Get mobile workspaces error:', error);
