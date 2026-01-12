@@ -134,3 +134,4 @@ If you have existing HTTPS checks in individual routes, you can remove them sinc
 - `test_backend_https.py` - Test script to verify fix
 - `BACKEND_HTTPS_IMPLEMENTATION.md` - Detailed implementation guide
 
+

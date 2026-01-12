@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.grabdocs.mobile",
-      "buildNumber": "4",
+      "buildNumber": "6",
       "usesAppleSignIn": true,
       "splash": {
         "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
@@ -49,7 +49,7 @@
     },
     "android": {
       "package": "com.grabdocs.mobile",
-      "versionCode": 3,
+      "versionCode": 5,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
         "backgroundColor": "#ffffff",

@@ -3,10 +3,10 @@
  * Sends errors from the mobile app to the backend for centralized logging
  */
 
-import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { apiClient } from './api';
+import { Platform } from 'react-native';
 import { APP_VERSION } from '../constants/Config';
+import { apiClient } from './api';
 
 export interface ErrorLogData {
   errorType: string;
@@ -41,12 +41,22 @@ class ErrorLoggerService {
    * Get device information for error logging
    */
   private getDeviceInfo(): ErrorLogData['deviceInfo'] {
-    return {
-      platform: Platform.OS,
-      osVersion: Platform.Version?.toString(),
-      deviceModel: Constants.deviceName || 'Unknown',
-      appVersion: APP_VERSION || '1.0.0',
-    };
+    try {
+      return {
+        platform: Platform.OS || 'unknown',
+        osVersion: Platform.Version?.toString() || 'unknown',
+        deviceModel: Constants?.deviceName || 'Unknown',
+        appVersion: APP_VERSION || '1.0.0',
+      };
+    } catch (err) {
+      // Fallback if any constants are unavailable
+      return {
+        platform: 'unknown',
+        osVersion: 'unknown',
+        deviceModel: 'Unknown',
+        appVersion: '1.0.0',
+      };
+    }
   }
 
   /**
@@ -122,18 +132,25 @@ class ErrorLoggerService {
       if (!errorLog) continue;
 
       try {
+        // Safely access apiClient - it might not be initialized yet
+        if (!apiClient || !apiClient.client) {
+          console.warn('⚠️ API client not available for error logging');
+          return;
+        }
+        
         await apiClient.client.post(
           '/api/v1/mobile/error-log',
           {
             ...errorLog,
-            platform: Platform.OS,
+            platform: Platform.OS || 'unknown',
             appVersion: APP_VERSION || '1.0.0',
           }
         );
         console.log('✅ Error logged to backend:', errorLog.errorType);
       } catch (err: any) {
         // Log failure but don't retry to prevent infinite loops
-        console.error('Failed to log error to backend:', err);
+        // Don't use errorLogger here to prevent recursion
+        console.error('Failed to log error to backend:', err?.message || err);
       }
     }
 

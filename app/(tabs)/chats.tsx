@@ -2,20 +2,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -139,7 +139,15 @@ export default function ChatsScreen() {
   const isStreamingRef = useRef<boolean>(false);
   const isFakeStreamingRef = useRef<boolean>(false); // Track if we're in fake streaming mode
   
-
+  // Message ID counter to ensure uniqueness
+  const messageIdCounterRef = useRef<number>(0);
+  
+  // Helper function to generate unique message IDs
+  const generateUniqueMessageId = (): number => {
+    // Combine timestamp, counter, and random to ensure uniqueness
+    messageIdCounterRef.current += 1;
+    return Date.now() * 1000 + messageIdCounterRef.current + Math.floor(Math.random() * 1000);
+  };
   
   // Enhanced chat functionality state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -370,7 +378,7 @@ export default function ChatsScreen() {
             });
             
             const welcomeMessage: ChatMessage = {
-              id: 1,
+              id: generateUniqueMessageId(),
               content: 'Hello! I\'m your Chat Assistant. I\'m ready to help you with questions about your document. The document has been automatically added to this chat. What would you like to know?',
               sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
               is_own_message: false,
@@ -415,7 +423,7 @@ export default function ChatsScreen() {
           });
           
           const welcomeMessage: ChatMessage = {
-            id: 1,
+            id: generateUniqueMessageId(),
             content: 'Hello! I\'m your Chat Assistant. I\'m ready to help you with questions about your document. The document has been automatically added to this chat. What would you like to know?',
             sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
@@ -590,8 +598,16 @@ export default function ChatsScreen() {
           if (response) {
             setUserProfile(response);
           }
-        } catch (error) {
-          console.error('Failed to load user profile:', error);
+        } catch (error: any) {
+          // Handle timeout and connection errors gracefully
+          if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+            console.warn('⚠️ User profile request timed out - will retry on next focus');
+          } else if (error.message?.includes('Failed to fetch')) {
+            console.warn('⚠️ User profile request failed - backend may be unavailable');
+          } else {
+            console.error('Failed to load user profile:', error);
+          }
+          // Don't set userProfile to null - keep existing value if available
         }
       };
       
@@ -613,25 +629,29 @@ export default function ChatsScreen() {
     };
   }, []);
 
+  // Track previous selectedChat to detect when returning from conversation
+  const prevSelectedChatRef = useRef<Chat | null>(null);
+  
+  // Re-sort chats when returning from a conversation (selectedChat becomes null)
+  useEffect(() => {
+    // Only sort when transitioning from a chat to null (returning from conversation)
+    // This ensures sorting happens when user returns to list, not when switching tabs
+    if (prevSelectedChatRef.current !== null && selectedChat === null) {
+      // User returned from conversation, re-sort the chats by last message timestamp
+      setChats(prevChats => {
+        if (prevChats.length === 0) return prevChats;
+        return sortChatsByLastMessage(prevChats);
+      });
+    }
+    // Update the ref for next comparison
+    prevSelectedChatRef.current = selectedChat;
+  }, [selectedChat]);
+
   // Filter data based on search query
   useEffect(() => {
     if (!searchQuery.trim()) {
-      // Sort chats by date (most recent first) but keep Chat Assistant at the top
-      const validChats = chats.filter(chat => chat && typeof chat === 'object');
-      
-      // Separate Chat Assistant from other chats
-      const chatAssistant = validChats.find(chat => chat.id === -1);
-      const otherChats = validChats.filter(chat => chat.id !== -1);
-      
-      // Sort other chats by date (most recent first)
-      const sortedOtherChats = [...otherChats].sort((a, b) => {
-        const aDate = new Date(a.updated_at || new Date()).getTime();
-        const bDate = new Date(b.updated_at || new Date()).getTime();
-        return bDate - aDate;
-      });
-      
-      // Always put Chat Assistant first, then other chats
-      const finalChats = chatAssistant ? [chatAssistant, ...sortedOtherChats] : [DEFAULT_CHAT_ASSISTANT, ...sortedOtherChats];
+      // Sort chats by last message timestamp (most recent first) but keep Chat Assistant at the top
+      const finalChats = sortChatsByLastMessage(chats);
       
       setFilteredChats(finalChats);
       
@@ -648,19 +668,8 @@ export default function ChatsScreen() {
         return title.includes(query) || lastMessage.includes(query);
       });
       
-      // Separate Chat Assistant from filtered chats
-      const chatAssistant = filteredChatsList.find(chat => chat.id === -1);
-      const otherFilteredChats = filteredChatsList.filter(chat => chat.id !== -1);
-      
-      // Sort other filtered chats by date (most recent first)
-      const sortedOtherFilteredChats = [...otherFilteredChats].sort((a, b) => {
-        const aDate = new Date(a.updated_at || new Date()).getTime();
-        const bDate = new Date(b.updated_at || new Date()).getTime();
-        return bDate - aDate;
-      });
-      
-      // Always put Chat Assistant first, then other filtered chats
-      const finalFilteredChats = chatAssistant ? [chatAssistant, ...sortedOtherFilteredChats] : [DEFAULT_CHAT_ASSISTANT, ...sortedOtherFilteredChats];
+      // Sort filtered chats by last message timestamp (most recent first)
+      const finalFilteredChats = sortChatsByLastMessage(filteredChatsList);
       
       setFilteredChats(finalFilteredChats);
       
@@ -794,13 +803,56 @@ export default function ChatsScreen() {
     setMentionResults(results);
   }, [mentionQuery, users, bookmarks, workspaces, documents]);
 
-  const loadChats = async () => {
+  // Helper function to get last message timestamp in user's local timezone for sorting
+  const getLastMessageTimestamp = (chat: Chat): number => {
+    try {
+      // Convert the date string to a Date object
+      // JavaScript's new Date() automatically converts UTC to local timezone
+      const date = new Date(chat.updated_at || chat.created_at || new Date().toISOString());
+      
+      if (isNaN(date.getTime())) {
+        // If invalid date, return 0 so it sorts to the bottom
+        return 0;
+      }
+      
+      // Return the timestamp in local timezone (getTime() returns milliseconds since epoch)
+      // The Date object already represents the time in local timezone
+      return date.getTime();
+    } catch (error) {
+      if (__DEV__) {
+        console.log('❌ Error getting last message timestamp:', error, 'for chat:', chat.id);
+      }
+      return 0;
+    }
+  };
+
+  // Helper function to sort chats by last message timestamp
+  const sortChatsByLastMessage = (chatsToSort: Chat[]): Chat[] => {
+    const validChats = chatsToSort.filter(chat => chat && typeof chat === 'object');
+    
+    // Separate Chat Assistant from other chats
+    const chatAssistant = validChats.find(chat => chat.id === -1);
+    const otherChats = validChats.filter(chat => chat.id !== -1);
+    
+    // Sort other chats by last message timestamp (most recent first)
+    // Use helper function to ensure dates are converted to user's local timezone
+    const sortedOtherChats = [...otherChats].sort((a, b) => {
+      const timestampA = getLastMessageTimestamp(a);
+      const timestampB = getLastMessageTimestamp(b);
+      return timestampB - timestampA;
+    });
+    
+    // Always put Chat Assistant first, then other chats
+    return chatAssistant ? [chatAssistant, ...sortedOtherChats] : [DEFAULT_CHAT_ASSISTANT, ...sortedOtherChats];
+  };
+
+  const loadChats = async (limit: number = 50, offset: number = 0) => {
     try {
       setLoading(true);
       
-      // Try to load chat histories from backend (AI chats)
+      // Try to load chat histories from backend (AI chats) with pagination
       const { fetchChatHistories } = useChatStore.getState();
-      await fetchChatHistories();
+      await fetchChatHistories(limit, offset);
       
       // Get the loaded histories from the store
       const { histories, error } = useChatStore.getState();
@@ -958,25 +1010,36 @@ export default function ChatsScreen() {
         convertedChats = [];
       }
       
-      // Combine AI chats and user chats
+      // Combine AI chats and user chats, removing duplicates by ID
       const allChatsCombined = [...convertedChats, ...userChats];
       
-      // Sort all chats by updated_at date (most recent first), but keep Chat Assistant at top
-      const sortedChats = allChatsCombined.sort((a, b) => {
-        const dateA = new Date(a.updated_at).getTime();
-        const dateB = new Date(b.updated_at).getTime();
-        return dateB - dateA; // Most recent first
+      // Remove duplicates based on chat ID
+      const uniqueChatsMap = new Map<number, Chat>();
+      allChatsCombined.forEach(chat => {
+        if (!uniqueChatsMap.has(chat.id)) {
+          uniqueChatsMap.set(chat.id, chat);
+        } else {
+          // If duplicate found, keep the one with more recent last message timestamp
+          const existing = uniqueChatsMap.get(chat.id)!;
+          const existingTimestamp = getLastMessageTimestamp(existing);
+          const newTimestamp = getLastMessageTimestamp(chat);
+          if (newTimestamp > existingTimestamp) {
+            uniqueChatsMap.set(chat.id, chat);
+          }
+        }
       });
       
-      // Always put default Chat Assistant first, followed by other chats sorted by date
-      const allChats = [DEFAULT_CHAT_ASSISTANT, ...sortedChats];
+      // Sort all chats by last message timestamp (most recent first), but keep Chat Assistant at top
+      // Use helper function to ensure dates are converted to user's local timezone
+      const allChatsArray = Array.from(uniqueChatsMap.values());
+      const allChats = sortChatsByLastMessage(allChatsArray);
       
       console.log('📱 Loaded chats:', {
         total: allChats.length,
         aiChats: convertedChats.length,
         userChats: userChats.length,
         defaultChat: DEFAULT_CHAT_ASSISTANT,
-        otherChats: sortedChats.length,
+        otherChats: allChats.length - 1, // Excluding Chat Assistant
       });
       setChats(allChats);
       
@@ -1050,7 +1113,14 @@ export default function ChatsScreen() {
 
   const loadBookmarks = async () => {
     try {
+      // Add timeout handling - if request takes too long, cancel it
+      const timeoutId = setTimeout(() => {
+        console.warn('⚠️ Bookmarks request taking too long, may timeout');
+      }, 25000); // Warn at 25 seconds
+      
       const response = await (api as any).getBookmarks();
+      clearTimeout(timeoutId);
+      
       if (response.success && response.data) {
         // Handle both response structures: data.bookmarks or data as array
         const bookmarksData = Array.isArray(response.data) 
@@ -1063,20 +1133,25 @@ export default function ChatsScreen() {
         console.log('Bookmarks API returned no data');
         setBookmarks([]);
       }
-    } catch (error) {
-      console.log('Failed to load bookmarks:', error);
+    } catch (error: any) {
+      // Handle timeout errors gracefully
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        console.warn('⚠️ Bookmarks request timed out - this is non-critical, continuing without bookmarks');
+      } else {
+        console.log('Failed to load bookmarks:', error);
+      }
       setBookmarks([]);
     }
   };
 
   const loadMessages = async (chatId: number) => {
+    setMessagesLoading(true);
+    
     try {
-      setMessagesLoading(true);
-      
       // If it's the Chat Assistant (id: -1), show welcome message
       if (chatId === -1) {
         const welcomeMessage: ChatMessage = {
-          id: 1,
+          id: generateUniqueMessageId(),
           content: 'Hello! I\'m your Chat Assistant. I can help you with questions about your documents, analyze files, and provide insights. How can I help you today?',
           sender: { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
           is_own_message: false,
@@ -1086,46 +1161,139 @@ export default function ChatsScreen() {
         return;
       }
       
-      // Check if this is a user chat (user_direct or workspace)
+      // FIRST: Check the chat type from the local chats array
+      // This is the most reliable way to determine if it's a user chat or AI chat
       const chat = chats.find(c => c.id === chatId);
-      if (chat && (chat.type === 'user_direct' || chat.type === 'workspace')) {
-        // Load user chat messages using web endpoint (same as web chat.tsx)
-        const response = await api.getChatMessages(chatId);
-        if (response.success && (response as any).messages) {
-          // Web chat.tsx returns: { success: true, messages: ChatMessage[] }
-          const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => ({
-            id: msg.id,
-            content: msg.content || '',
-            sender: msg.sender || null,
-            is_own_message: msg.sender_id === userProfile?.id,
-            created_at: msg.created_at || new Date().toISOString(),
-            document_context: msg.metadata?.attachments?.[0] ? {
-              id: msg.metadata.attachments[0].file_id,
-              name: msg.metadata.attachments[0].name,
-              type: msg.metadata.attachments[0].mimeType || 'other'
-            } : undefined
-          }));
-          
-          setMessages(convertedMessages);
-        } else {
-          setMessages([]);
-        }
-        setMessagesLoading(false);
-        return;
+      
+      // Check if this chat exists in the chat store (AI assistant chats)
+      // CRITICAL: All chats from /api/v1/mobile/chat/history are AI assistant chats
+      // Compare IDs robustly to handle string/number mismatches
+      const { histories, currentHistory } = useChatStore.getState();
+      const chatExistsInStore = (histories && histories.length > 0 && histories.some(h => {
+        const historyId = typeof h.id === 'string' ? parseInt(String(h.id), 10) : Number(h.id);
+        const targetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+        return !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
+      })) || 
+      (currentHistory && (() => {
+        const currentId = typeof currentHistory.id === 'string' ? parseInt(String(currentHistory.id), 10) : Number(currentHistory.id);
+        const targetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+        return !isNaN(currentId) && !isNaN(targetId) && currentId === targetId;
+      })());
+      
+      // Determine if this is an AI chat based on type or store presence
+      // CRITICAL LOGIC:
+      // 1. If chat exists in store (from /api/v1/mobile/chat/history), it's ALWAYS an AI chat - NEVER use user-chat endpoint
+      // 2. If chat type is 'ai_assistant', 'document_focused', or 'bookmark_focused', it's ALWAYS an AI chat
+      // 3. If chat type is 'user_direct' or 'workspace', it's a user chat - use user-chat endpoint
+      // 4. FALLBACK: If chat not found in local array AND not explicitly user/workspace type, assume it's an AI chat
+      //    (This handles cases where chat history is loaded but chat list hasn't been updated yet)
+      const isAIChat = chatExistsInStore || 
+                       (chat && (chat.type === 'ai_assistant' || chat.type === 'document_focused' || chat.type === 'bookmark_focused')) ||
+                       (!chat); // If chat not found in local array, assume AI chat (safer default)
+      
+      console.log(`🔍 [loadMessages] Chat ${chatId} check:`, {
+        chatFound: !!chat,
+        chatType: chat?.type,
+        chatExistsInStore,
+        isAIChat,
+        historiesCount: histories?.length || 0,
+        historyIds: histories?.slice(0, 10).map(h => h.id) || [],
+        willUseUserChatEndpoint: !isAIChat && chat && (chat.type === 'user_direct' || chat.type === 'workspace')
+      });
+      
+      // Only use user-chat endpoint for actual user/workspace chats that are NOT AI chats
+      // AI assistant chats (ai_assistant, document_focused, bookmark_focused) are document queries and should use chat store
+      // IMPORTANT: Only use user-chat endpoint if chat is EXPLICITLY a user/workspace chat AND not an AI chat
+      if (!isAIChat && chat && (chat.type === 'user_direct' || chat.type === 'workspace')) {
+          // Load user chat messages using web endpoint (same as web chat.tsx)
+          try {
+            const response = await api.getChatMessages(chatId);
+            if (response.success && (response as any).messages) {
+              // Web chat.tsx returns: { success: true, messages: ChatMessage[] }
+              const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => ({
+                id: msg.id,
+                content: msg.content || '',
+                sender: msg.sender || null,
+                is_own_message: msg.sender_id === userProfile?.id,
+                created_at: msg.created_at || new Date().toISOString(),
+                document_context: msg.metadata?.attachments?.[0] ? {
+                  id: msg.metadata.attachments[0].file_id,
+                  name: msg.metadata.attachments[0].name,
+                  type: msg.metadata.attachments[0].mimeType || 'other'
+                } : undefined
+              }));
+              
+              setMessages(convertedMessages);
+            } else {
+              setMessages([]);
+            }
+          } catch (error: any) {
+            console.error(`❌ Failed to load messages for chat ${chatId}:`, error.message || error);
+            // If chat doesn't exist, clear messages and refresh chat list
+            if (error.message?.includes('Chat not found') || error.message?.includes('404') || error.response?.status === 404) {
+              console.warn(`⚠️ Chat ${chatId} not found in user-chat endpoint, trying chat store instead`);
+              // If it's a 404, it might be an AI assistant chat that was misclassified
+              // Try loading from chat store instead
+              try {
+                const { fetchChatConversation } = useChatStore.getState();
+                await fetchChatConversation(chatId);
+                const { currentHistory: fallbackHistory } = useChatStore.getState();
+                if (fallbackHistory && fallbackHistory.messages.length > 0) {
+                  const convertedMessages: ChatMessage[] = fallbackHistory.messages.map((msg, index) => {
+                    const backendMsg = msg as any;
+                    let timestamp = backendMsg.created_at || backendMsg.timestamp;
+                    // Use backend message ID if available, otherwise generate unique ID
+                    const backendMessageId = backendMsg.message_id || backendMsg.id;
+                    const messageId = backendMessageId ? backendMessageId : generateUniqueMessageId();
+                    return {
+                      id: typeof messageId === 'number' ? messageId : generateUniqueMessageId(),
+                      content: msg.content || '',
+                      sender: msg.role === 'user' ? null : { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
+                      is_own_message: msg.role === 'user',
+                      created_at: timestamp || new Date().toISOString(),
+                    };
+                  });
+                  setMessages(convertedMessages);
+                } else {
+                  setMessages([]);
+                }
+              } catch (storeError) {
+                console.error(`❌ Failed to load from chat store for chat ${chatId}:`, storeError);
+                setMessages([]);
+                // Refresh the chat list to remove stale chat IDs
+                loadChats();
+              }
+            } else {
+              setMessages([]);
+            }
+          }
+          return;
       }
       
-      // Use the chat store to load the specific conversation (for AI chats)
+      // If chat is an AI chat, or not found in local list, or exists in chat store, use chat store
+      // AI assistant chats (ai_assistant, document_focused, bookmark_focused) are document queries, NOT user chats
+      if (isAIChat) {
+        console.log(`📚 Chat ${chatId} is an AI assistant chat (type: ${chat?.type || 'unknown'}, in store: ${chatExistsInStore}) - using chat store`);
+      } else if (!chat) {
+        // Chat not found in local array - if it's not explicitly a user chat, try chat store first
+        // This handles the case where chat history is loaded but chat list hasn't been updated yet
+        console.log(`⚠️ Chat ${chatId} not found in local list, trying chat store first (might be AI assistant chat)...`);
+      } else {
+        console.log(`⚠️ Chat ${chatId} found but type is ${chat.type} - isAIChat=${isAIChat}, will ${isAIChat ? 'use chat store' : 'use user-chat endpoint'}`);
+      }
+      
+      // Use the chat store to load the specific conversation (for AI chats/document queries)
       // console.log('🔄 Loading messages for chat ID:', chatId);
       const { fetchChatConversation } = useChatStore.getState();
       await fetchChatConversation(chatId);
       
       // Get the current history from the store
-      const { currentHistory } = useChatStore.getState();
-      console.log('📋 Current history from store:', currentHistory);
+      const { currentHistory: storeHistory } = useChatStore.getState();
+      console.log('📋 Current history from store:', storeHistory);
       
-      if (currentHistory && currentHistory.messages.length > 0) {
+      if (storeHistory && storeHistory.messages.length > 0) {
         // Convert chat store messages to the expected format
-        const convertedMessages: ChatMessage[] = currentHistory.messages.map((msg, index) => {
+        const convertedMessages: ChatMessage[] = storeHistory.messages.map((msg, index) => {
           // Use actual message timestamp from backend - the backend provides 'created_at' field
           // Use type assertion to access backend response fields
           const backendMsg = msg as any;
@@ -1141,11 +1309,13 @@ export default function ChatsScreen() {
             // });
           }
           
-          // Generate unique ID for messages (backend messages don't have IDs)
-          const messageId = Date.now() + index + Math.random() * 1000;
+          // Use backend message ID if available, otherwise generate unique ID
+          // Backend messages may have message_id field
+          const backendMessageId = backendMsg.message_id || backendMsg.id;
+          const messageId = backendMessageId ? backendMessageId : generateUniqueMessageId();
           
           return {
-            id: Math.floor(messageId), // Ensure it's an integer
+            id: typeof messageId === 'number' ? messageId : generateUniqueMessageId(),
             content: msg.content || '',
             sender: msg.role === 'user' ? null : { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
             is_own_message: msg.role === 'user',
@@ -1158,18 +1328,25 @@ export default function ChatsScreen() {
         // For empty chats, don't show any welcome message - just show empty chat
         setMessages([]);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load messages:', error);
       
-      // Show error message
-      const errorMessage: ChatMessage = {
-        id: 1,
-        content: 'Hello! I\'m your Chat Assistant. How can I help you today?',
-        sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
-        is_own_message: false,
-        created_at: new Date().toISOString(), // This is fine for error messages as they're current
-      };
-      setMessages([errorMessage]);
+      // If it's a 404, the chat might not exist anymore - refresh chat list
+      if (error.message?.includes('Chat not found') || error.message?.includes('404') || error.response?.status === 404) {
+        console.warn(`⚠️ Chat ${chatId} not found, refreshing chat list`);
+        setMessages([]);
+        loadChats();
+      } else {
+        // Show error message for other errors
+        const errorMessage: ChatMessage = {
+          id: generateUniqueMessageId(),
+          content: 'Failed to load messages. Please try again.',
+          sender: null,
+          is_own_message: false,
+          created_at: new Date().toISOString(),
+        };
+        setMessages([errorMessage]);
+      }
     } finally {
       setMessagesLoading(false);
     }
@@ -1177,11 +1354,24 @@ export default function ChatsScreen() {
 
   // Helper function to start/continue character streaming
   const startOrContinueStreaming = (assistantMsgIndex: number) => {
-    console.log('🎬 startOrContinueStreaming called, isStreaming:', isStreamingRef.current, 'contentBuffer length:', contentBufferRef.current.length);
+    console.log('🎬 startOrContinueStreaming called, isStreaming:', isStreamingRef.current, 'contentBuffer length:', contentBufferRef.current.length, 'displayedChars:', displayedCharsRef.current, 'isFakeStreaming:', isFakeStreamingRef.current);
     
-    // If already streaming, just return (the interval will pick up new content)
-    if (isStreamingRef.current) {
-      console.log('📝 Streaming already active, new content will be picked up automatically');
+    // If already streaming with an interval, clear it first to restart
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+      console.log('🔄 Cleared existing streaming interval');
+    }
+    
+    // Don't start if buffer is empty
+    if (!contentBufferRef.current || contentBufferRef.current.length === 0) {
+      console.log('⏸️ Content buffer is empty, skipping');
+      return;
+    }
+    
+    // Don't start if we've already displayed all content (unless it's fake streaming that needs to continue)
+    if (displayedCharsRef.current >= contentBufferRef.current.length && !isFakeStreamingRef.current) {
+      console.log('⏸️ All content already displayed, skipping');
       return;
     }
     
@@ -1200,8 +1390,7 @@ export default function ChatsScreen() {
     streamingIntervalRef.current = setInterval(() => {
       // Check if we have more content to display
       if (displayedCharsRef.current >= contentBufferRef.current.length) {
-        // No more content available yet, keep waiting
-        console.log(`⏸️ Caught up: displayed ${displayedCharsRef.current}/${contentBufferRef.current.length} chars, waiting for more...`);
+        // No more content available yet, keep waiting (silently)
         return;
       }
       
@@ -1227,7 +1416,7 @@ export default function ChatsScreen() {
         } else {
           // Create new assistant message if it doesn't exist
           const assistantMessage: ChatMessage = {
-            id: Date.now() + 1,
+            id: generateUniqueMessageId(),
             content: displayText,
             sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
@@ -1238,7 +1427,7 @@ export default function ChatsScreen() {
         }
         return newMessages;
       });
-    }, 5); // Fixed interval - speed is controlled by charsPerInterval
+    }, 5) as unknown as number; // Fixed interval - speed is controlled by charsPerInterval
   };
   
   // Helper function to stop streaming and finalize
@@ -1262,7 +1451,7 @@ export default function ChatsScreen() {
         } else {
           // Create new assistant message if it doesn't exist
           const assistantMessage: ChatMessage = {
-            id: Date.now() + 1,
+            id: generateUniqueMessageId(),
             content: contentBufferRef.current,
             sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
@@ -1290,7 +1479,7 @@ export default function ChatsScreen() {
       
       // Add user message immediately for better UX
       const userMessage: ChatMessage = {
-        id: Date.now(),
+        id: generateUniqueMessageId(),
         content: newMessage.trim(),
         sender: null,
         is_own_message: true,
@@ -1299,13 +1488,14 @@ export default function ChatsScreen() {
       
       // Save message text before clearing
       const messageText = newMessage.trim();
+      
+      // Calculate assistant message index: it will be at messages.length after user message is added
+      assistantMessageIndex = messages.length;
+      
+      // Add user message
       setMessages(prev => [...prev, userMessage]);
       setNewMessage('');
 
-      // Don't add placeholder message - the processing message will be handled by the FlatList data prop
-      // Calculate assistant message index BEFORE adding placeholder (if needed)
-      assistantMessageIndex = messages.length; // Index of assistant message (no placeholder added)
-      
       // Reset streaming state
       contentBufferRef.current = '';
       displayedCharsRef.current = 0;
@@ -1315,29 +1505,29 @@ export default function ChatsScreen() {
 
       // For AI assistant chats, use streaming
       if (selectedChat.type === 'ai_assistant' || selectedChat.type === 'document_focused' || selectedChat.type === 'bookmark_focused') {
-        // Start fake streaming immediately for better perceived performance
-        const fakeContent = "Thinking...";
-        contentBufferRef.current = fakeContent;
+        // Initialize state for fake streaming from ProcessingMessageDisplay component
+        // The ProcessingMessageDisplay will show looping messages until real content arrives
+        contentBufferRef.current = '';
         displayedCharsRef.current = 0;
         isPreviewPhaseRef.current = true;
-        isFakeStreamingRef.current = true;
-        isStreamingRef.current = true;
+        isFakeStreamingRef.current = true; // Enable fake streaming display (ProcessingMessageDisplay)
+        isStreamingRef.current = false;
         
-        // Create placeholder assistant message
-        // Calculate index after user message is added (messages.length already includes user message)
-        assistantMessageIndex = messages.length; // This is the index where placeholder will be
+         // Create placeholder assistant message - fake streaming from file will populate it
+          const placeholderMessage: ChatMessage = {
+            id: generateUniqueMessageId(),
+            content: '', // Fake streaming from file will populate this
+            sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+            is_own_message: false,
+            created_at: new Date().toISOString()
+          };
+        setMessages(prev => {
+          assistantMessageIndex = prev.length; // Update to correct index after user message is added
+          console.log('📝 Created placeholder message at index', assistantMessageIndex, 'fake streaming from file will handle display');
+          return [...prev, placeholderMessage];
+        });
         
-        const placeholderMessage: ChatMessage = {
-          id: Date.now() + 1,
-          content: '',
-          sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
-          is_own_message: false,
-          created_at: new Date().toISOString()
-        };
-        setMessages(prev => [...prev, placeholderMessage]);
-        
-        // Start fake streaming animation
-        startOrContinueStreaming(assistantMessageIndex);
+        // Don't start streaming here - fake streaming from file is already running
         // Build context for AI
         let chatContext = userMessage.content;
         
@@ -1396,7 +1586,7 @@ export default function ChatsScreen() {
         }
         
         // Build search filters for streaming
-        let streamFilters = {};
+        let streamFilters: any = {};
         if (selectedMention) {
           const documentIds = selectedMention.type === 'bookmark' 
             ? selectedMention.data.documents?.map((doc: any) => doc.id) || []
@@ -1416,6 +1606,13 @@ export default function ChatsScreen() {
             ...searchFilters // Include any context filters (bookmark, document, etc.)
           };
         }
+        
+        // CRITICAL: Add chat_history_id if this is an existing chat (not the default chat assistant)
+        // This ensures conversation history is loaded for context and pronoun resolution
+        if (selectedChat && selectedChat.id && selectedChat.id !== -1) {
+          streamFilters.chat_history_id = selectedChat.id;
+          console.log('📋 [MOBILE] Adding chat_history_id to filters:', selectedChat.id);
+        }
 
         // Use SSE streaming for AI chat
         await (api as any).sendChatMessageStream(
@@ -1433,26 +1630,22 @@ export default function ChatsScreen() {
               case 'search_results':
               case 'refining':
               case 'synthesizing':
-                // Create assistant message if it doesn't exist, or update if it does
+                // Status events - don't update content, let fake streaming from file handle it
+                // Just ensure message exists (fake streaming will populate content)
                 setMessages(prev => {
                   const newMessages = [...prev];
-                  if (newMessages[assistantMessageIndex]) {
-                    // Update existing message
-                    newMessages[assistantMessageIndex] = {
-                      ...newMessages[assistantMessageIndex],
-                      content: data.message || '...'
-                    };
-                  } else {
-                    // Create new assistant message
+                  if (!newMessages[assistantMessageIndex]) {
+                    // Only create message if it doesn't exist - don't update content
                     const assistantMessage: ChatMessage = {
-                      id: Date.now() + 1,
-                      content: data.message || '...',
+                      id: generateUniqueMessageId(),
+                      content: '', // Fake streaming from file will populate this
                       sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
                       is_own_message: false,
                       created_at: new Date().toISOString()
                     };
                     newMessages.push(assistantMessage);
                   }
+                  // Don't update content - let fake streaming from file continue
                   return newMessages;
                 });
                 break;
@@ -1478,12 +1671,14 @@ export default function ChatsScreen() {
                   if (newMessages[assistantMessageIndex]) {
                     newMessages[assistantMessageIndex] = {
                       ...newMessages[assistantMessageIndex],
-                      content: initialContent
+                      content: initialContent,
+                      is_own_message: false, // Explicitly set to false for assistant messages
+                      sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }
                     };
                   } else {
                     // Create new assistant message
                     const assistantMessage: ChatMessage = {
-                      id: Date.now() + 1,
+                      id: generateUniqueMessageId(),
                       content: initialContent,
                       sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
                       is_own_message: false,
@@ -1522,7 +1717,9 @@ export default function ChatsScreen() {
                   if (newMessages[assistantMessageIndex]) {
                     newMessages[assistantMessageIndex] = {
                       ...newMessages[assistantMessageIndex],
-                      content: data.content || 'Sorry, there was an error processing your request. Please try again.'
+                      content: data.content || 'Sorry, there was an error processing your request. Please try again.',
+                      is_own_message: false, // Explicitly set to false for assistant messages
+                      sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }
                     };
                   }
                   return newMessages;
@@ -1533,22 +1730,52 @@ export default function ChatsScreen() {
               case 'preview_chunk':
                 // Template preview chunk - replace fake streaming with real content
                 const previewChunkContent = data.content || '';
-                console.log('📦 Template preview chunk received');
+                console.log('📦 Template preview chunk received:', previewChunkContent.substring(0, 50), 'chunk_index:', data.chunk_index);
                 
                 // Replace fake content with real content
                 isFakeStreamingRef.current = false; // Real content arrived, stop fake streaming
                 
                 // Check if first chunk or append
-                if (data.chunk_index === 0 || contentBufferRef.current.includes('Thinking') || contentBufferRef.current.includes('Searching')) {
+                if (data.chunk_index === 0 || contentBufferRef.current.length === 0) {
                   // First chunk - replace fake/instant preview
+                  console.log('📦 First chunk - replacing content buffer with:', previewChunkContent);
                   contentBufferRef.current = previewChunkContent;
                   displayedCharsRef.current = 0;
+                  
+                  // CRITICAL: Ensure message exists and is visible
+                  setMessages(prev => {
+                    const newMessages = [...prev];
+                    if (!newMessages[assistantMessageIndex]) {
+                      // Create message if it doesn't exist
+                      const assistantMessage: ChatMessage = {
+                        id: generateUniqueMessageId(),
+                        content: previewChunkContent, // Set initial content immediately
+                        sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+                        is_own_message: false,
+                        created_at: new Date().toISOString()
+                      };
+                      newMessages.push(assistantMessage);
+                      console.log('📦 Created missing assistant message at index', assistantMessageIndex, 'with content:', previewChunkContent);
+                      return newMessages;
+                    } else {
+                      // Update existing message immediately with first chunk
+                      newMessages[assistantMessageIndex] = {
+                        ...newMessages[assistantMessageIndex],
+                        content: previewChunkContent
+                      };
+                      console.log('📦 Updated existing message with first chunk');
+                      return newMessages;
+                    }
+                  });
                 } else {
                   // Subsequent chunks - append
                   contentBufferRef.current += previewChunkContent;
                 }
                 
-                // Continue streaming with real content
+                // CRITICAL: Force restart streaming to ensure content is displayed
+                // Stop fake streaming and start real streaming
+                isFakeStreamingRef.current = false;
+                console.log('📦 Starting streaming with real content:', contentBufferRef.current.substring(0, 50));
                 startOrContinueStreaming(assistantMessageIndex);
                 break;
 
@@ -1594,6 +1821,56 @@ export default function ChatsScreen() {
 
               case 'complete':
                 console.log('✅ Stream complete');
+                console.log('✅ Final content buffer:', contentBufferRef.current);
+                
+                // CRITICAL: Ensure message exists and has final content
+                setMessages(prev => {
+                  const newMessages = [...prev];
+                  const finalContent = data.response || contentBufferRef.current || '';
+                  
+                  if (newMessages[assistantMessageIndex]) {
+                    // Update existing message with final content
+                    newMessages[assistantMessageIndex] = {
+                      ...newMessages[assistantMessageIndex],
+                      content: finalContent || contentBufferRef.current
+                    };
+                    console.log('✅ Updated message with final content:', finalContent.substring(0, 50));
+                  } else {
+                    // Create message if it doesn't exist (shouldn't happen, but safety check)
+                    const assistantMessage: ChatMessage = {
+                      id: generateUniqueMessageId(),
+                      content: finalContent || contentBufferRef.current,
+                      sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' },
+                      is_own_message: false,
+                      created_at: new Date().toISOString()
+                    };
+                    newMessages.push(assistantMessage);
+                    console.log('✅ Created missing message with final content');
+                  }
+                  return newMessages;
+                });
+                
+                // Update content buffer with final response if provided
+                if (data.response) {
+                  console.log('✅ Complete event has response field:', data.response.substring(0, 50), 'length:', data.response.length);
+                  contentBufferRef.current = data.response;
+                  displayedCharsRef.current = data.response.length;
+                  
+                  // CRITICAL: Immediately update message with final response
+                  setMessages(prev => {
+                    const newMessages = [...prev];
+                    if (newMessages[assistantMessageIndex]) {
+                      newMessages[assistantMessageIndex] = {
+                        ...newMessages[assistantMessageIndex],
+                        content: data.response
+                      };
+                      console.log('✅ Immediately updated message with complete response:', data.response.substring(0, 50));
+                    } else {
+                      console.error('❌ Assistant message not found at index', assistantMessageIndex);
+                    }
+                    return newMessages;
+                  });
+                }
                 
                 // Stop streaming and finalize
                 setTimeout(() => {
@@ -1673,7 +1950,9 @@ export default function ChatsScreen() {
             const newMessages = [...prev];
             newMessages[assistantMessageIndex] = {
               ...newMessages[assistantMessageIndex],
-              content: responseText
+              content: responseText,
+              is_own_message: false, // Explicitly set to false for assistant messages
+              sender: { id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }
             };
             return newMessages;
           });
@@ -1931,7 +2210,15 @@ export default function ChatsScreen() {
     
     // Add the new chat to the list and select it
     // Ensure Chat Assistant always remains first
+    // Check if a chat with the same ID already exists before adding
     setChats(prev => {
+      const existingChat = prev.find(chat => chat.id === newChat.id);
+      if (existingChat) {
+        // Chat already exists, just select it instead of creating a duplicate
+        console.log(`⚠️ Chat ${newChat.id} already exists, selecting existing chat instead of creating duplicate`);
+        return prev;
+      }
+      
       const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
       const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
       
@@ -2128,7 +2415,16 @@ export default function ChatsScreen() {
           return;
       }
       
-      setChats(prev => [newChat, ...prev]);
+      // Check if a chat with the same ID already exists before adding
+      setChats(prev => {
+        const existingChat = prev.find(chat => chat.id === newChat.id);
+        if (existingChat) {
+          // Chat already exists, just select it instead of creating a duplicate
+          console.log(`⚠️ Chat ${newChat.id} already exists, selecting existing chat instead of creating duplicate`);
+          return prev;
+        }
+        return [newChat, ...prev];
+      });
       setShowNewChatModal(false);
       setSelectedChat(newChat);
       
@@ -2336,16 +2632,16 @@ export default function ChatsScreen() {
           elements.push(
             <View key={`list-${elements.length}`} style={{ marginVertical: 4 }}>
               {currentList.items.map((item, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', marginBottom: 4, paddingLeft: 4 }}>
+                <View key={idx} style={{ flexDirection: 'row', marginBottom: 6, paddingLeft: 4, flexShrink: 1 }}>
                   <Text style={[
                     dynamicStyles.messageText,
                     isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { marginRight: 8 }
+                    { marginRight: 8, flexShrink: 0 }
                   ]}>•</Text>
                   <Text style={[
                     dynamicStyles.messageText,
                     isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { flex: 1 }
+                    { flex: 1, flexShrink: 1, minWidth: 0 }
                   ]}>{item.trim()}</Text>
                 </View>
               ))}
@@ -2355,16 +2651,16 @@ export default function ChatsScreen() {
           elements.push(
             <View key={`list-${elements.length}`} style={{ marginVertical: 4 }}>
               {currentList.items.map((item, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', marginBottom: 4, paddingLeft: 4 }}>
+                <View key={idx} style={{ flexDirection: 'row', marginBottom: 6, paddingLeft: 4, flexShrink: 1 }}>
                   <Text style={[
                     dynamicStyles.messageText,
                     isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { marginRight: 8, minWidth: 20 }
+                    { marginRight: 8, minWidth: 20, flexShrink: 0 }
                   ]}>{idx + 1}.</Text>
                   <Text style={[
                     dynamicStyles.messageText,
                     isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { flex: 1 }
+                    { flex: 1, flexShrink: 1, minWidth: 0 }
                   ]}>{item.trim()}</Text>
                 </View>
               ))}
@@ -2408,7 +2704,7 @@ export default function ChatsScreen() {
             style={[
               dynamicStyles.messageText,
               isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-              lineIdx > 0 ? { marginTop: 4 } : {}
+              lineIdx > 0 ? { marginTop: 6 } : {}
             ]}
           >
             {line}
@@ -2423,63 +2719,143 @@ export default function ChatsScreen() {
     // Flush any remaining list
     flushList();
     
-    return <View>{elements}</View>;
+    return <View style={{ flexShrink: 1 }}>{elements}</View>;
   };
 
   const renderMessageItem = ({ item }: { item: ChatMessage }) => {
+    // Determine if assistant responses should use bubbles based on chat type
+    // User messages always have bubbles, but assistant responses don't need bubbles in document/bookmark chats
+    const isDocumentOrBookmarkChat = selectedChat && (
+      selectedChat.type === 'document_focused' || 
+      selectedChat.type === 'bookmark_focused' ||
+      selectedChat.type === 'ai_assistant'
+    );
+    
     // Handle processing message (negative ID indicates processing)
     if (item.id === -1) {
-      return (
-        <View style={[
-          dynamicStyles.messageContainer,
-          dynamicStyles.otherMessage
-        ]}>
-          <View style={[
-            dynamicStyles.messageBubble,
-            dynamicStyles.otherBubble
-          ]}>
+      if (isDocumentOrBookmarkChat) {
+        // No bubbles for assistant processing in document/bookmark chats
+        return (
+          <View style={dynamicStyles.messageContainerNoBubble}>
             <ProcessingMessageDisplay
               isProcessing={true}
               hasRealData={false}
               processingType="general"
               onComplete={() => {}}
             />
+          </View>
+        );
+      } else {
+        // Bubbles for user/workspace chats - no timestamp for processing messages
+        return (
+          <View style={[
+            dynamicStyles.messageContainer,
+            dynamicStyles.otherMessage
+          ]}>
+            <View style={[
+              dynamicStyles.messageBubble,
+              dynamicStyles.otherBubble
+            ]}>
+              <ProcessingMessageDisplay
+                isProcessing={true}
+                hasRealData={false}
+                processingType="general"
+                onComplete={() => {}}
+              />
+              {/* No timestamp for processing messages - only show one streaming indicator */}
+            </View>
+          </View>
+        );
+      }
+    }
+
+    // User messages always have bubbles
+    if (item.is_own_message) {
+      return (
+        <View style={[
+          dynamicStyles.messageContainer,
+          dynamicStyles.ownMessage
+        ]}>
+          <View style={[
+            dynamicStyles.messageBubble,
+            dynamicStyles.ownBubble
+          ]}>
+            {renderMessageContent(item.content, item.is_own_message)}
             <Text style={[
               dynamicStyles.messageTime,
-              dynamicStyles.otherMessageTime
+              dynamicStyles.ownMessageTime
             ]}>
               {formatMessageTime(item.created_at)}
             </Text>
           </View>
         </View>
       );
-    }
-
-    return (
-      <View style={[
-        dynamicStyles.messageContainer,
-        item.is_own_message ? dynamicStyles.ownMessage : dynamicStyles.otherMessage
-      ]}>
-        <View style={[
-          dynamicStyles.messageBubble,
-          item.is_own_message ? dynamicStyles.ownBubble : dynamicStyles.otherBubble
-        ]}>
-          {renderMessageContent(item.content, item.is_own_message)}
-          <Text style={[
-            dynamicStyles.messageTime,
-            item.is_own_message ? dynamicStyles.ownMessageTime : dynamicStyles.otherMessageTime
+    } else {
+      // Assistant messages: no bubbles for document/bookmark chats, bubbles for user/workspace chats
+      // Only show content if it exists - processing is handled by id: -1 message
+      const hasContent = item.content && item.content.trim().length > 0;
+      
+      if (isDocumentOrBookmarkChat) {
+        // No bubbles for assistant responses (ChatGPT style)
+        // Don't show empty messages - processing is handled by id: -1 message
+        if (!hasContent) {
+          return null; // Don't render empty messages
+        }
+        
+        return (
+          <View style={[
+            dynamicStyles.messageContainerNoBubble,
+            dynamicStyles.otherMessageNoBubble
           ]}>
-            {formatMessageTime(item.created_at)}
-          </Text>
-        </View>
-      </View>
-    );
+            {renderMessageContent(item.content, item.is_own_message)}
+            <Text style={[
+              dynamicStyles.messageTimeNoBubble,
+              dynamicStyles.otherMessageTimeNoBubble
+            ]}>
+              {formatMessageTime(item.created_at)}
+            </Text>
+          </View>
+        );
+      } else {
+        // Bubbles for assistant messages in user/workspace chats
+        // Don't show empty messages - processing is handled by id: -1 message
+        if (!hasContent) {
+          return null; // Don't render empty messages
+        }
+        
+        return (
+          <View style={[
+            dynamicStyles.messageContainer,
+            dynamicStyles.otherMessage
+          ]}>
+            <View style={[
+              dynamicStyles.messageBubble,
+              dynamicStyles.otherBubble
+            ]}>
+              {renderMessageContent(item.content, item.is_own_message)}
+              <Text style={[
+                dynamicStyles.messageTime,
+                dynamicStyles.otherMessageTime
+              ]}>
+                {formatMessageTime(item.created_at)}
+              </Text>
+            </View>
+          </View>
+        );
+      }
+    }
   };
 
   const renderChatsList = () => {
     return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       <View style={dynamicStyles.header}>
+        <TouchableOpacity 
+          style={dynamicStyles.backButton} 
+          onPress={() => router.push('/(tabs)')}
+        >
+          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+        </TouchableOpacity>
         <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
         <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
           <Ionicons name="add" size={20} color="#007AFF" />
@@ -2529,12 +2905,21 @@ export default function ChatsScreen() {
   };
 
   const renderChatMessages = () => (
-    <SafeAreaView style={dynamicStyles.container} edges={['top']}>
+    <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom']}>
       {/* Chat Header */}
       <View style={dynamicStyles.chatHeader}>
         <TouchableOpacity 
           style={dynamicStyles.backButton} 
-          onPress={() => setSelectedChat(null)}
+          onPress={() => {
+            // Go back to chat list, or home if no chat selected
+            if (selectedChat) {
+              // Re-sort chats when returning from conversation
+              setSelectedChat(null);
+              // The useEffect watching selectedChat will handle the sorting
+            } else {
+              router.push('/(tabs)');
+            }
+          }}
         >
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
@@ -2649,86 +3034,82 @@ export default function ChatsScreen() {
           </View>
         )}
 
-        <View style={dynamicStyles.inputContainer}>
-          {/* Inline Mention Dropdown - Above text input */}
-          {showMentionModal && (
-            <View style={dynamicStyles.mentionDropdown}>
-              <FlatList
-                data={mentionResults}
-                keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={dynamicStyles.mentionDropdownItem}
-                    onPress={() => selectMention(item)}
-                  >
-                    <View style={[dynamicStyles.mentionDropdownIcon, { backgroundColor: `${getMentionColor(item.type)}20` }]}>
-                      <Ionicons 
-                        name={getMentionIcon(item.type) as keyof typeof Ionicons.glyphMap} 
-                        size={16} 
-                        color={getMentionColor(item.type)} 
-                      />
-                    </View>
-                    <View style={dynamicStyles.mentionDropdownContent}>
-                      <Text style={dynamicStyles.mentionDropdownTitle}>
-                        {item.type === 'file' ? truncateFilename(item.name) : item.name}
-                      </Text>
-                      <Text style={dynamicStyles.mentionDropdownSubtitle}>{item.subtitle}</Text>
-                    </View>
-                    <Text style={dynamicStyles.mentionDropdownType}>{item.type}</Text>
-                  </TouchableOpacity>
-                )}
-                style={dynamicStyles.mentionDropdownList}
-                showsVerticalScrollIndicator={false}
-                ListEmptyComponent={
-                  <View style={dynamicStyles.mentionDropdownEmpty}>
-                    <Text style={dynamicStyles.mentionDropdownEmptyText}>
-                      {mentionQuery.trim() ? 'No results found' : 'Type to search...'}
-                    </Text>
+        {/* Inline Mention Dropdown - Above text input */}
+        {showMentionModal && (
+          <View style={dynamicStyles.mentionDropdown}>
+            <FlatList
+              data={mentionResults}
+              keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={dynamicStyles.mentionDropdownItem}
+                  onPress={() => selectMention(item)}
+                >
+                  <View style={[dynamicStyles.mentionDropdownIcon, { backgroundColor: `${getMentionColor(item.type)}20` }]}>
+                    <Ionicons 
+                      name={getMentionIcon(item.type) as keyof typeof Ionicons.glyphMap} 
+                      size={16} 
+                      color={getMentionColor(item.type)} 
+                    />
                   </View>
-                }
-              />
-            </View>
-          )}
-          
-          {/* Text input and send button row */}
-          <View style={dynamicStyles.inputRow}>
-            <TextInput
-              style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
-              value={newMessage}
-              onChangeText={handleMentionInput}
-              placeholder="Ask about documents, meeting transcripts, or @ to mention..."
-              placeholderTextColor={colors.textSecondary}
-              multiline
-              maxLength={1000}
-              onContentSizeChange={(event) => {
-                const { height } = event.nativeEvent.contentSize;
-                setTextInputHeight(height);
-              }}
+                  <View style={dynamicStyles.mentionDropdownContent}>
+                    <Text style={dynamicStyles.mentionDropdownTitle}>
+                      {item.type === 'file' ? truncateFilename(item.name) : item.name}
+                    </Text>
+                    <Text style={dynamicStyles.mentionDropdownSubtitle}>{item.subtitle}</Text>
+                  </View>
+                  <Text style={dynamicStyles.mentionDropdownType}>{item.type}</Text>
+                </TouchableOpacity>
+              )}
+              style={dynamicStyles.mentionDropdownList}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <View style={dynamicStyles.mentionDropdownEmpty}>
+                  <Text style={dynamicStyles.mentionDropdownEmptyText}>
+                    {mentionQuery.trim() ? 'No results found' : 'Type to search...'}
+                  </Text>
+                </View>
+              }
             />
-            <Animated.View
-              style={[
-                {
-                  transform: [{ scale: bounceAnim }],
-                },
-              ]}
-            >
-              <TouchableOpacity
-                style={[
-                  dynamicStyles.sendButton, 
-                  sendingMessage ? dynamicStyles.sendButtonProcessing : dynamicStyles.sendButtonNormal,
-                  (!newMessage.trim() && !sendingMessage) && dynamicStyles.sendButtonDisabled
-                ]}
-                onPress={sendingMessage ? stopProcessing : sendMessage}
-                disabled={!newMessage.trim() && !sendingMessage}
-              >
-                {sendingMessage ? (
-                  <Ionicons name="stop" size={20} color="#fff" />
-                ) : (
-                  <Ionicons name="send" size={20} color="#fff" />
-                )}
-              </TouchableOpacity>
-            </Animated.View>
           </View>
+        )}
+
+        <View style={dynamicStyles.inputContainer}>
+          <TextInput
+            style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
+            value={newMessage}
+            onChangeText={handleMentionInput}
+            placeholder="Ask questions from your documents"
+            placeholderTextColor={colors.textSecondary}
+            multiline
+            maxLength={1000}
+            onContentSizeChange={(event) => {
+              const { height } = event.nativeEvent.contentSize;
+              setTextInputHeight(height);
+            }}
+          />
+          <Animated.View
+            style={[
+              {
+                transform: [{ scale: bounceAnim }],
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={[
+                dynamicStyles.sendButton,
+                ((!newMessage.trim() && !sendingMessage) || sendingMessage) && { opacity: 0.5 }
+              ]}
+              onPress={sendMessage}
+              disabled={sendingMessage || !newMessage.trim()}
+            >
+              {sendingMessage ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="send" size={20} color="#fff" />
+              )}
+            </TouchableOpacity>
+          </Animated.View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -3074,7 +3455,7 @@ export default function ChatsScreen() {
       alignItems: 'center',
     },
     lastMessage: {
-      fontSize: 12,
+      fontSize: 14,
       color: colors.textSecondary,
       flex: 1,
     },
@@ -3129,11 +3510,26 @@ export default function ChatsScreen() {
       paddingHorizontal: 16,
       paddingVertical: 4,
     },
+    messageContainerNoBubble: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      maxWidth: '100%',
+      flexShrink: 1,
+      // Removed alignSelf - let parent container control alignment
+    },
     ownMessage: {
       alignItems: 'flex-end',
     },
     otherMessage: {
       alignItems: 'flex-start',
+    },
+    ownMessageNoBubble: {
+      alignItems: 'flex-end',
+      paddingLeft: 60,
+    },
+    otherMessageNoBubble: {
+      alignItems: 'flex-start',
+      paddingRight: 60,
     },
     messageBubble: {
       maxWidth: '80%',
@@ -3141,8 +3537,9 @@ export default function ChatsScreen() {
       paddingVertical: 8,
       borderRadius: 16,
       marginVertical: 2,
-      overflow: 'hidden',
+      overflow: 'hidden', // Keep hidden to prevent overflow, but allow text to wrap
       flexShrink: 1,
+      // Removed alignSelf - let parent container control alignment
     },
     ownBubble: {
       backgroundColor: '#007AFF',
@@ -3150,13 +3547,16 @@ export default function ChatsScreen() {
     otherBubble: {
       backgroundColor: colors.surface,
     },
-    messageText: {
-      fontSize: 14,
-      lineHeight: 20,
-      flexWrap: 'wrap',
-      wordWrap: 'break-word',
-      maxWidth: '100%',
-    },
+  messageText: {
+    fontSize: 15,
+    lineHeight: 23, // Increased from 20 to 23 for better readability (1.53 ratio)
+    flexWrap: 'wrap',
+    flexShrink: 1,
+    wordWrap: 'break-word',
+    maxWidth: '100%',
+    includeFontPadding: false, // Remove extra padding on Android
+    textAlignVertical: 'top', // Align text to top for better multi-line display
+  },
     ownMessageText: {
       color: '#fff',
     },
@@ -3166,6 +3566,7 @@ export default function ChatsScreen() {
     messageTime: {
       fontSize: 11,
       marginTop: 4,
+      alignSelf: 'flex-end',
     },
     ownMessageTime: {
       color: 'rgba(255, 255, 255, 0.7)',
@@ -3173,39 +3574,46 @@ export default function ChatsScreen() {
     otherMessageTime: {
       color: colors.textSecondary,
     },
-    inputContainer: {
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      backgroundColor: colors.card,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      minHeight: 48,
+    messageTimeNoBubble: {
+      fontSize: 11,
+      marginTop: 4,
+      alignSelf: 'flex-start',
     },
-    inputRow: {
+    ownMessageTimeNoBubble: {
+      color: colors.textSecondary,
+    },
+    otherMessageTimeNoBubble: {
+      color: colors.textSecondary,
+    },
+    inputContainer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      paddingBottom: 4,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      backgroundColor: colors.card,
     },
     messageInput: {
       flex: 1,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 18,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      fontSize: 14,
       backgroundColor: colors.surface,
+      borderRadius: 20,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      fontSize: 16,
       color: colors.text,
+      marginRight: 8,
       minHeight: 40,
       maxHeight: 120,
     },
     sendButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       backgroundColor: '#007AFF',
       justifyContent: 'center',
       alignItems: 'center',
-      marginLeft: 6,
     },
     modalOverlay: {
       flex: 1,
@@ -3513,7 +3921,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   lastMessage: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#666',
     flex: 1,
   },
@@ -3581,12 +3989,13 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     maxWidth: '80%',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    marginVertical: 1,
-    overflow: 'hidden', // Ensure content stays within bubble
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    marginVertical: 2,
+    overflow: 'hidden', // Keep hidden to prevent overflow, but allow text to wrap
     flexShrink: 1, // Allow bubble to shrink if needed
+    // Removed alignSelf - let parent container control alignment
   },
   ownBubble: {
     backgroundColor: '#007AFF',
@@ -3595,11 +4004,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
   },
   messageText: {
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 23, // Increased from 20 to 23 for better readability (1.53 ratio)
     flexWrap: 'wrap',
+    flexShrink: 1,
     wordWrap: 'break-word',
     maxWidth: '100%', // Don't exceed bubble width
+    includeFontPadding: false, // Remove extra padding on Android
+    textAlignVertical: 'top', // Align text to top for better multi-line display
   },
   ownMessageText: {
     color: '#fff',
@@ -3610,6 +4022,7 @@ const styles = StyleSheet.create({
   messageTime: {
     fontSize: 11,
     marginTop: 3,
+    alignSelf: 'flex-end',
   },
   ownMessageTime: {
     color: 'rgba(255, 255, 255, 0.7)',
@@ -3617,37 +4030,46 @@ const styles = StyleSheet.create({
   otherMessageTime: {
     color: '#666',
   },
-  inputContainer: {
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    minHeight: 48,
+  messageTimeNoBubble: {
+    fontSize: 11,
+    marginTop: 4,
+    alignSelf: 'flex-start',
   },
-  inputRow: {
+  ownMessageTimeNoBubble: {
+    color: '#666',
+  },
+  otherMessageTimeNoBubble: {
+    color: '#666',
+  },
+  inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    paddingBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#fff',
   },
   messageInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 18,
-    paddingHorizontal: 10,
-    paddingVertical: 2,
-    fontSize: 14,
     backgroundColor: '#f8f8f8',
-    minHeight: 20,
-    maxHeight: 80,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    fontSize: 16,
+    color: '#000',
+    marginRight: 8,
+    minHeight: 40,
+    maxHeight: 120,
   },
   sendButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 4,
   },
   sendButtonNormal: {
     backgroundColor: '#007AFF',

@@ -46,7 +46,14 @@ export default function PersistentBottomNavigation() {
 
   // Hide navigation on auth screens
   const isAuthScreen = pathname.startsWith('/(auth)');
-  if (isAuthScreen) {
+  // Hide navigation on user-chat screen
+  const isUserChatScreen = pathname === '/user-chat' || pathname.startsWith('/user-chat');
+  // Hide navigation on chats screen (ChatGD/Chat Assistant) - check multiple possible pathname formats
+  const isChatsScreen = pathname === '/(tabs)/chats' || 
+                        pathname.startsWith('/(tabs)/chats') ||
+                        pathname.includes('/chats') ||
+                        pathname === '/chats';
+  if (isAuthScreen || isUserChatScreen || isChatsScreen) {
     return null;
   }
 
