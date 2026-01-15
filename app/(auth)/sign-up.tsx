@@ -294,6 +294,9 @@ export default function SignUpScreen() {
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
+              autoCorrect={false}
+              autoCapitalize="none"
+              textContentType="newPassword"
               autoComplete="new-password"
               placeholderTextColor="#999"
             />
@@ -317,6 +320,9 @@ export default function SignUpScreen() {
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               secureTextEntry={!showConfirmPassword}
+              autoCorrect={false}
+              autoCapitalize="none"
+              textContentType="newPassword"
               autoComplete="new-password"
               placeholderTextColor="#999"
             />

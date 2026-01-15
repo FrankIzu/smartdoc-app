@@ -953,7 +953,23 @@ export default function UserChatScreen() {
               </Text>
             )}
           </View>
-          <View style={{ width: 40 }} />
+          {!isNewChat && selectedChat && (
+            <TouchableOpacity 
+              onPress={() => {
+                setRefreshing(true);
+                loadMessages(selectedChat.id).finally(() => setRefreshing(false));
+              }}
+              style={dynamicStyles.newChatButton}
+              disabled={refreshing}
+            >
+              <Ionicons 
+                name="refresh" 
+                size={20} 
+                color={refreshing ? "#999" : "#007AFF"} 
+              />
+            </TouchableOpacity>
+          )}
+          {isNewChat && <View style={{ width: 40 }} />}
         </View>
 
         <View style={{ flex: 1 }}>
@@ -1080,9 +1096,25 @@ export default function UserChatScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={dynamicStyles.headerTitle}>Messages</Text>
-        <TouchableOpacity onPress={handleNewChat} style={dynamicStyles.newChatButton}>
-          <Ionicons name="add" size={24} color="#007AFF" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity 
+            onPress={() => {
+              setRefreshing(true);
+              loadChats();
+            }}
+            style={dynamicStyles.newChatButton}
+            disabled={refreshing}
+          >
+            <Ionicons 
+              name="refresh" 
+              size={20} 
+              color={refreshing ? "#999" : "#007AFF"} 
+            />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleNewChat} style={dynamicStyles.newChatButton}>
+            <Ionicons name="add" size={24} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={dynamicStyles.searchContainer}>

@@ -265,6 +265,9 @@ export default function PhoneLoginScreen() {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
+                autoCorrect={false}
+                autoCapitalize="none"
+                textContentType="password"
                 autoFocus
             />
 

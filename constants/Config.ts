@@ -2,9 +2,11 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 // Local Development Configuration - Single source of truth for local backend IP
-// Change this IP address to update the backend URL for local development
-export const LOCAL_DEV_IP = '192.168.1.4';
+// ⚠️ CHANGE THIS IP ADDRESS TO UPDATE ALL LOCAL DEVELOPMENT URLs
+// This affects: API backend URL, Expo dev server URL, and all local development endpoints
+export const LOCAL_DEV_IP = '192.168.1.7';
 export const LOCAL_DEV_PORT = 5000;
+export const EXPO_DEV_PORT = 8082;
 export const LOCAL_DEV_URL = `http://${LOCAL_DEV_IP}:${LOCAL_DEV_PORT}`;
 
 // API Configuration - Auto-detect based on environment
@@ -113,8 +115,8 @@ export const APPLE_REDIRECT_URI = (() => {
 
 export const DROPBOX_CLIENT_ID = process.env.EXPO_PUBLIC_DROPBOX_APP_KEY || ''; // Dropbox App Key (same as Client ID)
 
-// Expo Development Server URL
-export const EXPO_DEV_URL = 'http://192.168.1.4:8082';
+// Expo Development Server URL - Automatically uses LOCAL_DEV_IP
+export const EXPO_DEV_URL = `http://${LOCAL_DEV_IP}:${EXPO_DEV_PORT}`;
 
 // Frontend Web URL - Used for sharing links that should open in browser
 export const FRONTEND_URL = (() => {

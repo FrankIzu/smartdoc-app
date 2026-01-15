@@ -1546,8 +1546,14 @@ class ApiService {
       });
       return response.data;
     } catch (error: any) {
-      // console.error('❌ Get mobile workspaces error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to fetch workspaces');
+      console.error('❌ Get mobile workspaces error:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        url: error.config?.url
+      });
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to fetch workspaces';
+      throw new Error(errorMessage);
     }
   }
 
