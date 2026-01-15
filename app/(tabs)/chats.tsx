@@ -2446,6 +2446,16 @@ export default function ChatsScreen() {
     loadChats();
   };
 
+  const onRefreshMessages = async () => {
+    if (!selectedChat) return;
+    setRefreshing(true);
+    try {
+      await loadMessages(selectedChat.id);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const formatMessageTime = (dateString: string) => {
     try {
       // Dates from backend are in UTC (with 'Z' suffix)
@@ -2857,9 +2867,22 @@ export default function ChatsScreen() {
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
         <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
-        <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
-          <Ionicons name="add" size={20} color="#007AFF" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity 
+            style={dynamicStyles.newChatButton} 
+            onPress={onRefresh}
+            disabled={refreshing}
+          >
+            <Ionicons 
+              name="refresh" 
+              size={20} 
+              color={refreshing ? "#999" : "#007AFF"} 
+            />
+          </TouchableOpacity>
+          <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
+            <Ionicons name="add" size={20} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Search Box with Chat Types */}
@@ -2935,15 +2958,28 @@ export default function ChatsScreen() {
           </Text>
         </View>
 
-        {/* Search Type Menu for AI Assistant */}
-        {selectedChat?.type === 'ai_assistant' && (
+        <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity 
             style={dynamicStyles.searchTypeButton} 
-            onPress={handleSearchTypeMenuPress}
+            onPress={onRefreshMessages}
+            disabled={refreshing || !selectedChat}
           >
-            <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+            <Ionicons 
+              name="refresh" 
+              size={20} 
+              color={refreshing || !selectedChat ? "#999" : "#007AFF"} 
+            />
           </TouchableOpacity>
-        )}
+          {/* Search Type Menu for AI Assistant */}
+          {selectedChat?.type === 'ai_assistant' && (
+            <TouchableOpacity 
+              style={dynamicStyles.searchTypeButton} 
+              onPress={handleSearchTypeMenuPress}
+            >
+              <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <KeyboardAvoidingView 

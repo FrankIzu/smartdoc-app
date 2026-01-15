@@ -405,14 +405,14 @@ function DashboardScreen() {
   }) => (
     <TouchableOpacity style={dynamicStyles.quickActionCard} onPress={onPress}>
       <View style={[dynamicStyles.quickActionIcon, { backgroundColor: color }]}>
-        <Ionicons name={icon as any} size={28} color="#fff" />
+        <Ionicons name={icon as any} size={20} color="#fff" />
         {isNew ? <View style={dynamicStyles.newBadge}><Text style={dynamicStyles.newBadgeText}>NEW</Text></View> : null}
       </View>
       <View style={dynamicStyles.quickActionContent}>
         <Text style={dynamicStyles.quickActionTitle}>{title}</Text>
         <Text style={dynamicStyles.quickActionSubtitle}>{subtitle}</Text>
       </View>
-      <Ionicons name="chevron-forward" size={20} color="#ccc" />
+      <Ionicons name="chevron-forward" size={16} color="#ccc" />
     </TouchableOpacity>
   );
 
@@ -727,13 +727,13 @@ function DashboardScreen() {
     fontWeight: '500',
   },
   quickActionsContainer: {
-    gap: 8,
+    gap: 6,
   },
   quickActionCard: {
     flexDirection: 'row',
     alignItems: 'center',
       backgroundColor: colors.card,
-    padding: 12,
+    padding: 8,
     borderRadius: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -742,24 +742,24 @@ function DashboardScreen() {
     elevation: 2,
   },
   quickActionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 8,
   },
   quickActionContent: {
     flex: 1,
   },
   quickActionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
       color: colors.text,
-    marginBottom: 2,
+    marginBottom: 1,
   },
   quickActionSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
       color: colors.textSecondary,
   },
   activityContainer: {

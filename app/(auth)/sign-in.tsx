@@ -362,6 +362,9 @@ export default function SignInScreen() {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
+                autoCorrect={false}
+                autoCapitalize="none"
+                textContentType="password"
                 placeholderTextColor="#999"
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>

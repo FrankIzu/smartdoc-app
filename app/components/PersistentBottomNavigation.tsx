@@ -53,7 +53,17 @@ export default function PersistentBottomNavigation() {
                         pathname.startsWith('/(tabs)/chats') ||
                         pathname.includes('/chats') ||
                         pathname === '/chats';
-  if (isAuthScreen || isUserChatScreen || isChatsScreen) {
+  // Hide navigation on home screen
+  // Check if we're on the home screen (index route of tabs)
+  const isHomeScreen = pathname === '/(tabs)' || 
+                       pathname === '/(tabs)/' || 
+                       pathname === '/(tabs)/index' ||
+                       pathname === '/';
+  
+  // Debug: uncomment to see actual pathname
+  // console.log('Current pathname:', pathname, 'isHomeScreen:', isHomeScreen);
+  
+  if (isAuthScreen || isUserChatScreen || isChatsScreen || isHomeScreen) {
     return null;
   }
 
