@@ -382,7 +382,7 @@ function DashboardScreen() {
       <View style={dynamicStyles.statContent}>
         <View style={dynamicStyles.statHeader}>
           <View style={{ position: 'relative' }}>
-            <Ionicons name={icon as any} size={24} color={color} />
+            <Ionicons name={icon as any} size={26} color={color} />
             {badge != null && badge > 0 ? (
               <View style={dynamicStyles.badge}>
                 <Text style={dynamicStyles.badgeText}>{badge > 99 ? '99+' : String(badge)}</Text>
@@ -405,7 +405,7 @@ function DashboardScreen() {
   }) => (
     <TouchableOpacity style={dynamicStyles.quickActionCard} onPress={onPress}>
       <View style={[dynamicStyles.quickActionIcon, { backgroundColor: color }]}>
-        <Ionicons name={icon as any} size={20} color="#fff" />
+        <Ionicons name={icon as any} size={22} color="#fff" />
         {isNew ? <View style={dynamicStyles.newBadge}><Text style={dynamicStyles.newBadgeText}>NEW</Text></View> : null}
       </View>
       <View style={dynamicStyles.quickActionContent}>
@@ -419,7 +419,7 @@ function DashboardScreen() {
   const ActivityItem = ({ activity, onPress }: { activity: RecentActivity; onPress?: () => void }) => (
     <TouchableOpacity style={dynamicStyles.activityItem} onPress={onPress}>
       <View style={[dynamicStyles.activityIcon, { backgroundColor: getActivityColor(activity.type) }]}>
-        <Ionicons name={activity.icon as any} size={16} color="#fff" />
+        <Ionicons name={activity.icon as any} size={18} color="#fff" />
       </View>
       <View style={dynamicStyles.activityContent}>
         <Text style={dynamicStyles.activityTitle}>{activity.title}</Text>
@@ -643,9 +643,9 @@ function DashboardScreen() {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 6,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 7,
     backgroundColor: colors.background,
   },
   headerLeft: {
@@ -654,21 +654,21 @@ function DashboardScreen() {
     gap: 8,
   },
   logoWithName: {
-    height: 32,
-      width: 120,
+    height: 36,
+      width: 135,
   },
   welcomeText: {
-    fontSize: 14,
+    fontSize: 15,
       color: colors.textSecondary,
   },
   userNameText: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
       color: colors.text,
     marginTop: 2,
   },
   statsContainer: {
-    padding: 12,
+    padding: 14,
   },
   statsRow: {
     flexDirection: 'row',
@@ -677,8 +677,8 @@ function DashboardScreen() {
   statCard: {
     flex: 1,
       backgroundColor: colors.card,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 9,
+    padding: 14,
     marginHorizontal: 4,
     borderLeftWidth: 3,
     shadowColor: '#000',
@@ -702,13 +702,13 @@ function DashboardScreen() {
       color: colors.text,
   },
   statTitle: {
-    fontSize: 11,
+    fontSize: 12,
       color: colors.textSecondary,
     textTransform: 'uppercase',
     fontWeight: '600',
   },
   section: {
-    padding: 12,
+    padding: 14,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -717,12 +717,12 @@ function DashboardScreen() {
     marginBottom: 12,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
       color: colors.text,
   },
   seeAllText: {
-    fontSize: 13,
+    fontSize: 14,
     color: '#007AFF',
     fontWeight: '500',
   },
@@ -733,8 +733,8 @@ function DashboardScreen() {
     flexDirection: 'row',
     alignItems: 'center',
       backgroundColor: colors.card,
-    padding: 8,
-    borderRadius: 8,
+    padding: 10,
+    borderRadius: 9,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
@@ -742,24 +742,24 @@ function DashboardScreen() {
     elevation: 2,
   },
   quickActionIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
+    marginRight: 10,
   },
   quickActionContent: {
     flex: 1,
   },
   quickActionTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
       color: colors.text,
-    marginBottom: 1,
+    marginBottom: 2,
   },
   quickActionSubtitle: {
-    fontSize: 11,
+    fontSize: 12,
       color: colors.textSecondary,
   },
   activityContainer: {
@@ -775,9 +775,9 @@ function DashboardScreen() {
       borderBottomColor: colors.border,
   },
   activityIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
@@ -786,13 +786,13 @@ function DashboardScreen() {
     flex: 1,
   },
   activityTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
       color: colors.text,
     marginBottom: 2,
   },
   activitySubtitle: {
-    fontSize: 11,
+    fontSize: 12,
       color: colors.textSecondary,
   },
   activityTime: {
@@ -815,23 +815,23 @@ function DashboardScreen() {
     marginLeft: 10,
   },
   insightTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
       color: colors.text,
     marginBottom: 3,
   },
   insightText: {
-    fontSize: 12,
+    fontSize: 13,
       color: colors.textSecondary,
-    lineHeight: 18,
+    lineHeight: 19,
   },
   insightsContainer: {
     gap: 8,
   },
   insightIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
@@ -842,13 +842,13 @@ function DashboardScreen() {
     alignItems: 'center',
   },
   emptyStateText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
       color: colors.text,
-    marginBottom: 6,
+    marginBottom: 7,
   },
   emptyStateSubtext: {
-    fontSize: 12,
+    fontSize: 13,
       color: colors.textSecondary,
   },
   headerActions: {
@@ -880,9 +880,9 @@ function DashboardScreen() {
     bottom: 20,
     right: 20,
     backgroundColor: '#007AFF',
-    borderRadius: 24,
-    width: 48,
-    height: 48,
+    borderRadius: 26,
+    width: 52,
+    height: 52,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
@@ -907,14 +907,14 @@ function DashboardScreen() {
     padding: 20,
   },
   welcomeTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
       color: colors.text,
     marginTop: 15,
     textAlign: 'center',
   },
   welcomeSubtitle: {
-    fontSize: 14,
+    fontSize: 15,
       color: colors.textSecondary,
     marginTop: 5,
     textAlign: 'center',
@@ -1068,7 +1068,7 @@ function DashboardScreen() {
       {!user && (
         <View style={dynamicStyles.welcomeContainer}>
           <View style={dynamicStyles.welcomeCard}>
-            <Ionicons name="person-circle-outline" size={48} color="#007AFF" />
+            <Ionicons name="person-circle-outline" size={52} color="#007AFF" />
             <Text style={dynamicStyles.welcomeTitle}>Welcome to GrabDocs</Text>
             <Text style={dynamicStyles.welcomeSubtitle}>
               Sign in to access your documents and see your personalized dashboard
@@ -1105,7 +1105,7 @@ function DashboardScreen() {
                 style={dynamicStyles.headerButton}
                 onPress={() => router.push('/(auth)')}
               >
-                <Ionicons name="log-in-outline" size={24} color="#007AFF" />
+                  <Ionicons name="log-in-outline" size={26} color="#007AFF" />
               </TouchableOpacity>
             ) : (
               <>
@@ -1114,7 +1114,7 @@ function DashboardScreen() {
                   onPress={handleNotificationPress}
                 >
                   <View style={{ position: 'relative' }}>
-                    <Ionicons name="notifications-outline" size={24} color="#007AFF" />
+                    <Ionicons name="notifications-outline" size={26} color="#007AFF" />
                     {stats.unreadNotifications > 0 ? (
                       <View style={dynamicStyles.headerBadge}>
                         <Text style={dynamicStyles.headerBadgeText}>{String(stats.unreadNotifications)}</Text>
@@ -1126,7 +1126,7 @@ function DashboardScreen() {
                   style={dynamicStyles.headerButton}
                   onPress={() => router.push('/(tabs)/settings')}
                 >
-                  <Ionicons name="person-circle" size={32} color="#007AFF" />
+                  <Ionicons name="person-circle" size={34} color="#007AFF" />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
@@ -1135,7 +1135,7 @@ function DashboardScreen() {
                 >
                   <Ionicons 
                     name="refresh" 
-                    size={24} 
+                    size={26} 
                     color={refreshing ? "#999" : "#007AFF"} 
                   />
                 </TouchableOpacity>
@@ -1261,7 +1261,7 @@ function DashboardScreen() {
               ))
             ) : (
               <View style={dynamicStyles.emptyState}>
-                <Ionicons name="document-text-outline" size={48} color="#ccc" />
+                <Ionicons name="document-text-outline" size={52} color="#ccc" />
                 <Text style={dynamicStyles.emptyStateText}>No recent activity</Text>
                 <Text style={dynamicStyles.emptyStateSubtext}>Start by uploading documents</Text>
               </View>
@@ -1275,7 +1275,7 @@ function DashboardScreen() {
           <View style={dynamicStyles.insightsContainer}>
             <TouchableOpacity key="insight-suggestions" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/settings')}>
               <View style={dynamicStyles.insightIcon}>
-                <Ionicons name="bulb" size={24} color="#FF9500" />
+                <Ionicons name="bulb" size={26} color="#FF9500" />
               </View>
               <View style={dynamicStyles.insightContent}>
                 <Text style={dynamicStyles.insightTitle}>Smart Suggestions</Text>
@@ -1291,7 +1291,7 @@ function DashboardScreen() {
             
             <TouchableOpacity key="insight-trends" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
               <View style={dynamicStyles.insightIcon}>
-                <Ionicons name="trending-up" size={24} color="#34C759" />
+                <Ionicons name="trending-up" size={26} color="#34C759" />
               </View>
               <View style={dynamicStyles.insightContent}>
                 <Text style={dynamicStyles.insightTitle}>Usage Trends</Text>
@@ -1335,7 +1335,7 @@ function DashboardScreen() {
           );
         }}
       >
-        <Ionicons name="add" size={20} color="#fff" />
+        <Ionicons name="add" size={26} color="#fff" />
       </TouchableOpacity>
 
       {/* Upload Options Modal */}

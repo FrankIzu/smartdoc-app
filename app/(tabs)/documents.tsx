@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
@@ -66,6 +66,19 @@ export default function QuickFilesScreen() {
   
   // Get workspaceId from route params if provided
   const workspaceId = params.workspaceId ? Number(params.workspaceId) : undefined;
+  
+  // Re-read params and reload when screen comes into focus (important for tab navigation)
+  // This ensures workspaceId is properly read when navigating from workspace details
+  useFocusEffect(
+    useCallback(() => {
+      const currentWorkspaceId = params.workspaceId ? Number(params.workspaceId) : undefined;
+      console.log('📁 Documents screen focused - workspaceId from params:', params.workspaceId, 'parsed:', currentWorkspaceId);
+      // Force reload documents when screen comes into focus to ensure correct workspace filtering
+      if (user) {
+        loadDocuments(true);
+      }
+    }, [params.workspaceId, user, loadDocuments])
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('date');
@@ -96,6 +109,7 @@ export default function QuickFilesScreen() {
     timestamp: number;
     searchQuery: string;
     filterBy: FilterOption;
+    workspaceId?: number;
   } | null>(null);
 
   const CACHE_DURATION = 30000; // 30 seconds cache
@@ -397,12 +411,14 @@ export default function QuickFilesScreen() {
   const loadDocuments = useCallback(async (forceRefresh = false) => {
     const now = Date.now();
     
-    // Check cache first (unless force refresh or workspaceId is present)
-    // Skip cache when workspaceId is present to avoid showing wrong workspace files
-    if (!forceRefresh && !workspaceId && apiCache && 
+    // Check cache first (unless force refresh)
+    // Cache key includes workspaceId to avoid showing wrong workspace files
+    if (!forceRefresh && apiCache && 
         (now - apiCache.timestamp) < CACHE_DURATION &&
         apiCache.searchQuery === searchQuery &&
-        apiCache.filterBy === filterBy) {
+        apiCache.filterBy === filterBy &&
+        apiCache.workspaceId === workspaceId) {
+      console.log('📁 Using cached documents for workspaceId:', workspaceId);
       setDocuments(apiCache.data);
       setLoading(false);
       return;
@@ -447,21 +463,26 @@ export default function QuickFilesScreen() {
       } else {
         try {
           // Try the new getDocuments method first with timeout
-          const documentsPromise = apiClient.getDocuments();
+          // Pass workspaceId to filter files by workspace
+          console.log('📁 Loading documents with workspaceId:', workspaceId);
+          const documentsPromise = apiClient.getDocuments(1, 50, undefined, undefined, workspaceId);
           const documentsTimeout = new Promise((_, reject) => 
             setTimeout(() => reject(new Error('API timeout')), 10000)
           );
           
           response = await Promise.race([documentsPromise, documentsTimeout]);
+          console.log('📁 Documents response received:', response?.success, 'Files count:', (response as any)?.data?.length || (response as any)?.files?.length || 0);
         } catch (err) {
           console.warn('Documents endpoint failed, trying files endpoint:', err);
           try {
+            console.log('📁 Falling back to getFiles with workspaceId:', workspaceId);
             const filesPromise = apiClient.getFiles(1, 50, undefined, undefined, workspaceId);
             const filesTimeout = new Promise((_, reject) => 
               setTimeout(() => reject(new Error('API timeout')), 10000)
             );
             
             response = await Promise.race([filesPromise, filesTimeout]);
+            console.log('📁 Files response received:', response?.success, 'Files count:', (response as any)?.files?.length || 0);
           } catch (fallbackErr) {
             console.error('Both endpoints failed:', fallbackErr);
             throw fallbackErr;
@@ -497,6 +518,7 @@ export default function QuickFilesScreen() {
             timestamp: now,
             searchQuery,
             filterBy,
+            workspaceId,
           });
         } else {
           setDocuments([]);
@@ -537,6 +559,7 @@ export default function QuickFilesScreen() {
             timestamp: now,
             searchQuery,
             filterBy,
+            workspaceId,
           });
         } else {
           setDocuments([]);
@@ -554,7 +577,7 @@ export default function QuickFilesScreen() {
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, filterBy]); // Add dependencies
+  }, [searchQuery, filterBy, workspaceId]); // Add dependencies including workspaceId
 
   const getFileTypeFromExtension = (filename: string | null | undefined): string => {
     if (!filename || typeof filename !== 'string') {
@@ -960,7 +983,7 @@ export default function QuickFilesScreen() {
       <DocumentIcon item={item} />
       
         <View style={dynamicStyles.documentInfo}>
-        <Text style={dynamicStyles.documentName} numberOfLines={2}>
+        <Text style={dynamicStyles.documentName} numberOfLines={1} ellipsizeMode="tail">
             {item.name}
           </Text>
         <Text style={dynamicStyles.documentMeta}>
@@ -1005,6 +1028,10 @@ export default function QuickFilesScreen() {
       backgroundColor: colors.card,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
+    },
+    backButton: {
+      marginRight: 12,
+      padding: 4,
     },
     headerTitleContainer: {
       flex: 1,
@@ -1333,8 +1360,18 @@ export default function QuickFilesScreen() {
       
       {/* Header */}
       <View style={dynamicStyles.header}>
+        {workspaceId ? (
+          <TouchableOpacity 
+            style={dynamicStyles.backButton}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+        ) : null}
         <View style={dynamicStyles.headerTitleContainer}>
-          <Text style={dynamicStyles.headerTitle}>Files</Text>
+          <Text style={dynamicStyles.headerTitle}>
+            {workspaceId ? 'Workspace Files' : 'Files'}
+          </Text>
           {isAutoRefreshing && (
             <View style={dynamicStyles.autoRefreshIndicator}>
               <Ionicons name="sync" size={16} color="#007AFF" />

@@ -1276,17 +1276,73 @@ class ApiService {
 
   // ==================== MOBILE DOCUMENTS ====================
 
-  async getDocuments(page = 1, perPage = 20, search?: string, category?: string): Promise<ApiResponse> {
+  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number): Promise<ApiResponse> {
     try {
+      // If workspaceId is provided, use the dedicated workspace files endpoint
+      // This endpoint properly filters files using FileWorkspaceVisibility
+      if (workspaceId) {
+        console.log('📁 API: Using workspace files endpoint for workspaceId:', workspaceId);
+        const url = `/api/v1/web/workspaces/${workspaceId}/files`;
+        console.log('📁 API: Requesting workspace files from:', url);
+        const response = await this.client.get(url);
+        console.log('📁 API: Workspace files response success:', response.data?.success, 'Files count:', response.data?.files?.length || 0);
+        
+        // Transform workspace files response format to match expected format
+        if (response.data?.success && response.data?.files) {
+          // Apply search and category filters client-side if needed
+          let filteredFiles = response.data.files;
+          if (search) {
+            filteredFiles = filteredFiles.filter((file: any) => 
+              (file.original_filename || file.filename || '').toLowerCase().includes(search.toLowerCase())
+            );
+          }
+          if (category) {
+            filteredFiles = filteredFiles.filter((file: any) => 
+              (file.file_kind || '').toLowerCase() === category.toLowerCase()
+            );
+          }
+          
+          return {
+            success: true,
+            data: filteredFiles,
+            files: filteredFiles,
+            pagination: {
+              page: 1,
+              per_page: filteredFiles.length,
+              total: filteredFiles.length,
+              has_more: false
+            }
+          };
+        }
+        return response.data;
+      }
+      
+      // For non-workspace requests, use the regular web files endpoint
       const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('perPage', perPage.toString());
       if (search) params.append('search', search);
       if (category) params.append('category', category);
       
-      const response = await this.client.get(`${MOBILE_ENDPOINTS.DOCUMENTS}?${params}`);
+      const url = `/api/v1/web/files?${params}`;
+      console.log('📁 API: Requesting files from web endpoint:', url);
+      const response = await this.client.get(url);
+      console.log('📁 API: Files response success:', response.data?.success, 'Files count:', response.data?.files?.length || 0);
+      
+      // Transform web response format to match expected format
+      if (response.data?.success && response.data?.files) {
+        return {
+          success: true,
+          data: response.data.files,
+          files: response.data.files,
+          pagination: response.data.pagination
+        };
+      }
       return response.data;
     } catch (error: any) {
-      // For backward compatibility, return files if documents endpoint fails
-      return this.getFiles(page, perPage, search, category);
+      console.warn('📁 API: Web files endpoint failed, falling back to getFiles:', error.message);
+      // For backward compatibility, return files if web endpoint fails
+      return this.getFiles(page, perPage, search, category, workspaceId);
     }
   }
 

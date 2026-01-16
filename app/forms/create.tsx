@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     FlatList,
     RefreshControl,
     ScrollView,
@@ -45,6 +46,25 @@ export default function CreateFormScreen() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Refresh forms list when switching to "My Forms" tab
+  useEffect(() => {
+    if (activeTab === 'recent') {
+      console.log('🔄 Tab switched to "My Forms", refreshing user forms...');
+      loadUserForms();
+    }
+  }, [activeTab]);
+
+  // Refresh forms list when screen comes into focus (e.g., when returning from form builder)
+  useFocusEffect(
+    useCallback(() => {
+      // Only refresh if we're on the "My Forms" tab
+      if (activeTab === 'recent') {
+        console.log('🔄 Screen focused, refreshing user forms...');
+        loadUserForms();
+      }
+    }, [activeTab])
+  );
 
   const loadData = async () => {
     await Promise.all([
@@ -275,8 +295,44 @@ export default function CreateFormScreen() {
     </TouchableOpacity>
   );
 
+  const deleteForm = async (form: Form) => {
+    Alert.alert(
+      'Delete Form',
+      `Are you sure you want to delete "${form.title}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              console.log('🗑️ Deleting form:', form.id);
+              const response = await apiService.deleteForm(form.id);
+              
+              if (response.success) {
+                console.log('✅ Form deleted successfully');
+                // Remove from list and refresh
+                setUserForms(prev => prev.filter(f => f.id !== form.id));
+                Alert.alert('Success', 'Form deleted successfully');
+              } else {
+                Alert.alert('Error', response.message || 'Failed to delete form');
+              }
+            } catch (error: any) {
+              console.error('❌ Failed to delete form:', error);
+              Alert.alert('Error', error?.message || 'Failed to delete form');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const renderUserFormItem = ({ item }: { item: Form }) => (
-    <TouchableOpacity style={styles.templateCard} onPress={() => selectUserForm(item)}>
+    <TouchableOpacity 
+      style={styles.templateCard} 
+      onPress={() => selectUserForm(item)}
+      activeOpacity={0.7}
+    >
       <View style={[styles.templateIcon, { backgroundColor: '#007AFF20' }]}>
         <Ionicons 
           name="document-text" 
@@ -291,9 +347,21 @@ export default function CreateFormScreen() {
           <View style={[styles.categoryBadge, { backgroundColor: '#007AFF' }]}>
             <Text style={styles.categoryText}>My Form</Text>
           </View>
-          <Text style={styles.fieldsCount}>
-            {item.json_fields?.length || 0} fields • {item.response_count || 0} responses
-          </Text>
+          <View style={styles.metaRight}>
+            <Text style={styles.fieldsCount}>
+              {item.json_fields?.length || 0} fields • {item.response_count || 0} responses
+            </Text>
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={(e) => {
+                e.stopPropagation(); // Prevent triggering the parent TouchableOpacity
+                deleteForm(item);
+              }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="trash-outline" size={18} color="#FF3B30" />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
       <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
@@ -349,7 +417,9 @@ export default function CreateFormScreen() {
       <View style={styles.tabContainer}>
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'templates' && styles.activeTab]} 
-          onPress={() => setActiveTab('templates')}
+          onPress={() => {
+            setActiveTab('templates');
+          }}
         >
           <Text style={[styles.tabText, activeTab === 'templates' && styles.activeTabText]}>
             Templates
@@ -357,7 +427,10 @@ export default function CreateFormScreen() {
         </TouchableOpacity>
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'recent' && styles.activeTab]} 
-          onPress={() => setActiveTab('recent')}
+          onPress={() => {
+            setActiveTab('recent');
+            // Refresh will happen automatically via useEffect when activeTab changes
+          }}
         >
           <Text style={[styles.tabText, activeTab === 'recent' && styles.activeTabText]}>
             My Forms
@@ -563,6 +636,11 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
+  deleteButton: {
+    padding: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   templateIcon: {
     width: 48,
     height: 48,
@@ -590,6 +668,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  metaRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   categoryBadge: {
     paddingHorizontal: 6,
