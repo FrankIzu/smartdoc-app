@@ -62,14 +62,31 @@ export default function CreateMeetingScreen() {
       console.log('📱 Create meeting response:', response.data);
       
       if (response.data.success) {
-        Alert.alert('Success', 'Meeting created successfully!', [
-          {
-            text: 'OK',
-            onPress: () => {
-              router.back();
+        const meetingData = response.data.data || response.data;
+        // Prioritize roomCode (HMS room_id) over meetingId (database ID)
+        const meetingId = meetingData.roomCode || meetingData.hmsRoomId || meetingData.meetingId || meetingData.id || meetingData.room_code;
+        const meetingTitle = meetingData.title || meetingData.name || meetingData.roomName || meetingData.title;
+        
+        if (meetingId) {
+          // Navigate directly to HMS prebuilt interface
+          router.push({
+            pathname: '/quick-reach/hms-meeting-interface',
+            params: {
+              meetingId: meetingId,
+              title: meetingTitle || meetingData.title || 'Meeting',
+              userName: 'Mobile User'
             }
-          }
-        ]);
+          });
+        } else {
+          Alert.alert('Success', 'Meeting created successfully!', [
+            {
+              text: 'OK',
+              onPress: () => {
+                router.back();
+              }
+            }
+          ]);
+        }
       } else {
         Alert.alert('Error', response.data.message || 'Failed to create meeting');
       }
@@ -98,14 +115,31 @@ export default function CreateMeetingScreen() {
                   const response = await apiClient.client.post('/api/v1/video/room/create', meetingPayload);
                   
                   if (response.data.success) {
-                    Alert.alert('Success', 'Meeting created successfully!', [
-                      {
-                        text: 'OK',
-                        onPress: () => {
-                          router.back();
+                    const meetingData = response.data.data || response.data;
+                    // Prioritize roomCode (HMS room_id) over meetingId (database ID)
+                    const meetingId = meetingData.roomCode || meetingData.hmsRoomId || meetingData.meetingId || meetingData.id || meetingData.room_code;
+                    const meetingTitle = meetingData.title || meetingData.name || meetingData.roomName || meetingData.title;
+                    
+                    if (meetingId) {
+                      // Navigate directly to HMS prebuilt interface
+                      router.push({
+                        pathname: '/quick-reach/hms-meeting-interface',
+                        params: {
+                          meetingId: meetingId,
+                          title: meetingTitle || 'Meeting',
+                          userName: 'Mobile User'
                         }
-                      }
-                    ]);
+                      });
+                    } else {
+                      Alert.alert('Success', 'Meeting created successfully!', [
+                        {
+                          text: 'OK',
+                          onPress: () => {
+                            router.back();
+                          }
+                        }
+                      ]);
+                    }
                   } else {
                     Alert.alert('Error', response.data.message || 'Failed to create meeting');
                   }
