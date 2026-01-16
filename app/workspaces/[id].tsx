@@ -2,14 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-    Alert,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -70,6 +71,7 @@ export default function WorkspaceDetailsScreen() {
   const [selectedInvitation, setSelectedInvitation] = useState<any>(null);
   const [showMemberActionSheet, setShowMemberActionSheet] = useState(false);
   const [selectedMember, setSelectedMember] = useState<WorkspaceMember | null>(null);
+  const [creatingMeeting, setCreatingMeeting] = useState(false);
 
   const loadWorkspaceDetails = async () => {
     if (!user) return;
@@ -203,7 +205,7 @@ export default function WorkspaceDetailsScreen() {
           onPress: async () => {
             try {
               // Find current user's member ID
-              const currentUserMember = members.find(m => m.user_id === user.id);
+              const currentUserMember = members.find(m => m.user_id === Number(user.id));
               if (!currentUserMember) {
                 Alert.alert('Error', 'Could not find your membership in this workspace');
                 return;
@@ -551,33 +553,145 @@ export default function WorkspaceDetailsScreen() {
           <Text style={dynamicStyles.sectionTitle}>Quick Actions</Text>
           <View style={dynamicStyles.actionsGrid}>
             <TouchableOpacity 
-              style={dynamicStyles.actionButton} 
-              onPress={() => router.push('/quick-reach/meeting-call')}
+              style={[dynamicStyles.actionButton, creatingMeeting && { opacity: 0.6 }]} 
+              onPress={async () => {
+                if (creatingMeeting || !workspace) return;
+                
+                try {
+                  setCreatingMeeting(true);
+                  
+                  // Get all workspace member emails (excluding current user)
+                  const participantEmails = members
+                    .filter(member => member.user && member.user.email && member.user.email !== user?.email)
+                    .map(member => member.user.email)
+                    .filter((email): email is string => !!email);
+                  
+                  console.log(`📞 Adding ${participantEmails.length} workspace members as participants`);
+                  
+                  // Create a meeting with workspace context
+                  const meetingPayload = {
+                    roomName: `${workspace.name} Meeting`,
+                    title: `${workspace.name} Meeting`,
+                    description: `Meeting in ${workspace.name} workspace`,
+                    isPrivate: false,
+                    enableRecording: false,
+                    enableTranscription: false,
+                    workspace_id: workspace.id,
+                    participants: participantEmails, // Add all workspace members as participants
+                    participant_count: participantEmails.length
+                  };
+
+                  const response = await apiService.client.post('/api/v1/video/room/create', meetingPayload);
+                  
+                  console.log('📱 Create meeting response:', response.data);
+                  
+                  if (response.data.success) {
+                    // Handle different response structures:
+                    // 1. Persistent meeting response: { success: true, room: { meeting_id: "...", ... }, is_existing: true }
+                    // 2. New meeting response: { success: true, data: { meetingId: "...", ... } }
+                    const roomData = response.data.room;
+                    const dataMeeting = response.data.data;
+                    const directData = response.data;
+                    
+                    // Try multiple possible paths for meetingId
+                    // Prioritize roomCode (HMS room_id) over meetingId (database ID)
+                    const meetingId = 
+                      dataMeeting?.roomCode ||  // HMS room_id (preferred - actual HMS room identifier)
+                      roomData?.roomCode ||     // Alternative format
+                      directData?.roomCode ||   // Direct in response
+                      dataMeeting?.hmsRoomId || // Explicit HMS room ID field
+                      roomData?.meeting_id ||   // Persistent meeting (room.meeting_id)
+                      roomData?.meetingId ||    // Alternative format
+                      dataMeeting?.meetingId || // New meeting (data.meetingId) - database ID fallback
+                      directData?.meetingId ||  // Direct in response
+                      roomData?.id?.toString() || // Fallback to room.id
+                      dataMeeting?.id?.toString(); // Fallback to data.id
+                    
+                    // Get meeting title from various possible locations
+                    const meetingTitle = 
+                      roomData?.name || 
+                      roomData?.title || 
+                      dataMeeting?.title || 
+                      dataMeeting?.name || 
+                      dataMeeting?.roomName || 
+                      directData?.title ||
+                      directData?.name ||
+                      `${workspace.name} Meeting`;
+                    
+                    if (meetingId) {
+                      console.log(`✅ Found meetingId: ${meetingId}, title: ${meetingTitle}`);
+                      // Navigate directly to HMS prebuilt interface
+                      router.push({
+                        pathname: '/quick-reach/hms-meeting-interface',
+                        params: {
+                          meetingId: meetingId.toString(),
+                          title: meetingTitle,
+                          userName: user?.name || user?.email?.split('@')[0] || 'Mobile User'
+                        }
+                      });
+                    } else {
+                      console.error('❌ No meetingId found in response:', response.data);
+                      Alert.alert('Error', 'Meeting created but meeting ID not found. Please try joining from the meeting list.');
+                    }
+                  } else {
+                    Alert.alert('Error', response.data.message || 'Failed to create meeting');
+                  }
+                } catch (error: any) {
+                  console.error('Failed to create meeting:', error);
+                  
+                  // Handle conflict - existing active meeting
+                  if (error.response?.status === 409) {
+                    const activeMeeting = error.response?.data?.activeMeeting;
+                    Alert.alert(
+                      'Active Meeting Exists',
+                      `You already have an active meeting: "${activeMeeting?.name || 'Unknown'}". Would you like to join it?`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { 
+                          text: 'Join Meeting', 
+                          onPress: () => {
+                            router.push({
+                              pathname: '/quick-reach/hms-meeting-interface',
+                              params: {
+                                meetingId: activeMeeting?.meetingId || activeMeeting?.id,
+                                title: activeMeeting?.name || 'Active Meeting',
+                                userName: user?.name || user?.email?.split('@')[0] || 'Mobile User'
+                              }
+                            });
+                          }
+                        }
+                      ]
+                    );
+                  } else {
+                    Alert.alert('Error', error.response?.data?.message || 'Failed to create meeting. Please try again.');
+                  }
+                } finally {
+                  setCreatingMeeting(false);
+                }
+              }}
+              disabled={creatingMeeting}
             >
               <View style={[dynamicStyles.actionIcon, { backgroundColor: '#007AFF' }]}>
-                <Ionicons name="videocam" size={24} color="#fff" />
+                {creatingMeeting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="videocam" size={24} color="#fff" />
+                )}
               </View>
-              <Text style={dynamicStyles.actionText}>Start Call</Text>
+              <Text style={dynamicStyles.actionText}>
+                {creatingMeeting ? 'Creating...' : 'Start Call'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
               style={dynamicStyles.actionButton} 
               onPress={() => {
-                // Add workspace context to chat
+                // Navigate directly to user-chat screen with workspace context
                 router.push({
-                  pathname: '/(tabs)/chats',
+                  pathname: '/user-chat',
                   params: { 
-                    workspaceId: id, 
-                    workspaceName: workspace.name,
-                    workspaceDescription: workspace.description || '',
-                    workspaceSlug: workspace.slug,
-                    workspaceOwnerId: workspace.owner_id.toString(),
-                    workspaceIsPersonal: workspace.is_personal.toString(),
-                    workspaceMemberCount: workspace.member_count.toString(),
-                    workspaceUserRole: workspace.user_role,
-                    workspaceCanManage: workspace.can_manage.toString(),
-                    workspaceCanInvite: workspace.can_invite.toString(),
-                    workspaceCanEdit: workspace.can_edit.toString()
+                    workspaceId: id.toString(), 
+                    workspaceName: workspace.name
                   }
                 });
               }}
@@ -667,12 +781,12 @@ export default function WorkspaceDetailsScreen() {
                       )}
                     </View>
                     <View style={dynamicStyles.memberActions}>
-                      {member.user_id === user?.id && (
+                      {member.user_id === Number(user?.id) && (
                         <View style={dynamicStyles.youBadge}>
                           <Text style={dynamicStyles.youBadgeText}>You</Text>
                         </View>
                       )}
-                      {workspace?.can_manage && member.user_id !== user?.id && member.can_remove && (
+                      {workspace?.can_manage && member.user_id !== Number(user?.id) && member.can_remove && (
                         <TouchableOpacity
                           style={dynamicStyles.memberActionButton}
                           onPress={() => {

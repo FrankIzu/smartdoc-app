@@ -18,6 +18,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
 import { apiService } from '../../services/api';
 
 interface FormField {
@@ -66,6 +67,8 @@ export default function FormBuilderScreen() {
   const [saving, setSaving] = useState(false);
   const [responses, setResponses] = useState<any[]>([]);
   const [loadingResponses, setLoadingResponses] = useState(false);
+  const [formId, setFormId] = useState<number | null>((params.formId as string) ? parseInt(params.formId as string) : null);
+  const [formShareUrl, setFormShareUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (params.fields) {
@@ -174,6 +177,12 @@ export default function FormBuilderScreen() {
     try {
       setSaving(true);
       
+      console.log('📝 Creating form with data:', {
+        name: formData.name,
+        fieldsCount: formData.fields.length,
+        fields: formData.fields
+      });
+      
       const response = await apiService.createForm({
         name: formData.name,
         title: formData.name,
@@ -185,7 +194,25 @@ export default function FormBuilderScreen() {
         settings: {}
       });
 
-      if (response.success) {
+      console.log('📋 Form creation response:', JSON.stringify(response, null, 2));
+
+      // Handle different response structures
+      const isSuccess = response?.success === true || response?.success === 'true';
+      const createdForm = response?.form || response?.data || response;
+
+      if (isSuccess) {
+        const savedFormId = createdForm?.id || createdForm?.form?.id;
+        const shareUrl = createdForm?.share_url || createdForm?.form?.share_url;
+        console.log('✅ Form created successfully:', savedFormId);
+        
+        // Store the form ID and share URL so sharing works immediately
+        if (savedFormId) {
+          setFormId(typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId));
+        }
+        if (shareUrl) {
+          setFormShareUrl(shareUrl);
+        }
+        
         Alert.alert(
           'Success',
           'Form saved successfully!',
@@ -194,29 +221,158 @@ export default function FormBuilderScreen() {
           ]
         );
       } else {
-        Alert.alert('Error', response.message || 'Failed to save form');
+        const errorMessage = response?.message || response?.error || 'Failed to save form';
+        console.error('❌ Form creation failed:', errorMessage);
+        Alert.alert('Error', errorMessage);
       }
-    } catch (error) {
-      console.error('Save form error:', error);
-      Alert.alert('Error', 'Failed to save form');
+    } catch (error: any) {
+      console.error('❌ Save form error:', error);
+      console.error('❌ Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status
+      });
+      const errorMessage = error?.response?.data?.message || error?.message || 'Failed to save form';
+      Alert.alert('Error', errorMessage);
     } finally {
       setSaving(false);
     }
   };
 
-  const shareForm = () => {
-    Alert.alert(
-      'Share Form',
-      'Choose how you want to share this form:',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Copy Link', onPress: () => {
-          // TODO: Implement form sharing
-          Alert.alert('Info', 'Form sharing will be available after saving');
-        }},
-        { text: 'Save & Share', onPress: saveForm }
-      ]
-    );
+  const shareForm = async () => {
+    // Check if form has been saved (has an ID)
+    const currentFormId = formId || (params.formId ? parseInt(params.formId as string) : null);
+    
+    if (!currentFormId) {
+      // Form hasn't been saved yet, prompt to save first
+      Alert.alert(
+        'Share Form',
+        'Please save the form first before sharing.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Save & Share', onPress: async () => {
+            // Save the form first, then share
+            // We'll handle sharing in the saveForm success callback
+            const originalSaveForm = saveForm;
+            // Create a wrapper that shares after saving
+            const saveAndShare = async () => {
+              try {
+                setSaving(true);
+                
+                const response = await apiService.createForm({
+                  name: formData.name,
+                  title: formData.name,
+                  description: formData.description,
+                  type: 'Custom',
+                  json_fields: formData.fields,
+                  theme: 'default',
+                  is_public: false,
+                  settings: {}
+                });
+
+                const isSuccess = response?.success === true || response?.success === 'true';
+                const createdForm = response?.form || response?.data || response;
+
+                if (isSuccess) {
+                  const savedFormId = createdForm?.id || createdForm?.form?.id;
+                  const shareUrl = createdForm?.share_url || createdForm?.form?.share_url;
+                  
+                  if (savedFormId) {
+                    setFormId(typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId));
+                  }
+                  if (shareUrl) {
+                    setFormShareUrl(shareUrl);
+                  }
+                  
+                  // Now share the form
+                  if (savedFormId) {
+                    handleShareForm(savedFormId);
+                  }
+                } else {
+                  Alert.alert('Error', response?.message || 'Failed to save form');
+                }
+              } catch (error: any) {
+                Alert.alert('Error', error?.message || 'Failed to save form');
+              } finally {
+                setSaving(false);
+              }
+            };
+            
+            await saveAndShare();
+          }}
+        ]
+      );
+      return;
+    }
+    
+    // Form is saved, show sharing options
+    handleShareForm(currentFormId);
+  };
+
+  const handleShareForm = async (formIdToShare: number) => {
+    try {
+      // Try to use cached share URL first, otherwise fetch it
+      let shareUrl = formShareUrl;
+      
+      if (!shareUrl) {
+        // Get the form's share URL from API
+        const formResponse = await apiService.getFormById(formIdToShare);
+        const form = formResponse?.form || formResponse?.data || formResponse;
+        shareUrl = form?.share_url;
+        
+        if (shareUrl) {
+          setFormShareUrl(shareUrl); // Cache it for future use
+        }
+      }
+      
+      if (!shareUrl) {
+        Alert.alert('Error', 'Share URL not available for this form');
+        return;
+      }
+      
+      // Construct the full share URL - use the public form endpoint
+      // The share URL is typically the share_url token, and the public endpoint is /form/{share_url}
+      const { API_BASE_URL } = await import('../../constants/Config');
+      const baseUrl = API_BASE_URL || 'http://localhost:5000';
+      const fullShareUrl = `${baseUrl}/form/${shareUrl}`;
+      
+      Alert.alert(
+        'Share Form',
+        'Choose how you want to share this form:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Copy Link', 
+            onPress: async () => {
+              try {
+                await Clipboard.setStringAsync(fullShareUrl);
+                Alert.alert('Success', 'Share link copied to clipboard!');
+              } catch (error) {
+                console.error('Failed to copy link:', error);
+                Alert.alert('Error', 'Failed to copy link');
+              }
+            }
+          },
+          { 
+            text: 'Share', 
+            onPress: async () => {
+              try {
+                await Share.share({
+                  message: `Check out this form: ${fullShareUrl}`,
+                  url: fullShareUrl,
+                  title: formData.name
+                });
+              } catch (error) {
+                console.error('Failed to share:', error);
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Failed to get form share URL:', error);
+      Alert.alert('Error', 'Failed to get share link. Please try again.');
+    }
   };
 
   const renderFieldItem = ({ item, index }: { item: FormField; index: number }) => {

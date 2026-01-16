@@ -489,58 +489,46 @@ export default function ChatsScreen() {
   // Handle workspace context from navigation
   useEffect(() => {
     if (params.workspaceId && params.workspaceName) {
-      const workspaceContext: Workspace = {
-        id: parseInt(params.workspaceId as string),
-        name: params.workspaceName as string,
-        description: params.workspaceDescription as string || '',
-        slug: params.workspaceSlug as string || '',
-        owner_id: parseInt(params.workspaceOwnerId as string) || 0,
-        is_personal: params.workspaceIsPersonal === 'true',
-        is_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        member_count: parseInt(params.workspaceMemberCount as string) || 0,
-        user_role: (params.workspaceUserRole as any) || 'member',
-        can_manage: params.workspaceCanManage === 'true',
-        can_invite: params.workspaceCanInvite === 'true',
-        can_edit: params.workspaceCanEdit === 'true'
-      };
+      const workspaceId = parseInt(params.workspaceId as string);
+      const workspaceName = params.workspaceName as string;
       
-      // Create a workspace-focused chat
-      const workspaceChat: Chat = {
-        id: Date.now(),
-        title: `Chat in ${workspaceContext.name}`,
-        type: 'workspace',
-        participants: [{ id: 1, username: 'Chat Assistant', email: 'ai@grabdocs.com' }],
-        last_message: `Ready to chat in ${workspaceContext.name} workspace`,
-        updated_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        unread_count: 0,
-        workspace: workspaceContext
-      };
-      
-      // Add the chat to the list and select it
-      setChats(prev => {
-        const chatAssistant = prev.find(chat => chat.id === -1); // Find the default Chat Assistant
-        const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default Chat Assistant
-        
-        if (chatAssistant) {
-          // Chat Assistant exists, add new chat after it
-          return [chatAssistant, workspaceChat, ...otherChats];
-        } else {
-          // No Chat Assistant found, add new chat at beginning
-          return [workspaceChat, ...prev];
+      // Start/find the real workspace chat via API
+      const startWorkspaceChat = async () => {
+        try {
+          const response = await api.startUserChat({
+            type: 'workspace',
+            workspace_id: workspaceId
+          });
+          
+          if (response.success && (response as any).chat) {
+            const chatData = (response as any).chat;
+            
+            // Navigate to user-chat screen with the workspace chat
+            router.push({
+              pathname: '/user-chat',
+              params: {
+                chatId: chatData.id.toString(),
+                chatType: 'workspace',
+                workspaceId: workspaceId.toString(),
+                workspaceName: workspaceName
+              }
+            });
+          } else {
+            console.error('Failed to start workspace chat:', response);
+            Alert.alert('Error', 'Failed to start workspace chat. Please try again.');
+          }
+        } catch (error: any) {
+          console.error('Error starting workspace chat:', error);
+          Alert.alert('Error', error.message || 'Failed to start workspace chat. Please try again.');
+        } finally {
+          // Clear the params to prevent re-triggering
+          router.setParams({});
         }
-      });
-      setSelectedChat(workspaceChat);
+      };
       
-      // Don't show welcome message - just show empty chat
-      setMessages([]);
-      
-      // Clear the params to prevent re-triggering
-      router.setParams({});
+      startWorkspaceChat();
     }
-  }, [params.workspaceId, params.workspaceName, params.workspaceDescription, params.workspaceSlug, params.workspaceOwnerId, params.workspaceIsPersonal, params.workspaceMemberCount, params.workspaceUserRole, params.workspaceCanManage, params.workspaceCanInvite, params.workspaceCanEdit]);
+  }, [params.workspaceId, params.workspaceName]);
 
   const startBounceAnimation = () => {
     // Keep only the button bounce animation

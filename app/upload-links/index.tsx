@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
     Alert,
     FlatList,
+    Modal,
     Platform,
     RefreshControl,
     Share,
@@ -38,6 +39,8 @@ export default function UploadLinksScreen() {
   const [uploadLinks, setUploadLinks] = useState<UploadLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [selectedLink, setSelectedLink] = useState<UploadLink | null>(null);
 
   const loadUploadLinks = async () => {
     if (!user) {
@@ -155,6 +158,20 @@ export default function UploadLinksScreen() {
         },
       ]
     );
+  };
+
+  const handleViewFiles = (link: UploadLink) => {
+    router.push(`/upload-links/${link.id}`);
+  };
+
+  const openMenu = (link: UploadLink) => {
+    setSelectedLink(link);
+    setMenuVisible(true);
+  };
+
+  const closeMenu = () => {
+    setMenuVisible(false);
+    setSelectedLink(null);
   };
 
   const formatDate = (dateString: string) => {
@@ -303,7 +320,41 @@ export default function UploadLinksScreen() {
       fontSize: 12,
       color: colors.textLight,
     },
-  }), [colors]);
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    menuContainer: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 8,
+      minWidth: 200,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 8,
+      elevation: 5,
+    },
+    menuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 12,
+      borderRadius: 8,
+    },
+    menuItemDanger: {
+      marginTop: 4,
+    },
+    menuItemText: {
+      fontSize: 16,
+      color: colors.text,
+      marginLeft: 12,
+    },
+    menuItemTextDanger: {
+      color: '#FF3B30',
+    },
+  }), [colors, selectedLink]);
 
   const renderUploadLink = ({ item }: { item: UploadLink }) => {
     const expired = isExpired(item.expires_at);
@@ -327,25 +378,12 @@ export default function UploadLinksScreen() {
           <View style={dynamicStyles.linkActions}>
             <TouchableOpacity
               style={dynamicStyles.actionButton}
-              onPress={() => handleShareLink(item)}
+              onPress={(e) => {
+                e.stopPropagation();
+                openMenu(item);
+              }}
             >
-              <Ionicons name="share" size={20} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={dynamicStyles.actionButton}
-              onPress={() => handleToggleActive(item)}
-            >
-              <Ionicons 
-                name={item.is_active ? "pause" : "play"} 
-                size={20} 
-                color={item.is_active ? "#FF9500" : "#34C759"} 
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={dynamicStyles.actionButton}
-              onPress={() => handleDeleteLink(item)}
-            >
-              <Ionicons name="trash" size={20} color="#FF3B30" />
+              <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
             </TouchableOpacity>
           </View>
         </View>

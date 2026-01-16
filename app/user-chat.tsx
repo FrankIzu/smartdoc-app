@@ -2,7 +2,7 @@
 import 'react-native-url-polyfill/auto';
 
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -58,6 +58,7 @@ interface ChatMessage {
 
 export default function UserChatScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   
@@ -288,6 +289,93 @@ export default function UserChatScreen() {
     loadWorkspaces();
   }, []);
 
+  // Handle route params to open specific chat (e.g., from workspace screen)
+  useEffect(() => {
+    if (!params.chatId && !params.workspaceId) {
+      return; // No params to handle
+    }
+
+    const handleRouteParams = async () => {
+      // If chatId is provided, find and select it
+      if (params.chatId) {
+        const chatId = parseInt(params.chatId as string);
+        const chat = chats.find(c => c.id === chatId);
+        
+        if (chat) {
+          setSelectedChat(chat);
+          loadMessages(chatId);
+          // Clear params to prevent re-triggering
+          router.setParams({});
+          return;
+        }
+      }
+      
+      // If workspace params exist, start/find the workspace chat
+      if (params.workspaceId && params.workspaceName) {
+        const workspaceId = parseInt(params.workspaceId as string);
+        const workspaceName = params.workspaceName as string;
+        
+        try {
+          const response = await api.startUserChat({
+            type: 'workspace',
+            workspace_id: workspaceId
+          });
+          
+          if (response.success && (response as any).chat) {
+            const chatData = (response as any).chat;
+            
+            // Format title as #{workspace.name} like web version
+            const title = chatData.display_name?.startsWith('#') 
+              ? chatData.display_name 
+              : `#${workspaceName}`;
+            
+            const newChat: Chat = {
+              id: chatData.id,
+              title: title,
+              type: 'workspace' as const,
+              participants: chatData.participants || [],
+              last_message: chatData.latest_message?.content || 'No messages yet',
+              updated_at: chatData.last_message_at || new Date().toISOString(),
+              created_at: chatData.created_at || new Date().toISOString(),
+              unread_count: chatData.unread_count || 0,
+              workspace: chatData.workspace_id ? { 
+                id: chatData.workspace_id, 
+                name: workspaceName, 
+                slug: chatData.workspace?.slug || '' 
+              } : undefined,
+            };
+            
+            // Add to chats list if not already there
+            setChats(prev => {
+              const exists = prev.find(c => c.id === newChat.id);
+              if (exists) {
+                return prev;
+              }
+              return [newChat, ...prev];
+            });
+            
+            setSelectedChat(newChat);
+            loadMessages(chatData.id);
+          }
+        } catch (error: any) {
+          console.error('Error starting workspace chat:', error);
+          Alert.alert('Error', error.message || 'Failed to start workspace chat');
+        } finally {
+          // Clear params
+          router.setParams({});
+        }
+      }
+    };
+
+    // Wait for chats to load if we need chatId, otherwise proceed immediately for workspace
+    if (params.chatId && chats.length === 0) {
+      // Wait for chats to load
+      return;
+    }
+    
+    handleRouteParams();
+  }, [params.chatId, params.workspaceId, params.workspaceName, chats.length]);
+
   const loadUserProfile = async () => {
     try {
       const response = await api.getUserProfile();
@@ -304,17 +392,32 @@ export default function UserChatScreen() {
       setLoading(true);
       const response = await api.getChats();
       if (response.success && (response as any).chats) {
-        const userChats = (response as any).chats.map((chat: any) => ({
-          id: chat.id,
-          title: chat.display_name || 'Untitled Chat',
-          type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
-          participants: chat.participants || [],
-          last_message: chat.latest_message?.content || 'No messages yet',
-          updated_at: chat.last_message_at || new Date().toISOString(),
-          created_at: chat.created_at || new Date().toISOString(),
-          unread_count: chat.unread_count || 0,
-          workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } : undefined,
-        }));
+        const userChats = (response as any).chats.map((chat: any) => {
+          // For workspace chats, use #{workspace.name} format like web
+          let title = chat.display_name || 'Untitled Chat';
+          if (chat.type === 'workspace' && chat.workspace) {
+            title = `#${chat.workspace.name}`;
+          } else if (chat.type === 'workspace' && chat.display_name && !chat.display_name.startsWith('#')) {
+            // If display_name doesn't start with #, add it
+            title = `#${chat.display_name}`;
+          }
+          
+          return {
+            id: chat.id,
+            title: title,
+            type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
+            participants: chat.participants || [],
+            last_message: chat.latest_message?.content || 'No messages yet',
+            updated_at: chat.last_message_at || new Date().toISOString(),
+            created_at: chat.created_at || new Date().toISOString(),
+            unread_count: chat.unread_count || 0,
+            workspace: chat.workspace_id ? { 
+              id: chat.workspace_id, 
+              name: chat.workspace?.name || chat.display_name?.replace(/^#/, '') || 'Workspace', 
+              slug: chat.workspace?.slug || '' 
+            } : undefined,
+          };
+        });
         setChats(userChats);
       }
     } catch (error) {
@@ -660,6 +763,11 @@ export default function UserChatScreen() {
       fontWeight: 'bold',
       color: colors.text,
     },
+    headerSubtitle: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
     backButton: {
       padding: 8,
     },
@@ -944,8 +1052,13 @@ export default function UserChatScreen() {
             <Text style={dynamicStyles.headerTitle}>
               {isNewChat ? 'New Message' : selectedChat?.title || ''}
             </Text>
+            {!isNewChat && selectedChat && selectedChat.participants !== undefined && (
+              <Text style={dynamicStyles.headerSubtitle}>
+                {selectedChat.participants.length} participant{selectedChat.participants.length !== 1 ? 's' : ''}
+              </Text>
+            )}
             {!isNewChat && isConnected && otherUserOnline && (
-              <Text style={{ fontSize: 10, color: colors.textSecondary }}>Connected</Text>
+              <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 2 }}>Connected</Text>
             )}
             {isNewChat && selectedRecipient && (
               <Text style={{ fontSize: 12, color: colors.textSecondary }}>

@@ -234,28 +234,52 @@ export default function HMSMeetingInterfaceScreen() {
   };
 
   // Timeout to detect if HMS gets stuck (black screen issue)
+  // Since React Native HMSPrebuilt doesn't have onJoin callback,
+  // we use a two-stage timeout:
+  // 1. After 5 seconds, assume join is in progress and hide loading overlay
+  // 2. After 20 seconds, if still initializing, show error
   useEffect(() => {
-    if (hmsInitializing) {
-      const timeoutId = setTimeout(() => {
-        console.warn('📱 [HMS] Initialization timeout after 15 seconds - component may be stuck');
+    if (hmsInitializing && authToken) {
+      // Stage 1: Clear loading overlay after 5 seconds (assuming join is in progress)
+      const successTimeoutId = setTimeout(() => {
+        console.log('✅ [HMS] Assuming join successful after 5 seconds (HMSPrebuilt should be rendering)');
+        setHmsInitializing(false); // Clear loading overlay
+        setIsLoading(false);
+        // Don't set error - component should be rendering by now
+      }, 5000); // 5 seconds - enough time for HMS to start joining
+      
+      // Stage 2: Error timeout after 20 seconds
+      const errorTimeoutId = setTimeout(() => {
+        console.warn('📱 [HMS] Initialization timeout after 20 seconds - component may be stuck');
+        console.warn('📱 [HMS] This usually means HMS Prebuilt failed to join');
         setHmsInitTimeout(true);
         setHmsInitializing(false);
+        setIsLoading(false);
+        setError('Meeting initialization timed out. Please check your connection and try again.');
         // Log timeout error
         errorLogger.logError(
-          new Error('HMS initialization timeout - black screen issue'),
+          new Error('HMS initialization timeout - component failed to join'),
           {
             severity: 'error',
             screenName: 'HMSMeetingInterface',
             userAction: 'HMS Initialization Timeout',
             errorType: 'HMSInitializationTimeout',
             userId: user?.id,
+            metadata: {
+              meetingId: meetingId as string,
+              hasAuthToken: !!authToken,
+              authTokenLength: authToken?.length || 0,
+            }
           }
         );
-      }, 15000); // 15 second timeout
+      }, 20000); // 20 second timeout
       
-      return () => clearTimeout(timeoutId);
+      return () => {
+        clearTimeout(successTimeoutId);
+        clearTimeout(errorTimeoutId);
+      };
     }
-  }, [hmsInitializing]);
+  }, [hmsInitializing, authToken, meetingId, user?.id]);
 
   const initializePrebuiltInterface = async () => {
     try {
@@ -397,12 +421,18 @@ export default function HMSMeetingInterfaceScreen() {
       console.log('💡 NOTE: Changes to this component logic can use Fast Refresh');
       console.log('💡 NOTE: Only native module changes require rebuilds');
       
-      // Set flag that HMS is initializing (will be cleared when component mounts)
+      // Set flag that HMS is initializing
+      // Note: React Native HMSPrebuilt doesn't have onJoin callback
+      // It will automatically join when mounted, so we use a timeout to detect if it fails
       setHmsInitializing(true);
+      setIsLoading(false); // Clear initial loading, but keep hmsInitializing for overlay
       
-      // Don't set isLoading to false yet - wait for HMS to actually render
-      // The loading overlay will show while hmsInitializing is true
-      console.log('✅ [HMS] Initialization complete, waiting for HMS to render...');
+      // React Native HMSPrebuilt automatically joins when mounted with valid token/roomCode
+      // Since there's no onJoin callback, we rely on timeout to detect failures
+      console.log('✅ [HMS] Initialization complete, HMS Prebuilt will automatically join...');
+      console.log('✅ [HMS] Note: React Native HMSPrebuilt uses "token" prop (not "authToken")');
+      console.log('✅ [HMS] Note: React Native HMSPrebuilt does NOT have onJoin callback');
+      console.log('✅ [HMS] Using timeout to detect if join succeeds (component will render when joined)');
       
     } catch (error: any) {
       console.error('❌ Failed to initialize 100ms Prebuilt Interface:', error);
@@ -460,9 +490,14 @@ export default function HMSMeetingInterfaceScreen() {
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Initializing 100ms Prebuilt Interface...</Text>
           {hmsInitializing && authToken && (
-            <Text style={[styles.loadingText, { marginTop: 8, fontSize: 14, opacity: 0.7 }]}>
-              Connecting to meeting...
-            </Text>
+            <>
+              <Text style={[styles.loadingText, { marginTop: 8, fontSize: 14, opacity: 0.7 }]}>
+                Connecting to meeting...
+              </Text>
+              <Text style={[styles.loadingText, { marginTop: 8, fontSize: 12, opacity: 0.5 }]}>
+                This may take a few seconds
+              </Text>
+            </>
           )}
         </View>
       </SafeAreaView>
@@ -662,22 +697,51 @@ export default function HMSMeetingInterfaceScreen() {
       console.log('=====================================');
       
       // Prepare props object with only valid values
+      // According to 100ms React Native docs: HMSPrebuilt uses:
+      // - roomCode OR token (not authToken!)
+      // - options: { userName, userId }
+      // - onLeave callback
+      // - NO onJoin callback (use HMSSDK event listeners instead)
+      // roomCode should be the meeting room code (e.g., "abc-defg-hij" from URL)
+      // If meetingId is a full URL, extract the code; otherwise use it directly
+      let finalRoomCode = roomCode.trim();
+      
+      // Extract room code from URL if needed (format: https://subdomain.app.100ms.live/meeting/abc-defg-hij)
+      // Or if meetingId is already just the code, use it as-is
+      if (finalRoomCode.includes('/meeting/')) {
+        const urlParts = finalRoomCode.split('/meeting/');
+        if (urlParts.length > 1) {
+          finalRoomCode = urlParts[1].split('?')[0]; // Remove query params if any
+        }
+      }
+      
+      // React Native HMSPrebuilt props format:
+      // - token (not authToken) - required if using token-based join
+      // - roomCode - required if using roomCode-based join
+      // - options: { userName, userId } - optional
+      // - onLeave - callback when leaving
       const hmsProps = {
-        roomCode: roomCode.trim(),
-        authToken: token.trim(),
-        ...(validUserName && { userName: userName.trim() }),
+        token: token.trim(), // React Native uses 'token', not 'authToken'
+        roomCode: finalRoomCode, // Can use either token OR roomCode
+        options: {
+          ...(validUserName && { userName: userName.trim() }),
+          ...(user?.id && { userId: user.id.toString() }),
+        },
         onLeave: handleLeaveMeeting,
         style: styles.prebuiltContainer
       };
       
+      console.log('📱 [HMS] Final roomCode after processing:', finalRoomCode);
+      console.log('📱 [HMS] Using token prop (React Native format), not authToken');
+      
       console.log('📱 [HMS] HMSPrebuilt props prepared:', {
         roomCode: hmsProps.roomCode.substring(0, 10) + '...',
         roomCodeFull: hmsProps.roomCode,
-        authTokenLength: hmsProps.authToken.length,
-        authTokenPreview: hmsProps.authToken.substring(0, 30) + '...',
-        hasUserName: !!hmsProps.userName,
-        userName: hmsProps.userName,
-        hasOnLeave: !!hmsProps.onLeave
+        tokenLength: hmsProps.token.length,
+        tokenPreview: hmsProps.token.substring(0, 30) + '...',
+        options: hmsProps.options,
+        hasOnLeave: !!hmsProps.onLeave,
+        note: 'React Native uses "token" prop, not "authToken"'
       });
       
       // Log join config one more time right before render
@@ -797,40 +861,20 @@ export default function HMSMeetingInterfaceScreen() {
                   </View>
                 ) : (
                   <HMSPrebuilt 
-                    {...hmsProps}
-                    onJoin={(data?: any) => {
-                      console.log('✅ [HMS] onJoin callback fired - HMS joined successfully');
-                      console.log('✅ [HMS] Join data:', data);
-                      setHmsInitializing(false);
-                      setIsLoading(false); // Clear loading state when HMS joins
-                      setHmsError(null);
-                    }}
-                    onError={(error: any) => {
-                      console.error('❌ [HMS] HMSPrebuilt onError callback fired');
-                      console.error('❌ [HMS] Error details:', error);
-                      console.error('❌ [HMS] Error type:', typeof error);
-                      console.error('❌ [HMS] Error message:', error?.message);
-                      console.error('❌ [HMS] Error code:', error?.code);
-                      console.error('❌ [HMS] Error stack:', error?.stack);
-                      setHmsInitializing(false);
-                      const errorMessage = error?.message || error?.code || 'Failed to join meeting';
-                      setHmsError(errorMessage);
-                      errorLogger.logError(
-                        error instanceof Error ? error : new Error(errorMessage),
-                        {
-                          severity: 'error',
-                          screenName: 'HMSMeetingInterface',
-                          userAction: 'HMS Prebuilt onError',
-                          errorType: 'HMSPrebuiltOnError',
-                          userId: user?.id,
-                        }
-                      );
-                    }}
+                    token={hmsProps.token}
+                    roomCode={hmsProps.roomCode}
+                    options={hmsProps.options}
                     onLeave={(data?: any) => {
                       console.log('👋 [HMS] onLeave callback fired');
                       console.log('👋 [HMS] Leave data:', data);
+                      setHmsInitializing(false);
+                      setIsLoading(false);
                       router.back();
                     }}
+                    style={hmsProps.style}
+                    // Note: React Native HMSPrebuilt does NOT support onJoin callback
+                    // The component will automatically join when mounted with valid token/roomCode
+                    // We use a timeout to detect if join fails silently
                   />
                 )}
               </HMSErrorBoundary>
