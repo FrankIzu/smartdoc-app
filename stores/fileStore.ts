@@ -1,9 +1,11 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
+import { Alert, Platform } from 'react-native';
 import { create } from 'zustand';
 import { apiService } from '../services/api';
 import { FileState, FileUpload, UploadProgress } from '../types';
+import { convertHeicToPng, isHeicFile } from '../utils/imageConversion';
 
 interface FileStore extends FileState {
   // Global state
@@ -106,11 +108,43 @@ export const useFileStore = create<FileStore>((set, get) => ({
       });
       
       try {
+        // Convert HEIC to PNG before upload if needed
+        // This happens here as a fallback in case conversion wasn't done earlier
+        let fileToUpload = file;
+
+        if (isHeicFile(file)) {
+          console.log(`🔄 Converting HEIC to PNG before upload: ${file.name}`);
+          progressStore.updateProgress(progressId, {
+            progress: 5,
+            status: 'in-progress',
+            message: 'Converting HEIC to PNG...',
+          });
+
+          fileToUpload = await convertHeicToPng(
+            file,
+            (progress, message) => {
+              // Scale conversion progress to 5-15% of total upload
+              const scaledProgress = 5 + (progress * 0.1);
+              progressStore.updateProgress(progressId, {
+                progress: scaledProgress,
+                status: 'in-progress',
+                message,
+              });
+            }
+          );
+
+          progressStore.updateProgress(progressId, {
+            progress: 15,
+            status: 'in-progress',
+            message: 'Starting upload...',
+          });
+        }
+
         const formData = new FormData();
         formData.append('file', {
-          uri: file.uri,
-          type: file.type,
-          name: file.name,
+          uri: fileToUpload.uri,
+          type: fileToUpload.type,
+          name: fileToUpload.name,
         } as any);
         
         const response = await apiService.uploadFileWithProgressPolling(
@@ -139,7 +173,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
         if (response.success) {
           // For mobile uploads, the response.data might be undefined initially
           // The progress polling will handle the completion status
-          console.log('📁 Upload successful - task_id:', response.task_id);
+          console.log('📁 Upload successful - task_id:', (response as any).task_id);
           
           // The progress polling already updated the progress to completed
           // Just ensure the progress shows as completed
@@ -225,10 +259,11 @@ export const useFileStore = create<FileStore>((set, get) => ({
       
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
+        // Detect actual file type from URI (iOS camera may capture HEIC)
         const file: FileUpload = {
           uri: asset.uri,
-          name: `photo_${Date.now()}.jpg`,
-          type: 'image/jpeg',
+          name: `photo_${Date.now()}.${asset.type?.includes('heic') ? 'heic' : 'jpg'}`,
+          type: asset.type || 'image/jpeg',
           size: asset.fileSize,
         };
         
@@ -280,14 +315,66 @@ export const useFileStore = create<FileStore>((set, get) => ({
       set({ isImagePickerOpen: false });
       
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const files: FileUpload[] = result.assets.map((asset, index) => ({
-          uri: asset.uri,
-          name: asset.fileName || `image_${Date.now()}_${index}.jpg`,
-          type: 'image/jpeg',
-          size: asset.fileSize || 0,
-        }));
+        // Check mobile file limit (3 files max)
+        const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+        if (isMobile && result.assets.length > 3) {
+          Alert.alert(
+            'Upload Limit',
+            'Sorry, our maximum upload is 3',
+            [{ text: 'OK' }]
+          );
+          return false;
+        }
         
-        console.log('🖼️ Files to upload:', files);
+        // Convert assets to FileUpload format and convert HEIC files
+        const { useProgressStore } = require('../services/progressService');
+        const progressStore = useProgressStore.getState();
+        
+        const files: FileUpload[] = [];
+        
+        for (let i = 0; i < result.assets.length; i++) {
+          const asset = result.assets[i];
+          const originalFile: FileUpload = {
+            uri: asset.uri,
+            name: asset.fileName || `image_${Date.now()}_${i}.jpg`,
+            type: asset.type || 'image/jpeg',
+            size: asset.fileSize || 0,
+          };
+
+          // Show conversion progress if needed
+          const conversionProgressId = progressStore.addProgress({
+            title: `Preparing ${originalFile.name}`,
+            progress: 0,
+            status: 'pending',
+            message: 'Checking format...',
+          });
+          progressStore.showProgress();
+
+          try {
+            // Convert HEIC to PNG if needed
+            const convertedFile = await convertHeicToPng(
+              originalFile,
+              (progress, message) => {
+                progressStore.updateProgress(conversionProgressId, {
+                  progress,
+                  status: 'in-progress',
+                  message,
+                });
+              }
+            );
+
+            // Remove conversion progress and add to files list
+            progressStore.removeProgress(conversionProgressId);
+            files.push(convertedFile);
+          } catch (error: any) {
+            console.error(`Failed to process ${originalFile.name}:`, error);
+            progressStore.removeProgress(conversionProgressId);
+            // Continue with original file if conversion fails
+            files.push(originalFile);
+          }
+        }
+        
+        console.log('🖼️ Files prepared for upload:', files);
         return await get().uploadFiles(files);
       }
       
@@ -319,6 +406,18 @@ export const useFileStore = create<FileStore>((set, get) => ({
       });
       
       if (!result.canceled && result.assets && result.assets.length > 0) {
+        // Check mobile file limit (3 files max)
+        const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+        if (isMobile && result.assets.length > 3) {
+          Alert.alert(
+            'Upload Limit',
+            'Sorry, our maximum upload is 3',
+            [{ text: 'OK' }]
+          );
+          get().setDocumentPickerOpen(false);
+          return false;
+        }
+        
         const files: FileUpload[] = result.assets.map((asset) => ({
           uri: asset.uri,
           name: asset.name,
@@ -421,8 +520,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   downloadFile: async (id: number) => {
     try {
-      const downloadUrl = await apiService.downloadFile(id);
-      return downloadUrl;
+      const result = await apiService.downloadFile(id);
+      // Extract url from the result object
+      return result?.url || null;
     } catch (error: any) {
       set({ error: error.message || 'Failed to download file' });
       return null;
