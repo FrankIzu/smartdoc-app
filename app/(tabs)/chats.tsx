@@ -1,3 +1,6 @@
+// Polyfill for URL in React Native (required for socket.io)
+import 'react-native-url-polyfill/auto';
+
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -18,10 +21,13 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { io, Socket } from 'socket.io-client';
+import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
+import { secureStorage } from '../../utils/storage';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 
 interface ChatParticipant {
@@ -204,6 +210,12 @@ export default function ChatsScreen() {
   const abortControllerRef = useRef<AbortController | null>(null);
   
   const messagesRef = useRef<FlatList>(null);
+
+  // WebSocket for user chats (user_direct and workspace only)
+  const socketRef = useRef<Socket | null>(null);
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<{ [userId: number]: string }>({});
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Animation states (removed bouncing balls)
 
@@ -568,6 +580,206 @@ export default function ChatsScreen() {
   // const startProgressTracking = (taskId: string) => { ... };
   // const stopProgressTracking = () => { ... };
 
+  // Initialize WebSocket for user chats (must be defined before useFocusEffect)
+  const initializeSocket = React.useCallback(async () => {
+    try {
+      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      if (!token) return;
+
+      const socket = io(API_BASE_URL, {
+        auth: { token },
+        transports: ['polling', 'websocket'],
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+        timeout: 20000,
+      });
+
+      socket.on('connect', () => {
+        console.log('✅ [CHATS] Socket connected');
+        setIsSocketConnected(true);
+        
+        // Join user room first (required for receiving messages)
+        // Note: userProfile comes from useChatStore, need to get it from there
+        // We'll join user room in a separate useEffect when userProfile is available
+        console.log('🔌 [CHATS] Socket connected, will join user room when userProfile is available');
+        
+        // Use state setter to get latest selectedChat
+        setSelectedChat(currentChat => {
+          // Rejoin chat room if we have a selected chat
+          if (currentChat && (currentChat.type === 'user_direct' || currentChat.type === 'workspace')) {
+            console.log('🔌 [CHATS] Rejoining chat room after reconnect:', currentChat.id);
+            socket.emit('join_chat_room', { chat_id: currentChat.id });
+            console.log('🔌 [CHATS] Emitted join_chat_room for chat:', currentChat.id);
+          }
+          return currentChat;
+        });
+      });
+
+      socket.on('disconnect', () => {
+        console.log('❌ [CHATS] Socket disconnected');
+        setIsSocketConnected(false);
+      });
+
+      // Listen for new messages (only for user chats)
+      socket.on('new_chat_message', (data: any) => {
+        console.log('📨 [CHATS] New message received:', data);
+        // Use state setter with function form to access latest selectedChat
+        setSelectedChat(currentChat => {
+          if (currentChat && (currentChat.type === 'user_direct' || currentChat.type === 'workspace')) {
+            if (data.chat_id === currentChat.id) {
+              const isOwnMessage = !!(userProfile?.id && data.message.sender_id && data.message.sender_id === userProfile.id);
+              
+              const newMsg: ChatMessage = {
+                id: data.message.id,
+                content: data.message.content,
+                sender: data.message.sender,
+                is_own_message: isOwnMessage,
+                created_at: data.message.created_at,
+              };
+              
+              // Prevent duplicates
+              setMessages(prev => {
+                const existingIndex = prev.findIndex(msg => msg.id === newMsg.id);
+                if (existingIndex !== -1) {
+                  console.log('⚠️ [CHATS] Duplicate message detected, skipping:', newMsg.id);
+                  return prev;
+                }
+                console.log('✅ [CHATS] Adding new message:', newMsg.id);
+                return [...prev, newMsg];
+              });
+              
+              // Update chat list
+              setChats(prev => prev.map(chat => 
+                chat.id === data.chat_id 
+                  ? { ...chat, last_message: data.message.content.substring(0, 50), updated_at: data.message.created_at }
+                  : chat
+              ));
+            }
+          }
+          return currentChat;
+        });
+      });
+
+      // Listen for typing indicators
+      socket.on('chat_typing', (data: any) => {
+        console.log('⌨️ [CHATS] Typing event received:', data);
+        // Use state setters with function form to access latest values
+        setSelectedChat(currentChat => {
+          if (currentChat && (currentChat.type === 'user_direct' || currentChat.type === 'workspace')) {
+            if (data.chat_id === currentChat.id && data.user_id !== userProfile?.id) {
+              if (data.is_typing) {
+                // Try to get username from multiple sources (same as web)
+                let displayName: string | null = null;
+                
+                // 1. Check participants first
+                const participant = currentChat?.participants?.find((p: any) => 
+                  p.id === data.user_id || p.user_id === data.user_id
+                );
+                
+                if (participant) {
+                  const user = (participant as any).user || participant;
+                  if (user.firstName && user.lastName) {
+                    displayName = `${user.firstName} ${user.lastName}`.trim();
+                  } else if (user.username) {
+                    displayName = user.username;
+                  } else if (user.name) {
+                    displayName = user.name;
+                  }
+                }
+                
+                // 2. Check messages for sender info (fallback) - use state setter to get latest
+                if (!displayName) {
+                  setMessages(currentMessages => {
+                    if (currentMessages.length > 0) {
+                      const reversed = [...currentMessages].reverse();
+                      const matchedMsg = reversed.find((m) => 
+                        m.sender && (m.sender.id === data.user_id || (m.sender as any).user_id === data.user_id)
+                      );
+                      if (matchedMsg && matchedMsg.sender) {
+                        const sender = matchedMsg.sender as any;
+                        if (sender.firstName && sender.lastName) {
+                          displayName = `${sender.firstName} ${sender.lastName}`.trim();
+                        } else if (sender.username) {
+                          displayName = sender.username;
+                        } else if (sender.name) {
+                          displayName = sender.name;
+                        }
+                      }
+                    }
+                    return currentMessages;
+                  });
+                }
+                
+                // 3. Fallback to users list (already loaded for mentions) - use state setter to get latest
+                if (!displayName) {
+                  setUsers(currentUsers => {
+                    const userFromList = currentUsers.find((u: any) => u.id === data.user_id) as any;
+                    if (userFromList) {
+                      if (userFromList.firstName && userFromList.lastName) {
+                        displayName = `${userFromList.firstName} ${userFromList.lastName}`.trim();
+                      } else if (userFromList.username) {
+                        displayName = userFromList.username;
+                      }
+                    }
+                    return currentUsers;
+                  });
+                }
+                
+                const username = displayName || 'Someone';
+                console.log('⌨️ [CHATS] Setting typing user:', username, 'for user_id:', data.user_id);
+                setTypingUsers(prev => ({ ...prev, [data.user_id]: username }));
+              } else {
+                console.log('⌨️ [CHATS] Removing typing user:', data.user_id);
+                setTypingUsers(prev => {
+                  const updated = { ...prev };
+                  delete updated[data.user_id];
+                  return updated;
+                });
+              }
+            }
+          }
+          return currentChat;
+        });
+      });
+
+      socket.on('error', (error: any) => {
+        console.error('[CHATS] Socket error:', error);
+      });
+
+      socket.on('connect_error', (error: any) => {
+        console.warn('[CHATS] Socket connection error:', error.message);
+      });
+
+      socketRef.current = socket;
+    } catch (error) {
+      console.warn('[CHATS] Failed to initialize socket:', error);
+    }
+  }, [userProfile]); // Removed selectedChat - handle room joining separately
+
+      // Join/leave chat room when user chat is selected
+      useEffect(() => {
+        if (selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'workspace') && socketRef.current && isSocketConnected) {
+          console.log('🔌 [CHATS] Joining chat room:', selectedChat.id, 'socket connected:', socketRef.current.connected);
+          socketRef.current.emit('join_chat_room', { chat_id: selectedChat.id });
+          console.log('🔌 [CHATS] Emitted join_chat_room event for chat:', selectedChat.id);
+          return () => {
+            if (socketRef.current && isSocketConnected) {
+              console.log('🔌 [CHATS] Leaving chat room:', selectedChat.id);
+              socketRef.current.emit('leave_chat_room', { chat_id: selectedChat.id });
+            }
+          };
+        } else {
+          console.log('⚠️ [CHATS] Cannot join chat room:', {
+            hasSelectedChat: !!selectedChat,
+            chatType: selectedChat?.type,
+            hasSocket: !!socketRef.current,
+            isSocketConnected,
+            socketConnected: socketRef.current?.connected
+          });
+        }
+      }, [selectedChat, isSocketConnected]);
+
   useEffect(() => {
     loadChats();
     loadWorkspaces();
@@ -601,6 +813,7 @@ export default function ChatsScreen() {
       
       // Refresh chat list when screen comes into focus
       loadUserProfile();
+      initializeSocket();
       loadChats();
     }, [])
   );
@@ -1453,7 +1666,19 @@ export default function ChatsScreen() {
   };
 
   const sendMessage = async () => {
-    if (!selectedChat || !newMessage.trim()) return;
+    console.log('📤 [CHATS-WEB] ===== sendMessage CALLED =====');
+    console.log('📤 [CHATS-WEB] selectedChat:', selectedChat);
+    console.log('📤 [CHATS-WEB] newMessage:', newMessage);
+    console.log('📤 [CHATS-WEB] userProfile:', userProfile);
+    
+    if (!selectedChat || !newMessage.trim()) {
+      console.log('⚠️ [CHATS-WEB] Cannot send - missing chat or empty message:', {
+        hasSelectedChat: !!selectedChat,
+        hasMessage: !!newMessage.trim(),
+        messageLength: newMessage.trim().length
+      });
+      return;
+    }
 
     // Declare assistantMessageIndex outside try-catch so it's accessible in both
     let assistantMessageIndex = 0;
@@ -1884,12 +2109,36 @@ export default function ChatsScreen() {
             : chat
         ));
       } else if (selectedChat.type === 'user_direct') {
+        console.log('📤 [CHATS-WEB] ===== SENDING USER DIRECT MESSAGE =====');
+        console.log('📤 [CHATS-WEB] Chat ID:', selectedChat.id);
+        console.log('📤 [CHATS-WEB] Message text:', messageText);
+        console.log('📤 [CHATS-WEB] User ID:', userProfile?.id);
+        
+        // Emit typing stopped
+        if (socketRef.current && userProfile) {
+          console.log('📤 [CHATS-WEB] Emitting typing stopped event');
+          socketRef.current.emit('user_typing', { 
+            chat_id: selectedChat.id,
+            user_id: userProfile.id,
+            is_typing: false
+          });
+        }
+        
         // Send direct message using web endpoint (same as web chat.tsx)
+        console.log('📤 [CHATS-WEB] Calling API to send user direct message...');
         const response = await api.sendChatMessageToChat(messageText, selectedChat.id);
+        console.log('📤 [CHATS-WEB] API response received:', {
+          success: response.success,
+          hasMessage: !!(response as any).message,
+          messageId: (response as any).message?.id,
+          messageContent: (response as any).message?.content,
+          senderId: (response as any).message?.sender_id
+        });
         
         if (response.success && (response as any).message) {
           // Web chat.tsx returns: { success: true, message: ChatMessage }
           const newMsg = (response as any).message;
+          console.log('📤 [CHATS-WEB] Message sent successfully, adding to UI');
           setMessages(prev => [...prev, {
             id: newMsg.id,
             content: newMsg.content,
@@ -1904,14 +2153,41 @@ export default function ChatsScreen() {
               ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString() }
               : chat
           ));
+          console.log('📤 [CHATS-WEB] User direct message successfully added to UI and chat list updated');
+        } else {
+          console.warn('⚠️ [CHATS-WEB] User direct message API call succeeded but no message in response');
         }
       } else if (selectedChat.type === 'workspace') {
+        console.log('📤 [CHATS-WEB] ===== SENDING WORKSPACE MESSAGE =====');
+        console.log('📤 [CHATS-WEB] Chat ID:', selectedChat.id);
+        console.log('📤 [CHATS-WEB] Message text:', messageText);
+        console.log('📤 [CHATS-WEB] User ID:', userProfile?.id);
+        
+        // Emit typing stopped
+        if (socketRef.current && userProfile) {
+          console.log('📤 [CHATS-WEB] Emitting typing stopped event');
+          socketRef.current.emit('user_typing', { 
+            chat_id: selectedChat.id,
+            user_id: userProfile.id,
+            is_typing: false
+          });
+        }
+        
         // Send workspace message using web endpoint (same as web chat.tsx)
+        console.log('📤 [CHATS-WEB] Calling API to send workspace message...');
         const response = await api.sendChatMessageToChat(messageText, selectedChat.id);
+        console.log('📤 [CHATS-WEB] API response received:', {
+          success: response.success,
+          hasMessage: !!(response as any).message,
+          messageId: (response as any).message?.id,
+          messageContent: (response as any).message?.content,
+          senderId: (response as any).message?.sender_id
+        });
         
         if (response.success && (response as any).message) {
           // Web chat.tsx returns: { success: true, message: ChatMessage }
           const newMsg = (response as any).message;
+          console.log('📤 [CHATS-WEB] Message sent successfully, adding to UI');
           setMessages(prev => [...prev, {
             id: newMsg.id,
             content: newMsg.content,
@@ -1926,6 +2202,9 @@ export default function ChatsScreen() {
               ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString() }
               : chat
           ));
+          console.log('📤 [CHATS-WEB] Workspace message successfully added to UI and chat list updated');
+        } else {
+          console.warn('⚠️ [CHATS-WEB] Workspace message API call succeeded but no message in response');
         }
       } else {
         // Fallback to general chat (non-streaming)
@@ -1948,7 +2227,7 @@ export default function ChatsScreen() {
       }
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('Request was aborted');
+        console.log('📤 [CHATS-WEB] Request was aborted');
         // Stop fake streaming if it was active
         if (isFakeStreamingRef.current) {
           stopStreaming(assistantMessageIndex, false);
@@ -1957,7 +2236,16 @@ export default function ChatsScreen() {
         // Don't show error for aborted requests
         return;
       }
-      console.error('Failed to send message:', error);
+      console.error('❌ [CHATS-WEB] Failed to send message:', error);
+      console.error('❌ [CHATS-WEB] Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        chatType: selectedChat?.type,
+        chatId: selectedChat?.id,
+        messageText: newMessage?.trim() || 'N/A',
+        userId: userProfile?.id
+      });
       
       // Determine user-friendly error message based on error type
       let fallbackResponse = "I apologize, but I'm experiencing some technical difficulties right now. Let me try to help you with a general response based on your question.\n\n" +
@@ -2007,6 +2295,7 @@ export default function ChatsScreen() {
       }, fallbackResponse.length * 50 + 1000); // 50ms per character + 1 second buffer
       
     } finally {
+      console.log('📤 [CHATS-WEB] Send operation completed (success or error)');
       setSendingMessage(false);
       stopBounceAnimation();
       abortControllerRef.current = null;
@@ -2087,6 +2376,32 @@ export default function ChatsScreen() {
     }
     
     setNewMessage(text);
+    
+    // Emit typing event for user chats (user_direct and workspace only)
+    if (selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'workspace') && socketRef.current && userProfile) {
+      // Clear existing timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      
+      // Emit typing started
+      socketRef.current.emit('user_typing', { 
+        chat_id: selectedChat.id,
+        user_id: userProfile.id,
+        is_typing: true
+      });
+      
+      // Auto-stop typing after 3 seconds of inactivity
+      typingTimeoutRef.current = setTimeout(() => {
+        if (socketRef.current) {
+          socketRef.current.emit('user_typing', { 
+            chat_id: selectedChat.id,
+            user_id: userProfile.id,
+            is_typing: false
+          });
+        }
+      }, 3000);
+    }
   };
 
   const selectMention = (item: any) => {
@@ -2628,9 +2943,9 @@ export default function ChatsScreen() {
       if (currentList.items.length > 0) {
         if (currentList.type === 'bullet') {
           elements.push(
-            <View key={`list-${elements.length}`} style={{ marginVertical: 4 }}>
+            <View key={`list-${elements.length}`} style={{ marginVertical: 1 }}>
               {currentList.items.map((item, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', marginBottom: 6, paddingLeft: 4, flexShrink: 1 }}>
+                <View key={idx} style={{ flexDirection: 'row', marginBottom: 2, paddingLeft: 4, flexShrink: 1 }}>
                   <Text style={[
                     dynamicStyles.messageText,
                     isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
@@ -2647,9 +2962,9 @@ export default function ChatsScreen() {
           );
         } else if (currentList.type === 'numbered') {
           elements.push(
-            <View key={`list-${elements.length}`} style={{ marginVertical: 4 }}>
+            <View key={`list-${elements.length}`} style={{ marginVertical: 1 }}>
               {currentList.items.map((item, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', marginBottom: 6, paddingLeft: 4, flexShrink: 1 }}>
+                <View key={idx} style={{ flexDirection: 'row', marginBottom: 2, paddingLeft: 4, flexShrink: 1 }}>
                   <Text style={[
                     dynamicStyles.messageText,
                     isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
@@ -2995,6 +3310,16 @@ export default function ChatsScreen() {
               renderItem={renderMessageItem}
               keyExtractor={(item) => item.id.toString()}
               style={dynamicStyles.messagesList}
+              ListFooterComponent={
+                // Typing Indicator for user chats
+                selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'workspace') && Object.keys(typingUsers).length > 0 ? (
+                  <View style={dynamicStyles.typingIndicator}>
+                    <Text style={dynamicStyles.typingText}>
+                      {Object.values(typingUsers).join(', ')} {Object.keys(typingUsers).length === 1 ? 'is' : 'are'} typing...
+                    </Text>
+                  </View>
+                ) : null
+              }
               contentContainerStyle={dynamicStyles.messagesContent}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -3528,11 +3853,11 @@ export default function ChatsScreen() {
       flex: 1,
     },
     messagesContent: {
-      paddingVertical: 10,
+      paddingVertical: 2, // Minimal vertical padding
     },
     messageContainer: {
       paddingHorizontal: 16,
-      paddingVertical: 4,
+      paddingVertical: 1, // Minimal vertical padding
     },
     messageContainerNoBubble: {
       paddingHorizontal: 16,
@@ -3560,7 +3885,7 @@ export default function ChatsScreen() {
       paddingHorizontal: 12,
       paddingVertical: 8,
       borderRadius: 16,
-      marginVertical: 2,
+      marginVertical: 0, // Minimal vertical margin
       overflow: 'hidden', // Keep hidden to prevent overflow, but allow text to wrap
       flexShrink: 1,
       // Removed alignSelf - let parent container control alignment
@@ -3572,8 +3897,8 @@ export default function ChatsScreen() {
       backgroundColor: colors.surface,
     },
   messageText: {
-    fontSize: 15,
-    lineHeight: 23, // Increased from 20 to 23 for better readability (1.53 ratio)
+    fontSize: 16, // WhatsApp standard size
+    lineHeight: 24, // 1.5x line height for better readability
     flexWrap: 'wrap',
     flexShrink: 1,
     wordWrap: 'break-word',
@@ -3589,7 +3914,7 @@ export default function ChatsScreen() {
     },
     messageTime: {
       fontSize: 11,
-      marginTop: 4,
+      marginTop: 1,
       alignSelf: 'flex-end',
     },
     ownMessageTime: {
@@ -3823,6 +4148,15 @@ export default function ChatsScreen() {
     sendButtonDisabled: {
       backgroundColor: '#ccc',
     },
+    typingIndicator: {
+      paddingHorizontal: 16,
+      paddingVertical: 4,
+    },
+    typingText: {
+      fontSize: 13,
+      fontStyle: 'italic',
+      color: '#666',
+    },
   }), [colors]);
 
   // Show chat list or individual chat based on selection
@@ -3999,11 +4333,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   messagesContent: {
-    paddingVertical: 6,
+    paddingVertical: 2, // Minimal vertical padding
   },
   messageContainer: {
     paddingHorizontal: 12,
-    paddingVertical: 3,
+    paddingVertical: 1, // Minimal vertical padding
   },
   ownMessage: {
     alignItems: 'flex-end',
@@ -4016,7 +4350,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 18,
-    marginVertical: 2,
+    marginVertical: 0, // Minimal vertical margin
     overflow: 'hidden', // Keep hidden to prevent overflow, but allow text to wrap
     flexShrink: 1, // Allow bubble to shrink if needed
     // Removed alignSelf - let parent container control alignment
@@ -4028,8 +4362,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
   },
   messageText: {
-    fontSize: 15,
-    lineHeight: 23, // Increased from 20 to 23 for better readability (1.53 ratio)
+    fontSize: 16, // WhatsApp standard size
+    lineHeight: 24, // 1.5x line height for better readability
     flexWrap: 'wrap',
     flexShrink: 1,
     wordWrap: 'break-word',
@@ -4045,7 +4379,7 @@ const styles = StyleSheet.create({
   },
   messageTime: {
     fontSize: 11,
-    marginTop: 3,
+    marginTop: 1,
     alignSelf: 'flex-end',
   },
   ownMessageTime: {
@@ -4365,58 +4699,4 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchTypeMenuContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 8,
-    minWidth: 120,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  searchTypeMenuTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 16,
-  },
-  searchTypeMenuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  selectedSearchTypeItem: {
-    backgroundColor: '#f0f8ff',
-  },
-  searchTypeText: {
-    fontSize: 14,
-    color: '#333',
-  },
-  selectedSearchTypeText: {
-    color: '#007AFF',
-    fontWeight: '600',
-  },
-  searchTypeDescription: {
-    fontSize: 12,
-    color: '#666',
-  },
-  // Processing message styles (handled by ProcessingMessageDisplay component)
-  processingText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-}); 
+});

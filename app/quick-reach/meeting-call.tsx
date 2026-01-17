@@ -1,16 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -48,12 +50,17 @@ export default function MeetingCallScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false);
   const [meetingId, setMeetingId] = useState('');
   const [meetingPassword, setMeetingPassword] = useState('');
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
+  const [infoMeeting, setInfoMeeting] = useState<Meeting | null>(null);
+  const [meetingInfoData, setMeetingInfoData] = useState<any>(null);
+  const [loadingInfo, setLoadingInfo] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteMessage, setInviteMessage] = useState('');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [featuresExpanded, setFeaturesExpanded] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated && !hasLoadedOnce) {
@@ -78,65 +85,87 @@ export default function MeetingCallScreen() {
     try {
       setLoading(true);
       
-      // Load meetings and assets in parallel
-      const [meetingsResponse, assetsResponse] = await Promise.all([
-        apiClient.getMeetings(),
-        apiClient.getMeetingAssets()
-      ]);
+      // Load meetings first (critical)
+      // Assets are loaded separately and are non-critical - don't block meeting list
+      // Limit to 10 most recent meetings (backend default)
+      const meetingsResult = await Promise.allSettled([
+        apiClient.getMeetings(10, 0)
+      ]).then(results => results[0]);
       
+      // Load assets separately (non-blocking, non-critical)
+      // This can be slow if there are many assets, so don't block the UI
+      const assetsResultPromise = apiClient.getMeetingAssets().catch(error => {
+        console.warn('Failed to load meeting assets (non-critical):', error?.message || error);
+        return null;
+      });
+      
+      // Extract results (handle both success and failure)
+      const meetingsResponse = meetingsResult.status === 'fulfilled' ? meetingsResult.value : null;
+      
+      // Log any failures (but don't block)
+      if (meetingsResult.status === 'rejected') {
+        console.error('Failed to load meetings:', meetingsResult.reason);
+      }
+      
+      // Load assets asynchronously (don't block meeting list display)
       // Track which meetings have assets (for potential future use like badges/indicators)
       // Use title as primary identifier since IDs might not match (HMS ID vs DB ID)
       let meetingsWithAssetsTitles = new Set<string>();
       let meetingsWithAssetsIds = new Set<string>();
       
-      if (assetsResponse.success && assetsResponse.data) {
-        // Check top-level assets array (this is the main source of assets)
-        if (assetsResponse.data.assets && Array.isArray(assetsResponse.data.assets)) {
-          console.log(`📱 Processing ${assetsResponse.data.assets.length} assets from top-level assets array`);
-          assetsResponse.data.assets.forEach((asset: any, index: number) => {
-            // Extract meeting title from asset (try multiple property names)
-            const title = (asset.meeting_title || asset.title || asset.meetingTitle || '').toLowerCase().trim();
-            if (title) {
-              meetingsWithAssetsTitles.add(title);
-              if (index < 3) { // Log first 3 for debugging
-                console.log(`📱 Asset ${index} title: "${title}"`);
-              }
-            }
-            // Extract meeting ID from asset (try multiple property names)
-            const meetingId = asset.meeting_id || asset.meetingId || asset.meeting_id;
-            if (meetingId) {
-              meetingsWithAssetsIds.add(String(meetingId));
-              if (index < 3) { // Log first 3 for debugging
-                console.log(`📱 Asset ${index} meetingId: "${meetingId}"`);
-              }
-            }
-          });
-        }
-        
-        // Also check meetings array for nested assets (if they exist)
-        if (assetsResponse.data.meetings && Array.isArray(assetsResponse.data.meetings)) {
-          assetsResponse.data.meetings.forEach((meeting: any) => {
-            const hasAssets = meeting.assets && Array.isArray(meeting.assets) && meeting.assets.length > 0;
-            if (hasAssets) {
-              // Add title for matching (normalize to lowercase for comparison)
-              const title = (meeting.title || meeting.meeting_title || '').toLowerCase().trim();
+      // Process assets in background (non-blocking)
+      assetsResultPromise.then(assetsResponse => {
+        if (assetsResponse?.success && assetsResponse?.data) {
+          // Check top-level assets array (this is the main source of assets)
+          if (assetsResponse.data.assets && Array.isArray(assetsResponse.data.assets)) {
+            console.log(`📱 Processing ${assetsResponse.data.assets.length} assets from top-level assets array`);
+            assetsResponse.data.assets.forEach((asset: any, index: number) => {
+              // Extract meeting title from asset (try multiple property names)
+              const title = (asset.meeting_title || asset.title || asset.meetingTitle || '').toLowerCase().trim();
               if (title) {
                 meetingsWithAssetsTitles.add(title);
+                if (index < 3) { // Log first 3 for debugging
+                  console.log(`📱 Asset ${index} title: "${title}"`);
+                }
               }
-              // Also add IDs for potential matching
-              const meetingId = meeting.id || meeting.meeting_id || meeting.meetingId;
+              // Extract meeting ID from asset (try multiple property names)
+              const meetingId = asset.meeting_id || asset.meetingId || asset.meeting_id;
               if (meetingId) {
                 meetingsWithAssetsIds.add(String(meetingId));
+                if (index < 3) { // Log first 3 for debugging
+                  console.log(`📱 Asset ${index} meetingId: "${meetingId}"`);
+                }
               }
-            }
-          });
+            });
+          }
+          
+          // Also check meetings array for nested assets (if they exist)
+          if (assetsResponse.data.meetings && Array.isArray(assetsResponse.data.meetings)) {
+            assetsResponse.data.meetings.forEach((meeting: any) => {
+              const hasAssets = meeting.assets && Array.isArray(meeting.assets) && meeting.assets.length > 0;
+              if (hasAssets) {
+                // Add title for matching (normalize to lowercase for comparison)
+                const title = (meeting.title || meeting.meeting_title || '').toLowerCase().trim();
+                if (title) {
+                  meetingsWithAssetsTitles.add(title);
+                }
+                // Also add IDs for potential matching
+                const meetingId = meeting.id || meeting.meeting_id || meeting.meetingId;
+                if (meetingId) {
+                  meetingsWithAssetsIds.add(String(meetingId));
+                }
+              }
+            });
+          }
+          
+          console.log('📱 Meeting titles with assets:', Array.from(meetingsWithAssetsTitles));
+          console.log('📱 Meeting IDs with assets:', Array.from(meetingsWithAssetsIds));
         }
-      }
+      }).catch(error => {
+        console.warn('Assets processing error (non-critical):', error);
+      });
       
-      console.log('📱 Meeting titles with assets:', Array.from(meetingsWithAssetsTitles));
-      console.log('📱 Meeting IDs with assets:', Array.from(meetingsWithAssetsIds));
-      
-      if (meetingsResponse.success && meetingsResponse.data) {
+      if (meetingsResponse?.success && meetingsResponse?.data) {
         const allMeetings = meetingsResponse.data.meetings || [];
         
         console.log(`📱 Processing ${allMeetings.length} meetings from backend`);
@@ -207,56 +236,50 @@ export default function MeetingCallScreen() {
           displayStatus: m.status.toUpperCase()
         })));
       } else {
-        // No meetings found - show empty state
+        // No meetings found or failed to load - show empty state
+        if (meetingsResult.status === 'rejected') {
+          const error = meetingsResult.reason;
+          console.error('Failed to load meetings from database:', error);
+          
+          // Check if it's a timeout error
+          if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
+            console.warn('📱 Meeting request timed out - showing empty state');
+            // Don't show alert for timeouts, just show empty state
+          } else if (error.response?.status === 401 || error.message?.includes('Not authenticated')) {
+            console.log('📱 Authentication required for meetings');
+            Alert.alert(
+              'Authentication Required',
+              'Please log in to view your meetings.',
+              [
+                { text: 'OK', onPress: () => router.push('/(auth)/sign-in') }
+              ]
+            );
+          } else if (error.response?.status === 500) {
+            console.log('📱 Server error (500) - backend issue');
+            Alert.alert(
+              'Server Error',
+              'There was a server error loading meetings. Please try again later.',
+              [
+                { text: 'OK' }
+              ]
+            );
+          }
+        } else {
+          console.log('📱 No meetings found in database');
+        }
+        
+        // Show empty state for any failure or no meetings
         setMeetings([]);
         setUpcomingMeetings([]);
         setOngoingMeetings([]);
-        console.log('📱 No meetings found in database');
       }
     } catch (error: any) {
-      console.error('Failed to load meetings from database:', error);
-      console.error('Error details:', {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data,
-        message: error.message,
-        config: {
-          url: error.config?.url,
-          method: error.config?.method,
-          headers: error.config?.headers
-        }
-      });
-      
-      // Check if it's an authentication error
-      if (error.response?.status === 401 || error.message?.includes('Not authenticated')) {
-        console.log('📱 Authentication required for meetings');
-        Alert.alert(
-          'Authentication Required',
-          'Please log in to view your meetings.',
-          [
-            { text: 'OK', onPress: () => router.push('/(auth)/sign-in') }
-          ]
-        );
-      } else if (error.response?.status === 500) {
-        console.log('📱 Server error (500) - backend issue');
-        Alert.alert(
-          'Server Error',
-          'There was a server error loading meetings. Please try again later.',
-          [
-            { text: 'OK' }
-          ]
-        );
-        // Show empty state for server errors
-        setMeetings([]);
-        setUpcomingMeetings([]);
-        setOngoingMeetings([]);
-      } else {
-        // Other errors - show empty state
-        console.log('📱 Other error loading meetings:', error.response?.status);
-        setMeetings([]);
-        setUpcomingMeetings([]);
-        setOngoingMeetings([]);
-      }
+      // This catch block should rarely be hit now since we use allSettled
+      // But keep it as a safety net
+      console.error('Unexpected error in loadMeetings:', error);
+      setMeetings([]);
+      setUpcomingMeetings([]);
+      setOngoingMeetings([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -277,46 +300,79 @@ export default function MeetingCallScreen() {
     router.push('./schedule-meeting' as any);
   };
 
-  const joinMeeting = (meeting: Meeting) => {
-    // Check if meeting is private and requires passcode
-    if (meeting.passcode) {
-      // Show passcode prompt for private meetings
-      Alert.prompt(
-        'Meeting Passcode',
-        'This is a private meeting. Enter the passcode:',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Join', 
-            onPress: (passcode) => {
-              if (passcode) {
-                router.push({
-                  pathname: './hms-meeting-interface',
-                  params: {
-                    meetingId: meeting.meetingId,
-                    title: meeting.title,
-                    userName: 'Mobile User',
-                    passcode: passcode
+  const joinMeeting = async (meeting: Meeting) => {
+    try {
+      // IMPORTANT: Call join endpoint first to create ActiveParticipant record
+      // This ensures the user shows up as active in the meeting (green dot on web)
+      const response = await apiClient.joinMeeting({
+        meetingId: meeting.meetingId,
+        passcode: meeting.passcode || undefined
+      });
+
+      if (!response.success) {
+        Alert.alert('Error', response.message || 'Failed to join meeting');
+        return;
+      }
+
+      // Check if meeting is private and requires passcode (if not provided in response)
+      if (meeting.passcode && !response.data?.password) {
+        // Show passcode prompt for private meetings
+        Alert.prompt(
+          'Meeting Passcode',
+          'This is a private meeting. Enter the passcode:',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Join', 
+              onPress: async (passcode?: string) => {
+                if (passcode) {
+                  try {
+                    // Retry join with passcode
+                    const retryResponse = await apiClient.joinMeeting({
+                      meetingId: meeting.meetingId,
+                      passcode: passcode
+                    });
+                    if (retryResponse.success) {
+                      router.push({
+                        pathname: './hms-meeting-interface',
+                        params: {
+                          meetingId: retryResponse.data?.meetingId || meeting.meetingId,
+                          title: retryResponse.data?.title || meeting.title,
+                          userName: 'Mobile User',
+                          passcode: passcode
+                        }
+                      });
+                    } else {
+                      Alert.alert('Error', retryResponse.message || 'Invalid passcode');
+                    }
+                  } catch (error) {
+                    console.error('Failed to join meeting with passcode:', error);
+                    Alert.alert('Error', 'Failed to join meeting. Please check the passcode.');
                   }
-                });
-              } else {
-                Alert.alert('Error', 'Passcode is required for private meetings');
+                } else {
+                  Alert.alert('Error', 'Passcode is required for private meetings');
+                }
               }
             }
-          }
-        ],
-        'secure-text'
-      );
-    } else {
-      // Public meeting - join directly without passcode
+          ],
+          'secure-text'
+        );
+        return;
+      }
+
+      // Navigate to meeting interface after successful join
       router.push({
         pathname: './hms-meeting-interface',
         params: {
-          meetingId: meeting.meetingId,
-          title: meeting.title,
-          userName: 'Mobile User'
+          meetingId: response.data?.meetingId || meeting.meetingId,
+          title: response.data?.title || meeting.title,
+          userName: 'Mobile User',
+          passcode: meeting.passcode || undefined
         }
       });
+    } catch (error: any) {
+      console.error('Failed to join meeting:', error);
+      Alert.alert('Error', error.message || 'Failed to join meeting. Please try again.');
     }
   };
 
@@ -487,6 +543,83 @@ export default function MeetingCallScreen() {
       hour: '2-digit', 
       minute: '2-digit' 
     });
+  };
+
+  const copyMeetingDetails = async (meeting: Meeting) => {
+    try {
+      // Use the same backend endpoint as web to get the properly formatted invitation text
+      const response = await apiClient.copyMeetingInvite(meeting.meetingId);
+      
+      if (response.success && response.data?.invite_message) {
+        // Use the invitation message from backend (same format as web)
+        await Clipboard.setStringAsync(response.data.invite_message);
+        Alert.alert('Copied', 'Meeting invitation copied to clipboard');
+      } else {
+        // Fallback to basic details if backend doesn't return invite_message
+        let details = `Meeting: ${meeting.title}\n`;
+        details += `Meeting ID: ${meeting.meetingId}\n`;
+        if (meeting.passcode) {
+          details += `Passcode: ${meeting.passcode}\n`;
+        }
+        if (meeting.roomUrl) {
+          details += `Room URL: ${meeting.roomUrl}\n`;
+        }
+        await Clipboard.setStringAsync(details);
+        Alert.alert('Copied', 'Meeting details copied to clipboard');
+      }
+    } catch (error) {
+      console.error('Copy error:', error);
+      Alert.alert('Error', 'Failed to copy meeting invitation');
+    }
+  };
+
+  const showMeetingInfo = async (meeting: Meeting) => {
+    setInfoMeeting(meeting);
+    setShowInfoModal(true);
+    setLoadingInfo(true);
+    setMeetingInfoData(null);
+    
+    try {
+      // Fetch detailed meeting info from backend (includes participants)
+      console.log('📋 Fetching meeting info for:', meeting.meetingId);
+      const response = await apiClient.getMeetingInfo(meeting.meetingId);
+      console.log('📋 Meeting info response:', JSON.stringify(response, null, 2));
+      
+      if (response.success) {
+        // Mobile endpoint returns: { success: true, data: room_object, platform: 'mobile' }
+        // API client returns response.data, which is the entire response object
+        // So response.data.data is the room object
+        const roomData = response.data?.data || response.data || response;
+        setMeetingInfoData(roomData);
+        
+        // Detailed logging to debug participant loading
+        console.log('📋 [MEETING-INFO] Full response:', JSON.stringify(response, null, 2));
+        console.log('📋 [MEETING-INFO] Response.data:', response.data);
+        console.log('📋 [MEETING-INFO] Response.data.data:', response.data?.data);
+        console.log('📋 [MEETING-INFO] Room data (final):', JSON.stringify(roomData, null, 2));
+        console.log('📋 [MEETING-INFO] Participant check:', {
+          hasData: !!roomData,
+          hasActiveParticipants: !!roomData.active_participants,
+          activeParticipantsType: typeof roomData.active_participants,
+          activeParticipantsIsArray: Array.isArray(roomData.active_participants),
+          participantCount: roomData.active_participants?.length || 0,
+          activeParticipants: roomData.active_participants,
+          roomKeys: roomData ? Object.keys(roomData) : [],
+          roomDataKeys: roomData ? Object.keys(roomData).join(', ') : 'none'
+        });
+      } else {
+        console.warn('Failed to load meeting info:', response.message);
+      }
+    } catch (error: any) {
+      console.error('Error loading meeting info:', error);
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        stack: error.stack
+      });
+    } finally {
+      setLoadingInfo(false);
+    }
   };
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
@@ -779,6 +912,121 @@ export default function MeetingCallScreen() {
       height: 80,
       textAlignVertical: 'top',
     },
+    infoSection: {
+      marginBottom: 16,
+    },
+    infoCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    infoCardTitle: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    infoRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginBottom: 10,
+    },
+    infoItem: {
+      width: '48%',
+      marginRight: '2%',
+      marginBottom: 10,
+    },
+    infoItemFull: {
+      width: '100%',
+      marginBottom: 8,
+    },
+    infoLabel: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: colors.textSecondary,
+      textTransform: 'uppercase',
+      marginBottom: 4,
+      letterSpacing: 0.5,
+    },
+    infoValue: {
+      fontSize: 14,
+      color: colors.text,
+      lineHeight: 20,
+    },
+    participantsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginTop: 8,
+    },
+    participantItem: {
+      width: '48%',
+      marginRight: '2%',
+      marginBottom: 8,
+      padding: 8,
+      backgroundColor: colors.surface,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    participantName: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 2,
+    },
+    participantEmail: {
+      fontSize: 11,
+      color: colors.textSecondary,
+    },
+    participantHostBadge: {
+      marginTop: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      backgroundColor: '#34C759',
+      borderRadius: 4,
+      alignSelf: 'flex-start',
+    },
+    participantHostText: {
+      fontSize: 9,
+      fontWeight: '700',
+      color: '#fff',
+    },
+    featureBadge: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    featureBadgeText: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    invitedGuestItem: {
+      paddingVertical: 2,
+      marginBottom: 0,
+    },
+    invitedGuestEmail: {
+      fontSize: 13,
+      color: colors.text,
+    },
+    invitedGuestYou: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      fontStyle: 'italic',
+    },
+    invitedGuestsScrollView: {
+      maxHeight: 200,
+    },
+    hostItem: {
+      paddingVertical: 2,
+      marginBottom: 0,
+    },
   }), [colors]);
 
   const renderMeetingCard = ({ item }: { item: Meeting }) => (
@@ -841,6 +1089,26 @@ export default function MeetingCallScreen() {
           }}
         >
           <Ionicons name="videocam" size={16} color="#007AFF" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={dynamicStyles.actionIcon}
+          onPress={(e) => {
+            e.stopPropagation();
+            copyMeetingDetails(item);
+          }}
+        >
+          <Ionicons name="copy" size={16} color="#5856D6" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={dynamicStyles.actionIcon}
+          onPress={(e) => {
+            e.stopPropagation();
+            showMeetingInfo(item);
+          }}
+        >
+          <Ionicons name="information-circle" size={16} color="#FF9500" />
         </TouchableOpacity>
         
         {(item.status === 'active') && (
@@ -1133,6 +1401,241 @@ export default function MeetingCallScreen() {
               numberOfLines={3}
             />
           </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Info Modal */}
+      <Modal
+        visible={showInfoModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowInfoModal(false)}
+      >
+        <SafeAreaView style={dynamicStyles.modalContainer}>
+          <View style={dynamicStyles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowInfoModal(false)}>
+              <Text style={dynamicStyles.cancelButton}>Close</Text>
+            </TouchableOpacity>
+            <Text style={dynamicStyles.modalTitle}>Meeting Information</Text>
+            <TouchableOpacity 
+              onPress={async () => {
+                if (infoMeeting) {
+                  await copyMeetingDetails(infoMeeting);
+                }
+              }}
+            >
+              <Text style={dynamicStyles.joinButton}>Copy</Text>
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={dynamicStyles.modalContent}>
+            {loadingInfo ? (
+              <View style={{ padding: 20, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#007AFF" />
+                <Text style={{ marginTop: 8, color: colors.textSecondary, fontSize: 12 }}>Loading meeting info...</Text>
+              </View>
+            ) : infoMeeting ? (
+              <>
+                {/* Title - Full width row for lengthy names */}
+                <View style={dynamicStyles.infoSection}>
+                  <Text style={dynamicStyles.infoLabel}>Title</Text>
+                  <Text style={dynamicStyles.infoValue}>{infoMeeting.title}</Text>
+                </View>
+
+                {/* Status with Participant Count - Compact Row */}
+                <View style={dynamicStyles.infoRow}>
+                  <View style={dynamicStyles.infoItem}>
+                    <Text style={dynamicStyles.infoLabel}>Status</Text>
+                    <Text style={dynamicStyles.infoValue}>{infoMeeting.status.toUpperCase()}</Text>
+                  </View>
+                  <View style={dynamicStyles.infoItem}>
+                    <Text style={dynamicStyles.infoLabel}>Participants</Text>
+                    <Text style={dynamicStyles.infoValue}>
+                      {meetingInfoData?.active_participant_count ?? 
+                       meetingInfoData?.active_participants?.length ??
+                       infoMeeting.participants}
+                      {meetingInfoData?.max_participants ? `/${meetingInfoData.max_participants}` : ''}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Start and End Time - Moved Up */}
+                <View style={dynamicStyles.infoRow}>
+                  <View style={dynamicStyles.infoItem}>
+                    <Text style={dynamicStyles.infoLabel}>Start Time</Text>
+                    <Text style={dynamicStyles.infoValue}>{formatMeetingTime(infoMeeting.startTime)}</Text>
+                  </View>
+                  {infoMeeting.endTime && (
+                    <View style={dynamicStyles.infoItem}>
+                      <Text style={dynamicStyles.infoLabel}>End Time</Text>
+                      <Text style={dynamicStyles.infoValue}>{formatMeetingTime(infoMeeting.endTime)}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Meeting Connect Info Section */}
+                <View style={dynamicStyles.infoSection}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="call" size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                    <Text style={dynamicStyles.infoLabel}>Meeting Connect Info</Text>
+                  </View>
+                  <View style={dynamicStyles.infoRow}>
+                    <View style={dynamicStyles.infoItem}>
+                      <Text style={dynamicStyles.infoLabel}>Meeting ID</Text>
+                      <Text style={dynamicStyles.infoValue} numberOfLines={1}>{infoMeeting.meetingId}</Text>
+                    </View>
+                    {infoMeeting.passcode && (
+                      <View style={dynamicStyles.infoItem}>
+                        <Text style={dynamicStyles.infoLabel}>Passcode</Text>
+                        <Text style={dynamicStyles.infoValue}>{infoMeeting.passcode}</Text>
+                      </View>
+                    )}
+                  </View>
+                  {meetingInfoData?.phone_number && (
+                    <View style={dynamicStyles.infoRow}>
+                      <View style={dynamicStyles.infoItemFull}>
+                        <Text style={dynamicStyles.infoLabel}>Phone</Text>
+                        <Text style={dynamicStyles.infoValue}>{meetingInfoData.phone_number}</Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                {/* Creation Details - Compact Row */}
+                <View style={dynamicStyles.infoRow}>
+                  {infoMeeting.createdAt && (
+                    <View style={dynamicStyles.infoItem}>
+                      <Text style={dynamicStyles.infoLabel}>Created</Text>
+                      <Text style={dynamicStyles.infoValue}>{formatMeetingTime(infoMeeting.createdAt)}</Text>
+                    </View>
+                  )}
+                  <View style={dynamicStyles.infoItem}>
+                    <Text style={dynamicStyles.infoLabel}>Creator</Text>
+                    <Text style={dynamicStyles.infoValue} numberOfLines={1}>
+                      {meetingInfoData?.creator?.username || meetingInfoData?.creator?.email || infoMeeting.host}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Features Section */}
+                {(meetingInfoData?.enable_recording || meetingInfoData?.enable_transcription || meetingInfoData?.enable_meeting_summary) && (
+                  <View style={dynamicStyles.infoSection}>
+                    <TouchableOpacity 
+                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: featuresExpanded ? 8 : 0 }}
+                      onPress={() => setFeaturesExpanded(!featuresExpanded)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={dynamicStyles.infoLabel}>Features</Text>
+                      <Ionicons 
+                        name={featuresExpanded ? "chevron-up" : "chevron-down"} 
+                        size={18} 
+                        color={colors.textSecondary} 
+                      />
+                    </TouchableOpacity>
+                    {featuresExpanded && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                        {meetingInfoData.enable_recording && (
+                          <View style={dynamicStyles.featureBadge}>
+                            <Text style={dynamicStyles.featureBadgeText}>Recording</Text>
+                          </View>
+                        )}
+                        {meetingInfoData.enable_transcription && (
+                          <View style={dynamicStyles.featureBadge}>
+                            <Text style={dynamicStyles.featureBadgeText}>Transcription</Text>
+                          </View>
+                        )}
+                        {meetingInfoData.enable_meeting_summary && (
+                          <View style={dynamicStyles.featureBadge}>
+                            <Text style={dynamicStyles.featureBadgeText}>Summary</Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {/* Host(s) - Can be single or multiple */}
+                <View style={dynamicStyles.infoCard}>
+                  <Text style={dynamicStyles.infoCardTitle}>
+                    {meetingInfoData?.meeting_hosts && meetingInfoData.meeting_hosts.length > 1 ? 'Hosts' : 'Host'}
+                  </Text>
+                  {meetingInfoData?.meeting_hosts && meetingInfoData.meeting_hosts.length > 0 ? (
+                    <View>
+                      {meetingInfoData.meeting_hosts.map((host: any, index: number) => {
+                        const hostName = host?.username || host?.email || host?.name || 'Unknown';
+                        const hostEmail = host?.email || '';
+                        return (
+                          <View key={index} style={dynamicStyles.hostItem}>
+                            <Text style={dynamicStyles.infoValue} numberOfLines={1}>
+                              {hostName}
+                              {hostEmail && hostEmail !== hostName && (
+                                <Text style={[dynamicStyles.infoValue, { color: colors.textSecondary, fontSize: 12 }]}>
+                                  {' '}({hostEmail})
+                                </Text>
+                              )}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <Text style={dynamicStyles.infoValue}>
+                      {meetingInfoData?.creator?.username || meetingInfoData?.creator?.email || infoMeeting.host || 'Unknown'}
+                    </Text>
+                  )}
+                </View>
+
+                {infoMeeting.duration && (
+                  <View style={dynamicStyles.infoRow}>
+                    <View style={dynamicStyles.infoItem}>
+                      <Text style={dynamicStyles.infoLabel}>Duration</Text>
+                      <Text style={dynamicStyles.infoValue}>{infoMeeting.duration} min</Text>
+                    </View>
+                  </View>
+                )}
+
+                {infoMeeting.roomUrl && (
+                  <View style={dynamicStyles.infoSection}>
+                    <Text style={dynamicStyles.infoLabel}>Room URL</Text>
+                    <Text style={dynamicStyles.infoValue} selectable numberOfLines={2}>{infoMeeting.roomUrl}</Text>
+                  </View>
+                )}
+
+                {infoMeeting.description && (
+                  <View style={dynamicStyles.infoSection}>
+                    <Text style={dynamicStyles.infoLabel}>Description</Text>
+                    <Text style={dynamicStyles.infoValue}>{infoMeeting.description}</Text>
+                  </View>
+                )}
+
+                {/* Invited Guests Section - Last Item with ScrollView */}
+                {meetingInfoData?.invited_participants && meetingInfoData.invited_participants.length > 0 && (
+                  <View style={dynamicStyles.infoCard}>
+                    <Text style={dynamicStyles.infoCardTitle}>Invited Guests</Text>
+                    <ScrollView 
+                      style={dynamicStyles.invitedGuestsScrollView}
+                      nestedScrollEnabled={true}
+                      showsVerticalScrollIndicator={true}
+                    >
+                      {meetingInfoData.invited_participants.map((email: string, index: number) => {
+                        const isCurrentUser = user?.email?.toLowerCase() === email.toLowerCase();
+                        return (
+                          <View key={index} style={dynamicStyles.invitedGuestItem}>
+                            <Text style={dynamicStyles.invitedGuestEmail} numberOfLines={1}>
+                              {email}
+                              {isCurrentUser && (
+                                <Text style={dynamicStyles.invitedGuestYou}> (You)</Text>
+                              )}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+              </>
+            ) : null}
+          </ScrollView>
         </SafeAreaView>
       </Modal>
     </SafeAreaView>

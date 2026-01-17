@@ -37,6 +37,7 @@ export default function ScheduleMeetingScreen() {
   const [newParticipant, setNewParticipant] = useState('');
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [featuresExpanded, setFeaturesExpanded] = useState(false);
 
   const createMeeting = async () => {
     if (!meetingData.title.trim()) {
@@ -250,17 +251,24 @@ export default function ScheduleMeetingScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          </TouchableOpacity>
           <Text style={styles.headerTitle}>Schedule Meeting</Text>
-          <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
-            <Ionicons name="close" size={24} color="#666" />
+          <TouchableOpacity 
+            style={[styles.scheduleButton, loading && styles.scheduleButtonDisabled]}
+            onPress={createMeeting}
+            disabled={loading}
+          >
+            <Text style={styles.scheduleButtonText}>
+              {loading ? 'Scheduling...' : 'Schedule'}
+            </Text>
           </TouchableOpacity>
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Meeting Details */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Meeting Details</Text>
-            
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Meeting Name *</Text>
               <TextInput
@@ -332,58 +340,73 @@ export default function ScheduleMeetingScreen() {
             </View>
           </View>
 
-          {/* Features */}
+          {/* Features - Collapsible */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Features</Text>
+            <TouchableOpacity 
+              style={styles.sectionHeader}
+              onPress={() => setFeaturesExpanded(!featuresExpanded)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.sectionTitle}>Features</Text>
+              <Ionicons 
+                name={featuresExpanded ? "chevron-up" : "chevron-down"} 
+                size={20} 
+                color="#007AFF" 
+              />
+            </TouchableOpacity>
             
-            <TouchableOpacity 
-              style={styles.featureRow}
-              onPress={() => toggleFeature('enableRecording')}
-            >
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Enable Recording</Text>
-              </View>
-              <View style={[styles.checkbox, meetingData.enableRecording && styles.checkboxChecked]}>
-                {meetingData.enableRecording && <Ionicons name="checkmark" size={16} color="#fff" />}
-              </View>
-            </TouchableOpacity>
+            {featuresExpanded && (
+              <>
+                <TouchableOpacity 
+                  style={styles.featureRow}
+                  onPress={() => toggleFeature('enableRecording')}
+                >
+                  <View style={styles.featureInfo}>
+                    <Text style={styles.featureTitle}>Enable Recording</Text>
+                  </View>
+                  <View style={[styles.checkbox, meetingData.enableRecording && styles.checkboxChecked]}>
+                    {meetingData.enableRecording && <Ionicons name="checkmark" size={16} color="#fff" />}
+                  </View>
+                </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.featureRow}
-              onPress={() => toggleFeature('enableTranscription')}
-            >
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Enable Transcription</Text>
-              </View>
-              <View style={[styles.checkbox, meetingData.enableTranscription && styles.checkboxChecked]}>
-                {meetingData.enableTranscription && <Ionicons name="checkmark" size={16} color="#fff" />}
-              </View>
-            </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.featureRow}
+                  onPress={() => toggleFeature('enableTranscription')}
+                >
+                  <View style={styles.featureInfo}>
+                    <Text style={styles.featureTitle}>Enable Transcription</Text>
+                  </View>
+                  <View style={[styles.checkbox, meetingData.enableTranscription && styles.checkboxChecked]}>
+                    {meetingData.enableTranscription && <Ionicons name="checkmark" size={16} color="#fff" />}
+                  </View>
+                </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.featureRow}
-              onPress={() => toggleFeature('isPrivate')}
-            >
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Private Meeting (Requires Passcode)</Text>
-              </View>
-              <View style={[styles.checkbox, meetingData.isPrivate && styles.checkboxChecked]}>
-                {meetingData.isPrivate && <Ionicons name="checkmark" size={16} color="#fff" />}
-              </View>
-            </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.featureRow}
+                  onPress={() => toggleFeature('isPrivate')}
+                >
+                  <View style={styles.featureInfo}>
+                    <Text style={styles.featureTitle}>Private Meeting (Requires Passcode)</Text>
+                  </View>
+                  <View style={[styles.checkbox, meetingData.isPrivate && styles.checkboxChecked]}>
+                    {meetingData.isPrivate && <Ionicons name="checkmark" size={16} color="#fff" />}
+                  </View>
+                </TouchableOpacity>
 
-            {meetingData.isPrivate && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Passcode *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Enter passcode"
-                  value={meetingData.passcode}
-                  onChangeText={(text) => setMeetingData(prev => ({ ...prev, passcode: text }))}
-                  secureTextEntry
-                  maxLength={20}
-                />
-              </View>
+                {meetingData.isPrivate && (
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Passcode *</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      placeholder="Enter passcode"
+                      value={meetingData.passcode}
+                      onChangeText={(text) => setMeetingData(prev => ({ ...prev, passcode: text }))}
+                      secureTextEntry
+                      maxLength={20}
+                    />
+                  </View>
+                )}
+              </>
             )}
           </View>
 
@@ -419,26 +442,6 @@ export default function ScheduleMeetingScreen() {
             )}
           </View>
         </ScrollView>
-
-        {/* Action Buttons */}
-        <View style={styles.actionButtons}>
-          <TouchableOpacity 
-            style={styles.cancelButtonContainer}
-            onPress={() => router.back()}
-          >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.createButton, loading && styles.createButtonDisabled]}
-            onPress={createMeeting}
-            disabled={loading}
-          >
-            <Text style={styles.createButtonText}>
-              {loading ? 'Scheduling...' : 'Schedule Meeting'}
-            </Text>
-          </TouchableOpacity>
-        </View>
       </KeyboardAvoidingView>
 
       {/* Start Date/Time Picker Modal */}
@@ -548,13 +551,29 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e9ecef',
   },
+  backButton: {
+    padding: 4,
+    marginRight: 12,
+  },
   headerTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#212529',
+    flex: 1,
   },
-  closeButton: {
-    padding: 4,
+  scheduleButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+  },
+  scheduleButtonDisabled: {
+    backgroundColor: '#c6c6c6',
+  },
+  scheduleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
   content: {
     flex: 1,
@@ -570,6 +589,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#212529',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 16,
   },
   inputGroup: {
@@ -652,42 +676,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#495057',
     flex: 1,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e9ecef',
-    gap: 12,
-  },
-  cancelButtonContainer: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: '#6c757d',
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  createButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: '#007AFF',
-    alignItems: 'center',
-  },
-  createButtonDisabled: {
-    backgroundColor: '#c6c6c6',
-  },
-  createButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
   },
   datePickerContainer: {
     flexDirection: 'row',

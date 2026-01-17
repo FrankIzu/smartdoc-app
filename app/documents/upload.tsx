@@ -2,7 +2,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function UploadScreen() {
@@ -42,6 +42,18 @@ export default function UploadScreen() {
         return;
       }
 
+      // Check mobile file limit (3 files max)
+      const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+      if (isMobile && result.assets.length > 3) {
+        Alert.alert(
+          'Upload Limit',
+          'Sorry, our maximum upload is 3',
+          [{ text: 'OK' }]
+        );
+        fileStore.setDocumentPickerOpen(false);
+        return;
+      }
+
       setUploading(true);
 
       // Process each selected file
@@ -49,14 +61,33 @@ export default function UploadScreen() {
         try {
           console.log('Uploading file:', file.name, file.uri);
           
+          // Convert HEIC to PNG before upload if needed
+          let fileToUpload = {
+            uri: file.uri,
+            name: file.name || 'unnamed_file',
+            type: file.mimeType || 'application/octet-stream',
+            size: file.size,
+          };
+
+          try {
+            const { convertHeicToPng } = await import('../../utils/imageConversion');
+            fileToUpload = await convertHeicToPng(fileToUpload, (progress, message) => {
+              // Show conversion progress (0-10% of total)
+              setProgress(progress * 0.1);
+              console.log(`🔄 Conversion progress: ${progress}% - ${message}`);
+            });
+          } catch (conversionError) {
+            console.warn('HEIC conversion failed, continuing with original:', conversionError);
+          }
+          
           // Create FormData for file upload
           const formData = new FormData();
           
           // Add file to form data
           formData.append('file', {
-            uri: file.uri,
-            type: file.mimeType || 'application/octet-stream',
-            name: file.name || 'unnamed_file',
+            uri: fileToUpload.uri,
+            type: fileToUpload.type,
+            name: fileToUpload.name,
           } as any);
 
           // Import API client
@@ -64,7 +95,8 @@ export default function UploadScreen() {
           
           // Upload file using API client with progress polling
           const uploadResult = await apiClient.uploadFileWithProgressPolling(formData, (progress, message, phase) => {
-            setProgress(progress);
+            // Scale server progress to 10-100% (conversion was 0-10%)
+            setProgress(10 + (progress * 0.9));
             console.log(`📊 Upload progress: ${progress}% - ${message} (${phase})`);
           });
 

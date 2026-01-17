@@ -28,6 +28,7 @@ export default function CreateMeetingScreen() {
     participants: [] as string[]
   });
   const [newParticipant, setNewParticipant] = useState('');
+  const [featuresExpanded, setFeaturesExpanded] = useState(false);
 
   const createMeeting = async () => {
     if (!meetingData.title.trim()) {
@@ -41,15 +42,17 @@ export default function CreateMeetingScreen() {
     }
 
     // Prepare meeting data for immediate creation
+    // Use mobile endpoint which properly handles room_name
     const meetingPayload = {
-      roomName: meetingData.title,
-      title: meetingData.title,
+      room_name: meetingData.title,
       description: meetingData.description,
       isPrivate: meetingData.isPrivate,
       passcode: meetingData.isPrivate ? meetingData.passcode : undefined,
+      passcode_required: meetingData.isPrivate,
       enableRecording: meetingData.enableRecording,
-      enableTranscription: meetingData.enableTranscription,
-      participants: meetingData.participants
+      enable_transcription: meetingData.enableTranscription,
+      participants: meetingData.participants,
+      invited_participants: meetingData.participants
     };
 
     console.log('📱 Sending create meeting payload:', meetingPayload);
@@ -57,7 +60,8 @@ export default function CreateMeetingScreen() {
     try {
       setLoading(true);
 
-      const response = await apiClient.client.post('/api/v1/video/room/create', meetingPayload);
+      // Use mobile endpoint which properly handles title/roomName conversion to room_name
+      const response = await apiClient.client.post('/api/v1/mobile/meetings/create', meetingPayload);
       
       console.log('📱 Create meeting response:', response.data);
       
@@ -112,7 +116,7 @@ export default function CreateMeetingScreen() {
                   await apiClient.endMeeting(activeMeeting.id.toString());
                   
                   // Then create the new meeting
-                  const response = await apiClient.client.post('/api/v1/video/room/create', meetingPayload);
+                  const response = await apiClient.client.post('/api/v1/mobile/meetings/create', meetingPayload);
                   
                   if (response.data.success) {
                     const meetingData = response.data.data || response.data;
@@ -379,11 +383,16 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#212529',
-    marginBottom: 16,
   },
   inputGroup: {
     marginBottom: 16,

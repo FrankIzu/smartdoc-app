@@ -31,10 +31,10 @@ const tabs: TabItem[] = [
     route: '/(tabs)/chats',
   },
   {
-    name: 'settings',
-    label: 'Settings',
-    icon: 'settings',
-    route: '/(tabs)/settings',
+    name: 'help',
+    label: 'Help',
+    icon: 'help-circle',
+    route: '/(tabs)/help',
   },
 ];
 
@@ -44,26 +44,12 @@ export default function PersistentBottomNavigation() {
   const colorScheme = useColorScheme();
   const insets = useSafeAreaInsets();
 
-  // Hide navigation on auth screens
-  const isAuthScreen = pathname.startsWith('/(auth)');
-  // Hide navigation on user-chat screen
-  const isUserChatScreen = pathname === '/user-chat' || pathname.startsWith('/user-chat');
-  // Hide navigation on chats screen (ChatGD/Chat Assistant) - check multiple possible pathname formats
-  const isChatsScreen = pathname === '/(tabs)/chats' || 
-                        pathname.startsWith('/(tabs)/chats') ||
-                        pathname.includes('/chats') ||
-                        pathname === '/chats';
-  // Hide navigation on home screen
-  // Check if we're on the home screen (index route of tabs)
-  const isHomeScreen = pathname === '/(tabs)' || 
-                       pathname === '/(tabs)/' || 
-                       pathname === '/(tabs)/index' ||
-                       pathname === '/';
+  // Only show navigation on settings page
+  const isSettingsScreen = pathname === '/(tabs)/settings' || 
+                           pathname.startsWith('/(tabs)/settings');
   
-  // Debug: uncomment to see actual pathname
-  // console.log('Current pathname:', pathname, 'isHomeScreen:', isHomeScreen);
-  
-  if (isAuthScreen || isUserChatScreen || isChatsScreen || isHomeScreen) {
+  // Hide navigation on all other screens
+  if (!isSettingsScreen) {
     return null;
   }
 

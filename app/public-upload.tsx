@@ -154,10 +154,22 @@ export default function PublicUploadScreen() {
 
     try {
       for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
+        let file = selectedFiles[i];
         const fileKey = `${file.name}_${i}`;
         newProgress[fileKey] = 0;
         setUploadProgress({ ...newProgress });
+
+        // Convert HEIC to PNG before upload
+        try {
+          const { convertHeicToPng } = await import('../utils/imageConversion');
+          file = await convertHeicToPng(file, (progress, message) => {
+            // Scale conversion progress to 0-10% of total
+            newProgress[fileKey] = progress * 0.1;
+            setUploadProgress({ ...newProgress });
+          });
+        } catch (conversionError) {
+          console.warn('HEIC conversion failed, continuing with original:', conversionError);
+        }
 
         const formData = new FormData();
         formData.append('file', {
@@ -172,7 +184,8 @@ export default function PublicUploadScreen() {
           
           const response = await apiClient.uploadFileWithProgressPolling(formData, (progress, message, phase) => {
             console.log(`📊 Public upload progress: ${progress}% - ${message} (${phase})`);
-            newProgress[fileKey] = progress;
+            // Scale server progress to 10-100% (conversion was 0-10%)
+            newProgress[fileKey] = 10 + (progress * 0.9);
             setUploadProgress({ ...newProgress });
           });
 

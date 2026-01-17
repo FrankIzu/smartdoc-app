@@ -7,7 +7,7 @@ export default function TabLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="documents" />
       <Stack.Screen name="chats" />
-      <Stack.Screen name="settings" />
+      <Stack.Screen name="help" />
     </Stack>
   );
 }

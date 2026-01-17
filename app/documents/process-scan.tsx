@@ -64,18 +64,28 @@ export default function ProcessScanScreen() {
     try {
       console.log('Saving document with image:', currentImage);
       
+      // Convert HEIC to PNG before upload if needed
+      let fileToUpload = {
+        uri: currentImage as string,
+        name: `scanned_document_${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      };
+
+      try {
+        const { convertHeicToPng } = await import('../../utils/imageConversion');
+        fileToUpload = await convertHeicToPng(fileToUpload);
+      } catch (conversionError) {
+        console.warn('HEIC conversion failed, continuing with original:', conversionError);
+      }
+      
       // Create FormData for file upload
       const formData = new FormData();
       
-      // Generate a filename based on timestamp
-      const timestamp = Date.now();
-      const filename = `scanned_document_${timestamp}.jpg`;
-      
       // Add file to form data
       formData.append('file', {
-        uri: currentImage as string,
-        type: 'image/jpeg',
-        name: filename,
+        uri: fileToUpload.uri,
+        type: fileToUpload.type,
+        name: fileToUpload.name,
       } as any);
 
       // Import API client and upload the file

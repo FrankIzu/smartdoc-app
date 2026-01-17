@@ -2,15 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
-  Image,
-  Modal,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    Alert,
+    Image,
+    Modal,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -218,33 +218,25 @@ function DashboardScreen() {
         }
       }
       
-      // Load recent uploaded documents (last 5 from last 7 days)
+      // Load recent uploaded documents (most recent 5 files, regardless of date)
       try {
         // console.log('📈 Attempting to load recent uploaded documents...');
-        const filesResponse = await apiClient.getFiles(1, 100); // Get more files to filter
+        const filesResponse = await apiClient.getFiles(1, 50); // Get recent files
         
         if (filesResponse && filesResponse.success && filesResponse.data) {
           const files = Array.isArray(filesResponse.data) ? filesResponse.data : [];
           
-          // Calculate date 7 days ago
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-          
-          // Filter files uploaded in the last 7 days and limit to 5
+          // Sort files by upload date, most recent first, and take the 5 most recent
           const recentFiles = files
             .filter((file: any) => {
-              if (!file.created_at) return false;
-              
-              const fileDate = new Date(file.created_at);
-              
-              // Check if file was uploaded in the last 7 days
-              return fileDate >= sevenDaysAgo && !isNaN(fileDate.getTime());
+              // Include files with or without created_at (handle both cases)
+              return file; // Include all files
             })
             .sort((a: any, b: any) => {
               // Sort by upload date, most recent first
-              const dateA = new Date(a.created_at);
-              const dateB = new Date(b.created_at);
-              return dateB.getTime() - dateA.getTime();
+              const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+              const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+              return dateB - dateA; // Most recent first
             })
             .slice(0, 5); // Limit to 5 most recent
           
@@ -254,16 +246,23 @@ function DashboardScreen() {
               try {
                 let timestamp: Date;
                 try {
-                  timestamp = new Date(file.created_at);
-                  if (isNaN(timestamp.getTime())) {
-                    timestamp = new Date();
+                  // Try to get timestamp from created_at, updated_at, or use current date
+                  const dateStr = file.created_at || file.updated_at || file.uploaded_at;
+                  if (dateStr) {
+                    timestamp = new Date(dateStr);
+                    if (isNaN(timestamp.getTime())) {
+                      timestamp = new Date();
+                    }
+                  } else {
+                    // If no date, use a date in the past (e.g., 1 day ago) so it shows "1d ago"
+                    timestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
                   }
                 } catch {
-                  timestamp = new Date();
+                  timestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
                 }
 
                 // Get filename from various possible fields
-                const fileName = file.original_filename || file.filename || file.name || 'Document';
+                const fileName = file.original_filename || file.filename || file.name || `Document ${index + 1}`;
 
                 return {
                   id: file.id?.toString() || `file-${index}-${Date.now()}`,
@@ -279,7 +278,7 @@ function DashboardScreen() {
                   type: 'upload' as const,
                   title: 'File uploaded',
                   subtitle: 'Unknown file',
-                  timestamp: new Date(),
+                  timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
                   icon: 'document-outline'
                 };
               }
@@ -288,7 +287,7 @@ function DashboardScreen() {
             // console.log('📈 Setting formatted activities:', formattedActivities);
             setRecentActivities(formattedActivities);
           } else {
-            // console.log('📈 No recent files found in last 7 days');
+            // console.log('📈 No recent files found');
             setRecentActivities(defaultActivities);
           }
         } else {
@@ -1124,20 +1123,15 @@ function DashboardScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={dynamicStyles.headerButton}
+                  onPress={() => router.push('/(tabs)/help')}
+                >
+                  <Ionicons name="help-circle-outline" size={26} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={dynamicStyles.headerButton}
                   onPress={() => router.push('/(tabs)/settings')}
                 >
                   <Ionicons name="person-circle" size={34} color="#007AFF" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
-                  onPress={onRefresh}
-                  disabled={refreshing}
-                >
-                  <Ionicons 
-                    name="refresh" 
-                    size={26} 
-                    color={refreshing ? "#999" : "#007AFF"} 
-                  />
                 </TouchableOpacity>
               </>
             )}
@@ -1273,7 +1267,7 @@ function DashboardScreen() {
         <View style={dynamicStyles.section}>
           <Text style={dynamicStyles.sectionTitle}>AI Insights</Text>
           <View style={dynamicStyles.insightsContainer}>
-            <TouchableOpacity key="insight-suggestions" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/settings')}>
+            <TouchableOpacity key="insight-suggestions" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
               <View style={dynamicStyles.insightIcon}>
                 <Ionicons name="bulb" size={26} color="#FF9500" />
               </View>
