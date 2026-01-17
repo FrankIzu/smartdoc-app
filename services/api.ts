@@ -64,6 +64,8 @@ const MOBILE_ENDPOINTS = {
   FILE_DOWNLOAD: (id: number) => `/api/v1/mobile/file/${id}/download`, // Backend decrypts on download
   FILE_VIEW: (id: number) => `/api/v1/mobile/file/${id}/view`, // Backend decrypts for viewing
   FILE_DELETE: (id: number) => `/api/v1/mobile/file/${id}`,
+  FILE_CATEGORIZE: (id: number) => `/api/v1/mobile/file/${id}/categorize`,
+  FILE_AUTO_CATEGORIZE: (id: number) => `/api/v1/mobile/file/${id}/auto-categorize`,
   
   // Chat
   CHAT_HISTORY: '/api/v1/mobile/chat/history',
@@ -817,6 +819,24 @@ class ApiService {
       // Fallback to download endpoint if view endpoint doesn't exist
       console.log('⚠️ View endpoint not available, falling back to download endpoint');
       return this.downloadFile(id);
+    }
+  }
+
+  async categorizeFile(id: number, category: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.FILE_CATEGORIZE(id), { category });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Categorize failed');
+    }
+  }
+
+  async autoCategorizeFile(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.FILE_AUTO_CATEGORIZE(id));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Auto-categorize failed');
     }
   }
 
@@ -1941,9 +1961,11 @@ class ApiService {
 
   // ==================== MEETING MANAGEMENT ====================
 
-  async getMeetings(): Promise<ApiResponse> {
+  async getMeetings(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {
-      const response = await this.client.get('/api/v1/mobile/meetings');
+      const response = await this.client.get('/api/v1/mobile/meetings', {
+        params: { limit, offset }
+      });
       return response.data;
     } catch (error: any) {
       console.error('Get meetings failed:', error);
@@ -2047,16 +2069,55 @@ class ApiService {
     }
   }
 
+  async copyMeetingInvite(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/api/v1/mobile/meetings/${meetingId}/copy-invite`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Copy meeting invite failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to copy meeting invite');
+    }
+  }
+
+  async getMeetingInfo(meetingId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(`/api/v1/mobile/meetings/${meetingId}/info`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get meeting info failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to get meeting info');
+    }
+  }
+
+  async sendMeetingHeartbeat(roomId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/api/v1/video/room/${roomId}/heartbeat`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Send meeting heartbeat failed:', error);
+      // Don't throw - heartbeat failures shouldn't break the app
+      return { success: false, message: error.response?.data?.message || 'Failed to send heartbeat' };
+    }
+  }
+
   // ==================== MEETING ASSETS & WEBHOOKS ====================
 
   async getMeetingAssets(): Promise<ApiResponse> {
     try {
       console.log('📁 Loading meeting assets with local file paths...');
-      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_ASSETS);
+      // Use shorter timeout for assets (non-critical) - 15 seconds instead of 30
+      const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_ASSETS, {
+        timeout: 15000
+      });
       console.log('📁 Meeting assets response:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('Get meeting assets failed:', error);
+      // Don't throw for timeout errors - assets are non-critical
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        console.warn('⚠️ Meeting assets request timed out (non-critical)');
+        return { success: false, data: null, message: 'Assets request timed out' };
+      }
       throw new Error(error.response?.data?.message || 'Failed to fetch meeting assets');
     }
   }

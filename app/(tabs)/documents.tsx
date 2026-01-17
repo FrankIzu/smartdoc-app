@@ -428,33 +428,21 @@ export default function QuickFilesScreen() {
     setLoading(true);
     
     try {
-      // Test backend connectivity with timeout
-      let connectivityTest;
-      try {
-        const connectivityPromise = apiClient.testConnectivity();
-        const connectivityTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection timeout')), 5000)
-        );
-        
-        connectivityTest = await Promise.race([connectivityPromise, connectivityTimeout]);
-      } catch (error) {
-        console.warn('Connectivity test failed, proceeding with data load:', error);
-        connectivityTest = { success: false, message: 'Connection test failed' };
-      }
+      // Test backend connectivity (non-blocking, don't wait for it)
+      // Run health check in background without blocking data load
+      apiClient.testConnectivity().catch((error) => {
+        console.warn('Connectivity test failed (non-blocking):', error);
+      });
       
-      // Try to load data even if connectivity test fails
+      // Load data immediately without waiting for health check
       let response;
       
       // If forms filter is selected, load recent forms instead of documents
       if (filterBy === 'forms') {
         try {
           console.log('📝 Loading recent forms for user...');
-          const formsPromise = apiClient.getForms();
-          const formsTimeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('API timeout')), 10000)
-          );
-          
-          response = await Promise.race([formsPromise, formsTimeout]);
+          // Use API client's built-in timeout (30 seconds) instead of creating artificial timeout
+          response = await apiClient.getForms();
           console.log('✅ Forms response:', response);
         } catch (err) {
           console.error('Forms endpoint failed:', err);
@@ -462,26 +450,18 @@ export default function QuickFilesScreen() {
         }
       } else {
         try {
-          // Try the new getDocuments method first with timeout
+          // Try the new getDocuments method first
           // Pass workspaceId to filter files by workspace
           console.log('📁 Loading documents with workspaceId:', workspaceId);
-          const documentsPromise = apiClient.getDocuments(1, 50, undefined, undefined, workspaceId);
-          const documentsTimeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('API timeout')), 10000)
-          );
-          
-          response = await Promise.race([documentsPromise, documentsTimeout]);
+          // Use API client's built-in timeout (30 seconds) instead of creating artificial timeout
+          response = await apiClient.getDocuments(1, 50, undefined, undefined, workspaceId);
           console.log('📁 Documents response received:', response?.success, 'Files count:', (response as any)?.data?.length || (response as any)?.files?.length || 0);
         } catch (err) {
           console.warn('Documents endpoint failed, trying files endpoint:', err);
           try {
             console.log('📁 Falling back to getFiles with workspaceId:', workspaceId);
-            const filesPromise = apiClient.getFiles(1, 50, undefined, undefined, workspaceId);
-            const filesTimeout = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('API timeout')), 10000)
-            );
-            
-            response = await Promise.race([filesPromise, filesTimeout]);
+            // Use API client's built-in timeout (30 seconds) instead of creating artificial timeout
+            response = await apiClient.getFiles(1, 50, undefined, undefined, workspaceId);
             console.log('📁 Files response received:', response?.success, 'Files count:', (response as any)?.files?.length || 0);
           } catch (fallbackErr) {
             console.error('Both endpoints failed:', fallbackErr);
@@ -1360,14 +1340,12 @@ export default function QuickFilesScreen() {
       
       {/* Header */}
       <View style={dynamicStyles.header}>
-        {workspaceId ? (
-          <TouchableOpacity 
-            style={dynamicStyles.backButton}
-            onPress={() => router.back()}
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
-        ) : null}
+        <TouchableOpacity 
+          style={dynamicStyles.backButton}
+          onPress={() => router.push('/(tabs)')}
+        >
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
         <View style={dynamicStyles.headerTitleContainer}>
           <Text style={dynamicStyles.headerTitle}>
             {workspaceId ? 'Workspace Files' : 'Files'}

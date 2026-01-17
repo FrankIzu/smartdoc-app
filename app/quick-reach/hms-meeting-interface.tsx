@@ -2,14 +2,15 @@
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
+import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from 'react';
 import {
-  Alert, Linking, Platform, StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    Alert, Linking, Platform, StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useAuth } from '../context/auth';
 import { hmsBackendService } from './hmsBackendService';
@@ -105,9 +106,11 @@ export default function HMSMeetingInterfaceScreen() {
   const [hmsInitTimeout, setHmsInitTimeout] = useState(false);
   const [permissionsGranted, setPermissionsGranted] = useState<boolean | null>(null);
   const [joinConfig, setJoinConfig] = useState<any>(null);
+  const [roomId, setRoomId] = useState<number | null>(null);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Debug logging
-  console.log('📱 100ms Prebuilt Interface - Received params:', {
+      console.log('📱 GrabDocs Meeting Interface - Received params:', {
     meetingId,
     title,
     userName,
@@ -281,6 +284,97 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, [hmsInitializing, authToken, meetingId, user?.id]);
 
+  // Get room_id from meeting info and set up heartbeat
+  useEffect(() => {
+    let mounted = true;
+
+    const getRoomIdAndStartHeartbeat = async () => {
+      if (!meetingId || !user) return;
+
+      try {
+        // Get meeting info to retrieve room_id
+        const meetingInfo = await apiClient.getMeetingInfo(meetingId as string);
+        if (meetingInfo.success && meetingInfo.data?.id) {
+          const dbRoomId = meetingInfo.data.id;
+          if (mounted) {
+            setRoomId(dbRoomId);
+            console.log('💓 [HEARTBEAT] Got room_id:', dbRoomId, 'Starting heartbeat...');
+          }
+        } else {
+          console.warn('⚠️ [HEARTBEAT] Could not get room_id from meeting info');
+        }
+      } catch (error) {
+        console.error('❌ [HEARTBEAT] Error getting meeting info:', error);
+      }
+    };
+
+    getRoomIdAndStartHeartbeat();
+
+    return () => {
+      mounted = false;
+    };
+  }, [meetingId, user]);
+
+  // Set up heartbeat interval when room_id is available
+  useEffect(() => {
+    if (!roomId) return;
+
+    // Clear any existing interval
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+    }
+
+    // Send initial heartbeat immediately
+    const sendHeartbeat = async () => {
+      try {
+        await apiClient.sendMeetingHeartbeat(roomId);
+        console.log('💓 [HEARTBEAT] Sent heartbeat for room_id:', roomId);
+      } catch (error) {
+        // Silently fail - heartbeat errors shouldn't break the app
+        console.warn('⚠️ [HEARTBEAT] Failed to send heartbeat:', error);
+      }
+    };
+
+    // Send first heartbeat immediately
+    sendHeartbeat();
+
+    // Set up interval to send heartbeat every 25 seconds (recommended: 20-30 seconds)
+    heartbeatIntervalRef.current = setInterval(() => {
+      sendHeartbeat();
+    }, 25000);
+
+    console.log('💓 [HEARTBEAT] Started heartbeat interval for room_id:', roomId);
+
+    // Cleanup on unmount
+    return () => {
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+        console.log('💓 [HEARTBEAT] Stopped heartbeat interval for room_id:', roomId);
+      }
+    };
+  }, [roomId]);
+
+  // Cleanup heartbeat and call leave endpoint on component unmount (e.g., user navigates away)
+  useEffect(() => {
+    return () => {
+      // Stop heartbeat
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+        console.log('💓 [HEARTBEAT] Cleaned up heartbeat on unmount');
+      }
+
+      // Call leave endpoint if we have meetingId (async, don't await - component is unmounting)
+      if (meetingId && user) {
+        apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`).catch((error) => {
+          // Silently fail - component is already unmounting
+          console.warn('⚠️ [LEAVE] Error calling leave endpoint on unmount:', error);
+        });
+      }
+    };
+  }, [meetingId, user]);
+
   const initializePrebuiltInterface = async () => {
     try {
       setIsLoading(true);
@@ -296,20 +390,22 @@ export default function HMSMeetingInterfaceScreen() {
 
       // Check if meetingId is provided
       if (!meetingId) {
-        console.error('❌ No meetingId provided to 100ms Prebuilt Interface');
+        console.error('❌ No meetingId provided to GrabDocs Meeting Interface');
         setError('No meeting ID provided. Please try joining the meeting again from the meeting list.');
         setIsLoading(false);
         return;
       }
 
-      console.log('📱 Initializing 100ms Prebuilt Interface with meeting ID:', meetingId);
+      console.log('📱 Initializing GrabDocs Meeting Interface with meeting ID:', meetingId);
       
       // Generate auth token from backend
       try {
+        // Don't specify role - let backend determine based on creator_id
+        // Backend will check if user is meeting creator and assign 'host' or 'guest' accordingly
         const token = await hmsBackendService.generateAuthToken({
           roomCode: meetingId as string,
           userName: (userName as string) || user?.name || 'Mobile User',
-          role: 'host', // or 'viewer' based on your needs
+          // role: not specified - backend will determine based on creator_id (same as web)
           userId: user?.id?.toString()
         });
         if (!token) {
@@ -340,7 +436,7 @@ export default function HMSMeetingInterfaceScreen() {
           userName: displayUserName,
           userNameLength: displayUserName.length,
           userId: user?.id?.toString(),
-          role: 'host',
+          role: 'auto-determined-by-backend', // Backend determines host/guest based on creator_id
           platform: Platform.OS,
           permissionsGranted: permissionsGranted,
           timestamp: new Date().toISOString(),
@@ -348,7 +444,7 @@ export default function HMSMeetingInterfaceScreen() {
         
         setJoinConfig(joinConfigData);
         
-        console.log('🚀 [HMS] JOINING 100ms MEETING WITH:');
+        console.log('🚀 [HMS] JOINING GRABDOCS MEETING WITH:');
         console.log('=====================================');
         console.log('Token Length:', token.length);
         console.log('Token Preview:', token.substring(0, 50) + '...');
@@ -358,7 +454,7 @@ export default function HMSMeetingInterfaceScreen() {
         console.log('User Name:', displayUserName);
         console.log('User Name Length:', displayUserName.length);
         console.log('User ID:', user?.id?.toString());
-        console.log('Role: host');
+        console.log('Role: auto-determined by backend (host if creator, guest otherwise)');
         console.log('Platform:', Platform.OS);
         console.log('Permissions Granted:', permissionsGranted);
         console.log('HMSPrebuilt Available:', !!HMSPrebuilt);
@@ -405,7 +501,7 @@ export default function HMSMeetingInterfaceScreen() {
       
       // Check if HMS Prebuilt is available
       if (!HMSPrebuilt) {
-        console.log('📱 100ms Prebuilt not available - showing development mode');
+        console.log('📱 GrabDocs Meeting not available - showing development mode');
         console.log('📱 To test with full functionality:');
         console.log('   1. Install HMS package: npm install @100mslive/react-native-hms');
         console.log('   2. Create a development build (not Expo Go)');
@@ -435,7 +531,7 @@ export default function HMSMeetingInterfaceScreen() {
       console.log('✅ [HMS] Using timeout to detect if join succeeds (component will render when joined)');
       
     } catch (error: any) {
-      console.error('❌ Failed to initialize 100ms Prebuilt Interface:', error);
+      console.error('❌ Failed to initialize GrabDocs Meeting Interface:', error);
       setError('Failed to initialize meeting interface. Please try again.');
       setHmsInitializing(false);
       setIsLoading(false);
@@ -451,7 +547,7 @@ export default function HMSMeetingInterfaceScreen() {
     // This prevents the blank screen issue
   };
 
-  const handleLeaveMeeting = () => {
+  const handleLeaveMeeting = async () => {
     Alert.alert(
       'Leave Meeting',
       'Are you sure you want to leave the meeting?',
@@ -460,7 +556,29 @@ export default function HMSMeetingInterfaceScreen() {
         { 
           text: 'Leave', 
           style: 'destructive', 
-          onPress: () => router.back()
+          onPress: async () => {
+            try {
+              // Stop heartbeat immediately
+              if (heartbeatIntervalRef.current) {
+                clearInterval(heartbeatIntervalRef.current);
+                heartbeatIntervalRef.current = null;
+                console.log('💓 [HEARTBEAT] Stopped heartbeat before leaving');
+              }
+
+              // Call backend to leave meeting (clears ActiveParticipant table)
+              if (meetingId) {
+                console.log('📱 [LEAVE] Calling leave endpoint for meeting:', meetingId);
+                await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
+                console.log('✅ [LEAVE] Successfully left meeting via backend');
+              }
+            } catch (error: any) {
+              // Log error but don't block navigation - user is leaving anyway
+              console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
+              console.error('⚠️ [LEAVE] Continuing with navigation despite error');
+            }
+            // Navigate back regardless of API call result
+            router.back();
+          }
         }
       ]
     );
@@ -488,7 +606,7 @@ export default function HMSMeetingInterfaceScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Initializing 100ms Prebuilt Interface...</Text>
+          <Text style={styles.loadingText}>Initializing GrabDocs Meeting...</Text>
           {hmsInitializing && authToken && (
             <>
               <Text style={[styles.loadingText, { marginTop: 8, fontSize: 14, opacity: 0.7 }]}>
@@ -508,7 +626,7 @@ export default function HMSMeetingInterfaceScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
-          <Text style={styles.errorTitle}>100ms Prebuilt Interface</Text>
+          <Text style={styles.errorTitle}>GrabDocs Meeting</Text>
           <Text style={styles.errorMessage}>{error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={initializePrebuiltInterface}>
             <Text style={styles.retryButtonText}>Retry</Text>
@@ -697,7 +815,7 @@ export default function HMSMeetingInterfaceScreen() {
       console.log('=====================================');
       
       // Prepare props object with only valid values
-      // According to 100ms React Native docs: HMSPrebuilt uses:
+      // According to React Native docs: HMSPrebuilt uses:
       // - roomCode OR token (not authToken!)
       // - options: { userName, userId }
       // - onLeave callback
@@ -864,11 +982,26 @@ export default function HMSMeetingInterfaceScreen() {
                     token={hmsProps.token}
                     roomCode={hmsProps.roomCode}
                     options={hmsProps.options}
-                    onLeave={(data?: any) => {
+                    onLeave={async (data?: any) => {
                       console.log('👋 [HMS] onLeave callback fired');
                       console.log('👋 [HMS] Leave data:', data);
                       setHmsInitializing(false);
                       setIsLoading(false);
+                      
+                      // Call backend to leave meeting (clears ActiveParticipant table)
+                      try {
+                        if (meetingId) {
+                          console.log('📱 [LEAVE] Calling leave endpoint for meeting:', meetingId);
+                          await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
+                          console.log('✅ [LEAVE] Successfully left meeting via backend');
+                        }
+                      } catch (error: any) {
+                        // Log error but don't block navigation - user is leaving anyway
+                        console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
+                        console.error('⚠️ [LEAVE] Continuing with navigation despite error');
+                      }
+                      
+                      // Navigate back regardless of API call result
                       router.back();
                     }}
                     style={hmsProps.style}
@@ -916,7 +1049,7 @@ export default function HMSMeetingInterfaceScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.developmentContainer}>
-        <Text style={styles.developmentTitle}>100ms Prebuilt Interface</Text>
+        <Text style={styles.developmentTitle}>GrabDocs Meeting</Text>
         <Text style={styles.developmentSubtitle}>Development Mode</Text>
         
         <View style={styles.meetingInfo}>
@@ -932,7 +1065,7 @@ export default function HMSMeetingInterfaceScreen() {
 
         <View style={styles.developmentMessage}>
           <Text style={styles.developmentText}>
-            The 100ms Prebuilt Interface requires a development build (not Expo Go).
+            The GrabDocs Meeting Interface requires a development build (not Expo Go).
           </Text>
           <Text style={styles.developmentText}>
             To test with an existing meeting:

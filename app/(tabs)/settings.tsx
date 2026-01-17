@@ -509,6 +509,8 @@ export default function SettingsScreen() {
       backgroundColor: colors.background,
     },
     header: {
+      flexDirection: 'row',
+      alignItems: 'center',
       paddingHorizontal: 16,
       paddingVertical: 12,
       backgroundColor: colors.headerBackground,
@@ -829,6 +831,12 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
+        <TouchableOpacity 
+          onPress={() => router.push('/(tabs)')}
+          style={{ marginRight: 12 }}
+        >
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
         <Text style={dynamicStyles.headerTitle}>Settings</Text>
       </View>
 
@@ -1306,7 +1314,7 @@ export default function SettingsScreen() {
             icon="help-circle-outline"
             title="Help & Support"
             value="Get help with the app"
-            onPress={() => Alert.alert('Help & Support', 'Get assistance with GrabDocs:\n\n📧 Email: support@grabdocs.com\n💬 Live Chat: Available 9AM-5PM EST\n📖 Documentation: grabdocs.com/help\n🎥 Video Tutorials: grabdocs.com/tutorials\n\nCommon topics:\n• Setting up document categories\n• Using AI-powered search\n• Managing upload links\n• Form builder guide\n• Workspace collaboration\n\nOur support team typically responds within 24 hours.')}
+            onPress={() => router.push('/(tabs)/help')}
           />
           <InfoItem
             icon="document-text-outline"

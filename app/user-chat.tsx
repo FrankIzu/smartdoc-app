@@ -87,33 +87,57 @@ export default function UserChatScreen() {
   const messagesListRef = useRef<FlatList>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [otherUserOnline, setOtherUserOnline] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<{ [userId: number]: string }>({}); // userId -> username
 
   // Initialize socket connection
   useEffect(() => {
     initializeSocket();
     return () => {
+      // Clean up typing timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      // Disconnect socket
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
     };
   }, []);
 
+  // Join user room when socket is connected and userProfile is available
+  useEffect(() => {
+    if (socketRef.current && isConnected && userProfile?.id) {
+      console.log('🔌 [USER-CHAT] Joining user room:', userProfile.id);
+      socketRef.current.emit('join_user_room', { user_id: userProfile.id });
+      console.log('🔌 [USER-CHAT] Emitted join_user_room for user:', userProfile.id);
+    }
+  }, [isConnected, userProfile?.id]);
+
   // Join chat room when chat is selected
   useEffect(() => {
-    if (selectedChat && socketRef.current && !isNewChat) {
+    if (selectedChat && socketRef.current && !isNewChat && isConnected) {
       // Leave previous room
-      socketRef.current.emit('leave_chat', { chatId: selectedChat.id });
+      socketRef.current.emit('leave_chat_room', { chat_id: selectedChat.id });
       // Reset online status when leaving
       setOtherUserOnline(false);
       // Join new room
-      socketRef.current.emit('join_chat', { chatId: selectedChat.id });
+      console.log('🔌 [USER-CHAT] Joining chat room:', selectedChat.id, 'socket connected:', socketRef.current.connected);
+      socketRef.current.emit('join_chat_room', { chat_id: selectedChat.id });
+      console.log('🔌 [USER-CHAT] Emitted join_chat_room event for chat:', selectedChat.id);
       // Request participant online status
       socketRef.current.emit('get_chat_participants_status', { chatId: selectedChat.id });
     } else {
+      console.log('⚠️ [USER-CHAT] Cannot join chat room:', {
+        hasSelectedChat: !!selectedChat,
+        isNewChat,
+        hasSocket: !!socketRef.current,
+        isConnected,
+        socketConnected: socketRef.current?.connected
+      });
       // Reset when no chat is selected
       setOtherUserOnline(false);
     }
-  }, [selectedChat, isNewChat]);
+  }, [selectedChat, isNewChat, isConnected]);
 
   // Load users and workspaces for @ mention
   useEffect(() => {
@@ -158,11 +182,51 @@ export default function UserChatScreen() {
         reconnectionDelay: 1000,
         reconnectionAttempts: 5,
         timeout: 20000,
+        // Explicitly use default namespace to match backend
+        path: '/socket.io/',
       });
 
+      // TEST: Add a direct listener to catch ALL events (before other handlers)
+      const originalOnevent = (socket as any).onevent;
+      if (originalOnevent) {
+        (socket as any).onevent = function(packet: any) {
+          if (packet && packet.data && packet.data[0]) {
+            const eventName = packet.data[0];
+            if (eventName === 'new_chat_message') {
+              console.log('🔍 [USER-CHAT] ===== RAW onevent DETECTED new_chat_message =====', packet.data[1]);
+            }
+          }
+          return originalOnevent.call(this, packet);
+        };
+      }
+
       socket.on('connect', () => {
-        console.log('✅ Socket connected');
+        console.log('✅ [USER-CHAT] Socket connected');
         setIsConnected(true);
+        
+        // Join user room first (required for receiving messages)
+        // Use state setter to get latest userProfile
+        setUserProfile(currentProfile => {
+          if (currentProfile?.id) {
+            console.log('🔌 [USER-CHAT] Joining user room:', currentProfile.id);
+            socket.emit('join_user_room', { user_id: currentProfile.id });
+            console.log('🔌 [USER-CHAT] Emitted join_user_room for user:', currentProfile.id);
+          } else {
+            console.log('⚠️ [USER-CHAT] Cannot join user room - userProfile not loaded yet');
+          }
+          return currentProfile;
+        });
+        
+        // Use state setter to get latest selectedChat
+        setSelectedChat(currentChat => {
+          // Rejoin chat room if we have a selected chat
+          if (currentChat && !isNewChat) {
+            console.log('🔌 [USER-CHAT] Rejoining chat room after reconnect:', currentChat.id);
+            socket.emit('join_chat_room', { chat_id: currentChat.id });
+            console.log('🔌 [USER-CHAT] Emitted join_chat_room for chat:', currentChat.id);
+          }
+          return currentChat;
+        });
       });
 
       socket.on('disconnect', () => {
@@ -170,68 +234,146 @@ export default function UserChatScreen() {
         setIsConnected(false);
       });
 
-      socket.on('new_message', (data: any) => {
-        console.log('📨 New message received:', data);
-        if (data.chat_id === selectedChat?.id) {
-          // Check if this message is from the current user
-          // Use strict comparison and ensure userProfile is loaded
-          const isOwnMessage = !!(userProfile?.id && data.message.sender_id && data.message.sender_id === userProfile.id);
-          
-          console.log('🔍 Message ownership check:', {
-            sender_id: data.message.sender_id,
-            userProfile_id: userProfile?.id,
-            isOwnMessage,
-            message_id: data.message.id
-          });
-          
-          const newMsg: ChatMessage = {
-            id: data.message.id,
-            content: data.message.content,
-            sender: data.message.sender,
-            is_own_message: isOwnMessage,
-            created_at: data.message.created_at,
-          };
-          
-          // Prevent duplicates and update existing messages with correct ownership
-          setMessages(prev => {
-            const existingIndex = prev.findIndex(msg => msg.id === newMsg.id);
-            if (existingIndex !== -1) {
-              // Message exists - update it if ownership changed
-              const existing = prev[existingIndex];
-              if (existing.is_own_message !== newMsg.is_own_message) {
-                const updated = [...prev];
-                updated[existingIndex] = newMsg;
-                console.log('🔄 Updating existing message with correct ownership:', newMsg.id, 'from', existing.is_own_message, 'to', newMsg.is_own_message);
-                return updated;
-              }
-              console.log('⚠️ Duplicate message detected, skipping:', newMsg.id);
-              return prev;
-            }
-            return [...prev, newMsg];
-          });
-          scrollToBottom();
-          
-          // If message is from another user, they're definitely online
-          if (!isOwnMessage) {
-            setOtherUserOnline(true);
-          }
-        }
-        
-        // Update chat list
+      // Register new_chat_message handler
+      console.log('📨 [USER-CHAT] Registering new_chat_message event handler...');
+      socket.on('new_chat_message', (data: any) => {
+        console.log('📨 [USER-CHAT] ===== NEW MESSAGE EVENT TRIGGERED =====');
+        console.log('📨 [USER-CHAT] Event handler called with data:', data);
+        console.log('📨 [USER-CHAT] New message received:', JSON.stringify(data, null, 2));
+        // Always update chat list first
         setChats(prev => prev.map(chat => 
           chat.id === data.chat_id 
             ? { ...chat, last_message: data.message.content.substring(0, 50), updated_at: data.message.created_at }
             : chat
         ));
+        
+        // Use state setters with function form to access latest values
+        setSelectedChat(currentChat => {
+          setUserProfile(currentProfile => {
+            // Only add to messages if this is the currently selected chat
+            if (data.chat_id === currentChat?.id) {
+              // Check if this message is from the current user
+              const isOwnMessage = !!(currentProfile?.id && data.message.sender_id && data.message.sender_id === currentProfile.id);
+              
+              console.log('🔍 [USER-CHAT] Message ownership check:', {
+                chat_id: data.chat_id,
+                current_chat_id: currentChat?.id,
+                sender_id: data.message.sender_id,
+                userProfile_id: currentProfile?.id,
+                isOwnMessage,
+                message_id: data.message.id
+              });
+              
+              const newMsg: ChatMessage = {
+                id: data.message.id,
+                content: data.message.content,
+                sender: data.message.sender,
+                is_own_message: isOwnMessage,
+                created_at: data.message.created_at,
+              };
+              
+              // Prevent duplicates and update existing messages with correct ownership
+              setMessages(prev => {
+                const existingIndex = prev.findIndex(msg => msg.id === newMsg.id);
+                if (existingIndex !== -1) {
+                  // Message exists - update it if ownership changed
+                  const existing = prev[existingIndex];
+                  if (existing.is_own_message !== newMsg.is_own_message) {
+                    const updated = [...prev];
+                    updated[existingIndex] = newMsg;
+                    console.log('🔄 [USER-CHAT] Updating existing message with correct ownership:', newMsg.id);
+                    return updated;
+                  }
+                  console.log('⚠️ [USER-CHAT] Duplicate message detected, skipping:', newMsg.id);
+                  return prev;
+                }
+                console.log('✅ [USER-CHAT] Adding new message:', newMsg.id);
+                return [...prev, newMsg];
+              });
+              scrollToBottom();
+              
+              // If message is from another user, they're definitely online
+              if (!isOwnMessage) {
+                setOtherUserOnline(true);
+              }
+            } else {
+              console.log('⚠️ [USER-CHAT] Message for different chat:', {
+                message_chat_id: data.chat_id,
+                current_chat_id: currentChat?.id
+              });
+            }
+            return currentProfile;
+          });
+          return currentChat;
+        });
       });
 
-      socket.on('user_typing', (data: any) => {
-        if (data.chat_id === selectedChat?.id && data.user_id !== userProfile?.id) {
-          console.log('⌨️ User typing:', data.username);
-          // If user is typing, they're definitely online
-          setOtherUserOnline(true);
-          // You can add typing indicator here
-        }
+      socket.on('chat_typing', (data: any) => {
+        console.log('⌨️ [USER-CHAT] Typing event received:', data);
+        // Use state setter with function form to access latest selectedChat
+        setSelectedChat(currentChat => {
+          if (data.chat_id === currentChat?.id && data.user_id !== userProfile?.id) {
+            // If user is typing, they're definitely online
+            setOtherUserOnline(true);
+            
+            // Update typing users
+            if (data.is_typing) {
+              // Try to get username from multiple sources (same as web)
+              let displayName: string | null = null;
+              
+              // 1. Check participants first
+              const participant = currentChat?.participants?.find((p: any) => 
+                p.id === data.user_id || p.user_id === data.user_id
+              );
+              
+              if (participant) {
+                const user = participant.user || participant;
+                if (user.firstName && user.lastName) {
+                  displayName = `${user.firstName} ${user.lastName}`.trim();
+                } else if (user.username) {
+                  displayName = user.username;
+                } else if (user.name) {
+                  displayName = user.name;
+                }
+              }
+              
+              // 2. Check messages for sender info (fallback) - use state setter to get latest
+              if (!displayName) {
+                setMessages(currentMessages => {
+                  if (currentMessages.length > 0) {
+                    const reversed = [...currentMessages].reverse();
+                    const matchedMsg = reversed.find((m) => 
+                      m.sender && (m.sender.id === data.user_id || (m.sender as any).user_id === data.user_id)
+                    );
+                    if (matchedMsg && matchedMsg.sender) {
+                      const sender = matchedMsg.sender as any;
+                      if (sender.firstName && sender.lastName) {
+                        displayName = `${sender.firstName} ${sender.lastName}`.trim();
+                      } else if (sender.username) {
+                        displayName = sender.username;
+                      } else if (sender.name) {
+                        displayName = sender.name;
+                      }
+                    }
+                  }
+                  return currentMessages;
+                });
+              }
+              
+              const username = displayName || 'Someone';
+              console.log('⌨️ [USER-CHAT] Setting typing user:', username, 'for user_id:', data.user_id);
+              setTypingUsers(prev => ({ ...prev, [data.user_id]: username }));
+            } else {
+              console.log('⌨️ [USER-CHAT] Removing typing user:', data.user_id);
+              setTypingUsers(prev => {
+                const updated = { ...prev };
+                delete updated[data.user_id];
+                return updated;
+              });
+            }
+          }
+          return currentChat;
+        });
       });
 
       // Listen for user online/offline events
@@ -271,6 +413,29 @@ export default function UserChatScreen() {
       });
 
       socketRef.current = socket;
+      
+      // Debug: Log all socket events (if available)
+      if (typeof (socket as any).onAny === 'function') {
+        (socket as any).onAny((eventName: string, ...args: any[]) => {
+          // Log ALL events including new_chat_message for debugging
+          if (eventName === 'new_chat_message') {
+            console.log(`🔍 [USER-CHAT] ===== onAny DETECTED new_chat_message =====`, args.length > 0 ? args[0] : '');
+          }
+          if (eventName !== 'connect' && eventName !== 'disconnect' && eventName !== 'connect_error' && eventName !== 'error') {
+            console.log(`🔍 [USER-CHAT] Socket event received: ${eventName}`, args.length > 0 ? args[0] : '');
+          }
+        });
+        console.log('✅ [USER-CHAT] onAny handler registered for debugging');
+      } else {
+        console.warn('⚠️ [USER-CHAT] socket.onAny is not available - cannot debug all events');
+      }
+      
+      // Verify handlers are registered
+      const listeners = (socket as any)._callbacks || (socket as any).listeners || {};
+      console.log('📋 [USER-CHAT] Registered event handlers:', Object.keys(listeners));
+      console.log('📋 [USER-CHAT] Has new_chat_message handler:', !!(listeners['new_chat_message'] || (socket as any)._events?.['new_chat_message']));
+      
+      console.log('✅ [USER-CHAT] Socket initialized and event handlers registered');
     } catch (error) {
       console.warn('Failed to initialize socket (chat will work without real-time updates):', error);
       // Don't throw - allow chat to work without WebSocket
@@ -379,8 +544,13 @@ export default function UserChatScreen() {
   const loadUserProfile = async () => {
     try {
       const response = await api.getUserProfile();
-      if (response) {
-        setUserProfile(response);
+      console.log('👤 getUserProfile response:', JSON.stringify(response, null, 2));
+      
+      // Extract user data from response - could be response.data or response.data.data
+      const userData = response.data || response;
+      if (userData) {
+        console.log('👤 Setting userProfile:', { id: userData.id, username: userData.username, email: userData.email });
+        setUserProfile(userData);
       }
     } catch (error) {
       console.error('Failed to load user profile:', error);
@@ -468,16 +638,42 @@ export default function UserChatScreen() {
     try {
       setMessagesLoading(true);
       console.log(`📨 Loading messages for chat_id: ${chatId}`);
+      
+      // Ensure userProfile is loaded before determining message ownership
+      if (!userProfile) {
+        await loadUserProfile();
+      }
+      
       const response = await api.getChatMessages(chatId);
       if (response.success && (response as any).messages) {
-        const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => ({
-          id: msg.id,
-          content: msg.content || '',
-          sender: msg.sender || null,
-          is_own_message: msg.sender_id === userProfile?.id,
-          created_at: msg.created_at || new Date().toISOString(),
-        }));
+        const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => {
+          // Use the same logic as sendMessageToChat for consistency
+          // Convert both to numbers for comparison in case one is string and other is number
+          const isOwnMessage = !!(userProfile?.id && msg.sender_id && Number(msg.sender_id) === Number(userProfile.id));
+          
+          console.log(`🔍 Message ${msg.id} ownership check:`, {
+            sender_id: msg.sender_id,
+            sender_id_type: typeof msg.sender_id,
+            userProfile_id: userProfile?.id,
+            userProfile_id_type: typeof userProfile?.id,
+            isOwnMessage,
+            comparison: `${msg.sender_id} === ${userProfile?.id}`,
+            numberComparison: `${Number(msg.sender_id)} === ${Number(userProfile?.id)}`
+          });
+          
+          return {
+            id: msg.id,
+            content: msg.content || '',
+            sender: msg.sender || null,
+            is_own_message: isOwnMessage,
+            created_at: msg.created_at || new Date().toISOString(),
+          };
+        });
         console.log(`✅ Loaded ${convertedMessages.length} messages for chat ${chatId}`);
+        console.log(`📊 User profile ID: ${userProfile?.id}, Messages ownership summary:`, 
+          convertedMessages.map(m => ({ id: m.id, is_own: m.is_own_message })));
+        console.log(`📊 User profile ID: ${userProfile?.id}, Messages ownership:`, 
+          convertedMessages.map(m => ({ id: m.id, is_own: m.is_own_message, sender_id: (m.sender as any)?.id })));
         setMessages(convertedMessages);
       } else {
         console.warn(`⚠️ No messages found for chat ${chatId}`);
@@ -576,14 +772,22 @@ export default function UserChatScreen() {
   };
 
   const handleSendMessage = async () => {
+    console.log('📤 [USER-CHAT] ===== handleSendMessage CALLED =====');
+    console.log('📤 [USER-CHAT] isNewChat:', isNewChat);
+    console.log('📤 [USER-CHAT] selectedRecipient:', selectedRecipient);
+    console.log('📤 [USER-CHAT] selectedChat:', selectedChat);
+    console.log('📤 [USER-CHAT] newMessage:', newMessage);
+    
     // If in new chat mode and no recipient selected, try to start chat
     if (isNewChat && !selectedRecipient) {
+      console.log('⚠️ [USER-CHAT] Cannot send - new chat but no recipient selected');
       Alert.alert('Select Recipient', 'Type @ and select a user or workspace to start the chat');
       return;
     }
 
     // If in new chat mode with recipient, start the chat first
     if (isNewChat && selectedRecipient) {
+      console.log('📤 [USER-CHAT] Starting new chat first, then sending message');
       await handleStartChat();
       // After chat is created, send the message if there's one
       if (newMessage.trim()) {
@@ -603,30 +807,72 @@ export default function UserChatScreen() {
     }
 
     // Normal message sending
-    if (!selectedChat || !newMessage.trim()) return;
+    if (!selectedChat || !newMessage.trim()) {
+      console.log('⚠️ [USER-CHAT] Cannot send - missing chat or empty message:', {
+        hasSelectedChat: !!selectedChat,
+        hasMessage: !!newMessage.trim(),
+        messageLength: newMessage.trim().length
+      });
+      return;
+    }
+    console.log('📤 [USER-CHAT] Proceeding with normal message send');
     await sendMessageToChat(selectedChat.id, newMessage.trim());
   };
 
   const sendMessageToChat = async (chatId: number, messageText: string) => {
+    console.log('📤 [USER-CHAT] ===== SENDING MESSAGE =====');
+    console.log('📤 [USER-CHAT] Chat ID:', chatId);
+    console.log('📤 [USER-CHAT] Message text:', messageText);
+    console.log('📤 [USER-CHAT] User ID:', userProfile?.id);
+    console.log('📤 [USER-CHAT] User profile:', userProfile);
+    
     setSendingMessage(true);
 
     // Emit typing stopped
-    if (socketRef.current) {
-      socketRef.current.emit('stop_typing', { chatId });
+    if (socketRef.current && userProfile?.id) {
+      console.log('📤 [USER-CHAT] Emitting typing stopped event');
+      socketRef.current.emit('user_typing', { 
+        chat_id: chatId,
+        user_id: userProfile.id,
+        is_typing: false
+      });
     }
 
     try {
+      console.log('📤 [USER-CHAT] Calling API to send message...');
       const response = await api.sendChatMessageToChat(messageText, chatId);
+      console.log('📤 [USER-CHAT] API response received:', {
+        success: response.success,
+        hasMessage: !!(response as any).message,
+        messageId: (response as any).message?.id,
+        messageContent: (response as any).message?.content,
+        senderId: (response as any).message?.sender_id
+      });
       
       if (response.success && (response as any).message) {
         const newMsg = (response as any).message;
+        // Use the same logic as loadMessages to determine is_own_message
+        // This ensures consistency between sent messages and loaded messages
+        // Convert both to numbers for comparison in case one is string and other is number
+        const isOwnMessage = !!(userProfile?.id && newMsg.sender_id && Number(newMsg.sender_id) === Number(userProfile.id));
         const messageObj: ChatMessage = {
           id: newMsg.id,
           content: newMsg.content,
           sender: newMsg.sender,
-          is_own_message: true,
+          is_own_message: isOwnMessage,
           created_at: newMsg.created_at || new Date().toISOString()
         };
+        
+        console.log('📤 Sent message ownership check:', {
+          sender_id: newMsg.sender_id,
+          sender_id_type: typeof newMsg.sender_id,
+          userProfile_id: userProfile?.id,
+          userProfile_id_type: typeof userProfile?.id,
+          isOwnMessage,
+          message_id: newMsg.id,
+          comparison: `${newMsg.sender_id} === ${userProfile?.id}`,
+          numberComparison: `${Number(newMsg.sender_id)} === ${Number(userProfile?.id)}`
+        });
         
         // Add message locally (socket will also broadcast it, but we prevent duplicates)
         setMessages(prev => {
@@ -646,21 +892,57 @@ export default function UserChatScreen() {
         ));
       }
       setNewMessage('');
+      console.log('📤 [USER-CHAT] Message sent successfully, cleared input');
     } catch (error: any) {
-      console.error('Failed to send message:', error);
+      console.error('❌ [USER-CHAT] Failed to send message:', error);
+      console.error('❌ [USER-CHAT] Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        chatId,
+        messageText,
+        userId: userProfile?.id
+      });
       const errorMessage = error?.message || 'Failed to send message. Please try again.';
       Alert.alert('Error', errorMessage);
     } finally {
       setSendingMessage(false);
+      console.log('📤 [USER-CHAT] Send operation completed (success or error)');
     }
   };
 
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   const handleTyping = (text: string) => {
     setNewMessage(text);
     
     // Emit typing event (only if in existing chat)
-    if (selectedChat && !isNewChat && socketRef.current) {
-      socketRef.current.emit('typing', { chatId: selectedChat.id });
+    if (selectedChat && !isNewChat && socketRef.current && userProfile?.id) {
+      // Clear existing timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      
+      const chatId = selectedChat.id;
+      const userId = userProfile.id;
+      
+      // Emit typing started
+      socketRef.current.emit('user_typing', { 
+        chat_id: chatId,
+        user_id: userId,
+        is_typing: true
+      });
+      
+      // Auto-stop typing after 3 seconds of inactivity
+      typingTimeoutRef.current = setTimeout(() => {
+        if (socketRef.current && userProfile?.id) {
+          socketRef.current.emit('user_typing', { 
+            chat_id: chatId,
+            user_id: userId,
+            is_typing: false
+          });
+        }
+      }, 3000);
     }
   };
 
@@ -863,7 +1145,7 @@ export default function UserChatScreen() {
     },
     messageItem: {
       paddingHorizontal: 16,
-      paddingVertical: 4,
+      paddingVertical: 1, // Minimal vertical padding
       width: '100%',
     },
     myMessage: {
@@ -885,7 +1167,7 @@ export default function UserChatScreen() {
       paddingHorizontal: 12,
       paddingVertical: 8,
       borderRadius: 18,
-      marginVertical: 2,
+      marginVertical: 0, // Minimal vertical margin
     },
     myMessageBubble: {
       backgroundColor: '#007AFF',
@@ -894,11 +1176,13 @@ export default function UserChatScreen() {
       backgroundColor: colors.surface,
     },
     messageText: {
-      fontSize: 15,
-      lineHeight: 20,
+      fontSize: 16, // WhatsApp standard size
+      lineHeight: 24, // 1.5x line height for better readability
       flexWrap: 'wrap',
       wordWrap: 'break-word',
       maxWidth: '100%',
+      includeFontPadding: false, // Remove extra padding on Android
+      textAlignVertical: 'top', // Align text to top for better multi-line display
     },
     myMessageText: {
       color: '#fff',
@@ -908,7 +1192,7 @@ export default function UserChatScreen() {
     },
     messageTime: {
       fontSize: 11,
-      marginTop: 4,
+      marginTop: 1,
       alignSelf: 'flex-end',
     },
     myMessageTime: {
@@ -983,6 +1267,15 @@ export default function UserChatScreen() {
       color: colors.text,
       marginLeft: 12,
     },
+    typingIndicator: {
+      paddingHorizontal: 16,
+      paddingVertical: 4,
+    },
+    typingText: {
+      fontSize: 13,
+      fontStyle: 'italic',
+      color: colors.textSecondary,
+    },
     createButton: {
       backgroundColor: '#007AFF',
       borderRadius: 8,
@@ -1048,24 +1341,43 @@ export default function UserChatScreen() {
           }} style={dynamicStyles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={dynamicStyles.headerTitle}>
-              {isNewChat ? 'New Message' : selectedChat?.title || ''}
-            </Text>
-            {!isNewChat && selectedChat && selectedChat.participants !== undefined && (
-              <Text style={dynamicStyles.headerSubtitle}>
-                {selectedChat.participants.length} participant{selectedChat.participants.length !== 1 ? 's' : ''}
+          {!isNewChat && selectedChat && selectedChat.participants !== undefined ? (
+            <TouchableOpacity
+              style={{ flex: 1, alignItems: 'center' }}
+              onPress={() => {
+                router.push({
+                  pathname: '/user-chat/participants',
+                  params: {
+                    chatId: selectedChat.id.toString(),
+                  },
+                });
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={dynamicStyles.headerTitle}>
+                {selectedChat?.title || ''}
               </Text>
-            )}
-            {!isNewChat && isConnected && otherUserOnline && (
-              <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 2 }}>Connected</Text>
-            )}
-            {isNewChat && selectedRecipient && (
-              <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                {selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={dynamicStyles.headerSubtitle}>
+                  {selectedChat.participants.length} participant{selectedChat.participants.length !== 1 ? 's' : ''}
+                </Text>
+                {isConnected && otherUserOnline && (
+                  <Text style={{ fontSize: 10, color: colors.textSecondary }}>• Connected</Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <Text style={dynamicStyles.headerTitle}>
+                {isNewChat ? 'New Message' : selectedChat?.title || ''}
               </Text>
-            )}
-          </View>
+              {isNewChat && selectedRecipient && (
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                  {selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}
+                </Text>
+              )}
+            </View>
+          )}
           {!isNewChat && selectedChat && (
             <TouchableOpacity 
               onPress={() => {
@@ -1127,6 +1439,15 @@ export default function UserChatScreen() {
               onContentSizeChange={() => scrollToBottom()}
               onLayout={() => scrollToBottom()}
             />
+          )}
+          
+          {/* Typing Indicator */}
+          {!isNewChat && Object.keys(typingUsers).length > 0 && (
+            <View style={dynamicStyles.typingIndicator}>
+              <Text style={dynamicStyles.typingText}>
+                {Object.values(typingUsers).join(', ')} {Object.keys(typingUsers).length === 1 ? 'is' : 'are'} typing...
+              </Text>
+            </View>
           )}
         </View>
 
