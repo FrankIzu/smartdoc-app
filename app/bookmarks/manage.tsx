@@ -267,7 +267,7 @@ export default function ManageBookmarksScreen() {
       backgroundColor: 'rgba(0, 0, 0, 0.5)',
       justifyContent: 'center',
       alignItems: 'center',
-      padding: 20,
+      padding: 16,
     },
     modalContainer: {
       backgroundColor: colors.card,
@@ -279,48 +279,48 @@ export default function ManageBookmarksScreen() {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      padding: 20,
+      padding: 12,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
     modalTitle: {
-      fontSize: 18,
+      fontSize: 16,
       fontWeight: '600',
       color: colors.text,
     },
     modalContent: {
-      padding: 20,
+      padding: 12,
     },
     inputLabel: {
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '600',
       color: colors.text,
-      marginBottom: 8,
-      marginTop: 16,
+      marginBottom: 6,
+      marginTop: 8,
     },
     textInput: {
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: 8,
-      padding: 12,
-      fontSize: 16,
+      padding: 10,
+      fontSize: 14,
       color: colors.text,
       backgroundColor: colors.surface,
     },
     textArea: {
-      height: 80,
+      height: 60,
       textAlignVertical: 'top',
     },
     colorPicker: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 12,
-      marginTop: 8,
+      gap: 8,
+      marginTop: 4,
     },
     colorOption: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
       justifyContent: 'center',
       alignItems: 'center',
       borderWidth: 2,
@@ -332,32 +332,32 @@ export default function ManageBookmarksScreen() {
     modalActions: {
       flexDirection: 'row',
       justifyContent: 'flex-end',
-      padding: 20,
+      padding: 12,
       borderTopWidth: 1,
       borderTopColor: colors.border,
-      gap: 12,
+      gap: 8,
     },
     cancelButton: {
-      paddingVertical: 12,
-      paddingHorizontal: 20,
+      paddingVertical: 8,
+      paddingHorizontal: 16,
       borderRadius: 8,
       borderWidth: 1,
       borderColor: colors.border,
     },
     cancelButtonText: {
       color: colors.textSecondary,
-      fontSize: 16,
+      fontSize: 14,
       fontWeight: '600',
     },
     createButton: {
       backgroundColor: '#007AFF',
-      paddingVertical: 12,
-      paddingHorizontal: 20,
+      paddingVertical: 8,
+      paddingHorizontal: 16,
       borderRadius: 8,
     },
     createButtonText: {
       color: '#fff',
-      fontSize: 16,
+      fontSize: 14,
       fontWeight: '600',
     },
   }), [colors]);
@@ -479,12 +479,12 @@ export default function ManageBookmarksScreen() {
             <View style={dynamicStyles.modalHeader}>
               <Text style={dynamicStyles.modalTitle}>Create Bookmark</Text>
               <TouchableOpacity onPress={() => setShowCreateModal(false)}>
-                <Ionicons name="close" size={24} color={colors.textSecondary} />
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
             <View style={dynamicStyles.modalContent}>
-              <Text style={dynamicStyles.inputLabel}>Name *</Text>
+              <Text style={[dynamicStyles.inputLabel, { marginTop: 0 }]}>Name *</Text>
               <TextInput
                 style={dynamicStyles.textInput}
                 value={newBookmarkName}
