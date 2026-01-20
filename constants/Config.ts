@@ -261,6 +261,8 @@ export const STORAGE_KEYS = {
   SETTINGS: 'settings',
   OFFLINE_QUEUE: 'offline_queue',
   DEVICE_TOKEN: 'device_token',
+  /** Chat IDs where the user explicitly removed the document/bookmark/workspace context. */
+  CONTEXT_REMOVED_CHAT_IDS: 'context_removed_chat_ids',
 } as const;
 
 // File Upload Settings

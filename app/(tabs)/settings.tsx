@@ -1,10 +1,7 @@
-import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
-import { useTheme } from '../../contexts/ThemeContext';
-import { useThemeColors } from '../../hooks/useThemeColors';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
 import Constants from 'expo-constants';
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -18,6 +15,9 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import deviceSecurityService from '../../services/deviceSecurity';
 import { useAuth } from '../context/auth';
@@ -832,7 +832,7 @@ export default function SettingsScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <TouchableOpacity 
-          onPress={() => router.push('/(tabs)')}
+          onPress={() => router.back()}
           style={{ marginRight: 12 }}
         >
           <Ionicons name="arrow-back" size={24} color={colors.text} />

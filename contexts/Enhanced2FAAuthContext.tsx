@@ -4,6 +4,7 @@ import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { deviceSecurityService } from '../services/deviceSecurity';
 import { googleAuthService } from '../services/googleAuth';
 import { secureStorage } from '../utils/storage';
+import { apiClient } from '../services/api';
 
 // Import types from the real service
 type DeviceFingerprint = any;
@@ -131,28 +132,45 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
 
   const checkAuthStatus = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/mobile/auth-check`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Platform': 'mobile',
-        },
-        credentials: 'include',
-      });
-
-      const result = await response.json();
-      return {
-        success: result.success,
-        user: result.data ? {
-          id: result.data.id,
-          username: result.data.username,
-          email: result.data.email,
-          firstName: result.data.first_name,
-          lastName: result.data.last_name,
-        } : null,
-      };
-    } catch (error) {
-      console.error('Auth check failed:', error);
+      // Use apiClient instead of plain fetch so auth token is automatically included
+      const response = await apiClient.checkAuth();
+      
+      if (response && response.success) {
+        // Handle different response structures: response.data or response.user
+        const userData = response.data || response.user || null;
+        
+        if (userData) {
+          return {
+            success: true,
+            user: {
+              id: userData.id,
+              username: userData.username,
+              email: userData.email,
+              firstName: userData.first_name || userData.firstName,
+              lastName: userData.last_name || userData.lastName,
+            },
+          };
+        } else {
+          console.log('Auth check successful but no user data found');
+          return { success: true, user: null };
+        }
+      } else {
+        console.log('Auth check returned unsuccessful:', response?.message || 'Unknown error');
+        return { success: false, user: null };
+      }
+    } catch (error: any) {
+      // Don't log as error if it's just an unauthenticated state
+      const errorMessage = error.response?.data?.message || error.message || 'Auth check failed';
+      const statusCode = error.response?.status;
+      
+      if (statusCode === 401 || statusCode === 403 || 
+          errorMessage.toLowerCase().includes('unauthorized') || 
+          errorMessage.toLowerCase().includes('token') ||
+          errorMessage.toLowerCase().includes('authentication')) {
+        console.log('🔐 User not authenticated (expected if not logged in)');
+      } else {
+        console.error('Auth check failed:', errorMessage, 'Status:', statusCode);
+      }
       return { success: false, user: null };
     }
   };

@@ -1,7 +1,8 @@
 import axios, { AxiosInstance } from 'axios';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import EventSource from 'react-native-sse';
+// @ts-ignore - react-native-fetch-api provides true ReadableStream support
+import { fetch as streamingFetch } from 'react-native-fetch-api';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
 
@@ -20,11 +21,18 @@ interface ApiResponse<T = any> {
     confidence?: number;
   }>;
   files?: any[];
+  file?: any;  // single file from get-file, getFileById, etc.
   forms?: any[];
   requires_confirmation?: boolean;
   asset_count?: number;
   asset_details?: string[];
   warning?: string;
+  pagination?: {
+    page?: number;
+    per_page?: number;
+    total?: number;
+    has_more?: boolean;
+  };
 }
 
 interface AuthResponse {
@@ -32,6 +40,9 @@ interface AuthResponse {
   message: string;
   user?: any;
   token?: string;
+  requires2FA?: boolean;
+  preferredAuthMethod?: string;
+  identifier?: string;
   session_info?: {
     user_id: number;
     session_id?: string;
@@ -747,9 +758,15 @@ class ApiService {
     }
   }
 
-  async getFileById(id: number): Promise<ApiResponse> {
+  /**
+   * Get file by ID. Pass workspaceId when the file was listed from a workspace so the
+   * backend can apply the same visibility (workspace membership) as the list endpoints.
+   */
+  async getFileById(id: number, workspaceId?: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.FILE_BY_ID(id));
+      const url = MOBILE_ENDPOINTS.FILE_BY_ID(id);
+      const config = workspaceId != null ? { params: { workspace_id: workspaceId } } : undefined;
+      const response = await this.client.get(url, config);
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to get file');
@@ -895,8 +912,86 @@ class ApiService {
   }
 
   /**
+   * Helper function to normalize IDs from dicts with 'id' field or simple values
+   * Matches web implementation: normalize_ids() helper function
+   */
+  private normalizeIds(ids: any[]): number[] {
+    if (!Array.isArray(ids)) return [];
+    return ids
+      .map((id) => {
+        if (id == null) return null;
+        // Handle dicts with 'id' field
+        if (typeof id === 'object' && id.id != null) {
+          const numId = Number(id.id);
+          return !Number.isNaN(numId) ? numId : null;
+        }
+        // Handle simple values
+        const numId = Number(id);
+        return !Number.isNaN(numId) ? numId : null;
+      })
+      .filter((id): id is number => id != null);
+  }
+
+  /**
+   * Extract filenames from query text (e.g., "Document: IMG_9734.png")
+   * Matches web implementation: filename extraction and resolution
+   */
+  private extractFilenamesFromQuery(query: string): string[] {
+    const filenamePatterns = [
+      /Document:\s*([^\s]+\.\w+)/gi,
+      /File:\s*([^\s]+\.\w+)/gi,
+      /Filename:\s*([^\s]+\.\w+)/gi,
+      /"([^"]+\.\w+)"/g,
+      /'([^']+\.\w+)'/g,
+    ];
+    
+    const filenames: string[] = [];
+    filenamePatterns.forEach((pattern) => {
+      const matches = query.matchAll(pattern);
+      for (const match of matches) {
+        if (match[1]) {
+          filenames.push(match[1]);
+        }
+      }
+    });
+    
+    return [...new Set(filenames)]; // Remove duplicates
+  }
+
+  /**
+   * Format conversation history for context (last 10 messages)
+   * Matches web implementation: conversation history formatting
+   */
+  private formatConversationHistory(messages: any[]): any[] {
+    if (!Array.isArray(messages)) return [];
+    
+    // Get last 10 messages
+    const recentMessages = messages.slice(-10);
+    
+    return recentMessages.map((msg) => {
+      // Extract role: 'user' or 'assistant'
+      const role = msg.role || 
+                   (msg.is_own_message ? 'user' : 'assistant') ||
+                   (msg.sender?.id === 1 ? 'assistant' : 'user') ||
+                   'user';
+      
+      // Extract content from various field names
+      const content = msg.content || 
+                     msg.message || 
+                     msg.text || 
+                     '';
+      
+      return {
+        role,
+        content: String(content).trim()
+      };
+    }).filter((msg) => msg.content.length > 0);
+  }
+
+  /**
    * SSE Streaming chat message - backend automatically encrypts messages and responses
    * All chat operations go through backend encryption class
+   * Enhanced with full web feature parity
    */
   async sendChatMessageStream(
     message: string, 
@@ -908,7 +1003,6 @@ class ApiService {
     // WEB: Would use fetch with response.body.getReader() - but this is mobile-only code
     
     const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
-    let eventSource: EventSource | null = null;
     
     try {
       console.log('💬 [MOBILE] Sending chat message via SSE streaming');
@@ -919,37 +1013,238 @@ class ApiService {
         throw new Error('Not authenticated');
       }
       
-      // Build payload
+      // ==================== FEATURE 1: ID NORMALIZATION ====================
+      // Normalize all ID arrays to extract IDs from dicts or simple values
+      const normalizeIds = this.normalizeIds.bind(this);
+      
+      // ==================== FEATURE 2: FILENAME EXTRACTION ====================
+      // Extract filenames from query text (e.g., "Document: IMG_9734.png")
+      const extractedFilenames = this.extractFilenamesFromQuery(message);
+      console.log('📄 [MOBILE] Extracted filenames from query:', extractedFilenames);
+      
+      // Note: Filename resolution to file IDs would require a database lookup
+      // This is handled on the backend, but we log extracted filenames for debugging
+      
+      // ==================== FEATURE 3: PERSISTENT CONTEXT LOADING ====================
+      // Load persistent context from chat history if chat_history_id exists
+      let persistentContext: any = null;
+      if (filters?.chat_history_id != null && filters.chat_history_id !== -1 && filters.chat_history_id > 0) {
+        try {
+          // Import chatStore dynamically to avoid circular dependencies
+          const { useChatStore } = await import('../stores/chatStore');
+          const chatHistory = useChatStore.getState().currentHistory;
+          
+          if (chatHistory?.persistent_context) {
+            persistentContext = chatHistory.persistent_context;
+            console.log('📋 [MOBILE] Loaded persistent context from chat history:', {
+              context_file_ids: persistentContext.context_file_ids?.length || 0,
+              context_bookmark_ids: persistentContext.context_bookmark_ids?.length || 0,
+              context_entry_ids: persistentContext.context_entry_ids?.length || 0,
+              context_transcript_ids: persistentContext.context_transcript_ids?.length || 0,
+              selected_files: persistentContext.selected_files?.length || 0,
+              selected_bookmarks: persistentContext.selected_bookmarks?.length || 0,
+              selected_workspaces: persistentContext.selected_workspaces?.length || 0,
+              selected_users: persistentContext.selected_users?.length || 0,
+            });
+          }
+        } catch (error) {
+          console.warn('⚠️ [MOBILE] Failed to load persistent context:', error);
+        }
+      }
+      
+      // ==================== FEATURE 4: CONVERSATION HISTORY ====================
+      // Format conversation history (last 10 messages)
+      let conversationHistory: any[] = [];
+      if (filters?.chat_history_id != null && filters.chat_history_id !== -1 && filters.chat_history_id > 0) {
+        try {
+          const { useChatStore } = await import('../stores/chatStore');
+          const chatHistory = useChatStore.getState().currentHistory;
+          
+          if (chatHistory?.messages && Array.isArray(chatHistory.messages)) {
+            conversationHistory = this.formatConversationHistory(chatHistory.messages);
+            console.log('💬 [MOBILE] Formatted conversation history:', {
+              totalMessages: chatHistory.messages.length,
+              formattedCount: conversationHistory.length,
+              lastMessage: conversationHistory[conversationHistory.length - 1]
+            });
+          }
+        } catch (error) {
+          console.warn('⚠️ [MOBILE] Failed to format conversation history:', error);
+        }
+      }
+      
+      // ==================== BUILD COMPREHENSIVE PAYLOAD ====================
+      // Build payload to match web: all context fields, normalized IDs, etc.
       const payload: any = { 
         message,
-        response_mode: 'flexible',
-        stream: true, // Enable streaming (SSE)
-        preview_mode: true  // CRITICAL: Enable preview mode to match web behavior (same search logic)
+        response_mode: filters?.response_mode || 'flexible', // FEATURE 10: Response mode preference
+        stream: true,
+        preview_mode: true,
+        enable_preview_mode: filters?.enable_preview_mode !== false, // FEATURE 16: Preview mode support
+        search_type: filters?.search_type || 'refined',
       };
-      
-      // Map filters
+
+      // Helper functions for ID conversion
+      const toNum = (v: any) => (v == null || v === '') ? null : Number(v);
+      const toNumList = (arr: any) => normalizeIds(Array.isArray(arr) ? arr : []);
+
+      // ==================== FEATURE 5: CONTEXT ID NORMALIZATION ====================
+      // Normalize all context ID arrays
       if (filters) {
-        if (filters.context_file_ids) {
-          payload.context_file_ids = filters.context_file_ids;
+        // Priority: Request context > Persistent context > Empty
+        // Check if request arrays have VALUES (not just keys)
+        const hasRequestContext = 
+          (filters.selected_files && filters.selected_files.length > 0) ||
+          (filters.context_file_ids && filters.context_file_ids.length > 0) ||
+          (filters.selected_bookmarks && filters.selected_bookmarks.length > 0) ||
+          (filters.context_bookmark_ids && filters.context_bookmark_ids.length > 0) ||
+          (filters.selected_workspaces && filters.selected_workspaces.length > 0) ||
+          (filters.selected_users && filters.selected_users.length > 0) ||
+          (filters.selected_transcripts && filters.selected_transcripts.length > 0) ||
+          (filters.context_transcript_ids && filters.context_transcript_ids.length > 0) ||
+          (filters.context_entry_ids && filters.context_entry_ids.length > 0);
+
+        // Merge persistent context with request context (request takes priority)
+        const requestContext = {
+          selected_files: filters.selected_files || filters.context_file_ids,
+          selected_bookmarks: filters.selected_bookmarks || filters.context_bookmark_ids,
+          selected_workspaces: filters.selected_workspaces,
+          selected_users: filters.selected_users,
+          selected_transcripts: filters.selected_transcripts || filters.context_transcript_ids,
+          context_file_ids: filters.context_file_ids || filters.selected_files,
+          context_bookmark_ids: filters.context_bookmark_ids || filters.selected_bookmarks,
+          context_entry_ids: filters.context_entry_ids,
+          context_transcript_ids: filters.context_transcript_ids || filters.selected_transcripts,
+        };
+
+        // Use request context if it has values, otherwise use persistent context
+        const finalContext = hasRequestContext ? requestContext : persistentContext || requestContext;
+
+        // Normalize and set all context IDs
+        if (finalContext?.selected_files || finalContext?.context_file_ids) {
+          const fileIds = toNumList(finalContext.selected_files || finalContext.context_file_ids);
+          if (fileIds.length > 0) {
+            payload.selected_files = fileIds;
+            payload.context_file_ids = fileIds;
+          }
         }
-        if (filters.context_bookmark_ids) {
-          payload.context_bookmark_ids = filters.context_bookmark_ids;
+
+        if (finalContext?.selected_bookmarks || finalContext?.context_bookmark_ids) {
+          const bookmarkIds = toNumList(finalContext.selected_bookmarks || finalContext.context_bookmark_ids);
+          if (bookmarkIds.length > 0) {
+            payload.selected_bookmarks = bookmarkIds;
+            payload.context_bookmark_ids = bookmarkIds;
+          }
         }
-        if (filters.context_transcript_ids) {
-          payload.context_transcript_ids = filters.context_transcript_ids;
+
+        if (finalContext?.selected_workspaces) {
+          const workspaceIds = toNumList(finalContext.selected_workspaces);
+          if (workspaceIds.length > 0) {
+            payload.selected_workspaces = workspaceIds;
+          }
         }
+
+        if (finalContext?.selected_users) {
+          const userIds = toNumList(finalContext.selected_users);
+          if (userIds.length > 0) {
+            payload.selected_users = userIds;
+          }
+        }
+
+        if (finalContext?.selected_transcripts || finalContext?.context_transcript_ids) {
+          const transcriptIds = toNumList(finalContext.selected_transcripts || finalContext.context_transcript_ids);
+          if (transcriptIds.length > 0) {
+            payload.selected_transcripts = transcriptIds;
+            payload.context_transcript_ids = transcriptIds;
+          }
+        }
+
+        // FEATURE 13: Context Entry IDs (for trend entity entries)
+        if (finalContext?.context_entry_ids) {
+          const entryIds = toNumList(finalContext.context_entry_ids);
+          if (entryIds.length > 0) {
+            payload.context_entry_ids = entryIds;
+          }
+        }
+
+        // FEATURE 8: Conversation Session ID (optional)
+        if (filters.conversation_session_id) {
+          payload.conversation_session_id = toNum(filters.conversation_session_id);
+        }
+
+        // FEATURE 7: Active Workspace ID
+        if (filters.active_workspace_id || filters.workspace_id) {
+          payload.active_workspace_id = toNum(filters.active_workspace_id || filters.workspace_id);
+        }
+
+        // Chat history ID
+        if (filters.chat_history_id != null && filters.chat_history_id !== -1) {
+          payload.chat_history_id = toNum(filters.chat_history_id);
+        }
+
+        // Search type
         if (filters.search_type) {
           payload.search_type = filters.search_type;
         }
-        if (filters.chat_history_id) {
-          payload.chat_history_id = filters.chat_history_id;
-        }
-        Object.keys(filters).forEach(key => {
-          if (!['context_file_ids', 'context_bookmark_ids', 'context_transcript_ids', 'search_type', 'chat_history_id'].includes(key)) {
-            payload[key] = filters[key];
-          }
+
+        // Log context priority decision
+        const requestContextKeys = Object.keys(requestContext).filter((k: string) => {
+          const val = (requestContext as any)[k];
+          return Array.isArray(val) && val.length > 0;
+        });
+        const persistentContextKeys = persistentContext 
+          ? Object.keys(persistentContext).filter((k: string) => {
+              const val = (persistentContext as any)[k];
+              return Array.isArray(val) && val.length > 0;
+            })
+          : [];
+        
+        console.log('📊 [MOBILE] Context priority decision:', {
+          hasRequestContext,
+          usingRequestContext: hasRequestContext,
+          usingPersistentContext: !hasRequestContext && !!persistentContext,
+          requestContextKeys,
+          persistentContextKeys,
         });
       }
+
+      // ==================== FEATURE 14: EXTRACTED ENTITIES PLACEHOLDER ====================
+      // Initialize extracted_entities dict with proper structure
+      payload.extracted_entities = {
+        all_entities: [],
+        is_metadata_query: false,
+        metadata_type: null,
+        document_location_hint: null,
+        topic_keywords: []
+      };
+
+      // ==================== FEATURE 4: CONVERSATION HISTORY ====================
+      // Add conversation history to payload
+      if (conversationHistory.length > 0) {
+        payload.conversation_history = conversationHistory;
+      }
+
+      // ==================== FEATURE 19: LOGGING & DEBUGGING ====================
+      // Comprehensive logging for context decisions
+      console.log('📤 [MOBILE] Complete payload being sent:', {
+        message: message.substring(0, 100),
+        hasConversationHistory: conversationHistory.length > 0,
+        conversationHistoryLength: conversationHistory.length,
+        context_file_ids: payload.context_file_ids?.length || 0,
+        context_bookmark_ids: payload.context_bookmark_ids?.length || 0,
+        context_entry_ids: payload.context_entry_ids?.length || 0,
+        context_transcript_ids: payload.context_transcript_ids?.length || 0,
+        selected_files: payload.selected_files?.length || 0,
+        selected_bookmarks: payload.selected_bookmarks?.length || 0,
+        selected_workspaces: payload.selected_workspaces?.length || 0,
+        selected_users: payload.selected_users?.length || 0,
+        selected_transcripts: payload.selected_transcripts?.length || 0,
+        chat_history_id: payload.chat_history_id,
+        active_workspace_id: payload.active_workspace_id,
+        response_mode: payload.response_mode,
+        search_type: payload.search_type,
+        extractedFilenames: extractedFilenames.length > 0 ? extractedFilenames : undefined,
+      });
       
       // Get base URL
       const baseURL = this.client.defaults.baseURL || '';
@@ -957,13 +1252,12 @@ class ApiService {
       
       console.log('📱 [MOBILE] Connecting to SSE stream with EventSource:', streamURL);
       
-      // MOBILE: Use fetch with manual SSE parsing (EventSource doesn't support POST)
+      // MOBILE: Use react-native-fetch-api for TRUE streaming (supports ReadableStream)
       if (isMobile) {
-        console.log('📱 [MOBILE] Using fetch with manual SSE parsing for POST request');
+        console.log('📱 [MOBILE] Using react-native-fetch-api for TRUE streaming');
         console.log('📱 [MOBILE] Payload:', JSON.stringify(payload).substring(0, 100));
         
-        // Use fetch for POST request (EventSource only supports GET)
-        const response = await fetch(streamURL, {
+        const response = await streamingFetch(streamURL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -972,6 +1266,7 @@ class ApiService {
           },
           body: JSON.stringify(payload),
           signal,
+          reactNative: { textStreaming: true }, // Enable true streaming
         });
         
         if (!response.ok) {
@@ -980,130 +1275,195 @@ class ApiService {
         
         console.log('✅ [MOBILE] Fetch response received, status:', response.status);
         
-        // Parse SSE stream manually using response.text() which works in React Native
+        // Use ReadableStream if available (preferred for true streaming)
         const reader = response.body?.getReader();
-        if (!reader) {
-          // Fallback: Read entire response as text (React Native limitation)
-          console.warn('⚠️ [MOBILE] response.body.getReader() not available, reading as text');
-          const text = await response.text();
-          console.log('📱 [MOBILE] Full response text length:', text.length);
+        console.log('🔍 [MOBILE] Checking stream reader:', { hasReader: !!reader, hasBody: !!response.body });
+        
+        if (reader) {
+          console.log('✅ [MOBILE] Using ReadableStream for true async streaming');
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let refinementCount = 0;
+          let previewCount = 0;
+          let lastEventType = '';
+          let totalBytesRead = 0;
           
-          // Parse SSE format manually
-          const lines = text.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.substring(6).trim();
-              if (dataStr) {
+          while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) {
+              console.log('📱 [MOBILE] Stream done', { 
+                refinementCount, 
+                bufferRemaining: buffer.length,
+                receivedRefinement: refinementCount > 0 
+              });
+              
+              // Process any remaining buffer before exiting
+              if (buffer.trim()) {
+                console.log('⚠️ [MOBILE] Processing remaining buffer:', buffer.substring(0, 100));
+              }
+              break;
+            }
+            
+            // Decode and add to buffer
+            const chunk = decoder.decode(value, { stream: true });
+            totalBytesRead += value.length;
+            buffer += chunk;
+            
+            console.log('📥 [MOBILE] Received chunk:', { 
+              bytes: value.length, 
+              totalBytes: totalBytesRead,
+              chunkPreview: chunk.substring(0, 50).replace(/\n/g, '\\n')
+            });
+            
+            // Process complete lines
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const dataStr = line.substring(6).trim();
+                if (!dataStr) continue;
+                
                 try {
                   const data = JSON.parse(dataStr);
-                  console.log('📱 [MOBILE] Parsed SSE message:', data.type);
+                  const eventType = data.type || 'unknown';
                   
-                  if (data.type === 'status' && onChunk) {
+                  // Track phase transitions
+                  if (lastEventType !== eventType) {
+                    console.log('🔄 [MOBILE] Phase transition:', { 
+                      from: lastEventType || 'none', 
+                      to: eventType,
+                      previewCount,
+                      refinementCount
+                    });
+                    lastEventType = eventType;
+                  }
+                  
+                  if (eventType === 'preview_chunk') previewCount++;
+                  if (eventType === 'refinement_chunk') refinementCount++;
+                  
+                  console.log('📱 [MOBILE] SSE event:', eventType, {
+                    chunk_index: data.chunk_index,
+                    hasContent: !!(data.content || data.response),
+                    previewTotal: previewCount,
+                    refinementTotal: refinementCount
+                  });
+                  
+                  if (!onChunk) continue;
+                  
+                  if (data.type === 'status') {
                     onChunk('status', data);
-                  } else if ((data.type === 'preview_chunk' || data.type === 'chunk' || data.type === 'refinement_chunk') && onChunk) {
-                    onChunk('chunk', {
-                      type: 'chunk',
-                      content: data.content,
+                  } else if (data.type === 'instant_preview') {
+                    onChunk('instant_preview', data);
+                  } else if (data.type === 'preview_complete') {
+                    onChunk('preview_complete', data);
+                  } else if (data.type === 'preview_chunk' || data.type === 'chunk') {
+                    const chunkContent = data.content || data.response || '';
+                    onChunk('preview_chunk', {
+                      content: chunkContent,
                       chunk_index: data.chunk_index,
                       total_chunks: data.total_chunks,
                       progress: data.progress,
-                      phase: data.phase || (data.type === 'preview_chunk' ? 'preview' : 'final')
+                      phase: data.phase || 'preview'
                     });
-                  } else if (data.type === 'complete' && onChunk) {
-                    console.log('📱 [MOBILE] Received complete event');
+                  } else if (data.type === 'refinement_chunk' || data.type === 'refinement') {
+                    const c = data.content || data.response || '';
+                    refinementCount++;
+                    console.log('📦 [API] refinement_chunk #' + (data.chunk_index ?? '?') + ' (total: ' + refinementCount + ')');
+                    onChunk('refinement_chunk', {
+                      content: c,
+                      chunk_index: data.chunk_index,
+                      total_chunks: data.total_chunks,
+                      progress: data.progress,
+                      phase: data.phase || 'final'
+                    });
+                  } else if (data.type === 'complete') {
+                    const fullResponse = data.response ?? data.content ?? data.captured_text ?? data.refinement ?? '';
+                    const resp = typeof fullResponse === 'string' ? fullResponse : String(fullResponse || '');
+                    console.log('📱 [MOBILE] Received complete', { responseLen: resp.length, refinementCount });
                     onChunk('complete', {
                       type: 'complete',
-                      response: data.response || '',
+                      response: resp,
                       citations: data.citations || [],
                       chat_history_id: data.chat_history_id,
                       metadata: data.metadata
                     });
-                    return;
+                    return; // Exit streaming
                   } else if (data.type === 'error') {
+                    console.error('❌ [MOBILE] SSE error:', data.message);
                     throw new Error(data.message || 'Chat processing error');
                   }
                 } catch (parseError) {
-                  console.error('❌ [MOBILE] Error parsing SSE message:', parseError);
+                  console.error('❌ [MOBILE] Parse error:', parseError, 'Line:', dataStr.substring(0, 100));
                 }
               }
             }
           }
+          
+          console.log('📱 [MOBILE] ReadableStream streaming complete');
           return;
         }
         
-        // Use ReadableStream if available
-        console.log('✅ [MOBILE] Using ReadableStream for SSE parsing');
-        const decoder = new TextDecoder();
-        let buffer = '';
+        // Fallback: response.text() (synchronous, no true streaming)
+        console.warn('⚠️ [MOBILE] No ReadableStream, using response.text() fallback');
+        const text = await response.text();
+        console.log('📱 [MOBILE] Full response length:', text.length);
         
-        while (true) {
-          const { done, value } = await reader.read();
-          
-          if (done) {
-            console.log('📱 [MOBILE] Stream completed');
-            break;
-          }
-          
-          // Decode chunk and add to buffer
-          buffer += decoder.decode(value, { stream: true });
-          
-          // Process complete SSE messages (lines ending with \n\n)
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.substring(6).trim(); // Remove 'data: ' prefix
-              if (dataStr) {
-                try {
-                  const data = JSON.parse(dataStr);
-                  console.log('📱 [MOBILE] Received SSE message:', data.type);
-                  
-                  if (data.type === 'status' && onChunk) {
-                    onChunk('status', data);
-                  } else if ((data.type === 'preview_chunk' || data.type === 'chunk' || data.type === 'refinement_chunk') && onChunk) {
-                    onChunk('chunk', {
-                      type: 'chunk',
-                      content: data.content,
-                      chunk_index: data.chunk_index,
-                      total_chunks: data.total_chunks,
-                      progress: data.progress,
-                      phase: data.phase || (data.type === 'preview_chunk' ? 'preview' : 'final')
-                    });
-                  } else if (data.type === 'complete' && onChunk) {
-                    console.log('📱 [MOBILE] Received complete event');
-                    onChunk('complete', {
-                      type: 'complete',
-                      response: data.response || '',
-                      citations: data.citations || [],
-                      chat_history_id: data.chat_history_id,
-                      metadata: data.metadata
-                    });
-                    return; // Exit function
-                  } else if (data.type === 'error') {
-                    console.error('❌ [MOBILE] Received error event:', data);
-                    if (onChunk) {
-                      onChunk('error', {
-                        type: 'error',
-                        message: data.message || 'Chat processing error',
-                        error: data.error
-                      });
-                    }
-                    throw new Error(data.message || 'Chat processing error');
-                  }
-                } catch (parseError) {
-                  console.error('❌ [MOBILE] Error parsing SSE message:', parseError);
-                }
+        const lines = text.split('\n');
+        let refinementCount = 0;
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.substring(6).trim();
+            if (!dataStr) continue;
+            
+            try {
+              const data = JSON.parse(dataStr);
+              if (!onChunk) continue;
+              
+              if (data.type === 'instant_preview') {
+                onChunk('instant_preview', data);
+              } else if (data.type === 'preview_chunk' || data.type === 'chunk') {
+                onChunk('preview_chunk', {
+                  content: data.content || data.response || '',
+                  chunk_index: data.chunk_index,
+                  total_chunks: data.total_chunks,
+                  progress: data.progress,
+                  phase: data.phase || 'preview'
+                });
+              } else if (data.type === 'refinement_chunk' || data.type === 'refinement') {
+                refinementCount++;
+                onChunk('refinement_chunk', {
+                  content: data.content || data.response || '',
+                  chunk_index: data.chunk_index,
+                  total_chunks: data.total_chunks,
+                  progress: data.progress,
+                  phase: data.phase || 'final'
+                });
+              } else if (data.type === 'complete') {
+                const resp = data.response ?? data.content ?? data.captured_text ?? data.refinement ?? '';
+                onChunk('complete', {
+                  type: 'complete',
+                  response: typeof resp === 'string' ? resp : String(resp || ''),
+                  citations: data.citations || [],
+                  chat_history_id: data.chat_history_id,
+                  metadata: data.metadata
+                });
+                return;
               }
+            } catch (parseError) {
+              console.error('❌ [MOBILE] Parse error:', parseError);
             }
           }
         }
         
+        console.log('📱 [MOBILE] Text fallback complete');
         return;
-      } else {
-        // WEB: Use fetch with response.body.getReader() (not implemented here, web has its own code)
-        throw new Error('Web streaming not implemented in this function - use web-specific code');
       }
+      
+      // Non-mobile platforms would use different implementation
+      throw new Error('Non-mobile streaming not implemented in this mobile-specific function');
 
     } catch (error: any) {
       // Error handling
@@ -1133,15 +1493,6 @@ class ApiService {
       }
       
       throw new Error(error.message || 'Chat stream failed');
-    } finally {
-      // Cleanup EventSource
-      if (eventSource) {
-        try {
-          eventSource.close();
-        } catch (e) {
-          // Ignore close errors
-        }
-      }
     }
   }
 
@@ -1152,7 +1503,14 @@ class ApiService {
       });
       return response.data;
     } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch chat history');
+      const status = error.response?.status;
+      const msg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        (typeof error.response?.data === 'string' ? error.response.data : null);
+      const suffix = status != null ? ` (${status})` : '';
+      throw new Error(msg ? `${msg}${suffix}` : `Failed to fetch chat history${suffix}`);
     }
   }
 
@@ -1278,19 +1636,227 @@ class ApiService {
     }
   }
 
-  async getReceiptAnalytics(days = 30): Promise<ApiResponse> {
+  // ==================== WEB RECEIPT & INVOICE ENDPOINTS ====================
+  // All receipt and invoice operations use web endpoints (no mobile-specific endpoints)
+
+  async getReceiptAnalytics(days = 30, category?: string): Promise<ApiResponse> {
     try {
-      console.log(`📊 Getting receipt analytics (${days} days)`);
-      // Try the dashboard analytics endpoint that has receipt data
-      const response = await this.client.get('/api/dashboard/analytics', {
-        params: { days }
-      });
-      console.log('✅ Receipt analytics loaded');
+      console.log(`📊 Getting receipt analytics (${days} days${category ? `, category: ${category}` : ''})`);
+      const params: any = { days };
+      if (category) params.category = category;
+      const response = await this.client.get('/api/v1/web/analysis/receipts', { params });
+      console.log('✅ Receipt analytics loaded from web endpoint');
       return response.data;
     } catch (error: any) {
-      console.log('❌ Receipt analytics failed, trying comprehensive analytics');
-      // Fallback to comprehensive analytics
-      return this.getComprehensiveAnalytics(days);
+      // Log detailed error for debugging (without throwing)
+      const errorMessage = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to fetch receipt analytics';
+      const status = error.response?.status;
+      
+      if (status) {
+        console.warn(`❌ Receipt analytics failed (${status}):`, errorMessage);
+      } else {
+        console.warn('❌ Receipt analytics failed:', errorMessage);
+      }
+      
+      // Return a graceful error response instead of throwing
+      // This allows the dashboard to continue with empty receipt data
+      return {
+        success: false,
+        message: errorMessage,
+        data: null
+      };
+    }
+  }
+
+  async downloadReceiptReport(days = 30, category?: string): Promise<ApiResponse> {
+    try {
+      const params: any = { days };
+      if (category) params.category = category;
+      const response = await this.client.post('/api/v1/web/analysis/receipts/download-report', null, { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to download receipt report');
+    }
+  }
+
+  async autoCategorizeAllReceipts(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post('/receipts/auto-categorize');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to auto-categorize receipts');
+    }
+  }
+
+  async autoCategorizeReceipt(fileId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/files/${fileId}/auto-categorize`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to auto-categorize receipt');
+    }
+  }
+
+  async batchAutoCategorizeReceipts(fileIds: number[]): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post('/files/batch-auto-categorize', { file_ids: fileIds });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to batch auto-categorize receipts');
+    }
+  }
+
+  async categorizeReceipt(fileId: number, category: string): Promise<ApiResponse> {
+    try {
+      // Use web endpoint - route is registered under /api/v1/web prefix
+      const endpoint = `/api/v1/web/files/${fileId}/categorize`;
+      const payload = { category };
+      
+      console.log(`📊 Categorizing receipt:`, {
+        fileId,
+        category,
+        endpoint,
+        payload,
+        baseURL: this.client.defaults.baseURL
+      });
+      
+      const response = await this.client.put(endpoint, payload, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('📊 Categorize response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Categorize receipt error:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        message: error.response?.data?.message || error.response?.data?.error,
+        data: error.response?.data,
+        requestUrl: error.config?.url,
+        fullUrl: (error.config?.baseURL || '') + (error.config?.url || '')
+      });
+      // Return a graceful error response instead of throwing
+      return {
+        success: false,
+        message: error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to categorize receipt',
+        data: null
+      };
+    }
+  }
+
+  async getImportedReceipts(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get('/platforms/imported-receipts');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch imported receipts');
+    }
+  }
+
+  async getImportedReceiptsStats(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get('/platforms/imported-receipts/stats');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch imported receipts stats');
+    }
+  }
+
+  async getInvoiceAnalytics(days = 30, category?: string): Promise<ApiResponse> {
+    try {
+      console.log(`📊 Getting invoice analytics (${days} days${category ? `, category: ${category}` : ''})`);
+      const params: any = { days };
+      if (category) params.category = category;
+      const response = await this.client.get('/api/v1/web/analysis/invoices', { params });
+      console.log('✅ Invoice analytics loaded from web endpoint');
+      return response.data;
+    } catch (error: any) {
+      // Log detailed error for debugging (without throwing)
+      const errorMessage = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to fetch invoice analytics';
+      const status = error.response?.status;
+      
+      if (status) {
+        console.warn(`❌ Invoice analytics failed (${status}):`, errorMessage);
+      } else {
+        console.warn('❌ Invoice analytics failed:', errorMessage);
+      }
+      
+      // Return a graceful error response instead of throwing
+      // This allows the dashboard to continue with empty invoice data
+      return {
+        success: false,
+        message: errorMessage,
+        data: null
+      };
+    }
+  }
+
+  async downloadInvoiceReport(days = 30, category?: string): Promise<ApiResponse> {
+    try {
+      const params: any = { days };
+      if (category) params.category = category;
+      const response = await this.client.post('/api/v1/web/analysis/invoices/download-report', null, { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to download invoice report');
+    }
+  }
+
+  async linkReceiptToInvoice(invoiceId: number, receiptId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(`/invoices/${invoiceId}/link-receipt`, { receipt_id: receiptId });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to link receipt to invoice');
+    }
+  }
+
+  async bulkMatchReceiptsToInvoices(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post('/api/v1/web/invoices/bulk-match');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to bulk match receipts to invoices');
+    }
+  }
+
+  async updateInvoiceStatus(invoiceId: number, status: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(`/invoices/${invoiceId}/status`, { status });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to update invoice status');
+    }
+  }
+
+  async updateInvoicePaymentStatus(fileId: number, paymentStatus: string): Promise<ApiResponse> {
+    try {
+      console.log(`💳 Updating payment status for invoice file ${fileId} to "${paymentStatus}"`);
+      console.log('💳 Payment status request payload:', { payment_status: paymentStatus });
+      
+      // Use the file-based endpoint - accepts file ID instead of invoice record ID
+      const endpoint = `/api/v1/web/files/${fileId}/payment-status`;
+      console.log('💳 Payment status request endpoint:', endpoint);
+      
+      const response = await this.client.put(endpoint, { payment_status: paymentStatus });
+      console.log('💳 Payment status response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Update payment status error:', {
+        requestUrl: error.config?.url,
+        fullUrl: (error.config?.baseURL || '') + (error.config?.url || ''),
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        message: error.response?.data?.message || error.response?.data?.error,
+        data: error.response?.data,
+      });
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to update invoice payment status',
+        data: null,
+      };
     }
   }
 
@@ -1298,70 +1864,43 @@ class ApiService {
 
   async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number): Promise<ApiResponse> {
     try {
-      // If workspaceId is provided, use the dedicated workspace files endpoint
-      // This endpoint properly filters files using FileWorkspaceVisibility
-      if (workspaceId) {
-        console.log('📁 API: Using workspace files endpoint for workspaceId:', workspaceId);
-        const url = `/api/v1/web/workspaces/${workspaceId}/files`;
-        console.log('📁 API: Requesting workspace files from:', url);
-        const response = await this.client.get(url);
-        console.log('📁 API: Workspace files response success:', response.data?.success, 'Files count:', response.data?.files?.length || 0);
-        
-        // Transform workspace files response format to match expected format
-        if (response.data?.success && response.data?.files) {
-          // Apply search and category filters client-side if needed
-          let filteredFiles = response.data.files;
-          if (search) {
-            filteredFiles = filteredFiles.filter((file: any) => 
-              (file.original_filename || file.filename || '').toLowerCase().includes(search.toLowerCase())
-            );
-          }
-          if (category) {
-            filteredFiles = filteredFiles.filter((file: any) => 
-              (file.file_kind || '').toLowerCase() === category.toLowerCase()
-            );
-          }
-          
-          return {
-            success: true,
-            data: filteredFiles,
-            files: filteredFiles,
-            pagination: {
-              page: 1,
-              per_page: filteredFiles.length,
-              total: filteredFiles.length,
-              has_more: false
-            }
-          };
-        }
-        return response.data;
-      }
-      
-      // For non-workspace requests, use the regular web files endpoint
+      // Mobile app should use mobile endpoints, not web endpoints
+      // Use the mobile files endpoint which supports workspace_id parameter
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('perPage', perPage.toString());
       if (search) params.append('search', search);
       if (category) params.append('category', category);
+      if (workspaceId) params.append('workspace_id', workspaceId.toString());
       
-      const url = `/api/v1/web/files?${params}`;
-      console.log('📁 API: Requesting files from web endpoint:', url);
+      const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
+      console.log('📁 API: Requesting files from mobile endpoint:', url);
       const response = await this.client.get(url);
-      console.log('📁 API: Files response success:', response.data?.success, 'Files count:', response.data?.files?.length || 0);
+      console.log('📁 API: Files response success:', response.data?.success, 'Files count:', response.data?.files?.length || response.data?.data?.length || 0);
       
-      // Transform web response format to match expected format
-      if (response.data?.success && response.data?.files) {
+      // Transform response format to match expected format
+      if (response.data) {
+        // Handle different response formats
+        const files = response.data.files || response.data.data || [];
+        const success = response.data.success !== false; // Default to true if not specified
+        
         return {
-          success: true,
-          data: response.data.files,
-          files: response.data.files,
-          pagination: response.data.pagination
+          success,
+          data: files,
+          files: files,
+          pagination: response.data.pagination || {
+            page,
+            per_page: perPage,
+            total: Array.isArray(files) ? files.length : 0,
+            has_more: false
+          }
         };
       }
+      
       return response.data;
     } catch (error: any) {
-      console.warn('📁 API: Web files endpoint failed, falling back to getFiles:', error.message);
-      // For backward compatibility, return files if web endpoint fails
+      console.warn('📁 API: Mobile files endpoint failed, falling back to getFiles:', error.message);
+      // For backward compatibility, fall back to getFiles
       return this.getFiles(page, perPage, search, category, workspaceId);
     }
   }
@@ -1518,10 +2057,17 @@ class ApiService {
    */
   async searchUsersForChat(query: string): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(`${MOBILE_ENDPOINTS.USER_CHAT_SEARCH_USERS}?q=${encodeURIComponent(query)}`);
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.USER_CHAT_SEARCH_USERS}?q=${encodeURIComponent(query)}`, {
+        timeout: 10000 // 10 second timeout for user search (faster than default 30s)
+      });
       return response.data;
     } catch (error: any) {
       console.error('Search users error:', error);
+      // Return empty array instead of throwing to allow app to continue
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        console.warn('⚠️ User search timed out - returning empty list');
+        return { success: false, message: 'Request timed out', data: [] } as any;
+      }
       const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to search users';
       throw new Error(errorMessage);
     }

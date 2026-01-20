@@ -72,6 +72,7 @@ export default function WorkspaceDetailsScreen() {
   const [showMemberActionSheet, setShowMemberActionSheet] = useState(false);
   const [selectedMember, setSelectedMember] = useState<WorkspaceMember | null>(null);
   const [creatingMeeting, setCreatingMeeting] = useState(false);
+  const [recentActivities, setRecentActivities] = useState<any[]>([]);
 
   const loadWorkspaceDetails = async () => {
     if (!user) return;
@@ -127,6 +128,62 @@ export default function WorkspaceDetailsScreen() {
               setMembers([]);
               setInvitations([]);
             }
+          }
+
+          // Load workspace files for recent activity
+          try {
+            console.log('📁 Loading workspace files for recent activity, workspaceId:', id);
+            const filesResponse = await apiService.getDocuments(1, 20, undefined, undefined, Number(id));
+            let files: any[] = [];
+            
+            if (filesResponse && filesResponse.success) {
+              if (filesResponse.files && Array.isArray(filesResponse.files)) {
+                files = filesResponse.files;
+              } else if (filesResponse.data) {
+                if (Array.isArray(filesResponse.data)) {
+                  files = filesResponse.data;
+                } else if (filesResponse.data.files && Array.isArray(filesResponse.data.files)) {
+                  files = filesResponse.data.files;
+                }
+              }
+            }
+
+            // Format files as recent activities (shared to this workspace)
+            const activities = files
+              .sort((a: any, b: any) => {
+                const dateA = a.updated_at || a.created_at ? new Date(a.updated_at || a.created_at).getTime() : 0;
+                const dateB = b.updated_at || b.created_at ? new Date(b.updated_at || b.created_at).getTime() : 0;
+                return dateB - dateA; // Most recent first
+              })
+              .slice(0, 10) // Limit to 10 most recent
+              .map((file: any) => {
+                const fileName = file.original_filename || file.filename || file.name || 'Unknown file';
+                const timestamp = file.updated_at || file.created_at 
+                  ? new Date(file.updated_at || file.created_at) 
+                  : new Date();
+                
+                // Get who shared it (if available)
+                const sharedBy = file.shared_by_username || file.shared_by || null;
+                const subtitle = sharedBy 
+                  ? `${fileName} (shared by ${sharedBy})`
+                  : fileName;
+
+                return {
+                  id: file.id?.toString() || `file-${Date.now()}`,
+                  type: 'share',
+                  title: 'File shared to workspace',
+                  subtitle,
+                  timestamp,
+                  icon: 'share-outline',
+                  file
+                };
+              });
+
+            setRecentActivities(activities);
+            console.log('✅ Loaded workspace recent activities:', activities.length);
+          } catch (error: any) {
+            console.warn('⚠️ Failed to load workspace files for recent activity:', error);
+            setRecentActivities([]);
           }
         } else {
           console.log('❌ Workspace not found with ID:', id);
@@ -850,11 +907,82 @@ export default function WorkspaceDetailsScreen() {
         {/* Recent Activity Section */}
         <View style={dynamicStyles.section}>
           <Text style={dynamicStyles.sectionTitle}>Recent Activity</Text>
-          <View style={dynamicStyles.emptyState}>
-            <Ionicons name="time-outline" size={48} color={colors.textLight} />
-            <Text style={dynamicStyles.emptyStateText}>No recent activity</Text>
-            <Text style={dynamicStyles.emptyStateSubtext}>Activity will appear here</Text>
-          </View>
+          {recentActivities.length > 0 ? (
+            <View style={{ gap: 8 }}>
+              {recentActivities.map((activity) => {
+                const timeAgo = activity.timestamp 
+                  ? (() => {
+                      const diff = Date.now() - activity.timestamp.getTime();
+                      const minutes = Math.floor(diff / 60000);
+                      const hours = Math.floor(diff / 3600000);
+                      const days = Math.floor(diff / 86400000);
+                      if (days > 0) return `${days}d ago`;
+                      if (hours > 0) return `${hours}h ago`;
+                      if (minutes > 0) return `${minutes}m ago`;
+                      return 'Just now';
+                    })()
+                  : '';
+
+                return (
+                  <TouchableOpacity
+                    key={activity.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      padding: 12,
+                      backgroundColor: colors.backgroundSecondary,
+                      borderRadius: 8,
+                      gap: 12
+                    }}
+                    onPress={() => {
+                      if (activity.file) {
+                        router.push({
+                          pathname: '/documents',
+                          params: { workspaceId: id, fileId: activity.file.id }
+                        });
+                      }
+                    }}
+                  >
+                    <Ionicons 
+                      name={activity.icon as any} 
+                      size={24} 
+                      color={colors.primary} 
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ 
+                        fontSize: 14, 
+                        fontWeight: '500', 
+                        color: colors.text,
+                        marginBottom: 2
+                      }}>
+                        {activity.title}
+                      </Text>
+                      <Text style={{ 
+                        fontSize: 12, 
+                        color: colors.textSecondary 
+                      }} numberOfLines={1}>
+                        {activity.subtitle}
+                      </Text>
+                    </View>
+                    {timeAgo && (
+                      <Text style={{ 
+                        fontSize: 11, 
+                        color: colors.textLight 
+                      }}>
+                        {timeAgo}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={dynamicStyles.emptyState}>
+              <Ionicons name="time-outline" size={48} color={colors.textLight} />
+              <Text style={dynamicStyles.emptyStateText}>No recent activity</Text>
+              <Text style={dynamicStyles.emptyStateSubtext}>Files shared to this workspace will appear here</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
 

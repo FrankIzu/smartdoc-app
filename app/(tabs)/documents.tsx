@@ -1,17 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     Animated,
     FlatList,
     Modal,
+    Platform,
     RefreshControl,
+    ScrollView,
+    Share,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    View
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
@@ -34,6 +40,7 @@ interface Document {
   status: 'processed' | 'processing' | 'pending' | 'error';
   tags: string[];
   category?: string;
+  file_kind?: string; // Store the raw file_kind from backend
   formData?: any; // Store original form data for form-specific actions
   responseCount?: number; // Number of responses for forms
 }
@@ -94,6 +101,40 @@ export default function QuickFilesScreen() {
   // Kebab menu state
   const [showKebabMenu, setShowKebabMenu] = useState(false);
   const [selectedDocumentForMenu, setSelectedDocumentForMenu] = useState<Document | null>(null);
+  
+  // Category selection modal states
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [categorizingReceipt, setCategorizingReceipt] = useState(false);
+  
+  // Payment status selection modal states
+  const [showPaymentStatusModal, setShowPaymentStatusModal] = useState(false);
+  const [updatingPaymentStatus, setUpdatingPaymentStatus] = useState(false);
+  
+  // Receipt categories (must match backend validation)
+  const receiptCategories = [
+    'Uncategorized',
+    'Advertising',
+    'Supplies',
+    'Professional Services',
+    'Personal',
+    'Rent and Lease',
+    'Education and Training',
+    'Cars and Truck',
+    'Travel',
+    'Office Expenses',
+    'Meals and Entertainment',
+    'Contractors',
+    'Employee Benefit',
+    'Banking',
+    'Other Expenses'
+  ];
+  
+  // Invoice payment statuses (must match backend validation)
+  const paymentStatuses = [
+    'Paid',
+    'Unpaid',
+    'Partial'
+  ];
 
   // Bookmark state
   const [bookmarks, setBookmarks] = useState<any[]>([]);
@@ -319,22 +360,50 @@ export default function QuickFilesScreen() {
         categoryCounts.set('pending', (categoryCounts.get('pending') || 0) + 1);
       }
       
-      // Count by normalized category (but skip if it's pending, as we already counted it)
-      const category = normalizeCategory(doc.category) as FilterOption;
+      // Count by normalized file_kind (not category - category is for receipt categorization like "Supplies", "Rent", etc.)
+      // Use file_kind to determine the file type (receipt, invoice, document, etc.)
+      const category = normalizeCategory(doc.file_kind) as FilterOption;
       if (category !== 'pending') {
         categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
       }
     });
     
-    // Return only categories that have at least one file, sorted with 'all' first
+    // Return only categories that have at least one file, sorted with custom order
     const categories = Array.from(categoryCounts.entries())
       .filter(([_, count]) => count > 0)
       .map(([category]) => category);
     
-    // Sort: 'all' first, then alphabetically
+    // Define the desired order for filter tabs
+    const categoryOrder: FilterOption[] = [
+      'all',
+      'documents',
+      'receipts',
+      'invoice',
+      'meeting_summary',
+      'forms',
+      'transcripts',
+      'meeting_notes',
+      'meeting_chat',
+      'spreadsheet',
+      'picture',
+      'pending',
+      'unknown',
+    ];
+    
+    // Sort: use predefined order, then alphabetically for any not in the list
     return categories.sort((a, b) => {
-      if (a === 'all') return -1;
-      if (b === 'all') return 1;
+      const indexA = categoryOrder.indexOf(a);
+      const indexB = categoryOrder.indexOf(b);
+      
+      // If both are in the predefined order, sort by their position
+      if (indexA !== -1 && indexB !== -1) {
+        return indexA - indexB;
+      }
+      // If only A is in the order, A comes first
+      if (indexA !== -1) return -1;
+      // If only B is in the order, B comes first
+      if (indexB !== -1) return 1;
+      // If neither is in the order, sort alphabetically
       return a.localeCompare(b);
     });
   }, [documents]);
@@ -356,32 +425,34 @@ export default function QuickFilesScreen() {
     // Apply category filter
     if (filterBy !== 'all') {
       filtered = filtered.filter(doc => {
-        const category = doc.category?.toLowerCase() || 'unknown';
+        // Use file_kind to determine file type (receipt, invoice, document, etc.)
+        // doc.category is for receipt categorization (Supplies, Rent, etc.), not file type
+        const fileTypeCategory = normalizeCategory(doc.file_kind).toLowerCase();
         switch (filterBy) {
           case 'documents':
-            return category === 'documents';
+            return fileTypeCategory === 'documents';
           case 'receipts':
-            return category === 'receipts';
+            return fileTypeCategory === 'receipts';
           case 'forms':
-            return category === 'forms';
+            return fileTypeCategory === 'forms';
           case 'transcripts':
-            return category === 'transcripts';
+            return fileTypeCategory === 'transcripts';
           case 'invoice':
-            return category === 'invoice';
+            return fileTypeCategory === 'invoice';
           case 'meeting_notes':
-            return category === 'meeting_notes';
+            return fileTypeCategory === 'meeting_notes';
           case 'meeting_chat':
-            return category === 'meeting_chat';
+            return fileTypeCategory === 'meeting_chat';
           case 'meeting_summary':
-            return category === 'meeting_summary';
+            return fileTypeCategory === 'meeting_summary';
           case 'spreadsheet':
-            return category === 'spreadsheet';
+            return fileTypeCategory === 'spreadsheet';
           case 'picture':
-            return category === 'picture';
+            return fileTypeCategory === 'picture';
           case 'pending':
-            return category === 'pending' || doc.status === 'pending';
+            return fileTypeCategory === 'pending' || doc.status === 'pending';
           case 'unknown':
-            return category === 'unknown';
+            return fileTypeCategory === 'unknown';
           default:
             return true;
         }
@@ -526,7 +597,8 @@ export default function QuickFilesScreen() {
               uploadDate: new Date(doc.created_at),
               status: status,
               tags: [],
-              category: normalizeCategory(doc.file_kind),
+              category: doc.receipt_category || undefined, // Use receipt_category for the actual category (Supplies, Rent, etc.)
+              file_kind: doc.file_kind, // Store raw file_kind to check for receipts
             };
           });
           
@@ -753,16 +825,112 @@ export default function QuickFilesScreen() {
     if (!selectedDocumentForMenu) return;
 
     try {
-      const response = await apiClient.shareFile(parseInt(selectedDocumentForMenu.id));
-      if (response.success) {
-        Alert.alert('Success', 'Document shared successfully!');
-      } else {
-        Alert.alert('Error', response.message || 'Failed to share document');
+      console.log('📤 Sharing document:', selectedDocumentForMenu.id, selectedDocumentForMenu.name);
+      
+      // Get file download info
+      const fileInfo = await apiClient.downloadFile(parseInt(selectedDocumentForMenu.id));
+      console.log('📤 File download info:', fileInfo);
+      
+      if (!fileInfo.url) {
+        throw new Error('Failed to get file download URL');
       }
+      
+      // Get the filename with extension
+      const filename = fileInfo.filename || selectedDocumentForMenu.name;
+      const fileExtension = filename.split('.').pop() || 'pdf';
+      const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
+      
+      // Get cache directory (fallback to document directory if cache is not available)
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!cacheDir) {
+        throw new Error('Unable to access file system directories');
+      }
+      
+      // Create a local file path in the cache directory
+      const fileUri = `${cacheDir}${sanitizedFilename}`;
+      console.log('📤 Downloading file to:', fileUri);
+      
+      // Get auth token for download
+      let authHeaders = {};
+      try {
+        const { secureStorage } = await import('../../utils/storage');
+        const { STORAGE_KEYS } = await import('../../constants/Config');
+        const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+        if (token) {
+          authHeaders = { 'Authorization': `Bearer ${token}` };
+        }
+      } catch (error) {
+        console.warn('📤 Could not get auth token for download:', error);
+      }
+      
+      // Download the file
+      const downloadResult = await FileSystem.downloadAsync(fileInfo.url, fileUri, {
+        headers: authHeaders
+      });
+      
+      console.log('📤 File downloaded to:', downloadResult.uri);
+      
+      // Check if sharing is available
+      const isAvailable = await Sharing.isAvailableAsync();
+      
+      if (isAvailable) {
+        // Share the actual file
+        await Sharing.shareAsync(downloadResult.uri, {
+          mimeType: getMimeType(fileExtension),
+          dialogTitle: `Share ${selectedDocumentForMenu.name}`,
+        });
+        console.log('📤 File shared successfully');
+      } else {
+        // Fallback to text sharing if file sharing not available
+        console.log('📤 File sharing not available, falling back to URL sharing');
+        if (Platform.OS === 'ios' || Platform.OS === 'android') {
+          await Share.share({
+            message: `Check out this document: ${selectedDocumentForMenu.name}\n\n${fileInfo.url}`,
+            url: fileInfo.url,
+            title: selectedDocumentForMenu.name,
+          });
+        } else {
+          Alert.alert('Share Link', fileInfo.url);
+        }
+      }
+      
+      // Clean up: delete the cached file after a delay
+      setTimeout(async () => {
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
+          if (fileInfo.exists) {
+            await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
+            console.log('📤 Cleaned up cached file');
+          }
+        } catch (error) {
+          console.warn('📤 Failed to clean up cached file:', error);
+        }
+      }, 60000); // Delete after 1 minute
+      
     } catch (error: any) {
+      console.error('📤 Share error:', error);
       Alert.alert('Error', error.message || 'Failed to share document');
     }
     setShowKebabMenu(false);
+  };
+
+  const getMimeType = (extension: string): string => {
+    const mimeTypes: Record<string, string> = {
+      'pdf': 'application/pdf',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls': 'application/vnd.ms-excel',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'ppt': 'application/vnd.ms-powerpoint',
+      'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'txt': 'text/plain',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+    };
+    return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
   };
 
   const handleDeleteDocument = () => {
@@ -810,9 +978,72 @@ export default function QuickFilesScreen() {
 
   const handleChatDocument = () => {
     if (!selectedDocumentForMenu) return;
+    // Pass fileId, fileName (from Files screen), and workspaceId when in a workspace
+    const q = `fileId=${selectedDocumentForMenu.id}&fileName=${encodeURIComponent(selectedDocumentForMenu.name || '')}${workspaceId ? `&workspaceId=${workspaceId}` : ''}`;
+    router.push(`/(tabs)/chats?${q}`);
+    setShowKebabMenu(false);
+  };
+  
+  const handleCategorizeReceipt = () => {
+    if (!selectedDocumentForMenu) return;
+    setShowKebabMenu(false);
+    setShowCategoryModal(true);
+  };
+  
+  const handleSelectCategory = async (category: string) => {
+    if (!selectedDocumentForMenu) return;
     
-    router.push(`/(tabs)/chats?fileId=${selectedDocumentForMenu.id}`);
-      setShowKebabMenu(false);
+    setCategorizingReceipt(true);
+    try {
+      const response = await apiClient.categorizeReceipt(parseInt(selectedDocumentForMenu.id), category);
+      if (response.success) {
+        Alert.alert('Success', `Receipt categorized as "${category}"`);
+        // Update the document in the local state
+        setDocuments(prev => prev.map(doc => 
+          doc.id === selectedDocumentForMenu.id ? { ...doc, category } : doc
+        ));
+        setShowCategoryModal(false);
+        setSelectedDocumentForMenu(null);
+        // Reload documents to get updated data
+        loadDocuments(true);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to categorize receipt');
+      }
+    } catch (error) {
+      console.error('Error categorizing receipt:', error);
+      Alert.alert('Error', 'Failed to categorize receipt');
+    } finally {
+      setCategorizingReceipt(false);
+    }
+  };
+  
+  const handleUpdatePaymentStatus = () => {
+    if (!selectedDocumentForMenu) return;
+    setShowKebabMenu(false);
+    setShowPaymentStatusModal(true);
+  };
+  
+  const handleSelectPaymentStatus = async (paymentStatus: string) => {
+    if (!selectedDocumentForMenu) return;
+    
+    setUpdatingPaymentStatus(true);
+    try {
+      const response = await apiClient.updateInvoicePaymentStatus(parseInt(selectedDocumentForMenu.id), paymentStatus);
+      if (response.success) {
+        Alert.alert('Success', `Invoice payment status updated to "${paymentStatus}"`);
+        setShowPaymentStatusModal(false);
+        setSelectedDocumentForMenu(null);
+        // Reload documents to get updated data
+        loadDocuments(true);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to update payment status');
+      }
+    } catch (error) {
+      console.error('Error updating payment status:', error);
+      Alert.alert('Error', 'Failed to update payment status');
+    } finally {
+      setUpdatingPaymentStatus(false);
+    }
   };
 
   const loadBookmarks = async () => {
@@ -967,7 +1198,8 @@ export default function QuickFilesScreen() {
             {item.name}
           </Text>
         <Text style={dynamicStyles.documentMeta}>
-          {item.size} • {item.uploadDate.toLocaleDateString()}
+          {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
+          {item.category && ` • ${item.category}`}
             </Text>
         </View>
         
@@ -1299,6 +1531,59 @@ export default function QuickFilesScreen() {
       marginLeft: 12,
       flex: 1,
     },
+    
+    // Category Modal Styles
+    categoryModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'flex-end',
+    },
+    categoryModalContent: {
+      backgroundColor: colors.card,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      maxHeight: '70%',
+      paddingBottom: 20,
+    },
+    categoryModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    categoryModalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    categoryList: {
+      maxHeight: 400,
+    },
+    categoryModalItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    categoryItemText: {
+      fontSize: 16,
+      color: colors.text,
+    },
+    categoryModalLoading: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
   }), [colors]);
 
   // Loading state with bouncing dots
@@ -1342,7 +1627,7 @@ export default function QuickFilesScreen() {
       <View style={dynamicStyles.header}>
         <TouchableOpacity 
           style={dynamicStyles.backButton}
-          onPress={() => router.push('/(tabs)')}
+          onPress={() => router.back()}
         >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
@@ -1559,6 +1844,28 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             )}
             
+            {/* Show Categorize option for receipts - check file_kind */}
+            {selectedDocumentForMenu?.file_kind?.toLowerCase() === 'receipt' && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleCategorizeReceipt}
+              >
+                <Ionicons name="pricetag-outline" size={20} color="#FF9500" />
+                <Text style={dynamicStyles.kebabMenuText}>Categorize</Text>
+              </TouchableOpacity>
+            )}
+            
+            {/* Show Update Payment Status option for invoices - check file_kind */}
+            {selectedDocumentForMenu?.file_kind?.toLowerCase() === 'invoice' && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleUpdatePaymentStatus}
+              >
+                <Ionicons name="card-outline" size={20} color="#2563EB" />
+                <Text style={dynamicStyles.kebabMenuText}>Update Payment Status</Text>
+              </TouchableOpacity>
+            )}
+            
             <TouchableOpacity
               style={dynamicStyles.kebabMenuItem}
               onPress={handleShareDocument}
@@ -1634,6 +1941,87 @@ export default function QuickFilesScreen() {
             </View>
           </View>
         </TouchableOpacity>
+      </Modal>
+      
+      {/* Category Selection Modal */}
+      <Modal
+        visible={showCategoryModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCategoryModal(false)}
+      >
+        <View style={dynamicStyles.categoryModalOverlay}>
+          <View style={dynamicStyles.categoryModalContent}>
+            <View style={dynamicStyles.categoryModalHeader}>
+              <Text style={dynamicStyles.categoryModalTitle}>Select Category</Text>
+              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={dynamicStyles.categoryList}>
+              {receiptCategories.map((category) => (
+                <TouchableOpacity
+                  key={category}
+                  style={dynamicStyles.categoryModalItem}
+                  onPress={() => handleSelectCategory(category)}
+                  disabled={categorizingReceipt}
+                >
+                  <Text style={dynamicStyles.categoryItemText}>{category}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            
+            {categorizingReceipt && (
+              <View style={dynamicStyles.categoryModalLoading}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+      
+      {/* Payment Status Selection Modal */}
+      <Modal
+        visible={showPaymentStatusModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPaymentStatusModal(false)}
+      >
+        <View style={dynamicStyles.categoryModalOverlay}>
+          <View style={dynamicStyles.categoryModalContent}>
+            <View style={dynamicStyles.categoryModalHeader}>
+              <Text style={dynamicStyles.categoryModalTitle}>Update Payment Status</Text>
+              <TouchableOpacity
+                onPress={() => setShowPaymentStatusModal(false)}
+                disabled={updatingPaymentStatus}
+              >
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={dynamicStyles.categoryList}>
+              {paymentStatuses.map((status) => (
+                <TouchableOpacity
+                  key={status}
+                  style={dynamicStyles.categoryModalItem}
+                  onPress={() => handleSelectPaymentStatus(status)}
+                  disabled={updatingPaymentStatus}
+                >
+                  <Text style={dynamicStyles.categoryItemText}>{status}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            
+            {updatingPaymentStatus && (
+              <View style={dynamicStyles.categoryModalLoading}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            )}
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
