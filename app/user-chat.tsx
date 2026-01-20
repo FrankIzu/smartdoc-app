@@ -1335,8 +1335,8 @@ export default function UserChatScreen() {
               setSelectedRecipient(null);
               setNewMessage('');
             } else {
-              // If on chat list, go back to home
-              router.push('/(tabs)');
+              // If on chat list, go back to previous screen
+              router.back();
             }
           }} style={dynamicStyles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
@@ -1525,7 +1525,7 @@ export default function UserChatScreen() {
       <View style={dynamicStyles.header}>
         <TouchableOpacity onPress={() => {
           // Navigate back to home
-          router.push('/(tabs)');
+          router.back();
         }} style={dynamicStyles.backButton}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>

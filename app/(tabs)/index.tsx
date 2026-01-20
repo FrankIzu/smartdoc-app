@@ -33,7 +33,7 @@ interface DashboardStats {
 
 interface RecentActivity {
   id: string;
-  type: 'upload' | 'chat' | 'scan' | 'process' | 'form' | 'analytics';
+  type: 'upload' | 'chat' | 'scan' | 'process' | 'form' | 'analytics' | 'share';
   title: string;
   subtitle: string;
   timestamp: Date | undefined;
@@ -218,84 +218,110 @@ function DashboardScreen() {
         }
       }
       
-      // Load recent uploaded documents (most recent 5 files, regardless of date)
+      // Load recent activities (including uploaded files and workspace shared files)
       try {
-        // console.log('📈 Attempting to load recent uploaded documents...');
-        const filesResponse = await apiClient.getFiles(1, 50); // Get recent files
+        // Try to use the recent activities API endpoint first
+        let activitiesFromAPI: RecentActivity[] = [];
+        try {
+          const activitiesResponse = await apiClient.getRecentActivities(7, 10);
+          if (activitiesResponse && activitiesResponse.success && activitiesResponse.data) {
+            const activities = Array.isArray(activitiesResponse.data) ? activitiesResponse.data : [];
+            activitiesFromAPI = activities.map((activity: any) => {
+              const timestamp = activity.timestamp || activity.created_at || activity.date;
+              return {
+                id: activity.id?.toString() || `activity-${Date.now()}-${Math.random()}`,
+                type: (activity.type || 'upload') as RecentActivity['type'],
+                title: activity.title || activity.action || 'Activity',
+                subtitle: activity.subtitle || activity.description || activity.file_name || '',
+                timestamp: timestamp ? new Date(timestamp) : new Date(),
+                icon: activity.icon || 'document-outline'
+              };
+            });
+          }
+        } catch (apiError) {
+          console.log('📈 Recent activities API not available, falling back to files:', apiError);
+        }
+
+        // Also load recent files to include uploads and workspace shares
+        const filesResponse = await apiClient.getFiles(1, 50);
         
-        if (filesResponse && filesResponse.success && filesResponse.data) {
-          const files = Array.isArray(filesResponse.data) ? filesResponse.data : [];
-          
-          // Sort files by upload date, most recent first, and take the 5 most recent
-          const recentFiles = files
-            .filter((file: any) => {
-              // Include files with or without created_at (handle both cases)
-              return file; // Include all files
-            })
-            .sort((a: any, b: any) => {
-              // Sort by upload date, most recent first
-              const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-              const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-              return dateB - dateA; // Most recent first
-            })
-            .slice(0, 5); // Limit to 5 most recent
-          
-          if (recentFiles.length > 0) {
-            // Format files as upload activities
-            const formattedActivities = recentFiles.map((file: any, index: number) => {
+        // Handle both response formats: { files: [...] } or { data: { files: [...] } }
+        let files: any[] = [];
+        if (filesResponse && filesResponse.success) {
+          if (filesResponse.files && Array.isArray(filesResponse.files)) {
+            files = filesResponse.files;
+          } else if (filesResponse.data) {
+            if (Array.isArray(filesResponse.data)) {
+              files = filesResponse.data;
+            } else if (filesResponse.data.files && Array.isArray(filesResponse.data.files)) {
+              files = filesResponse.data.files;
+            }
+          }
+        }
+        
+        // Create activities from files
+        const fileActivities: RecentActivity[] = files
+          .map((file: any, index: number) => {
+            try {
+              let timestamp: Date;
               try {
-                let timestamp: Date;
-                try {
-                  // Try to get timestamp from created_at, updated_at, or use current date
-                  const dateStr = file.created_at || file.updated_at || file.uploaded_at;
-                  if (dateStr) {
-                    timestamp = new Date(dateStr);
-                    if (isNaN(timestamp.getTime())) {
-                      timestamp = new Date();
-                    }
-                  } else {
-                    // If no date, use a date in the past (e.g., 1 day ago) so it shows "1d ago"
-                    timestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                // Use updated_at for workspace shares (when file was shared), created_at for uploads
+                const dateStr = file.updated_at || file.created_at || file.uploaded_at;
+                if (dateStr) {
+                  timestamp = new Date(dateStr);
+                  if (isNaN(timestamp.getTime())) {
+                    timestamp = new Date();
                   }
-                } catch {
+                } else {
                   timestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
                 }
-
-                // Get filename from various possible fields
-                const fileName = file.original_filename || file.filename || file.name || `Document ${index + 1}`;
-
-                return {
-                  id: file.id?.toString() || `file-${index}-${Date.now()}`,
-                  type: 'upload' as const,
-                  title: 'File uploaded',
-                  subtitle: fileName,
-                  timestamp,
-                  icon: 'document-outline'
-                };
-              } catch (fileError) {
-                return {
-                  id: `error-${index}-${Date.now()}`,
-                  type: 'upload' as const,
-                  title: 'File uploaded',
-                  subtitle: 'Unknown file',
-                  timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
-                  icon: 'document-outline'
-                };
+              } catch {
+                timestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
               }
-            });
-            
-            // console.log('📈 Setting formatted activities:', formattedActivities);
-            setRecentActivities(formattedActivities);
-          } else {
-            // console.log('📈 No recent files found');
-            setRecentActivities(defaultActivities);
-          }
+
+              const fileName = file.original_filename || file.filename || file.name || `Document ${index + 1}`;
+              
+              // Check if file is shared to a workspace
+              const isWorkspaceShare = file.workspace_id || file.shared_to_workspace || file.workspace_name;
+              const workspaceName = file.workspace_name || (file.workspace_id ? `Workspace ${file.workspace_id}` : null);
+
+              return {
+                id: file.id?.toString() || `file-${index}-${Date.now()}`,
+                type: isWorkspaceShare ? 'share' as const : 'upload' as const,
+                title: isWorkspaceShare ? 'File shared to workspace' : 'File uploaded',
+                subtitle: isWorkspaceShare && workspaceName 
+                  ? `${fileName} → ${workspaceName}`
+                  : fileName,
+                timestamp,
+                icon: isWorkspaceShare ? 'share-outline' : 'document-outline'
+              };
+            } catch (fileError) {
+              return null;
+            }
+          })
+          .filter((activity): activity is RecentActivity => activity !== null);
+
+        // Combine API activities and file activities, remove duplicates, sort by timestamp
+        const allActivities = [...activitiesFromAPI, ...fileActivities];
+        const uniqueActivities = Array.from(
+          new Map(allActivities.map(activity => [activity.id, activity])).values()
+        );
+        
+        const sortedActivities = uniqueActivities
+          .sort((a, b) => {
+            const timeA = a.timestamp?.getTime() || 0;
+            const timeB = b.timestamp?.getTime() || 0;
+            return timeB - timeA; // Most recent first
+          })
+          .slice(0, 10); // Limit to 10 most recent
+        
+        if (sortedActivities.length > 0) {
+          setRecentActivities(sortedActivities);
         } else {
-          // console.warn('📈 Files API call succeeded but no valid data returned');
           setRecentActivities(defaultActivities);
         }
       } catch (error) {
-        // console.warn('📈 Recent files failed, using empty array:', error);
+        console.warn('📈 Recent activities failed, using empty array:', error);
         setRecentActivities(defaultActivities);
       }
       
@@ -1154,7 +1180,7 @@ function DashboardScreen() {
               key="stat-forms"
               title="Forms"
               value={stats.totalForms}
-              icon="document-text"
+              icon="clipboard-outline"
               color="#34C759"
               onPress={() => router.push('/forms/create')}
               badge={stats.formResponses}

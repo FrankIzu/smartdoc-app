@@ -201,7 +201,7 @@ export default function HelpScreen() {
         backgroundColor: colors.background
       }}>
         <TouchableOpacity 
-          onPress={() => router.push('/(tabs)')}
+          onPress={() => router.back()}
           style={{ marginRight: 12 }}
         >
           <Ionicons name="arrow-back" size={24} color={colors.text} />

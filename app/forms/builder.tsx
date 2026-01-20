@@ -1,5 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -18,7 +21,6 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Clipboard from 'expo-clipboard';
 import { apiService } from '../../services/api';
 
 interface FormField {
@@ -479,17 +481,61 @@ export default function FormBuilderScreen() {
     }
 
     try {
-      // Generate CSV content for download
+      // Generate CSV content
       const csvContent = generateCSVContent(responses);
       
-      // Use React Native Share to share the CSV format
-      await Share.share({
-        message: csvContent,
-        title: 'Form Responses CSV',
+      // Get cache directory
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!cacheDir) {
+        throw new Error('Unable to access file system directories');
+      }
+      
+      // Create filename with form name
+      const formName = formData.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const fileName = `${formName}_responses_${Date.now()}.csv`;
+      const fileUri = `${cacheDir}${fileName}`;
+      
+      // Write CSV content to file
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, {
+        encoding: FileSystem.EncodingType.UTF8,
       });
+      
+      console.log('📊 CSV file created at:', fileUri);
+      
+      // Check if sharing is available
+      const isAvailable = await Sharing.isAvailableAsync();
+      
+      if (isAvailable) {
+        // Share the file
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'text/csv',
+          dialogTitle: 'Share Form Responses',
+        });
+        console.log('📊 CSV file shared successfully');
+      } else {
+        // Fallback to text sharing
+        await Share.share({
+          message: csvContent,
+          title: 'Form Responses CSV',
+        });
+      }
+      
+      // Clean up file after a delay
+      setTimeout(async () => {
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(fileUri);
+          if (fileInfo.exists) {
+            await FileSystem.deleteAsync(fileUri, { idempotent: true });
+            console.log('📊 Cleaned up CSV file');
+          }
+        } catch (error) {
+          console.warn('📊 Failed to clean up CSV file:', error);
+        }
+      }, 60000); // Delete after 1 minute
+      
     } catch (error: any) {
       console.error('Error downloading CSV:', error);
-      Alert.alert('Error', 'Failed to download CSV file');
+      Alert.alert('Error', error.message || 'Failed to download CSV file');
     }
   };
 
@@ -592,17 +638,61 @@ export default function FormBuilderScreen() {
     }
 
     try {
-      // Generate table-formatted content for better readability
-      const tableContent = generateTableContent(responses);
+      // Generate CSV content
+      const csvContent = generateCSVContent(responses);
       
-      // Use React Native Share to share the formatted table
-      await Share.share({
-        message: tableContent,
-        title: `Share Form Responses (${responses.length} responses)`,
+      // Get cache directory
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!cacheDir) {
+        throw new Error('Unable to access file system directories');
+      }
+      
+      // Create filename with form name
+      const formName = formData.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const fileName = `${formName}_responses_${Date.now()}.csv`;
+      const fileUri = `${cacheDir}${fileName}`;
+      
+      // Write CSV content to file
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, {
+        encoding: FileSystem.EncodingType.UTF8,
       });
+      
+      console.log('📊 CSV file created for sharing at:', fileUri);
+      
+      // Check if sharing is available
+      const isAvailable = await Sharing.isAvailableAsync();
+      
+      if (isAvailable) {
+        // Share the file
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'text/csv',
+          dialogTitle: `Share Form Responses (${responses.length} responses)`,
+        });
+        console.log('📊 CSV file shared successfully');
+      } else {
+        // Fallback to text sharing
+        await Share.share({
+          message: csvContent,
+          title: `Share Form Responses (${responses.length} responses)`,
+        });
+      }
+      
+      // Clean up file after a delay
+      setTimeout(async () => {
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(fileUri);
+          if (fileInfo.exists) {
+            await FileSystem.deleteAsync(fileUri, { idempotent: true });
+            console.log('📊 Cleaned up CSV file');
+          }
+        } catch (error) {
+          console.warn('📊 Failed to clean up CSV file:', error);
+        }
+      }, 60000); // Delete after 1 minute
+      
     } catch (error: any) {
       console.error('Error sharing responses:', error);
-      Alert.alert('Error', 'Failed to share responses');
+      Alert.alert('Error', error.message || 'Failed to share responses');
     }
   };
 
@@ -925,20 +1015,48 @@ export default function FormBuilderScreen() {
        currentView === 'preview' ? renderPreview() : 
        renderResponses()}
 
-      {/* Save Button - Only show on Builder and Preview tabs */}
+      {/* Save/Share Buttons - Only show on Builder and Preview tabs */}
       {currentView !== 'responses' && (
         <View style={styles.footer}>
-          <TouchableOpacity 
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-            onPress={saveForm}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.saveButtonText}>Save Form</Text>
-            )}
-          </TouchableOpacity>
+          {formId ? (
+            // Form is saved - show both Save and Share buttons side by side
+            <View style={styles.footerButtonsRow}>
+              <TouchableOpacity 
+                style={[styles.footerButton, styles.saveButton, saving && styles.saveButtonDisabled]}
+                onPress={saveForm}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="save-outline" size={20} color="#fff" />
+                    <Text style={styles.saveButtonText}>Save</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.footerButton, styles.shareButton]}
+                onPress={shareForm}
+              >
+                <Ionicons name="share-outline" size={20} color="#fff" />
+                <Text style={styles.shareButtonText}>Share</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            // Form not saved yet - show only Save button
+            <TouchableOpacity 
+              style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+              onPress={saveForm}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.saveButtonText}>Save Form</Text>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -1252,16 +1370,34 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
   },
-  saveButton: {
-    backgroundColor: '#007AFF',
+  footerButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  footerButton: {
+    flex: 1,
     borderRadius: 8,
     paddingVertical: 12,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  saveButton: {
+    backgroundColor: '#007AFF',
   },
   saveButtonDisabled: {
     backgroundColor: '#ccc',
   },
   saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  shareButton: {
+    backgroundColor: '#10B981',
+  },
+  shareButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',

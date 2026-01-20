@@ -77,6 +77,17 @@ export interface ChatHistory {
   created_at: string;
   updated_at: string;
   messages: ChatMessage[];
+  persistent_context?: {
+    context_file_ids?: number[];
+    context_bookmark_ids?: number[];
+    context_entry_ids?: number[];
+    context_transcript_ids?: number[];
+    selected_files?: number[];
+    selected_bookmarks?: number[];
+    selected_workspaces?: number[];
+    selected_users?: number[];
+    [key: string]: any;
+  } | null;
 }
 
 export interface ChatRequest {

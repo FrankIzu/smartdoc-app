@@ -35,6 +35,14 @@ config.resolver = {
   // Resolve HMS native modules to empty stubs for web platform
   // Also handle absolute path resolution for entry point
   resolveRequest: (context, moduleName, platform) => {
+    // For web platform, redirect react-native to react-native-web
+    // This prevents "importing from 'react-native' instead of 'react-native-web'" errors
+    if (platform === 'web' && moduleName === 'react-native') {
+      return defaultResolver
+        ? defaultResolver(context, 'react-native-web', platform)
+        : context.resolveRequest(context, 'react-native-web', platform);
+    }
+    
     // Handle absolute paths - convert to relative if it's the entry point
     if (moduleName && moduleName.startsWith('/') && moduleName.endsWith('index.js')) {
       const relativePath = path.relative(projectRoot, moduleName);

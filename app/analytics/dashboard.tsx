@@ -1,17 +1,22 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import * as Sharing from 'expo-sharing';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
@@ -131,6 +136,18 @@ export default function AnalyticsDashboard() {
   const [selectedCategory, setSelectedCategory] = useState('All'); // Category filter for receipts
   const [selectedInvoiceCategory, setSelectedInvoiceCategory] = useState('All'); // Category filter for invoices
   const [activeTab, setActiveTab] = useState<'receipts' | 'invoices'>('receipts');
+  const [recentReceipts, setRecentReceipts] = useState<any[]>([]);
+  const [recentInvoices, setRecentInvoices] = useState<any[]>([]);
+  
+  // Category selection modal states
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [selectedReceipt, setSelectedReceipt] = useState<any>(null);
+  const [categorizingReceipt, setCategorizingReceipt] = useState(false);
+  
+  // Payment status selection modal states
+  const [showPaymentStatusModal, setShowPaymentStatusModal] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [updatingPaymentStatus, setUpdatingPaymentStatus] = useState(false);
 
   console.log('📊 AnalyticsDashboard component loaded', { isAuthenticated, user: user?.username, authLoading });
 
@@ -138,6 +155,13 @@ export default function AnalyticsDashboard() {
     try {
       setLoading(true);
       console.log('🔍 Loading analytics for', days, 'days');
+      console.log('📊 Current state:', { 
+        isAuthenticated, 
+        authLoading, 
+        loading: true, 
+        hasAnalytics: !!analytics,
+        recentReceiptsCount: recentReceipts.length
+      });
       
       // Check authentication first
       if (!isAuthenticated) {
@@ -181,461 +205,330 @@ export default function AnalyticsDashboard() {
           recentActivity: [],
         };
         setAnalytics(noAuthData);
+        setRecentReceipts([]);
+        setRecentInvoices([]);
+        setLoading(false);
         return;
       }
       
-      // Fetch files data and build receipt analytics from it
-      console.log('📊 About to call getFiles API...');
-      const filesResponse = await apiClient.getFiles(1, 100);
-      console.log('📊 Files API Response:', JSON.stringify(filesResponse, null, 2));
-      console.log('📊 Files success:', filesResponse.success);
-      console.log('📊 Files data:', filesResponse.data);
-      console.log('📊 Files data files:', filesResponse.data?.files);
-      console.log('📊 Files data structure:', {
-        hasData: !!filesResponse.data,
-        hasFiles: !!filesResponse.data?.files,
-        filesLength: filesResponse.data?.files?.length || 0,
-        firstFile: filesResponse.data?.files?.[0] || null
-      });
+      // Use web endpoints for receipt and invoice analytics
+      console.log('📊 Loading analytics from web endpoints...');
       
-      // Check if the response structure is different
-      console.log('📊 Full response keys:', Object.keys(filesResponse));
-      console.log('📊 Response has files directly:', !!filesResponse.files);
-      console.log('📊 Response files length:', filesResponse.files?.length || 0);
-      
-      // Check if this is an authentication error
-      if (!filesResponse.success && filesResponse.message?.includes('Not authenticated')) {
-        console.error('📊 Authentication error - user not logged in');
-        // Show authentication error instead of sample data
-        const authErrorData = {
-          summary: {
-            period: `${days} days`,
-            period_days: parseInt(days),
-            total_files: 0,
-            total_size_mb: 0,
-            total_receipts: 0,
-            total_spending: 0,
-            total_workspaces: 0,
-            total_forms: 0,
-          },
-          receipts: {
-            summary: {
-              total_receipts: 0,
-              total_amount: 0,
-              average_amount: 0,
-              period_days: parseInt(days),
-            },
-            categories: [],
-            timeline: [],
-            payment_methods: [],
-            top_businesses: [],
-          },
-          files: {
-            types: [],
-            upload_trends: [],
-          },
-          workspaces: {
-            total_workspaces: 0,
-            workspace_details: [],
-          },
-          forms: {
-            total_forms: 0,
-            total_responses: 0,
-            form_details: [],
-          },
-          recentActivity: [],
-        };
-        setAnalytics(authErrorData);
-        return;
-      }
-      
-      if (filesResponse.success) {
-        console.log('📊 Processing files data to build receipt analytics');
-        // Handle the files response structure - check multiple possible locations
-        const actualFiles = filesResponse.files || 
-                           filesResponse.data?.files || 
-                           filesResponse.data?.file_list || 
-                           filesResponse.data || 
-                           [];
-        
-        console.log('📊 Files structure analysis:', {
-          hasFiles: !!filesResponse.files,
-          hasDataFiles: !!filesResponse.data?.files,
-          filesLength: actualFiles.length,
-          firstFileKeys: actualFiles[0] ? Object.keys(actualFiles[0]) : []
+      // Load receipt analytics from web endpoint
+      let receiptAnalytics: any = null;
+      try {
+        const category = selectedCategory !== 'All' ? selectedCategory : undefined;
+        const receiptResponse = await apiClient.getReceiptAnalytics(parseInt(days), category);
+        console.log('📊 Receipt analytics response:', {
+          success: receiptResponse?.success,
+          hasData: !!receiptResponse?.data,
+          dataKeys: receiptResponse?.data ? Object.keys(receiptResponse.data) : [],
+          hasOverview: !!receiptResponse?.data?.overview,
+          totalReceipts: receiptResponse?.data?.overview?.total_receipts,
+          categoriesCount: receiptResponse?.data?.category_distribution?.length || 0,
+          hasRecentReceipts: !!receiptResponse?.data?.recent_receipts,
+          message: receiptResponse?.message
         });
-        
-        if (actualFiles.length === 0) {
-          console.log('📊 No files found in response');
-          // Show basic data even if no files
-          const basicData = {
-            summary: {
-              period: `${days} days`,
-              period_days: parseInt(days),
-              total_files: 0,
-              total_size_mb: 0,
-              total_receipts: 0,
-              total_spending: 0,
-              total_workspaces: 0,
-              total_forms: 0,
-            },
-            receipts: {
-              summary: {
-                total_receipts: 0,
-                total_amount: 0,
-                average_amount: 0,
-                period_days: parseInt(days),
-              },
-              categories: [],
-              timeline: [],
-              payment_methods: [],
-              top_businesses: [],
-            },
-            files: {
-              types: [],
-              upload_trends: [],
-            },
-            workspaces: {
-              total_workspaces: 0,
-              workspace_details: [],
-            },
-            forms: {
-              total_forms: 0,
-              total_responses: 0,
-              form_details: [],
-            },
-            recentActivity: [],
-          };
-          setAnalytics(basicData);
-          return;
-        }
-        
-        // Count files by type
-        const fileTypes = actualFiles.reduce((acc: any, file: any) => {
-          const type = file.file_type || file.type || 'Unknown';
-          acc[type] = (acc[type] || 0) + 1;
-          return acc;
-        }, {});
-        
-        // Count receipts (files that are classified as receipts)
-        const receiptFiles = actualFiles.filter((file: any) => {
-          const fileName = file.filename || file.original_filename || '';
-          const fileKind = (file.file_kind || '').toLowerCase();
-          const isReceipt = fileKind === 'receipt' ||
-                           fileKind === 'receipts' ||
-                           file.receipt_category ||
-                           fileName.toLowerCase().includes('receipt') ||
-                           (file.json_data && (file.json_data.amount || file.json_data.total_amount));
-          return isReceipt;
-        });
-
-        // Count invoices (files that are classified as invoices)
-        const invoiceFiles = actualFiles.filter((file: any) => {
-          const fileName = file.filename || file.original_filename || '';
-          const fileKind = (file.file_kind || '').toLowerCase();
-          const isInvoice = fileKind === 'invoice' ||
-                           fileKind === 'invoices' ||
-                           fileName.toLowerCase().includes('invoice') ||
-                           (file.json_data && (file.json_data.invoice_number || file.json_data.invoice_date));
-          return isInvoice;
-        });
-        
-        console.log('📊 Actual files found:', actualFiles.length);
-        console.log('📊 All files:', actualFiles.map((f: any) => ({ name: f.filename || f.original_filename, kind: f.file_kind, type: f.file_type })));
-        console.log('📊 File types:', fileTypes);
-        console.log('📊 Receipt files:', receiptFiles.length);
-        console.log('📊 Receipt files details:', receiptFiles);
-        
-        // Calculate receipt analytics from files data
-        const totalReceipts = receiptFiles.length;
-        const totalSpending = receiptFiles.reduce((sum: number, file: any) => {
-          // Try to extract amount from file metadata - check multiple possible locations
-          const amount = file.json_data?.total_amount || 
-                        file.json_data?.amount || 
-                        file.json_data?.total ||
-                        file.amount || 
-                        file.total_amount ||
-                        file.json_data?.receipt_data?.amount ||
-                        file.json_data?.receipt_data?.total_amount ||
-                        0;
-          console.log('📊 File amount extraction:', { 
-            fileName: file.filename || file.original_filename, 
-            amount, 
-            jsonData: file.json_data,
-            allJsonDataKeys: file.json_data ? Object.keys(file.json_data) : [],
-            hasTotalAmount: !!file.json_data?.total_amount,
-            hasAmount: !!file.json_data?.amount
-          });
+        if (receiptResponse && receiptResponse.success && receiptResponse.data) {
+          // Backend returns: {overview, category_distribution, monthly_spending, recent_receipts, top_businesses}
+          // Transform to expected structure: {summary, categories, timeline, payment_methods, top_businesses}
+          const totalReceipts = receiptResponse.data.overview?.total_receipts || 0;
+          const totalAmount = receiptResponse.data.overview?.total_amount || 0;
+          // Calculate average amount if not provided or is 0
+          const averageAmount = receiptResponse.data.overview?.average_amount || 
+                                (totalReceipts > 0 ? totalAmount / totalReceipts : 0);
           
-          // Convert string amounts to numbers and handle different formats
-          let numericAmount = 0;
-          if (typeof amount === 'number') {
-            numericAmount = amount;
-          } else if (typeof amount === 'string' && amount.trim() !== '') {
-            // Remove any non-numeric characters except decimal point and minus sign
-            const cleanAmount = amount.replace(/[^0-9.-]/g, '');
-            const parsed = parseFloat(cleanAmount);
-            numericAmount = isNaN(parsed) ? 0 : parsed;
-          } else if (amount === 0 || amount === '0') {
-            numericAmount = 0;
-          }
-          
-          console.log('📊 Amount conversion:', { 
-            originalAmount: amount, 
-            cleanAmount: typeof amount === 'string' ? amount.replace(/[^0-9.-]/g, '') : 'N/A',
-            numericAmount,
-            type: typeof amount,
-            isNaN: isNaN(numericAmount),
-            sumBefore: sum,
-            sumAfter: sum + numericAmount
-          });
-          
-          return sum + numericAmount;
-        }, 0);
-        const averageAmount = totalReceipts > 0 ? totalSpending / totalReceipts : 0;
-        
-        console.log('📊 Final calculation check:', {
-          totalReceipts,
-          totalSpending,
-          averageAmount,
-          receiptFilesCount: receiptFiles.length
-        });
-        
-        console.log('📊 Calculated analytics:', {
-          totalReceipts,
-          totalSpending,
-          averageAmount,
-          receiptFilesWithAmounts: receiptFiles.map((f: any) => ({
-            name: f.filename || f.original_filename,
-            amount: f.json_data?.total_amount || f.json_data?.amount || 0,
-            type: typeof (f.json_data?.total_amount || f.json_data?.amount || 0)
-          }))
-        });
-        
-        // Calculate invoice analytics from files data
-        const totalInvoices = invoiceFiles.length;
-        const invoiceAmounts = invoiceFiles.map((file: any) => {
-          const amount = file.json_data?.total_amount || 
-                        file.json_data?.amount || 
-                        file.json_data?.invoice_amount ||
-                        file.json_data?.total ||
-                        file.amount || 
-                        file.total_amount || 0;
-          let numericAmount = 0;
-          if (typeof amount === 'number') {
-            numericAmount = amount;
-          } else if (typeof amount === 'string' && amount.trim() !== '') {
-            const cleanAmount = amount.replace(/[^0-9.-]/g, '');
-            const parsed = parseFloat(cleanAmount);
-            numericAmount = isNaN(parsed) ? 0 : parsed;
-          }
-          return numericAmount;
-        });
-        const totalInvoiceAmount = invoiceAmounts.reduce((sum: number, amt: number) => sum + amt, 0);
-        const avgInvoiceAmount = totalInvoices > 0 ? totalInvoiceAmount / totalInvoices : 0;
-        
-        // Calculate payment status for invoices
-        const paidInvoices = invoiceFiles.filter((file: any) => {
-          const status = (file.json_data?.payment_status || file.json_data?.status || '').toLowerCase();
-          return status === 'paid' || status === 'complete';
-        });
-        const unpaidInvoices = invoiceFiles.filter((file: any) => {
-          const status = (file.json_data?.payment_status || file.json_data?.status || '').toLowerCase();
-          return status === 'unpaid' || status === 'pending' || !status;
-        });
-        const paidAmount = paidInvoices.reduce((sum: number, file: any) => {
-          const amount = file.json_data?.total_amount || file.json_data?.amount || 0;
-          return sum + (typeof amount === 'number' ? amount : parseFloat(String(amount).replace(/[^0-9.-]/g, '')) || 0);
-        }, 0);
-        const unpaidAmount = totalInvoiceAmount - paidAmount;
-
-        const analyticsData = {
-          summary: {
-            period: `${days} days`,
-            period_days: parseInt(days),
-            total_files: actualFiles.length,
-            total_size_mb: 0,
-            total_receipts: totalReceipts,
-            total_spending: totalSpending,
-            total_workspaces: 0,
-            total_forms: 0,
-            total_invoices: totalInvoices,
-            total_invoice_amount: totalInvoiceAmount,
-          },
-          receipts: {
+          receiptAnalytics = {
             summary: {
               total_receipts: totalReceipts,
-              total_amount: totalSpending,
+              total_amount: totalAmount,
               average_amount: averageAmount,
               period_days: parseInt(days),
+              recent_30d: receiptResponse.data.overview?.recent_30d || 0,
             },
-            categories: receiptFiles.length > 0 ? [
-              { category: 'Receipt Images', count: receiptFiles.length, total_amount: totalSpending, percentage: 100 }
-            ] : [],
-            timeline: [],
-            payment_methods: [],
-            top_businesses: receiptFiles.map((file: any, index: number) => {
-              // Extract business name from json_data or use filename
-              const businessName = file.json_data?.store_name || 
-                                 file.json_data?.business_name || 
-                                 file.json_data?.merchant_name ||
-                                 file.filename || 
-                                 file.original_filename || 
-                                 `Receipt ${index + 1}`;
-              
-              // Extract amount for this specific receipt
-              const fileAmount = file.json_data?.total_amount || 
-                               file.json_data?.amount || 
-                               file.json_data?.total || 0;
-              
-              return {
-                business: businessName,
-                count: 1,
-                total_amount: typeof fileAmount === 'string' ? parseFloat(fileAmount.replace(/[^0-9.-]/g, '')) || 0 : fileAmount
-              };
-            }),
-          },
-          files: {
-            types: Object.entries(fileTypes).map(([type, count]) => ({
-              type,
-              count: count as number,
-              percentage: actualFiles.length > 0 ? ((count as number) / actualFiles.length) * 100 : 0
-            })),
-            upload_trends: [],
-          },
-          workspaces: {
-            total_workspaces: 0,
-            workspace_details: [],
-          },
-          forms: {
-            total_forms: 0, // Not available from files API
-            total_responses: 0, // Not provided by API
-            form_details: [],
-          },
-          invoices: totalInvoices > 0 ? {
-            overview: {
-              total_invoices: totalInvoices,
-              total_amount: totalInvoiceAmount,
-              paid_amount: paidAmount,
-              unpaid_amount: unpaidAmount,
-              partial_amount: 0,
-              avg_invoice_amount: avgInvoiceAmount,
-              paid_count: paidInvoices.length,
-              unpaid_count: unpaidInvoices.length,
-              partial_count: 0,
-              overdue_count: 0,
-              overdue_amount: 0,
-            },
-            payment_distribution: [
-              { status: 'Paid', count: paidInvoices.length, total_amount: paidAmount, percentage: totalInvoices > 0 ? (paidInvoices.length / totalInvoices) * 100 : 0 },
-              { status: 'Unpaid', count: unpaidInvoices.length, total_amount: unpaidAmount, percentage: totalInvoices > 0 ? (unpaidInvoices.length / totalInvoices) * 100 : 0 },
-            ],
-            category_distribution: [],
-            monthly_trends: [],
-            top_vendors: invoiceFiles.map((file: any, index: number) => {
-              const vendorName = file.json_data?.vendor_name || 
-                                file.json_data?.supplier_name ||
-                                file.json_data?.business_name ||
-                                file.filename || 
-                                file.original_filename || 
-                                `Vendor ${index + 1}`;
-              const fileAmount = file.json_data?.total_amount || file.json_data?.amount || 0;
-              return {
-                vendor_name: vendorName,
-                count: 1,
-                total_amount: typeof fileAmount === 'number' ? fileAmount : parseFloat(String(fileAmount).replace(/[^0-9.-]/g, '')) || 0,
-                avg_amount: typeof fileAmount === 'number' ? fileAmount : parseFloat(String(fileAmount).replace(/[^0-9.-]/g, '')) || 0,
-              };
-            }),
-            aging_buckets: {
-              '0-30': { count: 0, amount: 0 },
-              '31-60': { count: 0, amount: 0 },
-              '61-90': { count: 0, amount: 0 },
-              '90+': { count: 0, amount: 0 },
-            },
-          } : undefined,
-          recentActivity: [],
-        };
-        console.log('📊 Processed analytics data:', analyticsData);
-        setAnalytics(analyticsData);
-      } else {
-        console.warn('Files API returned no data or unsuccessful response');
-        // Show basic data even if API fails
-        console.log('📊 No files data available, showing basic data');
-        const basicData = {
-          summary: {
-            period: `${days} days`,
-            period_days: parseInt(days),
-            total_files: 1,
-            total_size_mb: 0,
-            total_receipts: 1,
-            total_spending: 31.22,
-            total_workspaces: 0,
-            total_forms: 0,
-          },
-          receipts: {
-            summary: {
-              total_receipts: 1,
-              total_amount: 31.22,
-              average_amount: 31.22,
-              period_days: parseInt(days),
-            },
-            categories: [
-              { category: 'Receipt Images', count: 1, total_amount: 31.22, percentage: 100 }
-            ],
-            timeline: [],
-            payment_methods: [],
-            top_businesses: [
-              { business: 'Unknown Business', count: 1, total_amount: 31.22 }
-            ],
-          },
-          files: {
-            types: [],
-            upload_trends: [],
-          },
-          workspaces: {
-            total_workspaces: 0,
-            workspace_details: [],
-          },
-          forms: {
-            total_forms: 0,
-            total_responses: 0,
-            form_details: [],
-          },
-          recentActivity: [],
-        };
-        setAnalytics(basicData);
+            categories: receiptResponse.data.category_distribution || [],
+            timeline: receiptResponse.data.monthly_spending || [],
+            payment_methods: receiptResponse.data.payment_methods || [],
+            top_businesses: receiptResponse.data.top_businesses || [],
+            recent_receipts: receiptResponse.data.recent_receipts || [],
+          };
+          console.log('✅ Receipt analytics transformed:', {
+            totalReceipts: receiptAnalytics.summary.total_receipts,
+            totalAmount: receiptAnalytics.summary.total_amount,
+            categoriesCount: receiptAnalytics.categories.length
+          });
+        } else if (receiptResponse && !receiptResponse.success) {
+          // API returned an error response (not an exception)
+          console.warn('❌ Receipt analytics endpoint returned error:', receiptResponse.message);
+        }
+      } catch (error) {
+        console.warn('❌ Receipt analytics endpoint failed with exception:', error);
       }
+      
+      // Load invoice analytics from web endpoint
+      let invoiceAnalytics = null;
+      try {
+        const category = selectedInvoiceCategory !== 'All' ? selectedInvoiceCategory : undefined;
+        const invoiceResponse = await apiClient.getInvoiceAnalytics(parseInt(days), category);
+        if (invoiceResponse && invoiceResponse.success && invoiceResponse.data) {
+          invoiceAnalytics = invoiceResponse.data;
+          console.log('✅ Invoice analytics loaded from web endpoint');
+        } else if (invoiceResponse && !invoiceResponse.success) {
+          // API returned an error response (not an exception)
+          console.warn('❌ Invoice analytics endpoint returned error:', invoiceResponse.message);
+        }
+      } catch (error) {
+        // This catch block should rarely be hit now since API service returns error response
+        console.warn('❌ Invoice analytics endpoint failed with exception:', error);
+      }
+      
+      // Combine receipt and invoice analytics into comprehensive format
+      console.log('📊 Building analyticsData with receiptAnalytics:', {
+        hasReceiptAnalytics: !!receiptAnalytics,
+        hasSummary: !!receiptAnalytics?.summary,
+        totalReceipts: receiptAnalytics?.summary?.total_receipts,
+        totalAmount: receiptAnalytics?.summary?.total_amount,
+        categoriesCount: receiptAnalytics?.categories?.length || 0
+      });
+      
+      const analyticsData: ComprehensiveAnalytics = {
+        summary: {
+          period: `${days} days`,
+          period_days: parseInt(days),
+          total_files: 0,
+          total_size_mb: 0,
+          total_receipts: receiptAnalytics?.summary?.total_receipts || 0,
+          total_spending: receiptAnalytics?.summary?.total_amount || 0,
+          total_workspaces: 0,
+          total_forms: 0,
+          total_invoices: invoiceAnalytics?.overview?.total_invoices || 0,
+          total_invoice_amount: invoiceAnalytics?.overview?.total_amount || 0,
+        },
+        receipts: receiptAnalytics || {
+          summary: {
+            total_receipts: 0,
+            total_amount: 0,
+            average_amount: 0,
+            period_days: parseInt(days),
+          },
+          categories: [],
+          timeline: [],
+          payment_methods: [],
+          top_businesses: [],
+        },
+        invoices: invoiceAnalytics || undefined,
+        files: {
+          types: [],
+          upload_trends: [],
+        },
+        workspaces: {
+          total_workspaces: 0,
+          workspace_details: [],
+        },
+        forms: {
+          total_forms: 0,
+          total_responses: 0,
+          form_details: [],
+        },
+        recentActivity: [],
+      };
+      
+      // Fetch all receipts from web files endpoint
+      // This ensures we show all receipts, not just a limited set
+      try {
+        console.log('📊 Fetching receipts from files endpoint...');
+        // Use web endpoint to get all receipts (category filter)
+        const filesResponse = await apiClient.getDocuments(1, 10000, undefined, 'receipts');
+        console.log('📊 Files response:', {
+          success: filesResponse?.success,
+          hasFiles: !!filesResponse?.files,
+          filesCount: filesResponse?.files?.length || 0,
+          hasDataFiles: !!filesResponse?.data?.files,
+          dataFilesCount: filesResponse?.data?.files?.length || 0
+        });
+        
+        if (filesResponse && filesResponse.success) {
+          const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
+          console.log(`📊 Total files received: ${allFiles.length}`);
+          
+          // Log first 3 files to see their structure
+          if (allFiles.length > 0) {
+            console.log('📊 Sample file structure:', {
+              firstFile: {
+                id: allFiles[0].id,
+                filename: allFiles[0].filename,
+                file_kind: allFiles[0].file_kind,
+                file_category: allFiles[0].file_category,
+                category: allFiles[0].category,
+                keys: Object.keys(allFiles[0])
+              }
+            });
+          }
+          
+          // When category=receipts is passed, the backend should already filter
+          // So we should use ALL returned files, not filter again
+          // But let's be defensive and still check if file_kind exists and matches
+          const receiptFiles = allFiles.filter((file: any) => {
+            // If file_kind is set, it should be 'receipt' or 'receipts'
+            // If file_kind is not set, include it (backend already filtered by category)
+            const fileKind = (file.file_kind || '').toLowerCase();
+            const hasNoFileKind = !file.file_kind || fileKind === '';
+            const isReceiptFileKind = fileKind === 'receipt' || fileKind === 'receipts';
+            return hasNoFileKind || isReceiptFileKind;
+          });
+          console.log(`📊 Filtered receipt files: ${receiptFiles.length} (from ${allFiles.length} total)`);
+          
+          // Sort by date (most recent first)
+          const sortedReceipts = [...receiptFiles].sort((a: any, b: any) => {
+            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return dateB - dateA;
+          });
+          console.log(`✅ Loaded ${sortedReceipts.length} receipts for display`);
+          setRecentReceipts(sortedReceipts);
+          console.log('📊 Set recentReceipts to', sortedReceipts.length, 'receipts');
+        } else {
+          console.warn('❌ Files endpoint returned unsuccessful response');
+          // Fallback to analytics recent_receipts if available
+          if (receiptAnalytics?.recent_receipts && receiptAnalytics.recent_receipts.length > 0) {
+            console.log(`📊 Using ${receiptAnalytics.recent_receipts.length} receipts from analytics`);
+            setRecentReceipts(receiptAnalytics.recent_receipts);
+          } else if (receiptAnalytics?.top_businesses && receiptAnalytics.top_businesses.length > 0) {
+            // Convert top_businesses to receipt-like format for display
+            console.log(`📊 Using ${receiptAnalytics.top_businesses.length} businesses as receipts from analytics`);
+            const businessReceipts = receiptAnalytics.top_businesses.map((business: any, idx: number) => ({
+              id: `business-${idx}`,
+              business: business.business,
+              json_data: {
+                store_name: business.business,
+                total_amount: business.total_amount
+              },
+              created_at: new Date().toISOString() // Use current date as fallback
+            }));
+            setRecentReceipts(businessReceipts);
+          } else {
+            console.warn('⚠️ No receipt data available from either source');
+            setRecentReceipts([]);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Failed to fetch all receipts:', error);
+        // Fallback to analytics recent_receipts if available
+        if (receiptAnalytics?.recent_receipts && receiptAnalytics.recent_receipts.length > 0) {
+          console.log(`📊 Using ${receiptAnalytics.recent_receipts.length} receipts from analytics fallback`);
+          setRecentReceipts(receiptAnalytics.recent_receipts);
+        } else if (receiptAnalytics?.top_businesses && receiptAnalytics.top_businesses.length > 0) {
+          // Convert top_businesses to receipt-like format for display
+          console.log(`📊 Using ${receiptAnalytics.top_businesses.length} businesses as receipts from analytics fallback`);
+          const businessReceipts = receiptAnalytics.top_businesses.map((business: any, idx: number) => ({
+            id: `business-${idx}`,
+            business: business.business,
+            json_data: {
+              store_name: business.business,
+              total_amount: business.total_amount
+            },
+            created_at: new Date().toISOString()
+          }));
+          setRecentReceipts(businessReceipts);
+        } else {
+          console.warn('⚠️ No receipt data available from any source');
+          setRecentReceipts([]);
+        }
+      }
+      
+      if (invoiceAnalytics?.recent_invoices) {
+        // The recent_invoices from the analytics endpoint may have file IDs
+        // We need to ensure each invoice has an invoice_id (invoice record ID)
+        // If not present, we need to fetch invoices separately or transform the data
+        console.log('📊 Processing recent invoices from analytics:', {
+          count: invoiceAnalytics.recent_invoices.length,
+          sampleInvoice: invoiceAnalytics.recent_invoices[0]
+        });
+        
+        // Check if invoices already have invoice record IDs
+        const hasInvoiceIds = invoiceAnalytics.recent_invoices.some((inv: any) => inv.invoice_id || inv.id);
+        
+        if (hasInvoiceIds) {
+          // Invoices have IDs, use them directly
+        setRecentInvoices(invoiceAnalytics.recent_invoices);
+        } else {
+          // Need to fetch invoice records to get invoice IDs
+          try {
+            console.log('📊 Fetching invoices from files endpoint to get invoice IDs...');
+            const invoicesResponse = await apiClient.getDocuments(1, 10000, undefined, 'invoices');
+            console.log('📊 Invoices response:', {
+              success: invoicesResponse?.success,
+              count: invoicesResponse?.files?.length || invoicesResponse?.data?.files?.length || 0
+            });
+            
+            if (invoicesResponse && invoicesResponse.success) {
+              const allInvoiceFiles = invoicesResponse.files || invoicesResponse.data?.files || invoicesResponse.data || [];
+              console.log(`📊 Total invoice files received: ${allInvoiceFiles.length}`);
+              
+              // Use files with invoice file_kind
+              const invoiceFiles = allInvoiceFiles.filter((file: any) => {
+                const fileKind = (file.file_kind || '').toLowerCase();
+                return fileKind === 'invoice' || fileKind === 'invoices';
+              });
+              
+              console.log(`📊 Filtered invoice files: ${invoiceFiles.length}`);
+              setRecentInvoices(invoiceFiles.slice(0, 50)); // Limit to 50 most recent
+            } else {
+              console.warn('⚠️ Failed to fetch invoice files, using analytics data');
+              setRecentInvoices(invoiceAnalytics.recent_invoices);
+            }
+          } catch (error) {
+            console.error('❌ Failed to fetch invoices:', error);
+            // Fallback to analytics data
+            setRecentInvoices(invoiceAnalytics.recent_invoices);
+          }
+        }
+      } else {
+        setRecentInvoices([]);
+      }
+      
+      setAnalytics(analyticsData);
+      console.log('✅ Analytics data set successfully');
+      console.log('📊 Final state:', {
+        hasAnalytics: !!analyticsData,
+        receiptsCount: analyticsData.receipts?.summary?.total_receipts || 0,
+        hasTopBusinesses: !!analyticsData.receipts?.top_businesses,
+        topBusinessesCount: analyticsData.receipts?.top_businesses?.length || 0,
+        hasRecentReceiptsInAnalytics: !!receiptAnalytics?.recent_receipts,
+        recentReceiptsInAnalyticsCount: receiptAnalytics?.recent_receipts?.length || 0
+      });
+      setLoading(false);
+      console.log('✅ Loading set to false');
     } catch (error) {
-      console.error('Failed to load analytics:', error);
+      console.error('❌ Failed to load analytics:', error);
+      console.error('❌ Error details:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       // Show basic data on error
       console.log('📊 API Error - Showing basic data');
       const basicData = {
         summary: {
           period: `${days} days`,
           period_days: parseInt(days),
-          total_files: 1,
+          total_files: 0,
           total_size_mb: 0,
-          total_receipts: 1,
-          total_spending: 31.22,
+          total_receipts: 0,
+          total_spending: 0,
           total_workspaces: 0,
           total_forms: 0,
         },
         receipts: {
           summary: {
-            total_receipts: 1,
-            total_amount: 31.22,
-            average_amount: 31.22,
+            total_receipts: 0,
+            total_amount: 0,
+            average_amount: 0,
             period_days: parseInt(days),
           },
-          categories: [
-            { category: 'Receipt Images', count: 1, total_amount: 31.22, percentage: 100 }
-          ],
+          categories: [],
           timeline: [],
           payment_methods: [],
-          top_businesses: [
-            { business: 'IMG_9231', count: 1, total_amount: 31.22 }
-          ],
+          top_businesses: [],
         },
         files: {
           types: [],
@@ -651,9 +544,12 @@ export default function AnalyticsDashboard() {
           form_details: [],
         },
         recentActivity: [],
-        };
-        setAnalytics(basicData);
+      };
+      setAnalytics(basicData);
+      setRecentReceipts([]);
+      setRecentInvoices([]);
     } finally {
+      console.log('🔚 Finally block - setting loading to false');
       setLoading(false);
     }
   };
@@ -662,6 +558,396 @@ export default function AnalyticsDashboard() {
     setRefreshing(true);
     await loadAnalytics();
     setRefreshing(false);
+  };
+  
+  // Receipt categories (must match backend validation)
+  const receiptCategories = [
+    'Uncategorized',
+    'Advertising',
+    'Supplies',
+    'Professional Services',
+    'Personal',
+    'Rent and Lease',
+    'Education and Training',
+    'Cars and Truck',
+    'Travel',
+    'Office Expenses',
+    'Meals and Entertainment',
+    'Contractors',
+    'Employee Benefit',
+    'Banking',
+    'Other Expenses'
+  ];
+  
+  const handleCategorizeReceipt = (receipt: any) => {
+    setSelectedReceipt(receipt);
+    setShowCategoryModal(true);
+  };
+  
+  const handleSelectCategory = async (category: string) => {
+    if (!selectedReceipt) return;
+    
+    setCategorizingReceipt(true);
+    try {
+      const response = await apiClient.categorizeReceipt(selectedReceipt.id, category);
+      if (response.success) {
+        Alert.alert('Success', `Receipt categorized as "${category}"`);
+        // Update the receipt in the local state
+        setRecentReceipts(prev => prev.map(r => 
+          r.id === selectedReceipt.id ? { ...r, category } : r
+        ));
+        setShowCategoryModal(false);
+        setSelectedReceipt(null);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to categorize receipt');
+      }
+    } catch (error) {
+      console.error('Error categorizing receipt:', error);
+      Alert.alert('Error', 'Failed to categorize receipt');
+    } finally {
+      setCategorizingReceipt(false);
+    }
+  };
+  
+  // Invoice payment statuses (must match backend validation)
+  const paymentStatuses = [
+    'Paid',
+    'Unpaid',
+    'Partial'
+  ];
+  
+  const handleUpdatePaymentStatus = (invoice: any) => {
+    setSelectedInvoice(invoice);
+    setShowPaymentStatusModal(true);
+  };
+  
+  const handleSelectPaymentStatus = async (paymentStatus: string) => {
+    if (!selectedInvoice) return;
+    
+    setUpdatingPaymentStatus(true);
+    try {
+      // The invoice object from recent_invoices has a file ID
+      // The new endpoint /api/v1/web/files/{file_id}/payment-status accepts file ID
+      const fileId = selectedInvoice.id;
+      
+      console.log('💳 Updating payment status:', {
+        fileId,
+        paymentStatus,
+        invoiceObject: selectedInvoice,
+      });
+      
+      if (!fileId) {
+        Alert.alert('Error', 'File ID not found. Cannot update payment status.');
+        setUpdatingPaymentStatus(false);
+        return;
+      }
+      
+      const response = await apiClient.updateInvoicePaymentStatus(fileId, paymentStatus);
+      if (response.success) {
+        Alert.alert('Success', `Invoice payment status updated to "${paymentStatus}"`);
+        // Update the invoice in the local state
+        setRecentInvoices(prev => prev.map(inv => {
+          if (inv.id === fileId) {
+            const updated = { ...inv };
+            updated.payment_status = paymentStatus;
+            if (updated.json_data) {
+              updated.json_data.payment_status = paymentStatus.toLowerCase();
+            } else {
+              updated.json_data = { payment_status: paymentStatus.toLowerCase() };
+            }
+            return updated;
+          }
+          return inv;
+        }));
+        setShowPaymentStatusModal(false);
+        setSelectedInvoice(null);
+        // Reload analytics to get updated data
+        loadAnalytics();
+      } else {
+        // Show error message
+        const errorMsg = response.message || 'Failed to update payment status';
+        Alert.alert('Error', errorMsg);
+      }
+    } catch (error) {
+      console.error('Error updating payment status:', error);
+      Alert.alert('Error', 'Failed to update payment status');
+    } finally {
+      setUpdatingPaymentStatus(false);
+    }
+  };
+
+  const generateReportCSV = (reportType: 'receipts' | 'invoices'): string => {
+    if (!analytics) {
+      return '';
+    }
+
+    const formatCurrency = (amount: number) => {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+      }).format(amount);
+    };
+
+    const escapeCSV = (value: any): string => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    let csvRows: string[] = [];
+
+    if (reportType === 'receipts') {
+      // Receipts Report
+      csvRows.push('RECEIPTS ANALYTICS REPORT');
+      csvRows.push(`Period: ${analytics.summary?.period || timePeriod} days`);
+      csvRows.push(`Generated: ${new Date().toLocaleString()}`);
+      csvRows.push('');
+
+      // Summary Section
+      csvRows.push('SUMMARY');
+      csvRows.push('Metric,Value');
+      csvRows.push(`Total Receipts,${analytics.receipts?.summary?.total_receipts || 0}`);
+      csvRows.push(`Total Amount,${formatCurrency(analytics.receipts?.summary?.total_amount || 0)}`);
+      csvRows.push(`Average Amount,${formatCurrency(analytics.receipts?.summary?.average_amount || 0)}`);
+      csvRows.push('');
+
+      // Categories Section
+      if (analytics.receipts?.categories && analytics.receipts.categories.length > 0) {
+        csvRows.push('CATEGORY BREAKDOWN');
+        csvRows.push('Category,Count,Total Amount,Percentage');
+        analytics.receipts.categories.forEach(cat => {
+          csvRows.push(`${escapeCSV(cat.category)},${cat.count},${formatCurrency(cat.total_amount)},${cat.percentage.toFixed(2)}%`);
+        });
+        csvRows.push('');
+      }
+
+      // Top Businesses Section
+      if (analytics.receipts?.top_businesses && analytics.receipts.top_businesses.length > 0) {
+        csvRows.push('TOP BUSINESSES');
+        csvRows.push('Business,Visit Count,Total Amount,Average Amount');
+        analytics.receipts.top_businesses.forEach(business => {
+          const avgAmount = business.count > 0 ? business.total_amount / business.count : 0;
+          csvRows.push(`${escapeCSV(business.business)},${business.count},${formatCurrency(business.total_amount)},${formatCurrency(avgAmount)}`);
+        });
+        csvRows.push('');
+      }
+
+      // Payment Methods Section
+      if (analytics.receipts?.payment_methods && analytics.receipts.payment_methods.length > 0) {
+        csvRows.push('PAYMENT METHODS');
+        csvRows.push('Payment Method,Count,Total Amount');
+        analytics.receipts.payment_methods.forEach(method => {
+          csvRows.push(`${escapeCSV(method.method)},${method.count},${formatCurrency(method.total_amount)}`);
+        });
+        csvRows.push('');
+      }
+
+      // Timeline Section
+      if (analytics.receipts?.timeline && analytics.receipts.timeline.length > 0) {
+        csvRows.push('TIMELINE');
+        csvRows.push('Month,Count,Total Amount');
+        analytics.receipts.timeline.forEach(item => {
+          csvRows.push(`${escapeCSV(item.month)},${item.count},${formatCurrency(item.total_amount)}`);
+        });
+      }
+    } else {
+      // Invoices Report
+      if (!analytics.invoices) {
+        return '';
+      }
+
+      csvRows.push('INVOICES ANALYTICS REPORT');
+      csvRows.push(`Period: ${analytics.summary?.period || timePeriod} days`);
+      csvRows.push(`Generated: ${new Date().toLocaleString()}`);
+      csvRows.push('');
+
+      // Overview Section
+      csvRows.push('OVERVIEW');
+      csvRows.push('Metric,Value');
+      csvRows.push(`Total Invoices,${analytics.invoices.overview?.total_invoices || 0}`);
+      csvRows.push(`Total Amount,${formatCurrency(analytics.invoices.overview?.total_amount || 0)}`);
+      csvRows.push(`Paid Amount,${formatCurrency(analytics.invoices.overview?.paid_amount || 0)}`);
+      csvRows.push(`Unpaid Amount,${formatCurrency(analytics.invoices.overview?.unpaid_amount || 0)}`);
+      csvRows.push(`Average Invoice Amount,${formatCurrency(analytics.invoices.overview?.avg_invoice_amount || 0)}`);
+      csvRows.push(`Paid Count,${analytics.invoices.overview?.paid_count || 0}`);
+      csvRows.push(`Unpaid Count,${analytics.invoices.overview?.unpaid_count || 0}`);
+      csvRows.push(`Overdue Count,${analytics.invoices.overview?.overdue_count || 0}`);
+      csvRows.push(`Overdue Amount,${formatCurrency(analytics.invoices.overview?.overdue_amount || 0)}`);
+      csvRows.push('');
+
+      // Payment Distribution Section
+      if (analytics.invoices.payment_distribution && analytics.invoices.payment_distribution.length > 0) {
+        csvRows.push('PAYMENT STATUS DISTRIBUTION');
+        csvRows.push('Status,Count,Total Amount,Percentage');
+        analytics.invoices.payment_distribution.forEach(item => {
+          csvRows.push(`${escapeCSV(item.status)},${item.count},${formatCurrency(item.total_amount)},${item.percentage.toFixed(2)}%`);
+        });
+        csvRows.push('');
+      }
+
+      // Category Distribution Section
+      if (analytics.invoices.category_distribution && analytics.invoices.category_distribution.length > 0) {
+        csvRows.push('CATEGORY DISTRIBUTION');
+        csvRows.push('Category,Count,Total Amount,Average Amount,Percentage');
+        analytics.invoices.category_distribution.forEach(item => {
+          csvRows.push(`${escapeCSV(item.category)},${item.count},${formatCurrency(item.total_amount)},${formatCurrency(item.avg_amount)},${item.percentage.toFixed(2)}%`);
+        });
+        csvRows.push('');
+      }
+
+      // Top Vendors Section
+      if (analytics.invoices.top_vendors && analytics.invoices.top_vendors.length > 0) {
+        csvRows.push('TOP VENDORS');
+        csvRows.push('Vendor Name,Invoice Count,Total Amount,Average Amount');
+        analytics.invoices.top_vendors.forEach(vendor => {
+          csvRows.push(`${escapeCSV(vendor.vendor_name)},${vendor.count},${formatCurrency(vendor.total_amount)},${formatCurrency(vendor.avg_amount)}`);
+        });
+        csvRows.push('');
+      }
+
+      // Monthly Trends Section
+      if (analytics.invoices.monthly_trends && analytics.invoices.monthly_trends.length > 0) {
+        csvRows.push('MONTHLY TRENDS');
+        csvRows.push('Month,Total Count,Total Amount,Paid Count,Unpaid Count');
+        analytics.invoices.monthly_trends.forEach(trend => {
+          csvRows.push(`${escapeCSV(trend.month)},${trend.count},${formatCurrency(trend.total_amount)},${trend.paid_count || 0},${trend.unpaid_count || 0}`);
+        });
+        csvRows.push('');
+      }
+
+      // Aging Buckets Section
+      if (analytics.invoices.aging_buckets) {
+        csvRows.push('AGING BUCKETS');
+        csvRows.push('Age Range,Count,Amount');
+        const buckets = analytics.invoices.aging_buckets;
+        if (buckets['0-30']) csvRows.push(`0-30 days,${buckets['0-30'].count},${formatCurrency(buckets['0-30'].amount)}`);
+        if (buckets['31-60']) csvRows.push(`31-60 days,${buckets['31-60'].count},${formatCurrency(buckets['31-60'].amount)}`);
+        if (buckets['61-90']) csvRows.push(`61-90 days,${buckets['61-90'].count},${formatCurrency(buckets['61-90'].amount)}`);
+        if (buckets['90+']) csvRows.push(`90+ days,${buckets['90+'].count},${formatCurrency(buckets['90+'].amount)}`);
+      }
+    }
+
+    return csvRows.join('\n');
+  };
+
+  const handleShareReport = async () => {
+    try {
+      const reportType = activeTab === 'receipts' ? 'receipts' : 'invoices';
+      console.log(`📊 Sharing ${reportType} report...`);
+
+      // Use the correct web endpoint (POST request)
+      const endpoint = `/api/v1/web/analysis/${reportType}/download-report`;
+      console.log(`📊 Calling endpoint: ${endpoint}`);
+
+      // Get cache directory
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!cacheDir) {
+        throw new Error('Unable to access file system directories');
+      }
+
+      // Create filename with .docx extension (matching web version format: Receipt_Report_YYYY-MM-DD.docx)
+      const dateStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+      const fileName = `${reportType.charAt(0).toUpperCase() + reportType.slice(1)}_Report_${dateStr}.docx`;
+      const fileUri = `${cacheDir}${fileName}`;
+
+      // Prepare request body with time period and optional category filter
+      // Convert timePeriod string to integer (backend expects integer, not string)
+      const daysInt = parseInt(timePeriod, 10) || 30; // Default to 30 if parsing fails
+      const requestBody: any = {
+        days: daysInt, // Pass the selected time period as integer (e.g., 7, 30, 90, 365)
+      };
+      
+      // Add category filter if one is selected
+      if (reportType === 'receipts' && selectedCategory && selectedCategory !== 'All') {
+        requestBody.category = selectedCategory;
+      } else if (reportType === 'invoices' && selectedInvoiceCategory && selectedInvoiceCategory !== 'All') {
+        requestBody.category = selectedInvoiceCategory;
+      }
+
+      console.log(`📊 Request body:`, requestBody);
+      console.log(`📊 Time period: ${timePeriod} days`);
+
+      // Use apiClient to download the file with proper authentication (POST request)
+      // Use 'arraybuffer' instead of 'blob' for React Native compatibility
+      const response = await apiClient.client.post(endpoint, requestBody, {
+        responseType: 'arraybuffer', // Use arraybuffer for React Native
+      });
+
+      // Convert arraybuffer to base64 for FileSystem
+      const arrayBuffer = response.data;
+      const bytes = new Uint8Array(arrayBuffer);
+
+      // Convert to base64
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+
+      // Use Buffer if available, otherwise manual base64 encoding
+      let base64Data: string;
+      if (typeof Buffer !== 'undefined') {
+        base64Data = Buffer.from(binary, 'binary').toString('base64');
+      } else {
+        // Manual base64 encoding
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        let result = '';
+        let i = 0;
+        while (i < binary.length) {
+          const a = binary.charCodeAt(i++);
+          const b = i < binary.length ? binary.charCodeAt(i++) : 0;
+          const c = i < binary.length ? binary.charCodeAt(i++) : 0;
+          const bitmap = (a << 16) | (b << 8) | c;
+          result += chars.charAt((bitmap >> 18) & 63) + chars.charAt((bitmap >> 12) & 63) +
+            (i - 2 < binary.length ? chars.charAt((bitmap >> 6) & 63) : '=') +
+            (i - 1 < binary.length ? chars.charAt(bitmap & 63) : '=');
+        }
+        base64Data = result;
+      }
+
+      // Write file
+      await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      console.log(`📊 Report file saved to: ${fileUri}`);
+
+      // Check if sharing is available
+      const isAvailable = await Sharing.isAvailableAsync();
+
+      if (isAvailable) {
+        // Share the file (docx MIME type)
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          dialogTitle: `Share ${reportType.charAt(0).toUpperCase() + reportType.slice(1)} Report`,
+        });
+        console.log(`📊 ${reportType} report shared successfully`);
+      } else {
+        Alert.alert('Share Not Available', 'File sharing is not available on this device.');
+      }
+
+      // Clean up file after a delay
+      setTimeout(async () => {
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(fileUri);
+          if (fileInfo.exists) {
+            await FileSystem.deleteAsync(fileUri, { idempotent: true });
+            console.log('📊 Cleaned up report file');
+          }
+        } catch (error) {
+          console.warn('📊 Failed to clean up report file:', error);
+        }
+      }, 60000); // Delete after 1 minute
+
+    } catch (error: any) {
+      console.error(`📊 Error sharing ${activeTab} report:`, error);
+      Alert.alert(
+        'Share Failed',
+        error.message || `Failed to share ${activeTab} report. Please try again.`
+      );
+    }
   };
 
   useEffect(() => {
@@ -899,10 +1185,15 @@ export default function AnalyticsDashboard() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Receipt Analytics</Text>
-        <TouchableOpacity onPress={onRefresh}>
-          <Ionicons name="refresh" size={24} color="#007AFF" />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Analytics</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={handleShareReport} style={styles.shareButton}>
+            <Ionicons name="share-outline" size={24} color="#10B981" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onRefresh}>
+            <Ionicons name="refresh" size={24} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tabs */}
@@ -944,22 +1235,28 @@ export default function AnalyticsDashboard() {
 
         {activeTab === 'receipts' && (
           <>
-            {(analytics.summary?.total_receipts || 0) > 0 ? (
+            {analytics ? (
               <>
-                {/* Receipt Overview Stats */}
+                {/* Receipt Overview Stats - Always show, even if zero */}
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Receipt Overview</Text>
                   <View style={styles.statsRow}>
                     <StatCard
                       title="Total Receipts"
-                      value={analytics.summary?.total_receipts || 0}
-                      subtitle={formatCurrency(analytics.summary?.total_spending || 0)}
+                      value={analytics.summary?.total_receipts || analytics.receipts?.summary?.total_receipts || 0}
+                      subtitle={formatCurrency(analytics.summary?.total_spending || analytics.receipts?.summary?.total_amount || 0)}
                       icon="receipt"
                       color="#34C759"
                     />
                     <StatCard
                       title="Average Receipt"
-                      value={formatCurrency(analytics.receipts?.summary?.average_amount || 0)}
+                      value={formatCurrency(
+                        (analytics.receipts?.summary?.average_amount && analytics.receipts.summary.average_amount > 0)
+                          ? analytics.receipts.summary.average_amount
+                          : ((analytics.receipts?.summary?.total_receipts || 0) > 0 && (analytics.receipts?.summary?.total_amount || 0) > 0)
+                            ? (analytics.receipts.summary.total_amount / analytics.receipts.summary.total_receipts)
+                            : 0
+                      )}
                       subtitle={`${analytics.receipts?.summary?.recent_30d || 0} in last 30 days`}
                       icon="calculator"
                       color="#007AFF"
@@ -967,51 +1264,388 @@ export default function AnalyticsDashboard() {
                   </View>
                 </View>
             
-                {/* Category Distribution - Compact */}
+                {/* Category Distribution - Donut Chart + List */}
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Category Distribution</Text>
               {(analytics.receipts?.categories || []).length > 0 ? (
-                <View style={styles.compactChartContainer}>
-                  {(analytics.receipts?.categories || []).map((category, index) => {
-                    const color = categoryColors[index % categoryColors.length];
-                    return (
-                      <View key={`category-${index}-${category.category}`} style={styles.compactChartItem}>
-                        <View style={styles.compactChartHeader}>
-                          <View style={[styles.compactChartDot, { backgroundColor: color }]} />
-                          <Text style={styles.compactChartLabel}>{category.category}</Text>
+                <View style={styles.categoryChartContainer}>
+                  {/* Donut Chart */}
+                  <View style={styles.donutChartContainer}>
+                    <View style={styles.donutChartWrapper}>
+                      {(() => {
+                        // Get all categories - don't filter by total_amount, use all categories
+                        const allCategories = analytics.receipts?.categories || [];
+                        
+                        // Filter out only categories with zero or negative amounts
+                        const categoriesWithData = allCategories.filter(c => 
+                          (c.total_amount && c.total_amount > 0) || 
+                          (c.count && c.count > 0) ||
+                          (c.percentage && c.percentage > 0)
+                        );
+                        
+                        console.log('📊 Pie chart categories:', {
+                          allCategories: allCategories.length,
+                          categoriesWithData: categoriesWithData.length,
+                          categories: categoriesWithData.map(c => ({
+                            category: c.category,
+                            total_amount: c.total_amount,
+                            percentage: c.percentage,
+                            count: c.count
+                          }))
+                        });
+                        
+                        if (categoriesWithData.length === 0) {
+                          return null;
+                        }
+                        
+                        const size = 120;
+                        const center = size / 2;
+                        const radius = 45;
+                        const innerRadius = 30;
+                        const startAngle = -90; // Start from top
+                        
+                        // Calculate total amount for percentage calculation
+                        const totalAmount = categoriesWithData.reduce((sum, c) => sum + (c.total_amount || 0), 0);
+                        
+                        // Calculate percentages for each category and normalize to sum to 100%
+                        const categoryPercentages = categoriesWithData.map(category => {
+                          // Use provided percentage or calculate from amount
+                          let percentage = category.percentage || 0;
+                          if (percentage === 0 && totalAmount > 0 && category.total_amount) {
+                            percentage = (category.total_amount / totalAmount) * 100;
+                          }
+                          return percentage;
+                        });
+                        
+                        // Calculate total percentage
+                        const totalPercentage = categoryPercentages.reduce((sum, p) => sum + p, 0);
+                        
+                        // Normalize percentages to sum to exactly 100%
+                        const normalizedPercentages = totalPercentage > 0 
+                          ? categoryPercentages.map(p => (p / totalPercentage) * 100)
+                          : categoryPercentages;
+                        
+                        // Verify normalization (should sum to 100)
+                        const normalizedTotal = normalizedPercentages.reduce((sum, p) => sum + p, 0);
+                        console.log('📊 Pie chart normalization:', {
+                          originalTotal: totalPercentage,
+                          normalizedTotal: normalizedTotal,
+                          categoryCount: categoriesWithData.length
+                        });
+                        
+                        const createArcPath = (startAngleDeg: number, endAngleDeg: number, outerRadius: number, innerRadius: number) => {
+                          const start = (startAngleDeg * Math.PI) / 180;
+                          const end = (endAngleDeg * Math.PI) / 180;
+                          
+                          const x1 = center + outerRadius * Math.cos(start);
+                          const y1 = center + outerRadius * Math.sin(start);
+                          const x2 = center + outerRadius * Math.cos(end);
+                          const y2 = center + outerRadius * Math.sin(end);
+                          
+                          const x3 = center + innerRadius * Math.cos(end);
+                          const y3 = center + innerRadius * Math.sin(end);
+                          const x4 = center + innerRadius * Math.cos(start);
+                          const y4 = center + innerRadius * Math.sin(start);
+                          
+                          const largeArc = end - start > Math.PI ? 1 : 0;
+                          
+                          return `M ${x1} ${y1} A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${x2} ${y2} L ${x3} ${y3} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${x4} ${y4} Z`;
+                        };
+                        
+                        // Build segments with normalized percentages
+                        let currentAngle = startAngle;
+                        const segments: Array<{category: any; startAngle: number; endAngle: number; color: string; index: number}> = [];
+                        
+                        categoriesWithData.forEach((category, index) => {
+                          const percentage = normalizedPercentages[index];
+                          const angle = (percentage / 100) * 360;
+                          
+                          // Only render segments with meaningful angles
+                          if (angle >= 0.1) {
+                            const segmentStartAngle = currentAngle;
+                            const segmentEndAngle = currentAngle + angle;
+                            
+                            segments.push({
+                              category,
+                              startAngle: segmentStartAngle,
+                              endAngle: segmentEndAngle,
+                              color: categoryColors[index % categoryColors.length],
+                              index
+                            });
+                            
+                            currentAngle = segmentEndAngle;
+                            
+                            console.log(`📊 Category ${category.category}:`, {
+                              percentage: percentage.toFixed(2),
+                              angle: angle.toFixed(2),
+                              startAngle: segmentStartAngle.toFixed(2),
+                              endAngle: segmentEndAngle.toFixed(2)
+                            });
+                          }
+                        });
+                        
+                        // Calculate remaining angle to complete the circle
+                        const finalAngle = currentAngle;
+                        const expectedEndAngle = startAngle + 360;
+                        const remainingAngle = expectedEndAngle - finalAngle;
+                        
+                        console.log('📊 Pie chart completion:', {
+                          startAngle,
+                          finalAngle: finalAngle.toFixed(2),
+                          expectedEndAngle,
+                          remainingAngle: remainingAngle.toFixed(2),
+                          segmentsCount: segments.length
+                        });
+                              
+                              return (
+                          <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                            {segments.map((segment) => (
+                                <Path
+                                key={`segment-${segment.index}-${segment.category.category}`}
+                                d={createArcPath(segment.startAngle, segment.endAngle, radius, innerRadius)}
+                                fill={segment.color}
+                                />
+                            ))}
+                            {/* Fill remaining space to complete the circle if needed */}
+                            {Math.abs(remainingAngle) > 0.1 && (
+                              <Path
+                                key="remaining-segment"
+                                d={createArcPath(finalAngle, expectedEndAngle, radius, innerRadius)}
+                                fill={colors.background || '#F5F5F5'}
+                                opacity={0.3}
+                              />
+                            )}
+                          </Svg>
+                        );
+                      })()}
+                    </View>
+                    
+                    {/* Legend */}
+                    <View style={styles.donutLegend}>
+                      {(analytics.receipts?.categories || []).filter(c => c.total_amount > 0).map((category, index) => {
+                        const color = categoryColors[index % categoryColors.length];
+                        return (
+                          <View key={`legend-${index}-${category.category}`} style={styles.donutLegendItem}>
+                            <View style={[styles.donutLegendDot, { backgroundColor: color }]} />
+                            <Text style={styles.donutLegendText} numberOfLines={1}>
+                              {category.category}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                  
+                  {/* Category Breakdown List - Only categories with content */}
+                  <View style={styles.categoryBreakdownList}>
+                    <Text style={styles.categoryBreakdownTitle}>Category Breakdown</Text>
+                    {(analytics.receipts?.categories || []).filter(c => c.total_amount > 0).map((category, index) => {
+                      const color = categoryColors[index % categoryColors.length];
+                      return (
+                        <View key={`breakdown-${index}-${category.category}`} style={styles.categoryBreakdownItem}>
+                          <View style={styles.categoryBreakdownLeft}>
+                            <View style={[styles.categoryBreakdownDot, { backgroundColor: color }]} />
+                            <Text style={styles.categoryBreakdownName}>{category.category}</Text>
+                          </View>
+                          <View style={styles.categoryBreakdownRight}>
+                            <Text style={styles.categoryBreakdownAmount}>{formatCurrency(category.total_amount)}</Text>
+                            <Text style={styles.categoryBreakdownPercent}>{category.percentage.toFixed(1)}%</Text>
+                            <Text style={styles.categoryBreakdownCount}>{category.count}</Text>
+                          </View>
                         </View>
-                        <View style={styles.compactChartBar}>
-                          <View style={[styles.compactChartFill, { width: `${category.percentage}%`, backgroundColor: color }]} />
-                        </View>
-                        <View style={styles.compactChartValues}>
-                          <Text style={styles.compactChartAmount}>{formatCurrency(category.total_amount)}</Text>
-                          <Text style={styles.compactChartPercentage}>{category.percentage.toFixed(1)}%</Text>
-                          <Text style={styles.compactChartCount}>{category.count}</Text>
-                        </View>
-                      </View>
-                    );
-                  })}
+                      );
+                    })}
+                  </View>
                 </View>
               ) : (
                 <Text style={styles.emptyText}>No receipt categories yet</Text>
               )}
             </View>
 
-                  {/* Top Businesses - Compact */}
-                  {(analytics.receipts?.top_businesses || []).length > 0 && (
-                    <View style={styles.section}>
-                      <Text style={styles.sectionTitle}>Top Businesses</Text>
-                      {(analytics.receipts?.top_businesses || []).slice(0, 6).map((business, index) => (
-                        <View key={`business-${index}-${business.business}`} style={styles.compactListItem}>
-                          <View style={styles.compactListInfo}>
-                            <Text style={styles.compactListName}>{business.business}</Text>
-                            <Text style={styles.compactListSubtext}>
-                              {business.count} visit{business.count !== 1 ? 's' : ''} • Avg: {formatCurrency(business.total_amount / business.count)}
-                            </Text>
+                {/* Monthly Spending Trends */}
+                {(analytics.receipts?.timeline || []).length > 0 && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Monthly Spending Trends</Text>
+                    <View style={styles.trendsContainer}>
+                      <View style={styles.trendsBars}>
+                        {(analytics.receipts.timeline || []).map((month, index) => {
+                          const maxAmount = Math.max(...(analytics.receipts.timeline || []).map(m => m.total_amount));
+                          const height = maxAmount > 0 ? (month.total_amount / maxAmount) * 100 : 0;
+                          return (
+                            <View key={`trend-${index}-${month.month}`} style={styles.trendBar}>
+                              <View 
+                                style={[
+                                  styles.trendBarFill, 
+                                  { height: `${Math.max(height, 2)}%` }
+                                ]} 
+                              />
+                              <Text style={styles.trendBarLabel} numberOfLines={1}>
+                                {month.month.length > 6 ? month.month.substring(0, 3) : month.month}
+                              </Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                      <View style={styles.trendsValues}>
+                        {(analytics.receipts.timeline || []).map((month, index) => (
+                          <View key={`value-${index}-${month.month}`} style={styles.trendValue}>
+                            <Text style={styles.trendValueAmount}>{formatCurrency(month.total_amount)}</Text>
+                            <Text style={styles.trendValueCount}>{month.count}</Text>
                           </View>
-                          <Text style={styles.compactListAmount}>{formatCurrency(business.total_amount)}</Text>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* Receipt Size Distribution */}
+                {recentReceipts.length > 0 && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Receipt Size Distribution</Text>
+                    {(() => {
+                      // Calculate receipt size distribution
+                      const sizeRanges = {
+                        '0-25': { count: 0, total: 0 },
+                        '25-50': { count: 0, total: 0 },
+                        '50+': { count: 0, total: 0 },
+                      };
+
+                      recentReceipts.forEach((receipt: any) => {
+                        const amount = receipt.json_data?.total_amount || 
+                                      receipt.json_data?.amount || 
+                                      receipt.json_data?.total ||
+                                      receipt.amount || 
+                                      receipt.total_amount || 0;
+                        const numericAmount = typeof amount === 'number' ? amount : 
+                                             (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+                        
+                        if (numericAmount <= 25) {
+                          sizeRanges['0-25'].count++;
+                          sizeRanges['0-25'].total += numericAmount;
+                        } else if (numericAmount <= 50) {
+                          sizeRanges['25-50'].count++;
+                          sizeRanges['25-50'].total += numericAmount;
+                        } else {
+                          sizeRanges['50+'].count++;
+                          sizeRanges['50+'].total += numericAmount;
+                        }
+                      });
+
+                      const maxCount = Math.max(sizeRanges['0-25'].count, sizeRanges['25-50'].count, sizeRanges['50+'].count);
+
+                      return (
+                        <View style={styles.sizeDistributionContainer}>
+                          {Object.entries(sizeRanges).map(([range, data], index) => {
+                            const percentage = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
+                            const color = index === 0 ? '#FF9500' : index === 1 ? '#8E8E93' : '#FF9500';
+                            return (
+                              <View key={`size-${range}`} style={styles.sizeDistributionItem}>
+                                <View style={styles.sizeDistributionHeader}>
+                                  <Text style={styles.sizeDistributionLabel}>${range}</Text>
+                                  <Text style={styles.sizeDistributionAmount}>{formatCurrency(data.total)}</Text>
+                                </View>
+                                <View style={styles.sizeDistributionBar}>
+                                  <View style={[styles.sizeDistributionBarFill, { width: `${percentage}%`, backgroundColor: color }]} />
+                                </View>
+                                <Text style={styles.sizeDistributionCount}>{data.count} receipt{data.count !== 1 ? 's' : ''}</Text>
+                              </View>
+                            );
+                          })}
                         </View>
-                      ))}
+                      );
+                    })()}
+                  </View>
+                )}
+
+                  {/* Recent Receipts */}
+                  {recentReceipts.length > 0 ? (
+                    <View style={styles.section}>
+                      <Text style={styles.sectionTitle}>Recent Receipts ({recentReceipts.length})</Text>
+                      {recentReceipts.slice(0, 50).map((receipt, index) => {
+                        const amount = receipt.json_data?.total_amount || 
+                                      receipt.json_data?.amount || 
+                                      receipt.json_data?.total ||
+                                      receipt.amount || 
+                                      receipt.total_amount || 0;
+                        const numericAmount = typeof amount === 'number' ? amount : 
+                                             (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+                        
+                        // Extract business name from multiple possible locations
+                        const businessName = receipt.json_data?.store_name || 
+                                           receipt.json_data?.business_name || 
+                                           receipt.json_data?.merchant_name ||
+                                           receipt.json_data?.receipt_data?.store_name ||
+                                           receipt.json_data?.receipt_data?.business_name ||
+                                           receipt.json_data?.receipt_data?.merchant_name ||
+                                           receipt.original_filename || 
+                                           receipt.filename || 
+                                           receipt.name || 
+                                           `Receipt ${index + 1}`;
+                        
+                        // Extract category
+                        const category = receipt.category || receipt.json_data?.category || 'Uncategorized';
+                        
+                        // Debug logging for "techwave" receipts
+                        if (businessName.toLowerCase().includes('techwave')) {
+                          console.log('🔍 Techwave receipt found:', {
+                            businessName,
+                            extractedAmount: amount,
+                            numericAmount,
+                            jsonDataKeys: receipt.json_data ? Object.keys(receipt.json_data) : [],
+                            jsonDataTotal: receipt.json_data?.total,
+                            jsonDataAmount: receipt.json_data?.amount,
+                            jsonDataTotalAmount: receipt.json_data?.total_amount,
+                            receiptAmount: receipt.amount,
+                            fullJsonData: JSON.stringify(receipt.json_data).substring(0, 500)
+                          });
+                        }
+                        
+                        // Format date
+                        const date = receipt.created_at ? new Date(receipt.created_at).toLocaleDateString() : 
+                                    receipt.json_data?.date ? new Date(receipt.json_data.date).toLocaleDateString() :
+                                    receipt.json_data?.receipt_data?.date ? new Date(receipt.json_data.receipt_data.date).toLocaleDateString() :
+                                    'Unknown date';
+                        
+                        return (
+                          <View key={`receipt-${index}-${receipt.id || index}`} style={styles.receiptItemContainer}>
+                            <View style={styles.compactListItem}>
+                            <View style={styles.compactListInfo}>
+                              <Text style={styles.compactListName}>{businessName}</Text>
+                              <Text style={styles.compactListSubtext}>
+                                  {date} • {category}
+                              </Text>
+                            </View>
+                              <View style={styles.receiptActions}>
+                            <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
+                                <TouchableOpacity 
+                                  style={styles.categorizeButton}
+                                  onPress={() => handleCategorizeReceipt(receipt)}
+                                >
+                                  <Ionicons name="pricetag-outline" size={18} color="#007AFF" />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <View style={styles.section}>
+                      <Text style={styles.sectionTitle}>Recent Receipts</Text>
+                      <View style={styles.emptyContainer}>
+                        <Ionicons name="receipt-outline" size={48} color="#ccc" />
+                        <Text style={styles.emptyText}>No Receipts Found</Text>
+                        <Text style={styles.emptySubtext}>
+                          {analytics?.receipts?.summary?.total_receipts 
+                            ? `Analytics shows ${analytics.receipts.summary.total_receipts} receipt(s), but no receipt files were found.`
+                            : 'Upload some receipts to see them here.'}
+                        </Text>
+                        {__DEV__ && (
+                          <Text style={[styles.emptySubtext, { marginTop: 8, fontSize: 10 }]}>
+                            Debug: recentReceipts.length = {recentReceipts.length}
+                          </Text>
+                        )}
+                      </View>
                     </View>
                   )}
               </>
@@ -1097,21 +1731,70 @@ export default function AnalyticsDashboard() {
                   </View>
                 )}
 
-                {/* Top Vendors */}
-                {analytics.invoices.top_vendors && analytics.invoices.top_vendors.length > 0 && (
+                {/* Recent Invoices */}
+                {recentInvoices.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Top Vendors</Text>
-                    {analytics.invoices.top_vendors.slice(0, 6).map((vendor, index) => (
-                      <View key={`vendor-${index}-${vendor.vendor_name}`} style={styles.compactListItem}>
-                        <View style={styles.compactListInfo}>
-                          <Text style={styles.compactListName}>{vendor.vendor_name}</Text>
-                          <Text style={styles.compactListSubtext}>
-                            {vendor.count} invoice{vendor.count !== 1 ? 's' : ''} • Avg: {formatCurrency(vendor.avg_amount)}
-                          </Text>
+                    <Text style={styles.sectionTitle}>Recent Invoices</Text>
+                    {recentInvoices.map((invoice, index) => {
+                      const amount = invoice.json_data?.total_amount || 
+                                    invoice.json_data?.amount || 
+                                    invoice.json_data?.invoice_amount ||
+                                    invoice.json_data?.total ||
+                                    invoice.amount || 
+                                    invoice.total_amount || 0;
+                      const numericAmount = typeof amount === 'number' ? amount : 
+                                           (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+                      
+                      // Extract business/vendor name from multiple possible locations
+                      // Prioritize vendor_name, business_name, vendor fields over filename
+                      const businessName = invoice.vendor_name ||
+                                          invoice.business_name ||
+                                          invoice.vendor ||
+                                          invoice.json_data?.vendor_name || 
+                                          invoice.json_data?.business_name || 
+                                          invoice.json_data?.vendor ||
+                                          invoice.json_data?.merchant_name ||
+                                          invoice.json_data?.invoice_data?.vendor_name ||
+                                          invoice.json_data?.invoice_data?.business_name ||
+                                          invoice.json_data?.invoice_data?.vendor ||
+                                          invoice.json_data?.invoice_data?.merchant_name ||
+                                          `Invoice ${index + 1}`;
+                      
+                      // Only use filename as last resort if no business name is found
+                      // Remove filename from the fallback chain
+                      
+                      const date = invoice.created_at ? new Date(invoice.created_at).toLocaleDateString() : 
+                                  invoice.json_data?.date ? new Date(invoice.json_data.date).toLocaleDateString() :
+                                  invoice.json_data?.invoice_date ? new Date(invoice.json_data.invoice_date).toLocaleDateString() :
+                                  'Unknown date';
+                      const status = (invoice.payment_status || 
+                                    invoice.json_data?.payment_status || 
+                                    invoice.json_data?.status || 
+                                    'unpaid').toLowerCase();
+                      const statusColor = status === 'paid' ? '#10B981' : status === 'partial' ? '#F59E0B' : '#EF4444';
+                      
+                      return (
+                        <View key={`invoice-${index}-${invoice.id || index}`} style={styles.receiptItemContainer}>
+                          <View style={styles.compactListItem}>
+                          <View style={styles.compactListInfo}>
+                              <Text style={styles.compactListName}>{businessName}</Text>
+                            <Text style={styles.compactListSubtext}>
+                              {date} • <Text style={{ color: statusColor, textTransform: 'capitalize' }}>{status}</Text>
+                            </Text>
+                          </View>
+                            <View style={styles.receiptActions}>
+                          <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
+                              <TouchableOpacity 
+                                style={styles.categorizeButton}
+                                onPress={() => handleUpdatePaymentStatus(invoice)}
+                              >
+                                <Ionicons name="card-outline" size={18} color="#007AFF" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
                         </View>
-                        <Text style={styles.compactListAmount}>{formatCurrency(vendor.total_amount)}</Text>
-                      </View>
-                    ))}
+                      );
+                    })}
                   </View>
                 )}
               </>
@@ -1129,6 +1812,87 @@ export default function AnalyticsDashboard() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+      
+      {/* Category Selection Modal */}
+      <Modal
+        visible={showCategoryModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCategoryModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Category</Text>
+              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.categoryList}>
+              {receiptCategories.map((category) => (
+                <TouchableOpacity
+                  key={category}
+                  style={styles.categoryModalItem}
+                  onPress={() => handleSelectCategory(category)}
+                  disabled={categorizingReceipt}
+                >
+                  <Text style={styles.categoryItemText}>{category}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            
+            {categorizingReceipt && (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+      
+      {/* Payment Status Selection Modal */}
+      <Modal
+        visible={showPaymentStatusModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPaymentStatusModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Update Payment Status</Text>
+              <TouchableOpacity 
+                onPress={() => setShowPaymentStatusModal(false)}
+                disabled={updatingPaymentStatus}
+              >
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.categoryList}>
+              {paymentStatuses.map((status) => (
+                <TouchableOpacity
+                  key={status}
+                  style={styles.categoryModalItem}
+                  onPress={() => handleSelectPaymentStatus(status)}
+                  disabled={updatingPaymentStatus}
+                >
+                  <Text style={styles.categoryItemText}>{status}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            
+            {updatingPaymentStatus && (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1152,6 +1916,14 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  shareButton: {
+    padding: 4,
   },
   placeholder: {
     width: 24,
@@ -1590,6 +2362,108 @@ const styles = StyleSheet.create({
   compactChartItem: {
     marginBottom: 12,
   },
+  // Category Chart Container
+  categoryChartContainer: {
+    marginTop: 8,
+  },
+  // Donut Chart Styles
+  donutChartContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingVertical: 12,
+  },
+  donutChartWrapper: {
+    width: 120,
+    height: 120,
+    marginRight: 16,
+  },
+  donutLegend: {
+    flex: 1,
+    flexWrap: 'wrap',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  donutLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+    marginBottom: 6,
+    minWidth: 100,
+  },
+  donutLegendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  donutLegendText: {
+    fontSize: 12,
+    color: '#333',
+    flex: 1,
+  },
+  // Category Breakdown List
+  categoryBreakdownList: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  categoryBreakdownTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  categoryBreakdownItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  categoryBreakdownLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  categoryBreakdownDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 10,
+  },
+  categoryBreakdownName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+    flex: 1,
+  },
+  categoryBreakdownRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  categoryBreakdownAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
+    minWidth: 80,
+    textAlign: 'right',
+  },
+  categoryBreakdownPercent: {
+    fontSize: 13,
+    color: '#666',
+    minWidth: 50,
+    textAlign: 'right',
+  },
+  categoryBreakdownCount: {
+    fontSize: 13,
+    color: '#999',
+    minWidth: 35,
+    textAlign: 'right',
+  },
   compactChartHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1671,18 +2545,166 @@ const styles = StyleSheet.create({
     paddingVertical: 64,
     paddingHorizontal: 40,
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 16,
-    textAlign: 'center',
-  },
   emptySubtext: {
     fontSize: 14,
     color: '#999',
     marginTop: 8,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  // Monthly Trends Styles
+  trendsContainer: {
+    marginTop: 8,
+  },
+  trendsBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    height: 120,
+    gap: 4,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  trendBar: {
+    flex: 1,
+    height: '100%',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  trendBarFill: {
+    backgroundColor: '#007AFF',
+    borderRadius: 4,
+    minHeight: 2,
+    width: '100%',
+  },
+  trendBarLabel: {
+    fontSize: 10,
+    color: '#666',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  trendsValues: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginTop: 4,
+  },
+  trendValue: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  trendValueAmount: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#333',
+  },
+  trendValueCount: {
+    fontSize: 10,
+    color: '#666',
+    marginTop: 2,
+  },
+  // Receipt Size Distribution Styles
+  sizeDistributionContainer: {
+    marginTop: 8,
+    gap: 12,
+  },
+  sizeDistributionItem: {
+    marginBottom: 12,
+  },
+  sizeDistributionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  sizeDistributionLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+  },
+  sizeDistributionAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  sizeDistributionBar: {
+    height: 8,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 4,
+    marginBottom: 4,
+    overflow: 'hidden',
+  },
+  sizeDistributionBarFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  sizeDistributionCount: {
+    fontSize: 12,
+    color: '#666',
+  },
+  
+  // Receipt item with actions
+  receiptItemContainer: {
+    marginBottom: 8,
+  },
+  receiptActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  categorizeButton: {
+    padding: 6,
+  },
+  
+  // Category Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  categoryList: {
+    maxHeight: 400,
+  },
+  categoryModalItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  categoryItemText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  modalLoading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 }); 

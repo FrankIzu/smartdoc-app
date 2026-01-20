@@ -1,15 +1,16 @@
 # Deploy script for GrabDocs mobile app
-# This script handles platform selection, environment selection, build number updates, and EAS build execution
+# This script handles platform selection, environment selection, version updates, build number updates, and EAS build execution
 #
 # Usage:
 #   Interactive mode: .\scripts\deploy.ps1
 #   Direct parameters: .\scripts\deploy.ps1 -Platform android -Environment development -BuildNumber 6
-#                      .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 6
+#                      .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 6 -Version 1.0.1
 
 param(
     [string]$Platform,
     [string]$Environment,
-    [string]$BuildNumber
+    [string]$BuildNumber,
+    [string]$Version
 )
 
 Write-Host "🚀 GrabDocs Deployment Script" -ForegroundColor Cyan
@@ -40,6 +41,22 @@ function Prompt-WithValidation {
     } while ($true)
 
     return $response.ToLower()
+}
+
+# Function to get current version from app.json
+function Get-CurrentVersion {
+    try {
+        $appJsonPath = "$PSScriptRoot\..\app.json"
+        if (Test-Path $appJsonPath) {
+            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+            return $appJson.expo.version
+        }
+    }
+    catch {
+        Write-Host "⚠️  Could not read current version: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
+    return $null
 }
 
 # Function to get current build number
@@ -73,6 +90,27 @@ function Get-CurrentBuildNumber {
     }
 
     return $null
+}
+
+# Function to update version in app.json
+function Update-Version {
+    param(
+        [string]$Version
+    )
+
+    Write-Host "📝 Updating version to $Version..." -ForegroundColor Yellow
+
+    try {
+        $appJsonPath = "$PSScriptRoot\..\app.json"
+        $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+        $appJson.expo.version = $Version
+        $appJson | ConvertTo-Json -Depth 10 | Set-Content $appJsonPath -Encoding UTF8
+        Write-Host "✅ Updated version in app.json" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "❌ Error updating version: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Function to update build numbers
@@ -175,23 +213,65 @@ try {
         "production" { "production" }
     }
 
-    # Handle build number for production
+    # Handle version and build number for production
     if ($normalizedEnv -eq "production") {
-        if (-not $BuildNumber) {
-            # Get current build number to display
-            $currentBuildNumber = Get-CurrentBuildNumber -Platform $Platform
-            if ($currentBuildNumber) {
-                Write-Host "📦 Current build number: $currentBuildNumber" -ForegroundColor Cyan
-                $BuildNumber = Read-Host "Enter new build number for production (current: $currentBuildNumber)"
+        # Get current version and build number to display
+        $currentVersion = Get-CurrentVersion
+        $currentBuildNumber = Get-CurrentBuildNumber -Platform $Platform
+
+        # Prompt for version update
+        if (-not $Version) {
+            if ($currentVersion) {
+                Write-Host "📦 Current version: $currentVersion" -ForegroundColor Cyan
+                $Version = Read-Host "Enter new version for production (current: $currentVersion, or press Enter to keep current)"
+                if ([string]::IsNullOrWhiteSpace($Version)) {
+                    $Version = $currentVersion
+                    Write-Host "ℹ️  Keeping current version: $Version" -ForegroundColor Yellow
+                }
             } else {
-                $BuildNumber = Read-Host "Enter build number for production"
+                $Version = Read-Host "Enter version for production (e.g., 1.0.1)"
+            }
+        }
+
+        # Validate version format (semantic versioning: x.y.z)
+        if ($Version -match '^\d+\.\d+\.\d+$') {
+            if ($Version -ne $currentVersion) {
+                Update-Version -Version $Version
+            } else {
+                Write-Host "ℹ️  Version unchanged: $Version" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "❌ Invalid version format. Must be in format x.y.z (e.g., 1.0.1)" -ForegroundColor Red
+            exit 1
+        }
+
+        # Prompt for build number/version code update (platform-specific)
+        if (-not $BuildNumber) {
+            if ($currentBuildNumber) {
+                if ($Platform -eq "android") {
+                    Write-Host "📦 Current Android version code: $currentBuildNumber" -ForegroundColor Cyan
+                    $BuildNumber = Read-Host "Enter new Android version code for production (current: $currentBuildNumber)"
+                } else {
+                    Write-Host "📦 Current iOS build number: $currentBuildNumber" -ForegroundColor Cyan
+                    $BuildNumber = Read-Host "Enter new iOS build number for production (current: $currentBuildNumber)"
+                }
+            } else {
+                if ($Platform -eq "android") {
+                    $BuildNumber = Read-Host "Enter Android version code for production"
+                } else {
+                    $BuildNumber = Read-Host "Enter iOS build number for production"
+                }
             }
         }
 
         if ($BuildNumber -match '^\d+$') {
             Update-BuildNumber -Platform $Platform -BuildNumber $BuildNumber
         } else {
-            Write-Host "❌ Invalid build number. Must be a number." -ForegroundColor Red
+            if ($Platform -eq "android") {
+                Write-Host "❌ Invalid version code. Must be a number." -ForegroundColor Red
+            } else {
+                Write-Host "❌ Invalid build number. Must be a number." -ForegroundColor Red
+            }
             exit 1
         }
     }
@@ -201,7 +281,8 @@ try {
     Write-Host "   Platform: $Platform" -ForegroundColor White
     Write-Host "   Environment: $normalizedEnv" -ForegroundColor White
     Write-Host "   Profile: $profile" -ForegroundColor White
-    if ($Environment -eq "prod") {
+    if ($normalizedEnv -eq "production") {
+        Write-Host "   Version: $Version" -ForegroundColor White
         Write-Host "   Build Number: $BuildNumber" -ForegroundColor White
     }
 

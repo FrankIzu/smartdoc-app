@@ -100,6 +100,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             
             messages = Array.isArray(rawMessages) ? rawMessages : [];
             
+            // Extract persistent_context from backend (context that persists across sessions)
+            const persistentContext = (match as any).persistent_context || (match as any).persistentContext || null;
+            
             console.log(`✅ Found chat ${id} in history:`, {
               hasMessages: !!(match as any).messages,
               hasConversationData: !!(match as any).conversation_data,
@@ -107,6 +110,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               rawMessagesType: typeof rawMessages,
               rawMessagesIsArray: Array.isArray(rawMessages),
               messagesCount: messages.length,
+              hasPersistentContext: !!persistentContext,
+              persistentContextKeys: persistentContext ? Object.keys(persistentContext) : [],
               matchKeys: Object.keys(match),
               sampleMatch: {
                 id: match.id,
@@ -116,6 +121,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 conversationDataType: typeof (match as any).conversation_data
               }
             });
+            
+            // Store persistent_context in the chat history for later use
+            const chatHistory: ChatHistory = {
+              id,
+              title: (match as any).title || `Chat ${id}`,
+              messages: messages || [],
+              created_at: (match as any).created_at || new Date().toISOString(),
+              updated_at: (match as any).updated_at || (match as any).last_message_at || new Date().toISOString(),
+              persistent_context: persistentContext, // Store persistent context
+            };
+            
+            set({
+              currentHistory: chatHistory,
+              isLoading: false,
+              error: null,
+            });
+            return; // Exit early since we found the match
           } else {
             console.log(`⚠️ Chat ${id} not found in history response. Available IDs:`, histories.slice(0, 10).map((h: any) => h.id));
           }
