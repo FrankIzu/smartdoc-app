@@ -2,10 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     Alert,
     Dimensions,
+    Linking,
     StyleSheet,
     Text,
     TouchableOpacity,
@@ -22,33 +23,49 @@ export default function ScannerScreen() {
   const [isCapturing, setIsCapturing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
 
+  // Automatically request permission when component mounts if not granted
+  useEffect(() => {
+    if (permission && !permission.granted && permission.canAskAgain) {
+      // No custom screen - directly request permission
+      requestPermission();
+    }
+  }, [permission]);
+
   if (!permission) {
     // Camera permissions are still loading.
     return <View />;
   }
 
   if (!permission.granted) {
-    // Camera permissions are not granted yet.
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.permissionContainer}>
-          <Ionicons name="camera-outline" size={64} color="#ccc" />
-          <Text style={styles.permissionTitle}>Camera Access Required</Text>
-          <Text style={styles.permissionMessage}>
-            We need access to your camera to scan documents
-          </Text>
-          <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-            <Text style={styles.permissionButtonText}>Grant Permission</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.backButton} 
-            onPress={() => router.back()}
-          >
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
+    // If user previously denied permission, show settings screen
+    if (!permission.canAskAgain) {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.permissionContainer}>
+            <Ionicons name="camera-outline" size={64} color="#ccc" />
+            <Text style={styles.permissionTitle}>Camera Access Disabled</Text>
+            <Text style={styles.permissionMessage}>
+              Camera access is disabled. Enable it in Settings to scan documents.
+            </Text>
+            <TouchableOpacity 
+              style={styles.permissionButton} 
+              onPress={() => Linking.openSettings()}
+            >
+              <Text style={styles.permissionButtonText}>Open Settings</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.backButton} 
+              onPress={() => router.back()}
+            >
+              <Text style={styles.backButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    // Permission is being requested - show loading
+    return <View style={styles.container} />;
   }
 
   const toggleCameraFacing = () => {
