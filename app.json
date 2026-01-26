@@ -2,7 +2,7 @@
   "expo": {
     "name": "GrabDocs",
     "slug": "grabdocs",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light.png",
     "userInterfaceStyle": "automatic",
@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.grabdocs.mobile",
-      "buildNumber": "3",
+      "buildNumber": "1",
       "usesAppleSignIn": true,
       "splash": {
         "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
