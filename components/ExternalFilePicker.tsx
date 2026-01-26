@@ -275,8 +275,8 @@ export function ExternalFilePicker({
   );
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <SafeAreaView style={styles.container}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+      <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={selectedService ? handleGoBack : onClose}>

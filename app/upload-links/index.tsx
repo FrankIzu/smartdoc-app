@@ -1,23 +1,22 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     FlatList,
-    Modal,
     Platform,
     RefreshControl,
     Share,
     StyleSheet,
     Text,
     TouchableOpacity,
-    View,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FRONTEND_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
-import { FRONTEND_URL } from '../../constants/Config';
 
 interface UploadLink {
   id: number;
@@ -65,10 +64,18 @@ export default function UploadLinksScreen() {
     }
   };
 
+  // Add debounce to prevent excessive reloads
+  const lastLoadTimeRef = useRef<number>(0);
+  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  
   useFocusEffect(
     useCallback(() => {
       if (user) {
-        loadUploadLinks();
+        const now = Date.now();
+        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
+          lastLoadTimeRef.current = now;
+          loadUploadLinks();
+        }
       }
     }, [user])
   );
@@ -370,7 +377,7 @@ export default function UploadLinksScreen() {
       >
         <View style={dynamicStyles.linkHeader}>
           <View style={dynamicStyles.linkInfo}>
-            <Text style={dynamicStyles.linkName}>{item.name}</Text>
+            <Text style={dynamicStyles.linkName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
             {item.description && (
               <Text style={dynamicStyles.linkDescription}>{item.description}</Text>
             )}

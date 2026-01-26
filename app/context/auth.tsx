@@ -192,10 +192,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('❌ Login successful but no user data or session info received');
         throw new Error('Login successful but no user data received');
       } else {
+        // Login failed - ensure user state is cleared
+        setUser(null);
         throw new Error(response.message || 'Login failed');
       }
     } catch (error) {
       console.error('❌ Sign in failed:', error);
+      // Ensure user state is cleared on any error
+      setUser(null);
       throw error;
     } finally {
       setLoading(false);

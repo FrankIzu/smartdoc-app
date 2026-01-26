@@ -6,7 +6,7 @@ import { Platform } from 'react-native';
 // This affects: API backend URL, Expo dev server URL, and all local development endpoints
 export const LOCAL_DEV_IP = '192.168.1.7';
 export const LOCAL_DEV_PORT = 5000;
-export const EXPO_DEV_PORT = 8082;
+export const EXPO_DEV_PORT = 8081; // Metro bundler default port
 export const LOCAL_DEV_URL = `http://${LOCAL_DEV_IP}:${LOCAL_DEV_PORT}`;
 
 // API Configuration - Auto-detect based on environment

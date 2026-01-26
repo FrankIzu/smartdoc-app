@@ -3,16 +3,16 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    Alert,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
@@ -117,6 +117,30 @@ export default function ScheduleMeetingScreen() {
       console.log('📱 Meeting creation response:', JSON.stringify(response.data, null, 2));
       
       if (response.data.success) {
+        // Verify meeting was actually created by checking for meeting ID or room code
+        const meetingData = response.data.data || response.data.room || response.data;
+        const meetingId = meetingData?.meetingId || meetingData?.meeting_id || meetingData?.id;
+        const roomCode = meetingData?.roomCode || meetingData?.room_code;
+        const hmsRoomId = meetingData?.hmsRoomId || meetingData?.hms_room_id;
+        
+        // Validate that we have at least one identifier
+        if (!meetingId && !roomCode && !hmsRoomId) {
+          console.error('❌ Meeting creation response missing identifiers:', response.data);
+          Alert.alert(
+            'Warning', 
+            'Meeting creation response did not include meeting ID. The meeting may not have been created. Please check your meetings list or try again.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+        
+        console.log('✅ Meeting scheduled successfully:', {
+          meetingId,
+          roomCode,
+          hmsRoomId,
+          title: meetingData?.title || meetingData?.name || meetingData?.roomName || meetingData?.room_name
+        });
+        
         Alert.alert('Success', 'Meeting scheduled successfully! Email invitations have been sent to all participants.', [
           {
             text: 'OK',
@@ -126,7 +150,9 @@ export default function ScheduleMeetingScreen() {
           }
         ]);
       } else {
-        Alert.alert('Error', response.data.message || 'Failed to schedule meeting');
+        const errorMessage = response.data.message || 'Failed to schedule meeting';
+        console.error('❌ Meeting scheduling failed:', errorMessage);
+        Alert.alert('Error', errorMessage);
       }
     } catch (error: any) {
       console.error('Create meeting failed:', error);
@@ -153,7 +179,33 @@ export default function ScheduleMeetingScreen() {
                   // Then create the new meeting
                   const response = await apiClient.client.post('/api/v1/mobile/meetings/schedule', meetingPayload);
                   
+                  console.log('📱 Meeting creation response (after ending existing):', JSON.stringify(response.data, null, 2));
+                  
                   if (response.data.success) {
+                    // Verify meeting was actually created
+                    const meetingData = response.data.data || response.data.room || response.data;
+                    const meetingId = meetingData?.meetingId || meetingData?.meeting_id || meetingData?.id;
+                    const roomCode = meetingData?.roomCode || meetingData?.room_code;
+                    const hmsRoomId = meetingData?.hmsRoomId || meetingData?.hms_room_id;
+                    
+                    // Validate that we have at least one identifier
+                    if (!meetingId && !roomCode && !hmsRoomId) {
+                      console.error('❌ Meeting creation response missing identifiers:', response.data);
+                      Alert.alert(
+                        'Warning', 
+                        'Meeting creation response did not include meeting ID. The meeting may not have been created. Please check your meetings list or try again.',
+                        [{ text: 'OK' }]
+                      );
+                      return;
+                    }
+                    
+                    console.log('✅ Meeting scheduled successfully:', {
+                      meetingId,
+                      roomCode,
+                      hmsRoomId,
+                      title: meetingData?.title || meetingData?.name || meetingData?.roomName || meetingData?.room_name
+                    });
+                    
                     Alert.alert('Success', 'Meeting scheduled successfully! Email invitations have been sent to all participants.', [
                       {
                         text: 'OK',
@@ -163,7 +215,9 @@ export default function ScheduleMeetingScreen() {
                       }
                     ]);
                   } else {
-                    Alert.alert('Error', response.data.message || 'Failed to schedule meeting');
+                    const errorMessage = response.data.message || 'Failed to schedule meeting';
+                    console.error('❌ Meeting scheduling failed:', errorMessage);
+                    Alert.alert('Error', errorMessage);
                   }
                 } catch (endError) {
                   console.error('Failed to end existing meeting:', endError);

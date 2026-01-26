@@ -170,60 +170,72 @@ function DashboardScreen() {
       
       // console.log('✅ Backend connectivity OK, loading dashboard data...');
       
-      // Load dashboard stats with robust error handling
-      try {
-        // console.log('📊 Attempting to load dashboard stats...');
-        const dashboardResponse = await (apiClient as any).getDashboardStats();
-        // console.log('📊 Dashboard stats response:', dashboardResponse);
-        
-        if (dashboardResponse && dashboardResponse.success && dashboardResponse.data) {
-          // Handle both direct stats and nested stats structure
-          const statsData = dashboardResponse.data.stats || dashboardResponse.data;
-          
-          const safeStats = {
-            totalDocuments: Number(statsData.totalDocuments) || 0,
-            totalForms: Number(statsData.totalForms) || 0,
-            formResponses: Number(statsData.formResponses) || 0,
-            chatSessions: Number(statsData.chatSessions) || 0,
-            processingFiles: Number(statsData.processingFiles) || 0,
-            unreadNotifications: Number(statsData.unreadNotifications) || 0,
-            recentAnalytics: Number(statsData.recentAnalytics) || 0,
-          };
-          
-          // console.log('📊 Setting safe dashboard stats:', safeStats);
-          setStats(safeStats);
-        } else {
-          console.warn('📊 Dashboard stats API call succeeded but no valid data returned');
-          setStats(defaultStats);
-        }
-      } catch (error) {
-        console.warn('📊 Dashboard stats failed, using defaults:', error);
-        // Try to get data from files endpoint as fallback
-        try {
-          // console.log('📊 Trying files endpoint as fallback...');
-          const filesResponse = await apiClient.getFiles();
-          if (filesResponse && filesResponse.success && filesResponse.data) {
-            const fileCount = Array.isArray(filesResponse.data) ? filesResponse.data.length : 0;
-            // console.log('📊 Found files count:', fileCount);
-            setStats({
-              ...defaultStats,
-              totalDocuments: fileCount,
-            });
-          } else {
-            setStats(defaultStats);
-          }
-        } catch (filesError) {
-          console.warn('📊 Files fallback also failed:', filesError);
-          setStats(defaultStats);
-        }
-      }
+      // Load dashboard stats and recent activities in parallel for better performance
+      const startTime = Date.now();
       
-      // Load recent activities (including uploaded files and workspace shared files)
-      try {
-        // Try to use the recent activities API endpoint first
-        let activitiesFromAPI: RecentActivity[] = [];
+      // Start both requests in parallel
+      const statsPromise = (async () => {
         try {
-          const activitiesResponse = await apiClient.getRecentActivities(7, 10);
+          // console.log('📊 Attempting to load dashboard stats...');
+          const dashboardResponse = await (apiClient as any).getDashboardStats();
+          // console.log('📊 Dashboard stats response:', dashboardResponse);
+          
+          if (dashboardResponse && dashboardResponse.success && dashboardResponse.data) {
+            // Handle both direct stats and nested stats structure
+            const statsData = dashboardResponse.data.stats || dashboardResponse.data;
+            
+            const safeStats = {
+              totalDocuments: Number(statsData.totalDocuments) || 0,
+              totalForms: Number(statsData.totalForms) || 0,
+              formResponses: Number(statsData.formResponses) || 0,
+              chatSessions: Number(statsData.chatSessions) || 0,
+              processingFiles: Number(statsData.processingFiles) || 0,
+              unreadNotifications: Number(statsData.unreadNotifications) || 0,
+              recentAnalytics: Number(statsData.recentAnalytics) || 0,
+            };
+            
+            // console.log('📊 Setting safe dashboard stats:', safeStats);
+            setStats(safeStats);
+            return safeStats;
+          } else {
+            console.warn('📊 Dashboard stats API call succeeded but no valid data returned');
+            setStats(defaultStats);
+            return defaultStats;
+          }
+        } catch (error) {
+          console.warn('📊 Dashboard stats failed, using defaults:', error);
+          // Try to get data from files endpoint as fallback
+          try {
+            // console.log('📊 Trying files endpoint as fallback...');
+            const filesResponse = await apiClient.getFiles();
+            if (filesResponse && filesResponse.success && filesResponse.data) {
+              const fileCount = Array.isArray(filesResponse.data) ? filesResponse.data.length : 0;
+              // console.log('📊 Found files count:', fileCount);
+              const fallbackStats = {
+                ...defaultStats,
+                totalDocuments: fileCount,
+              };
+              setStats(fallbackStats);
+              return fallbackStats;
+            } else {
+              setStats(defaultStats);
+              return defaultStats;
+            }
+          } catch (filesError) {
+            console.warn('📊 Files fallback also failed:', filesError);
+            setStats(defaultStats);
+            return defaultStats;
+          }
+        }
+      })();
+      
+      // Load recent activities in parallel
+      const activitiesPromise = (async () => {
+        try {
+          // Try to use the recent activities API endpoint first
+          let activitiesFromAPI: RecentActivity[] = [];
+          try {
+            const activitiesResponse = await apiClient.getRecentActivities(7, 10);
           if (activitiesResponse && activitiesResponse.success && activitiesResponse.data) {
             const activities = Array.isArray(activitiesResponse.data) ? activitiesResponse.data : [];
             activitiesFromAPI = activities.map((activity: any) => {
@@ -320,10 +332,18 @@ function DashboardScreen() {
         } else {
           setRecentActivities(defaultActivities);
         }
+        return sortedActivities;
       } catch (error) {
         console.warn('📈 Recent activities failed, using empty array:', error);
         setRecentActivities(defaultActivities);
+        return defaultActivities;
       }
+    })();
+    
+    // Wait for both to complete in parallel
+    await Promise.all([statsPromise, activitiesPromise]);
+    const loadTime = Date.now() - startTime;
+    console.log(`📊 Dashboard loaded in ${loadTime}ms (stats and activities in parallel)`);
       
     } catch (error) {
       // console.error('🏠 Unexpected error in dashboard data loading:', error);
@@ -505,6 +525,11 @@ function DashboardScreen() {
   const handleUploadFromCamera = () => {
     setShowUploadOptions(false);
     router.push('/scanner');
+  };
+
+  const handleUploadByLink = () => {
+    setShowUploadOptions(false);
+    router.push('/upload-by-link-code');
   };
 
   const handleUploadFromGallery = async () => {
@@ -1272,7 +1297,7 @@ function DashboardScreen() {
           </View>
           <View style={dynamicStyles.activityContainer}>
             {recentActivities.length > 0 ? (
-              recentActivities.map((activity, index) => (
+              recentActivities.slice(0, 5).map((activity, index) => (
                 <ActivityItem 
                   key={`activity-${activity.id || `fallback-${index}`}-${index}-${Date.now()}-${Math.random()}`} 
                   activity={activity} 
@@ -1447,6 +1472,20 @@ function DashboardScreen() {
                 <View style={dynamicStyles.uploadOptionText}>
                   <Text style={dynamicStyles.uploadOptionTitle}>Images Gallery</Text>
                   <Text style={dynamicStyles.uploadOptionSubtitle}>Upload from your photo gallery</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={dynamicStyles.uploadOption}
+                onPress={handleUploadByLink}
+              >
+                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#34C759' }]}>
+                  <Ionicons name="link" size={24} color="#fff" />
+                </View>
+                <View style={dynamicStyles.uploadOptionText}>
+                  <Text style={dynamicStyles.uploadOptionTitle}>Upload by Link</Text>
+                  <Text style={dynamicStyles.uploadOptionSubtitle}>Upload using an upload code</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#ccc" />
               </TouchableOpacity>

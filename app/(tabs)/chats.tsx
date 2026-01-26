@@ -22,7 +22,8 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { RectButton, Swipeable } from 'react-native-gesture-handler';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -125,6 +126,7 @@ const DEFAULT_CHAT_ASSISTANT: Chat = {
 
 // Storage key for persisting chat contexts
 const CHAT_CONTEXTS_KEY = '@grabdocs_chat_contexts';
+const FAVORITE_CHATS_KEY = '@grabdocs_favorite_chats';
 
 // Helper: Save document/bookmark/user/workspace chat contexts to AsyncStorage
 const savePersistedChatContexts = async (chats: Chat[]) => {
@@ -139,19 +141,35 @@ const savePersistedChatContexts = async (chats: Chat[]) => {
     }> = {};
     
     chats.forEach(chat => {
-      // Save contexts for document, bookmark, user_direct, and workspace chats
-      if (chat.type === 'document_focused' || 
-          chat.type === 'bookmark_focused' || 
-          chat.type === 'user_direct' || 
-          chat.type === 'workspace') {
+      // CRITICAL: Save contexts for chats that have context OR the correct type
+      // This ensures chats with bookmark_context but wrong type still get saved
+      const hasContext = chat.bookmark_context || chat.document_context || chat.workspace;
+      const hasCorrectType = chat.type === 'document_focused' || 
+                             chat.type === 'bookmark_focused' || 
+                             chat.type === 'user_direct' || 
+                             chat.type === 'workspace';
+      
+      if (hasContext || hasCorrectType) {
+        // Determine the correct type based on context if type is wrong
+        const correctType = chat.bookmark_context ? 'bookmark_focused' :
+                           chat.document_context ? 'document_focused' :
+                           chat.workspace ? 'workspace' :
+                           chat.type === 'user_direct' ? 'user_direct' :
+                           chat.type;
+        
         contextsToSave[chat.id] = {
-          type: chat.type,
+          type: correctType,
           title: chat.title,
           document_context: chat.document_context,
           bookmark_context: chat.bookmark_context,
           participants: chat.participants,
           workspace: chat.workspace
         };
+        
+        // Log if we're fixing the type
+        if (hasContext && !hasCorrectType) {
+          console.log(`🔧 Saving chat ${chat.id} with context but fixing type from ${chat.type} to ${correctType}`);
+        }
       }
     });
     
@@ -202,6 +220,7 @@ export default function ChatsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   
   const [chats, setChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with ChatGD Assistant
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
@@ -211,26 +230,53 @@ export default function ChatsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [isGoingBack, setIsGoingBack] = useState(false); // Track if user is going back to chat list
   const [userProfile, setUserProfile] = useState<any>(null); // User profile for determining is_own_message
+  const userProfileRef = useRef<any>(null); // Ref to always have latest userProfile in WebSocket handlers
+  const recentlySentMessageIdsRef = useRef<Set<number>>(new Set()); // Track recently sent message IDs to prevent duplicates
+  const lastMessageSentTimeRef = useRef<number>(0); // Track when last message was sent to prevent reload
+  const lastLoadTimeRef = useRef<number>(0); // Track last load time to prevent excessive reloads
   
   // Streaming state for fake character-by-character animation
   const [streamingMessageIndex, setStreamingMessageIndex] = useState<number | null>(null);
+  const streamingMessageIndexRef = useRef<number | null>(null); // Ref to track streaming index immediately
   const streamingIntervalRef = useRef<number | null>(null);
   const contentBufferRef = useRef<string>('');
   const displayedCharsRef = useRef<number>(0);
   const isPreviewPhaseRef = useRef<boolean>(true);
   const isStreamingRef = useRef<boolean>(false);
   const isFakeStreamingRef = useRef<boolean>(false); // Track if we're in fake streaming mode
+  const isStreamCompleteRef = useRef<boolean>(false); // Track if stream is complete (no more chunks will arrive)
+  const lastStreamedMessageIndexRef = useRef<number | null>(null); // Track which message index was last streamed
+  const lastStreamCompleteTimeRef = useRef<number>(0); // Track when streaming last completed
   
   // Message ID counter to ensure uniqueness
   const messageIdCounterRef = useRef<number>(0);
   const currentChatIdRef = useRef<number | null>(null); // Track current chat ID to handle chat_history_id updates
   const loadedChatIdRef = useRef<number | null>(null); // Track which chat's messages are currently loaded to prevent unnecessary reloads
+  const selectedChatRef = useRef<Chat | null>(null); // Track selectedChat to preserve it across reloads
+  const fileIdContextProcessedRef = useRef<Set<number>>(new Set()); // Track processed fileIds to prevent duplicate context setup
+  const isSettingUpFileContextRef = useRef<boolean>(false); // Track if we're currently setting up file context to prevent unnecessary reloads
+  const fileContextSetupStartTimeRef = useRef<number>(0); // Track when file context setup started
+  const workspaceRequestRef = useRef<Promise<any> | null>(null); // Track in-flight workspace request to prevent duplicate calls
+  const isPreservingContextRef = useRef<boolean>(false); // Track when we're preserving context to prevent loadChats from overwriting
+  const contextPreservationTimeRef = useRef<number>(0); // Track when context was last preserved
+  
+  // Keep selectedChatRef in sync with selectedChat state
+  useEffect(() => {
+    selectedChatRef.current = selectedChat;
+  }, [selectedChat]);
   
   // Keyboard height tracking for mention dropdown positioning
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const inputContainerRef = useRef<View>(null);
   const [inputContainerY, setInputContainerY] = useState(0);
+  
+  // Swipeable refs to manage open swipeables in chat list (only one open at a time)
+  const chatSwipeableRefs = useRef<Map<number, Swipeable>>(new Map());
+  const swipingChatId = useRef<number | null>(null);
+  const [menuChatId, setMenuChatId] = useState<number | null>(null);
+  const [favoriteChatIds, setFavoriteChatIds] = useState<Set<number>>(new Set());
   
   // Helper function to generate unique message IDs
   const generateUniqueMessageId = (): number => {
@@ -265,6 +311,7 @@ export default function ChatsScreen() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [users, setUsers] = useState<ChatParticipant[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [newChatType, setNewChatType] = useState<'ai_assistant' | 'user_direct' | 'workspace' | 'document_focused' | 'bookmark_focused'>('ai_assistant');
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
@@ -414,12 +461,24 @@ export default function ChatsScreen() {
   // Handle fileId parameter from documents screen (fileName passed from Files to keep display name)
   useEffect(() => {
     const handleFileIdContext = async () => {
-      if (!params.fileId || loading) return;
+      // Allow context to be set immediately even if loading is true
+      // This ensures the context shows up instantly when navigating from Files screen
+      if (!params.fileId) return;
       const fileIdNum = parseInt(String(params.fileId), 10);
       if (!Number.isFinite(fileIdNum)) {
         console.warn('⚠️ [CHATS] Invalid fileId param:', params.fileId);
         return;
       }
+      
+      // Prevent duplicate processing of the same fileId
+      if (fileIdContextProcessedRef.current.has(fileIdNum)) {
+        return;
+      }
+      
+      // CRITICAL: Set flag to prevent useFocusEffect from reloading everything
+      // This prevents all the API calls from happening when user just added a file context
+      isSettingUpFileContextRef.current = true;
+      fileContextSetupStartTimeRef.current = Date.now();
       const workspaceIdNum = params.workspaceId != null ? parseInt(String(params.workspaceId), 10) : undefined;
       let fileNameFromParams: string | null = null;
       if (typeof params.fileName === 'string' && params.fileName.trim() !== '') {
@@ -443,131 +502,135 @@ export default function ChatsScreen() {
           return;
         }
 
-        // Fetch document details; pass workspaceId when file was opened from a workspace
-        // so /api/v1/mobile/get-file can use the same visibility as workspace list endpoints.
-        const response = await api.getFileById(fileIdNum, Number.isFinite(workspaceIdNum) ? workspaceIdNum : undefined) as { success?: boolean; message?: string; file?: { id: number; original_filename?: string; filename?: string; file_type?: string; file_kind?: string; category?: string; file_size?: number } };
+        // OPTIMIZATION: Create document context immediately with available data (fileName from params)
+        // This allows the context to show instantly while API call enriches it in the background
+        const displayName = fileNameFromParams || 'Document';
+        const initialDocumentContext: Document = {
+          id: fileIdNum,
+          name: displayName,
+          type: 'other', // Will be updated when API call completes
+        };
+        
+        // Create a document-focused chat immediately
+        const documentChat: Chat = {
+          id: -2,
+          title: `Document: ${truncateFilename(displayName)}`,
+          type: 'document_focused',
+          participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
+          last_message: `Ready to answer questions about ${displayName}`,
+          updated_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          unread_count: 0,
+          document_context: initialDocumentContext
+        };
+        
+        // Add the chat to the list and select it immediately
+        setChats(prev => {
+          const chatAssistant = prev.find(chat => chat.id === -1);
+          const otherChats = prev.filter(chat => chat.id !== -1);
+          
+          let updatedChats: Chat[];
+          if (chatAssistant) {
+            updatedChats = [chatAssistant, documentChat, ...otherChats];
+          } else {
+            updatedChats = [documentChat, ...prev];
+          }
+          
+          // Persist document context immediately
+          savePersistedChatContexts(updatedChats);
+          return updatedChats;
+        });
+        
+        setSelectedChat(documentChat);
+        
+        // Reset going back flag when setting up new chat from fileId
+        setIsGoingBack(false);
+        
+        // Mark this fileId as processed BEFORE setting context to prevent duplicate processing
+        fileIdContextProcessedRef.current.add(fileIdNum);
+        
+        // Set the document as the selected mention IMMEDIATELY - this shows the context right away
+        // Set this synchronously in the same render cycle for instant display
+        setSelectedMention({
+          id: fileIdNum,
+          type: 'file',
+          name: displayName,
+          data: initialDocumentContext
+        });
+        
+        // Don't show welcome message - just show empty chat
+        setMessages([]);
+        loadedChatIdRef.current = documentChat.id;
+        
+        // Clear the params to prevent re-triggering (but context is already set)
+        router.setParams({});
+        
+        // Reset the flag after a short delay to allow context setup to complete
+        // This prevents useFocusEffect from interfering during setup
+        setTimeout(() => {
+          isSettingUpFileContextRef.current = false;
+        }, 1000);
+        
+        // Now fetch document details in the background to enrich the context (file_type, category, size)
+        // This happens asynchronously and updates the context when complete
+        api.getFileById(fileIdNum, Number.isFinite(workspaceIdNum) ? workspaceIdNum : undefined).then((response: any) => {
           if (response.success && response.file) {
             const documentData = response.file;
             // Prefer name from Files screen (params), then API, then fallback
-            const displayName = fileNameFromParams || documentData.original_filename || documentData.filename || 'Untitled';
-            const documentContext: Document = {
+            const enrichedName = fileNameFromParams || documentData.original_filename || documentData.filename || displayName;
+            const enrichedDocumentContext: Document = {
               id: documentData.id,
-              name: displayName,
+              name: enrichedName,
               type: documentData.file_type || 'other',
               category: documentData.file_kind || documentData.category,
               size: documentData.file_size ? `${(documentData.file_size / 1024 / 1024).toFixed(2)} MB` : undefined,
             };
             
-            // Create a document-focused chat
-            // Backend will create chat history when first message is sent
-            const documentChat: Chat = {
-              id: -2,
-              title: `Document: ${truncateFilename(documentContext.name)}`,
-              type: 'document_focused',
-              participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
-              last_message: `Ready to answer questions about ${documentContext.name}`,
-              updated_at: new Date().toISOString(),
-              created_at: new Date().toISOString(),
-              unread_count: 0,
-              document_context: documentContext
-            };
+            // Update the chat with enriched context
+            setChats(prev => prev.map(chat => 
+              chat.id === documentChat.id && chat.document_context
+                ? { 
+                    ...chat, 
+                    document_context: enrichedDocumentContext,
+                    title: `Document: ${truncateFilename(enrichedName)}`,
+                    last_message: `Ready to answer questions about ${enrichedName}`
+                  }
+                : chat
+            ));
             
-                      // Add the chat to the list and select it
-          setChats(prev => {
-            const chatAssistant = prev.find(chat => chat.id === -1); // Find the default ChatGD Assistant
-            const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default ChatGD Assistant
-            
-            let updatedChats: Chat[];
-            if (chatAssistant) {
-              // ChatGD Assistant exists, add new chat after it, preserve all other chats
-              updatedChats = [chatAssistant, documentChat, ...otherChats];
-            } else {
-              // No ChatGD Assistant found, add new chat at beginning, preserve all existing chats
-              updatedChats = [documentChat, ...prev];
-            }
-            
-            // Persist document context immediately
-            savePersistedChatContexts(updatedChats);
-            return updatedChats;
-          });
-            setSelectedChat(documentChat);
-            
-            // Set the document as the selected mention for the chat
+            // Update selected mention with enriched data
             setSelectedMention({
-              id: documentContext.id,
+              id: enrichedDocumentContext.id,
               type: 'file',
-              name: documentContext.name,
-              data: documentContext
+              name: enrichedDocumentContext.name,
+              data: enrichedDocumentContext
             });
             
-            // Don't show welcome message - just show empty chat
-            setMessages([]);
-            loadedChatIdRef.current = documentChat.id; // Track that we've set empty messages for this chat
-            
-            // Clear the params to prevent re-triggering
-            router.setParams({});
-          } else {
-            console.warn(`⚠️ [CHATS] API returned unsuccessful response for fileId ${fileIdNum}:`, response.message || 'Unknown error');
-            const fallbackName = fileNameFromParams || 'Document';
-            // Backend will create chat history when first message is sent
-            const fallbackChat: Chat = {
-              id: -2,
-              title: `Document: ${truncateFilename(fallbackName)}`,
-              type: 'document_focused',
-              participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
-              last_message: `Ready to answer questions about ${fallbackName}`,
-              updated_at: new Date().toISOString(),
-              created_at: new Date().toISOString(),
-              unread_count: 0,
-              document_context: { id: fileIdNum, name: fallbackName, type: 'other' }
-            };
-            
+            // Update persisted contexts
             setChats(prev => {
-              const chatAssistant = prev.find(chat => chat.id === -1); // Find the default ChatGD Assistant
-              const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default ChatGD Assistant
-              
-              let updatedChats: Chat[];
-              if (chatAssistant) {
-                updatedChats = [chatAssistant, fallbackChat, ...otherChats];
-              } else {
-                updatedChats = [fallbackChat, ...prev];
-              }
-              
-              // Persist document context immediately
-              savePersistedChatContexts(updatedChats);
-              return updatedChats;
+              savePersistedChatContexts(prev);
+              return prev;
             });
-            setSelectedChat(fallbackChat);
-            
-            setSelectedMention({
-              id: fileIdNum,
-              type: 'file',
-              name: fallbackName,
-              data: { id: fileIdNum, name: fallbackName, type: 'other' }
-            });
-            
-            const welcomeMessage: ChatMessage = {
-              id: generateUniqueMessageId(),
-              content: 'Hello! I\'m your ChatGD Assistant. I\'m ready to help you with questions about your document. The document has been automatically added to this chat. What would you like to know?',
-              sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
-              is_own_message: false,
-              created_at: new Date().toISOString(),
-            };
-            setMessages([welcomeMessage]);
-            loadedChatIdRef.current = fallbackChat.id; // Track that we've loaded this chat
-            
-            router.setParams({});
           }
-        } catch (error: any) {
+        }).catch((error: any) => {
+          // If API call fails, we already have the context set with fileName, so just log the error
           const errorMessage = error?.message || error?.response?.data?.message || error?.toString() || 'Unknown error';
           const statusCode = error?.response?.status;
-          // Log as warning since we have a fallback (e.g. file in workspace but get-file uses stricter visibility)
-          console.warn(`⚠️ [CHATS] Could not fetch document details for fileId ${fileIdNum}${statusCode ? ` (HTTP ${statusCode})` : ''}:`, errorMessage);
-          
-          const fallbackName = fileNameFromParams || 'Document';
-          // Backend will create chat history when first message is sent
-          const fallbackChat: Chat = {
-            id: -2,
+          console.warn(`⚠️ [CHATS] Could not enrich document details for fileId ${fileIdNum}${statusCode ? ` (HTTP ${statusCode})` : ''}:`, errorMessage);
+          // Context is already set with fileName, so no fallback needed
+        });
+        
+        return; // Exit early since we've handled the immediate setup
+      } catch (error: any) {
+        // This catch block handles any synchronous errors
+        const errorMessage = error?.message || error?.response?.data?.message || error?.toString() || 'Unknown error';
+        const statusCode = error?.response?.status;
+        console.warn(`⚠️ [CHATS] Error setting up document chat for fileId ${fileIdNum}${statusCode ? ` (HTTP ${statusCode})` : ''}:`, errorMessage);
+        
+        // Fallback: create chat with minimal context
+        const fallbackName = fileNameFromParams || 'Document';
+        const fallbackChat: Chat = {
+          id: -2,
           title: `Document: ${truncateFilename(fallbackName)}`,
           type: 'document_focused',
           participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
@@ -579,40 +642,45 @@ export default function ChatsScreen() {
         };
         
         setChats(prev => {
-            const chatAssistant = prev.find(chat => chat.id === -1); // Find the default ChatGD Assistant
-            const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default ChatGD Assistant
-            
-            if (chatAssistant) {
-              return [chatAssistant, fallbackChat, ...otherChats];
-            } else {
-              return [fallbackChat, ...prev];
-            }
-          });
-          setSelectedChat(fallbackChat);
+          const chatAssistant = prev.find(chat => chat.id === -1);
+          const otherChats = prev.filter(chat => chat.id !== -1);
           
-          setSelectedMention({
-            id: fileIdNum,
-            type: 'file',
-            name: fallbackName,
-            data: { id: fileIdNum, name: fallbackName, type: 'other' }
-          });
-          
-          const welcomeMessage: ChatMessage = {
-            id: generateUniqueMessageId(),
-            content: 'Hello! I\'m your ChatGD Assistant. I\'m ready to help you with questions about your document. The document has been automatically added to this chat. What would you like to know?',
-            sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
-            is_own_message: false,
-            created_at: new Date().toISOString(),
-          };
-          setMessages([welcomeMessage]);
-          loadedChatIdRef.current = fallbackChat.id; // Track that we've loaded this chat
-          
-          router.setParams({});
-        }
+          if (chatAssistant) {
+            return [chatAssistant, fallbackChat, ...otherChats];
+          } else {
+            return [fallbackChat, ...prev];
+          }
+        });
+        setSelectedChat(fallbackChat);
+        
+        // Mark this fileId as processed
+        fileIdContextProcessedRef.current.add(fileIdNum);
+        
+        setSelectedMention({
+          id: fileIdNum,
+          type: 'file',
+          name: fallbackName,
+          data: { id: fileIdNum, name: fallbackName, type: 'other' }
+        });
+        
+        setMessages([]);
+        loadedChatIdRef.current = fallbackChat.id;
+        
+        router.setParams({});
+        
+        // Reset the flag after a short delay
+        setTimeout(() => {
+          isSettingUpFileContextRef.current = false;
+        }, 1000);
+        
+        return;
+      }
     };
 
     handleFileIdContext();
-  }, [params.fileId, params.fileName, params.workspaceId, loading]);
+    // Removed 'loading' from dependencies to allow immediate context setup
+    // Context should show instantly when fileId params are available
+  }, [params.fileId, params.fileName, params.workspaceId]);
 
   // Handle bookmark context from navigation
   useEffect(() => {
@@ -733,12 +801,48 @@ export default function ChatsScreen() {
 
   // Stop message processing
   const stopProcessing = () => {
+    console.log('🛑 Stopping message processing...');
+    
+    // Abort the HTTP request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    
+    // Stop streaming if active
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+    }
+    
+    // Reset streaming state
+    isStreamingRef.current = false;
+    isFakeStreamingRef.current = false;
+    isStreamCompleteRef.current = false;
+    contentBufferRef.current = '';
+    displayedCharsRef.current = 0;
+    
+    // Remove any incomplete assistant message
+    if (streamingMessageIndex !== null) {
+      setMessages(prev => {
+        const newMessages = [...prev];
+        const assistantMsg = newMessages[streamingMessageIndex];
+        // Only remove if it's empty or very short (incomplete)
+        if (assistantMsg && (!assistantMsg.content || assistantMsg.content.trim().length < 10)) {
+          newMessages.splice(streamingMessageIndex, 1);
+        }
+        return newMessages;
+      });
+      streamingMessageIndexRef.current = null; // Clear ref immediately
+      setStreamingMessageIndex(null); // Clear streaming message index to stop ProcessingMessageDisplay
+    }
+    
+    // CRITICAL: Reset sendingMessage state AFTER clearing streamingMessageIndex
+    // This ensures ProcessingMessageDisplay receives isProcessing={false} and stops
     setSendingMessage(false);
     stopBounceAnimation();
+    
+    console.log('✅ Message processing stopped - fake streaming should now be inactive');
   };
 
   // Progress tracking functions - removed, only using bouncing dots
@@ -789,37 +893,115 @@ export default function ChatsScreen() {
       // Listen for new messages (only for user chats)
       socket.on('new_chat_message', (data: any) => {
         console.log('📨 [CHATS] New message received:', data);
-        // Use state setter with function form to access latest selectedChat
+        // Use state setter with function form to access latest selectedChat and messages
         setSelectedChat(currentChat => {
           if (currentChat && (currentChat.type === 'user_direct' || currentChat.type === 'workspace')) {
             if (data.chat_id === currentChat.id) {
-              const isOwnMessage = !!(userProfile?.id && data.message.sender_id && data.message.sender_id === userProfile.id);
+              // Get current userProfile from ref to ensure we have the latest value (not closure-stale)
+              // Handle both formats: { id: ... } or { data: { id: ... } }
+              const currentUserProfile = userProfileRef.current;
+              const userId = currentUserProfile?.data?.id || currentUserProfile?.id;
+              const senderId = data.message.sender_id;
+              const messageId = data.message.id;
               
-              const newMsg: ChatMessage = {
-                id: data.message.id,
-                content: data.message.content,
-                sender: data.message.sender,
-                is_own_message: isOwnMessage,
-                created_at: data.message.created_at,
-              };
+              // Check if this is our own message
+              const isOwnMessage = !!(userId && senderId && 
+                (senderId === userId || 
+                 String(senderId) === String(userId)));
               
-              // Prevent duplicates
-              setMessages(prev => {
-                const existingIndex = prev.findIndex(msg => msg.id === newMsg.id);
-                if (existingIndex !== -1) {
-                  console.log('⚠️ [CHATS] Duplicate message detected, skipping:', newMsg.id);
-                  return prev;
-                }
-                console.log('✅ [CHATS] Adding new message:', newMsg.id);
-                return [...prev, newMsg];
+              console.log('📨 [CHATS] Message ownership check:', {
+                senderId: senderId,
+                userId: userId,
+                userProfile: currentUserProfile,
+                isOwnMessage: isOwnMessage,
+                messageId: messageId
               });
               
-              // Update chat list
-              setChats(prev => prev.map(chat => 
-                chat.id === data.chat_id 
-                  ? { ...chat, last_message: data.message.content.substring(0, 50), updated_at: data.message.created_at }
-                  : chat
-              ));
+              // Check for duplicates BEFORE processing - use setMessages to access current messages
+              setMessages(prev => {
+                // First check: Is this a recently sent message ID?
+                if (recentlySentMessageIdsRef.current.has(messageId)) {
+                  console.log('⏭️ [CHATS] Duplicate detected - recently sent message ID, skipping:', messageId);
+                  return prev;
+                }
+                
+                // Second check: exact ID match in current messages
+                const existingById = prev.find(msg => msg.id === messageId);
+                if (existingById) {
+                  console.log('⏭️ [CHATS] Duplicate detected by ID, skipping:', messageId);
+                  // Add to recently sent set to prevent future duplicates
+                  recentlySentMessageIdsRef.current.add(messageId);
+                  setTimeout(() => {
+                    recentlySentMessageIdsRef.current.delete(messageId);
+                  }, 10000);
+                  return prev;
+                }
+                
+                // Third check: content + timestamp - catches optimistic updates
+                // Use larger time window (30 seconds) to account for timezone differences (EST vs UTC)
+                const duplicateByContent = prev.find(msg => {
+                  if (msg.content !== data.message.content) {
+                    return false;
+                  }
+                  // Check if it's our own message (either flag is true or in recently sent set)
+                  const isOwnMessage = msg.is_own_message === true || recentlySentMessageIdsRef.current.has(msg.id);
+                  if (!isOwnMessage) {
+                    return false;
+                  }
+                  // Normalize timestamps - ensure UTC parsing by appending Z if missing
+                  const msgTimeStr = msg.created_at + (msg.created_at.includes('T') && !msg.created_at.match(/[Z+-]/) ? 'Z' : '');
+                  const newMsgTimeStr = data.message.created_at + (data.message.created_at.includes('T') && !data.message.created_at.match(/[Z+-]/) ? 'Z' : '');
+                  const msgTime = new Date(msgTimeStr).getTime();
+                  const newMsgTime = new Date(newMsgTimeStr).getTime();
+                  const timeDiff = Math.abs(msgTime - newMsgTime);
+                  // Use 30 second window to account for EST/UTC differences and network delays
+                  return timeDiff < 30000;
+                });
+                
+                if (duplicateByContent) {
+                  const msgTimeStr = duplicateByContent.created_at + (duplicateByContent.created_at.includes('T') && !duplicateByContent.created_at.match(/[Z+-]/) ? 'Z' : '');
+                  const newMsgTimeStr = data.message.created_at + (data.message.created_at.includes('T') && !data.message.created_at.match(/[Z+-]/) ? 'Z' : '');
+                  const timeDiff = Math.abs(new Date(msgTimeStr).getTime() - new Date(newMsgTimeStr).getTime());
+                  console.log('⏭️ [CHATS] Duplicate detected by content+time, skipping:', messageId, 'existing:', duplicateByContent.id, 'timeDiff:', timeDiff, 'ms');
+                  // Add to recently sent set to prevent future duplicates
+                  recentlySentMessageIdsRef.current.add(messageId);
+                  setTimeout(() => {
+                    recentlySentMessageIdsRef.current.delete(messageId);
+                  }, 10000);
+                  return prev;
+                }
+                
+                // Fourth check: If this is our own message, it was already added optimistically - skip it
+                if (isOwnMessage) {
+                  console.log('⏭️ [CHATS] Skipping own message from WebSocket (already added optimistically):', messageId);
+                  // Also add to recently sent set to prevent future duplicates
+                  recentlySentMessageIdsRef.current.add(messageId);
+                  setTimeout(() => {
+                    recentlySentMessageIdsRef.current.delete(messageId);
+                  }, 10000);
+                  return prev;
+                }
+                
+                // This is a new received message - add it
+                const newMsg: ChatMessage = {
+                  id: messageId,
+                  content: data.message.content,
+                  sender: data.message.sender,
+                  is_own_message: false, // This is a received message, not our own
+                  created_at: data.message.created_at,
+                };
+                
+                console.log('✅ [CHATS] Adding new received message from WebSocket:', newMsg.id);
+                
+                // Update chat list when adding new message
+                setChats(prevChats => prevChats.map(chat => 
+                  chat.id === data.chat_id 
+                    ? { ...chat, last_message: data.message.content.substring(0, 50), updated_at: data.message.created_at }
+                    : chat
+                ));
+                
+                return [...prev, newMsg];
+              });
             }
           }
           return currentChat;
@@ -839,7 +1021,8 @@ export default function ChatsScreen() {
         // Use state setters with function form to access latest values
         setSelectedChat(currentChat => {
           if (currentChat && (currentChat.type === 'user_direct' || currentChat.type === 'workspace')) {
-            if (data.chat_id === currentChat.id && data.user_id !== userProfile?.id) {
+            const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
+            if (data.chat_id === currentChat.id && data.user_id !== userId) {
               if (data.is_typing) {
                 // Try to get username from multiple sources (same as web)
                 let displayName: string | null = null;
@@ -988,15 +1171,84 @@ export default function ChatsScreen() {
     });
   }, []);
 
+  // Reload users when direct chat modal opens
+  useEffect(() => {
+    if (showNewChatModal && newChatType === 'user_direct') {
+      console.log('🔄 Direct chat modal opened - reloading users...', {
+        currentUsersCount: users.length,
+        modalUserSearch: modalUserSearch
+      });
+      loadUsers().catch(error => {
+        console.error('❌ Failed to reload users for direct chat:', error);
+      });
+    }
+  }, [showNewChatModal, newChatType]);
+
   // Refresh chat list when screen comes into focus
+  // Add debounce to prevent excessive reloads when quickly switching screens
+  const RELOAD_DEBOUNCE_MS = 1000; // Don't reload if less than 1 second since last load (reduced for better responsiveness)
+  
   useFocusEffect(
     React.useCallback(() => {
+      // CRITICAL: Skip reload if we're currently setting up file context
+      // This prevents all the API calls from happening when user just added a file context
+      // BUT: Only skip if it's been less than 2 seconds since we started setting up
+      // This ensures that if user navigates away and back, it will refresh
+      if (isSettingUpFileContextRef.current) {
+        const timeSinceSetup = Date.now() - fileContextSetupStartTimeRef.current;
+        if (timeSinceSetup < 2000) {
+          console.log('⏭️ Skipping reload - file context is being set up (recent,', timeSinceSetup, 'ms ago)');
+          return;
+        } else {
+          // Setup took too long, allow refresh
+          console.log('🔄 Allowing reload - file context setup took longer than expected (', timeSinceSetup, 'ms)');
+          isSettingUpFileContextRef.current = false;
+        }
+      }
+      
+      // CRITICAL: Skip reload if we're currently preserving context (going back from chat)
+      // This prevents loadChats from overwriting context that was just saved
+      if (isPreservingContextRef.current) {
+        const timeSincePreservation = Date.now() - contextPreservationTimeRef.current;
+        if (timeSincePreservation < 2000) {
+          console.log('⏭️ Skipping reload - context is being preserved (recent,', timeSincePreservation, 'ms ago)');
+          return;
+        } else {
+          // Preservation took longer than expected, allow reload
+          console.log('🔄 Allowing reload - context preservation took longer than expected');
+          isPreservingContextRef.current = false;
+        }
+      }
+      
+      // Debounce reloads to prevent excessive API calls when quickly switching screens
+      // BUT: If it's been more than 5 seconds since last load, user likely navigated away and back
+      // In that case, skip debounce and always refresh to get latest data
+      // NOTE: This does NOT refresh every 5 seconds - it only checks when screen comes into focus
+      const now = Date.now();
+      const timeSinceLastLoad = now - lastLoadTimeRef.current;
+      const shouldSkipDebounce = timeSinceLastLoad > 5000; // Skip debounce if more than 5 seconds (user navigated away)
+      
+      // Only apply debounce if it's been less than 5 seconds (user is quickly switching screens)
+      if (!shouldSkipDebounce && timeSinceLastLoad < RELOAD_DEBOUNCE_MS) {
+        console.log('⏭️ Skipping reload - too soon since last load (debounce active)');
+        return;
+      }
+      
+      if (shouldSkipDebounce) {
+        console.log('🔄 Refreshing - user navigated back after', Math.round(timeSinceLastLoad / 1000), 'seconds');
+      } else {
+        console.log('🔄 Refreshing - screen came into focus');
+      }
+      
+      lastLoadTimeRef.current = now;
+      
       // Load user profile first (needed for determining is_own_message)
       const loadUserProfile = async () => {
         try {
           const response = await api.getUserProfile();
           if (response) {
             setUserProfile(response);
+            userProfileRef.current = response; // Update ref as well
           }
         } catch (error: any) {
           // Handle timeout and connection errors gracefully
@@ -1011,12 +1263,70 @@ export default function ChatsScreen() {
         }
       };
       
+      // Load favorites from storage
+      const loadFavorites = async () => {
+        try {
+          const stored = await AsyncStorage.getItem(FAVORITE_CHATS_KEY);
+          if (stored) {
+            const favoriteIds = JSON.parse(stored);
+            setFavoriteChatIds(new Set(favoriteIds));
+          }
+        } catch (error) {
+          console.error('Failed to load favorites:', error);
+        }
+      };
+      
       // Initialize socket and load chats in parallel (user profile can load separately)
       initializeSocket();
+      
+      // Always reload chats when screen comes into focus to get latest data
+      // Also reload workspaces, documents, users, and bookmarks to ensure all data is fresh
+      console.log('🔄 Refreshing ChatGD screen - loading latest data...');
       Promise.all([
         loadUserProfile(),
-        loadChats()
-      ]).catch(error => {
+        loadChats(),
+        loadFavorites(),
+        loadWorkspaces(),
+        loadDocuments(),
+        loadUsers(),
+        loadBookmarks()
+      ]).then(() => {
+        console.log('✅ ChatGD screen refresh complete - all data loaded');
+        // After chats are loaded, if there's a selected chat, reload its messages to get latest updates
+        // BUT: Don't reload if a message was just sent (within last 3 seconds) to prevent duplicates
+        // ALSO: Don't reload if we're setting up file context (temporary chat with id -2)
+        const timeSinceLastMessage = Date.now() - lastMessageSentTimeRef.current;
+        const shouldSkipReload = timeSinceLastMessage < 3000; // Skip if message sent within last 3 seconds
+        
+        const currentSelectedChat = selectedChatRef.current;
+        // Skip auto-reload for temporary chats (id -2) created when adding file context
+        const isTemporaryChat = currentSelectedChat && (currentSelectedChat.id === -2 || currentSelectedChat.id === -1);
+        
+        if (currentSelectedChat && currentSelectedChat.id && currentSelectedChat.id !== -1 && !isTemporaryChat) {
+          if (shouldSkipReload) {
+            console.log('⏭️ Skipping auto-reload - message was just sent (within 3 seconds)');
+          } else {
+            console.log('🔄 Auto-reloading messages for selected chat:', currentSelectedChat.id);
+            loadMessages(currentSelectedChat.id, true).then(() => {
+              // CRITICAL: Restore context after reloading messages to ensure it persists permanently
+              // Find the updated chat from the chats list to get latest context
+              setChats(prevChats => {
+                const updatedChat = prevChats.find(c => c.id === currentSelectedChat.id);
+                if (updatedChat) {
+                  // Restore context using the helper function
+                  restoreChatContext(updatedChat);
+                } else {
+                  // If chat not found in updated list, use current selected chat
+                  restoreChatContext(currentSelectedChat);
+                }
+                return prevChats;
+              });
+            });
+          }
+        } else if (isTemporaryChat) {
+          console.log('⏭️ Skipping auto-reload - temporary chat (file context being set up)');
+        }
+      }).catch(error => {
         console.error('Error refreshing data on focus:', error);
       });
     }, [])
@@ -1037,6 +1347,19 @@ export default function ChatsScreen() {
   // Track previous selectedChat to detect when returning from conversation
   const prevSelectedChatRef = useRef<Chat | null>(null);
   
+  // Re-sort chats when favorites change
+  useEffect(() => {
+    setChats(prev => {
+      const sorted = sortChatsByLastMessage(prev);
+      // Also update filteredChats if not searching
+      if (!searchQuery.trim()) {
+        setFilteredChats(sorted);
+      }
+      return sorted;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favoriteChatIds.size]);
+
   // Re-sort chats when returning from a conversation (selectedChat becomes null)
   useEffect(() => {
     // Only sort when transitioning from a chat to null (returning from conversation)
@@ -1099,12 +1422,17 @@ export default function ChatsScreen() {
   
   // Filtered lists for new chat modal (separate from main search)
   const modalFilteredUsers = useMemo(() => {
-    if (!modalUserSearch.trim()) return users;
+    if (!modalUserSearch.trim()) {
+      return users;
+    }
+    
     const query = modalUserSearch.toLowerCase();
-    return users.filter(user => 
+    const filtered = users.filter(user => 
       user.username.toLowerCase().includes(query) ||
       user.email.toLowerCase().includes(query)
     );
+    
+    return filtered;
   }, [modalUserSearch, users]);
   
   const modalFilteredWorkspaces = useMemo(() => {
@@ -1295,13 +1623,32 @@ export default function ChatsScreen() {
     }
   };
 
-  // Sort chat list: ChatGD Assistant (id === -1) always first; all others by last activity (most recent first).
+  // Sort chat list: ChatGD Assistant (id === -1) always first; favorites right after; then all others by last activity (most recent first).
   const sortChatsByLastMessage = (chatsToSort: Chat[]): Chat[] => {
     const validChats = chatsToSort.filter(chat => chat && typeof chat === 'object');
     const chatAssistant = validChats.find(chat => chat.id === -1);
     const otherChats = validChats.filter(chat => chat.id !== -1);
-    const sortedOtherChats = [...otherChats].sort((a, b) => getLastMessageTimestamp(b) - getLastMessageTimestamp(a));
-    return chatAssistant ? [chatAssistant, ...sortedOtherChats] : [DEFAULT_CHAT_ASSISTANT, ...sortedOtherChats];
+    
+    // Separate favorites and non-favorites
+    const favoriteChats = otherChats.filter(chat => favoriteChatIds.has(chat.id));
+    const nonFavoriteChats = otherChats.filter(chat => !favoriteChatIds.has(chat.id));
+    
+    // Sort favorites by last message timestamp
+    const sortedFavorites = [...favoriteChats].sort((a, b) => getLastMessageTimestamp(b) - getLastMessageTimestamp(a));
+    // Sort non-favorites by last message timestamp
+    const sortedNonFavorites = [...nonFavoriteChats].sort((a, b) => getLastMessageTimestamp(b) - getLastMessageTimestamp(a));
+    
+    // Combine: ChatGD Assistant first, then favorites, then others
+    const result: Chat[] = [];
+    if (chatAssistant) {
+      result.push(chatAssistant);
+    } else {
+      result.push(DEFAULT_CHAT_ASSISTANT);
+    }
+    result.push(...sortedFavorites);
+    result.push(...sortedNonFavorites);
+    
+    return result;
   };
 
   const loadChats = async (limit: number = 50, offset: number = 0) => {
@@ -1480,10 +1827,19 @@ export default function ChatsScreen() {
                     const persistentContext = historyData.persistent_context || historyData.persistentContext;
                     const contextBookmarkIds = persistentContext?.context_bookmark_ids || persistentContext?.selected_bookmarks || historyData.selected_bookmarks;
                     if (contextBookmarkIds && contextBookmarkIds.length > 0) {
+                      const bookmarkId = contextBookmarkIds[0];
+                      // Try to find bookmark in loaded bookmarks list first
+                      const bookmarkInList = bookmarks.find(b => b.id === bookmarkId);
+                      if (bookmarkInList) {
+                        return bookmarkInList;
+                      }
+                      // Fallback to basic bookmark object
                       return {
-                        id: contextBookmarkIds[0],
-                        name: String(history.title || 'Bookmark'),
-                        file_count: 0
+                        id: bookmarkId,
+                        name: historyData.selected_bookmark_names?.[0] || historyData.selected_bookmark_name || String(history.title || 'Bookmark'),
+                        description: '',
+                        file_count: 0,
+                        documents: []
                       };
                     }
                     return undefined;
@@ -1504,6 +1860,16 @@ export default function ChatsScreen() {
       // Combine AI chats and user chats, removing duplicates by ID
       const allChatsCombined = [...convertedChats, ...userChats];
       
+      // CRITICAL: Include temporary chats (id -2) from current chats list that have context
+      // These are newly created bookmark/document chats that haven't been saved to backend yet
+      const currentChatsWithContext = chats.filter(chat => 
+        chat.id === -2 && (chat.bookmark_context || chat.document_context || chat.workspace)
+      );
+      if (currentChatsWithContext.length > 0) {
+        console.log(`📋 Including ${currentChatsWithContext.length} temporary chats with context in load`);
+        allChatsCombined.push(...currentChatsWithContext);
+      }
+      
       // CRITICAL: Preserve document_focused type and document_context from existing local state
       // This prevents losing document chat status when backend doesn't return full context
       // Build map from: 1) Persisted AsyncStorage contexts, 2) Current in-memory state
@@ -1511,15 +1877,27 @@ export default function ChatsScreen() {
       
       // First, add persisted contexts from AsyncStorage (survives app restart)
       persistedContexts.forEach((context: any, chatId: number) => {
+        // CRITICAL: Load ALL persisted contexts, even if type isn't set correctly
+        // The type might be wrong but context exists
         if (context.type === 'document_focused' || 
             context.type === 'bookmark_focused' || 
             context.type === 'user_direct' || 
-            context.type === 'workspace') {
+            context.type === 'workspace' ||
+            context.bookmark_context ||
+            context.document_context ||
+            context.workspace) {
+          // Determine correct type based on context
+          const correctType = context.bookmark_context ? 'bookmark_focused' :
+                             context.document_context ? 'document_focused' :
+                             context.workspace ? 'workspace' :
+                             context.type === 'user_direct' ? 'user_direct' :
+                             (context.type as any);
+          
           // Create a minimal Chat object from persisted context
           existingChatsMap.set(chatId, {
             id: chatId,
             title: context.title,
-            type: context.type as any,
+            type: correctType,
             participants: context.participants || [],
             last_message: '',
             updated_at: new Date().toISOString(),
@@ -1528,19 +1906,96 @@ export default function ChatsScreen() {
             bookmark_context: context.bookmark_context,
             workspace: context.workspace
           });
+          
+          console.log(`📖 Loaded persisted context for chat ${chatId}:`, {
+            type: correctType,
+            hasBookmark: !!context.bookmark_context,
+            hasDocument: !!context.document_context,
+            title: context.title
+          });
         }
       });
       
       // Then, add/overwrite with current in-memory state (most recent)
+      // CRITICAL: Include temporary chats (id -2) with context so they appear in the list
+      // ALSO: Include ANY chat that has context, even if type isn't set correctly yet
       chats.forEach(chat => {
         if (chat.type === 'document_focused' || 
             chat.type === 'bookmark_focused' || 
             chat.type === 'user_direct' || 
             chat.type === 'workspace') {
           existingChatsMap.set(chat.id, chat);
+        } else if (chat.id === -2 && (chat.bookmark_context || chat.document_context || chat.workspace)) {
+          // Include temporary chats with context (they'll get real IDs when backend responds)
+          existingChatsMap.set(chat.id, chat);
+        } else if (chat.bookmark_context || chat.document_context || chat.workspace) {
+          // CRITICAL: Include chats that have context even if type isn't set correctly
+          // This catches cases where context exists but type was lost
+          const chatWithCorrectType: Chat = {
+            ...chat,
+            type: (chat.bookmark_context ? 'bookmark_focused' :
+                  chat.document_context ? 'document_focused' :
+                  chat.workspace ? 'workspace' :
+                  chat.type) as 'ai_assistant' | 'user_direct' | 'workspace' | 'document_focused' | 'bookmark_focused'
+          };
+          existingChatsMap.set(chat.id, chatWithCorrectType);
+          console.log(`🔧 Found chat ${chat.id} with context but wrong type, fixing:`, {
+            oldType: chat.type,
+            newType: chatWithCorrectType.type,
+            hasBookmark: !!chat.bookmark_context,
+            bookmarkName: chat.bookmark_context?.name,
+            hasDocument: !!chat.document_context
+          });
+        }
+      });
+      
+      // CRITICAL: Also check AsyncStorage for any chats that might have been saved with real IDs
+      // This handles the case where chat ID changed from -2 to real ID but we're loading before the transfer completed
+      persistedContexts.forEach((context: any, chatId: number) => {
+        // If we have a persisted context but the chat isn't in existingChatsMap yet, add it
+        // This ensures we don't lose context when chat ID changes
+        if (!existingChatsMap.has(chatId) && (context.bookmark_context || context.document_context || context.workspace)) {
+          const correctType = context.bookmark_context ? 'bookmark_focused' :
+                             context.document_context ? 'document_focused' :
+                             context.workspace ? 'workspace' :
+                             (context.type as any);
+          
+          existingChatsMap.set(chatId, {
+            id: chatId,
+            title: context.title,
+            type: correctType,
+            participants: context.participants || [],
+            last_message: '',
+            updated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            document_context: context.document_context,
+            bookmark_context: context.bookmark_context,
+            workspace: context.workspace
+          });
+          
+          console.log(`📖 [LOAD] Found persisted context for chat ${chatId} not in current state:`, {
+            type: correctType,
+            hasBookmark: !!context.bookmark_context,
+            bookmarkName: context.bookmark_context?.name
+          });
+        }
+      });
+      
+      // CRITICAL: Build a map of bookmark contexts by bookmark ID to help match chats
+      // This allows us to match chats even if the chat ID changed
+      const bookmarkContextMap = new Map<number, { chatId: number; context: any }>();
+      persistedContexts.forEach((context: any, chatId: number) => {
+        if (context.bookmark_context?.id) {
+          bookmarkContextMap.set(context.bookmark_context.id, { chatId, context });
+        }
+      });
+      chats.forEach(chat => {
+        if (chat.bookmark_context?.id && !bookmarkContextMap.has(chat.bookmark_context.id)) {
+          bookmarkContextMap.set(chat.bookmark_context.id, { chatId: chat.id, context: { bookmark_context: chat.bookmark_context } });
         }
       });
       console.log('🔒 Preserving', existingChatsMap.size, 'chat contexts (document/bookmark/user/workspace) from persisted + in-memory');
+      console.log('🔍 Bookmark context map has', bookmarkContextMap.size, 'entries');
       
       // Remove duplicates based on chat ID, preserving local document/bookmark context
       const uniqueChatsMap = new Map<number, Chat>();
@@ -1565,20 +2020,166 @@ export default function ChatsScreen() {
             uniqueChatsMap.set(chat.id, {
               ...chat,
               type: localChat.type,
-              title: localChat.title, // Keep original title
-              document_context: localChat.document_context,
-              bookmark_context: localChat.bookmark_context,
-              participants: localChat.participants,
-              workspace: localChat.workspace
+              title: localChat.title || chat.title, // Prefer local title, fallback to backend
+              document_context: localChat.document_context || chat.document_context,
+              bookmark_context: localChat.bookmark_context || chat.bookmark_context,
+              participants: localChat.participants || chat.participants,
+              workspace: localChat.workspace || chat.workspace
             });
           } else {
-            if (chat.id > 0) { // Don't log for default chat (-1)
-              console.log(`📋 No preserved context for chat ${chat.id}, using backend data:`, {
-                type: chat.type,
-                title: chat.title
+            // CRITICAL: Always check persisted contexts and current state for EVERY chat
+            // This ensures we don't lose context even if it's not in existingChatsMap yet
+            let persistedContext = persistedContexts.get(chat.id);
+            let currentStateChat = chats.find(c => c.id === chat.id);
+            
+            // CRITICAL: If we didn't find context for this chat ID, try multiple strategies:
+            // 1. Check if there's a context saved for ID -2 (temporary ID)
+            // 2. Check if backend has bookmark context in persistent_context that we can match
+            // IMPORTANT: Exclude Chat Assistant (ID -1) from context matching
+            if (!persistedContext && !currentStateChat && chat.id > 0 && chat.id !== -1 && !chat.bookmark_context && !chat.document_context) {
+              // Strategy 1: Check for temporary ID -2
+              const tempContext = persistedContexts.get(-2);
+              if (tempContext && (tempContext.bookmark_context || tempContext.document_context)) {
+                console.log(`🔄 [ID MATCH] Chat ${chat.id} might be migrated from chat -2, checking if we should transfer context...`);
+                persistedContext = tempContext;
+                console.log(`✅ [ID MATCH] Using context from ID -2 for chat ${chat.id}`, {
+                  hasBookmark: !!tempContext.bookmark_context,
+                  bookmarkName: tempContext.bookmark_context?.name
+                });
+              } else {
+                // Strategy 2: Check if backend has bookmark context in persistent_context
+                const historyData = chat as any;
+                const backendPersistentContext = historyData.persistent_context || historyData.persistentContext;
+                if (backendPersistentContext?.context_bookmark_ids?.length > 0) {
+                  const bookmarkId = backendPersistentContext.context_bookmark_ids[0];
+                  const matchedContext = bookmarkContextMap.get(bookmarkId);
+                  if (matchedContext) {
+                    console.log(`🔄 [MATCH] Chat ${chat.id} matches bookmark ${bookmarkId} from chat ${matchedContext.chatId}, transferring context`);
+                    persistedContext = matchedContext.context;
+                  }
+                }
+              }
+            }
+            
+            // CRITICAL: Check persisted storage FIRST, then current state, then backend
+            // Backend chat might not have context yet, but we saved it locally
+            // IMPORTANT: Use || operator so we get the FIRST non-null value (persisted > state > backend)
+            // CRITICAL: For Chat Assistant (ID -1), never use context - always clear it
+            const bookmarkContext = chat.id === -1 ? undefined : (persistedContext?.bookmark_context || currentStateChat?.bookmark_context || chat.bookmark_context);
+            const documentContext = chat.id === -1 ? undefined : (persistedContext?.document_context || currentStateChat?.document_context || chat.document_context);
+            const workspaceContext = chat.id === -1 ? undefined : (persistedContext?.workspace || currentStateChat?.workspace || chat.workspace);
+            
+            const hasBookmarkContext = !!bookmarkContext;
+            const hasDocumentContext = !!documentContext;
+            const hasWorkspace = !!workspaceContext;
+            
+            // CRITICAL: If we have context from persisted or state but backend doesn't, log it
+            if ((persistedContext?.bookmark_context || currentStateChat?.bookmark_context) && !chat.bookmark_context) {
+              console.log(`⚠️ [WARNING] Chat ${chat.id} has bookmark context in storage/state but NOT in backend! Preserving it.`, {
+                persistedBookmarkId: persistedContext?.bookmark_context?.id,
+                stateBookmarkId: currentStateChat?.bookmark_context?.id,
+                bookmarkName: persistedContext?.bookmark_context?.name || currentStateChat?.bookmark_context?.name
               });
             }
-            uniqueChatsMap.set(chat.id, chat);
+            
+            // CRITICAL: Exclude Chat Assistant (ID -1) from all context type fixing
+            // Chat Assistant should always stay as 'ai_assistant' type
+            if (chat.id > 0 && chat.id !== -1) { // Don't process default chat (-1)
+              console.log(`📋 Processing chat ${chat.id}:`, {
+                backendType: chat.type,
+                hasBookmarkContext,
+                hasDocumentContext,
+                hasPersistedContext: !!persistedContext,
+                hasCurrentStateChat: !!currentStateChat,
+                persistedBookmarkId: persistedContext?.bookmark_context?.id,
+                stateBookmarkId: currentStateChat?.bookmark_context?.id,
+                backendBookmarkId: chat.bookmark_context?.id
+              });
+              
+              // CRITICAL: If we have bookmark/document context from ANY source, preserve it and fix the type
+              // Priority: persistedContext > currentStateChat > backend chat
+              if (hasBookmarkContext) {
+                const source = persistedContext?.bookmark_context ? 'persisted' : 
+                              currentStateChat?.bookmark_context ? 'state' : 
+                              'backend';
+                console.log(`🔧 [FIX] Setting chat ${chat.id} to bookmark_focused (context from ${source})`);
+                uniqueChatsMap.set(chat.id, {
+                  ...chat,
+                  type: 'bookmark_focused',
+                  bookmark_context: bookmarkContext,
+                  title: persistedContext?.title || currentStateChat?.title || chat.title || (bookmarkContext?.name ? `Chat about ${bookmarkContext.name}` : `Bookmark: ${bookmarkContext?.name || 'Collection'}`)
+                });
+              } else if (hasDocumentContext) {
+                const source = persistedContext?.document_context ? 'persisted' : 
+                              currentStateChat?.document_context ? 'state' : 
+                              'backend';
+                console.log(`🔧 [FIX] Setting chat ${chat.id} to document_focused (context from ${source})`);
+                uniqueChatsMap.set(chat.id, {
+                  ...chat,
+                  type: 'document_focused',
+                  document_context: documentContext,
+                  title: persistedContext?.title || currentStateChat?.title || chat.title || (documentContext?.name ? `Document: ${truncateFilename(documentContext.name)}` : chat.title)
+                });
+              } else if (hasWorkspace) {
+                const source = persistedContext?.workspace ? 'persisted' : 
+                              currentStateChat?.workspace ? 'state' : 
+                              'backend';
+                console.log(`🔧 [FIX] Setting chat ${chat.id} to workspace (context from ${source})`);
+                uniqueChatsMap.set(chat.id, {
+                  ...chat,
+                  type: 'workspace',
+                  workspace: workspaceContext,
+                  title: persistedContext?.title || currentStateChat?.title || chat.title || (workspaceContext?.name ? workspaceContext.name : chat.title)
+                });
+              } else if (chat.type === 'ai_assistant' && (chat.document_context || chat.bookmark_context)) {
+                // Fallback: If backend says 'ai_assistant' but has context, fix it
+                // IMPORTANT: Exclude Chat Assistant (ID -1) - it should always stay ai_assistant
+                if (chat.id === -1) {
+                  // Chat Assistant should never have context - if it does, clear it
+                  console.log(`⚠️ Chat Assistant (ID -1) has context, clearing it to preserve ai_assistant type`);
+                  uniqueChatsMap.set(chat.id, {
+                    ...chat,
+                    document_context: undefined,
+                    bookmark_context: undefined,
+                    workspace: undefined,
+                    type: 'ai_assistant' as const
+                  });
+                } else if (chat.document_context) {
+                  console.log(`🔧 Fixing chat type from ai_assistant to document_focused for chat ${chat.id}`);
+                  uniqueChatsMap.set(chat.id, {
+                    ...chat,
+                    type: 'document_focused',
+                    title: chat.title || `Document: ${truncateFilename(chat.document_context.name)}`
+                  });
+                } else if (chat.bookmark_context) {
+                  console.log(`🔧 Fixing chat type from ai_assistant to bookmark_focused for chat ${chat.id}`);
+                  uniqueChatsMap.set(chat.id, {
+                    ...chat,
+                    type: 'bookmark_focused',
+                    title: chat.title || `Bookmark: ${chat.bookmark_context.name}`
+                  });
+                } else {
+                  uniqueChatsMap.set(chat.id, chat);
+                }
+              } else {
+                uniqueChatsMap.set(chat.id, chat);
+              }
+            } else {
+              // For Chat Assistant (ID -1) or other special IDs, preserve as-is
+              // But ensure Chat Assistant never has context
+              if (chat.id === -1 && (chat.bookmark_context || chat.document_context || chat.workspace)) {
+                console.log(`⚠️ Chat Assistant (ID -1) has context, clearing it to preserve ai_assistant type`);
+                uniqueChatsMap.set(chat.id, {
+                  ...chat,
+                  document_context: undefined,
+                  bookmark_context: undefined,
+                  workspace: undefined,
+                  type: 'ai_assistant'
+                });
+              } else {
+                uniqueChatsMap.set(chat.id, chat);
+              }
+            }
           }
         } else {
           // If duplicate found, keep the one with more recent last message timestamp
@@ -1596,14 +2197,40 @@ export default function ChatsScreen() {
               uniqueChatsMap.set(chat.id, {
                 ...chat,
                 type: localChat.type,
-                title: localChat.title,
-                document_context: localChat.document_context,
-                bookmark_context: localChat.bookmark_context,
-                participants: localChat.participants,
-                workspace: localChat.workspace
+                title: localChat.title || chat.title,
+                document_context: localChat.document_context || chat.document_context,
+                bookmark_context: localChat.bookmark_context || chat.bookmark_context,
+                participants: localChat.participants || chat.participants,
+                workspace: localChat.workspace || chat.workspace
               });
             } else {
-              uniqueChatsMap.set(chat.id, chat);
+              // Check if backend chat type needs fixing
+              // IMPORTANT: Exclude Chat Assistant (ID -1) from type fixing
+              if (chat.id === -1 && (chat.bookmark_context || chat.document_context || chat.workspace)) {
+                // Chat Assistant should never have context - clear it
+                console.log(`⚠️ Chat Assistant (ID -1) has context in duplicate handling, clearing it`);
+                uniqueChatsMap.set(chat.id, {
+                  ...chat,
+                  document_context: undefined,
+                  bookmark_context: undefined,
+                  workspace: undefined,
+                  type: 'ai_assistant'
+                });
+              } else if (chat.type === 'ai_assistant' && chat.document_context && chat.id !== -1) {
+                uniqueChatsMap.set(chat.id, {
+                  ...chat,
+                  type: 'document_focused',
+                  title: chat.title || `Document: ${truncateFilename(chat.document_context.name)}`
+                });
+              } else if (chat.type === 'ai_assistant' && chat.bookmark_context && chat.id !== -1) {
+                uniqueChatsMap.set(chat.id, {
+                  ...chat,
+                  type: 'bookmark_focused',
+                  title: chat.title || `Bookmark: ${chat.bookmark_context.name}`
+                });
+              } else {
+                uniqueChatsMap.set(chat.id, chat);
+              }
             }
           }
         }
@@ -1612,19 +2239,89 @@ export default function ChatsScreen() {
       // Sort all chats by last message timestamp (most recent first), but keep ChatGD Assistant at top
       // Use helper function to ensure dates are converted to user's local timezone
       const allChatsArray = Array.from(uniqueChatsMap.values());
+      
+      // CRITICAL: Ensure temporary chats (id -2) with context are included in the list
+      // These are newly created bookmark/document chats that should appear even before backend saves them
+      const temporaryChatsWithContext = chats.filter(chat => 
+        chat.id === -2 && (chat.bookmark_context || chat.document_context || chat.workspace) &&
+        !allChatsArray.find(c => c.id === -2 && 
+          ((c.bookmark_context?.id === chat.bookmark_context?.id) ||
+           (c.document_context?.id === chat.document_context?.id))
+        )
+      );
+      if (temporaryChatsWithContext.length > 0) {
+        console.log(`📋 Adding ${temporaryChatsWithContext.length} temporary chats with context to list`);
+        allChatsArray.push(...temporaryChatsWithContext);
+      }
+      
       const allChats = sortChatsByLastMessage(allChatsArray);
       
+      // CRITICAL: Final verification - ensure all chats with context have correct type
+      // IMPORTANT: Exclude Chat Assistant (ID -1) from type fixing - it should always be ai_assistant
+      const finalChats = allChats.map(chat => {
+        // Chat Assistant should never have context - if it does, clear it
+        if (chat.id === -1) {
+          if (chat.bookmark_context || chat.document_context || chat.workspace) {
+            console.log(`⚠️ [FINAL FIX] Chat Assistant (ID -1) has context, clearing it to preserve ai_assistant type`);
+            return {
+              ...chat,
+              document_context: undefined,
+              bookmark_context: undefined,
+              workspace: undefined,
+              type: 'ai_assistant' as const
+            };
+          }
+          return chat;
+        }
+        
+        // If chat has bookmark_context but wrong type, fix it
+        if (chat.bookmark_context && chat.type !== 'bookmark_focused') {
+          console.log(`🔧 [FINAL FIX] Chat ${chat.id} has bookmark_context but type is ${chat.type}, fixing to bookmark_focused`);
+          return {
+            ...chat,
+            type: 'bookmark_focused' as const
+          };
+        }
+        // If chat has document_context but wrong type, fix it
+        if (chat.document_context && chat.type !== 'document_focused') {
+          console.log(`🔧 [FINAL FIX] Chat ${chat.id} has document_context but type is ${chat.type}, fixing to document_focused`);
+          return {
+            ...chat,
+            type: 'document_focused' as const
+          };
+        }
+        // If chat has workspace but wrong type, fix it
+        if (chat.workspace && chat.type !== 'workspace') {
+          console.log(`🔧 [FINAL FIX] Chat ${chat.id} has workspace but type is ${chat.type}, fixing to workspace`);
+          return {
+            ...chat,
+            type: 'workspace' as const
+          };
+        }
+        return chat;
+      });
+      
+      // CRITICAL: Log bookmark chats to verify they're being preserved
+      const bookmarkChats = finalChats.filter(c => c.type === 'bookmark_focused' || c.bookmark_context);
       console.log('📱 Loaded chats:', {
-        total: allChats.length,
+        total: finalChats.length,
         aiChats: convertedChats.length,
         userChats: userChats.length,
+        bookmarkChats: bookmarkChats.length,
+        bookmarkChatIds: bookmarkChats.map(c => ({ id: c.id, type: c.type, hasBookmark: !!c.bookmark_context, bookmarkName: c.bookmark_context?.name })),
         defaultChat: DEFAULT_CHAT_ASSISTANT,
-        otherChats: allChats.length - 1, // Excluding ChatGD Assistant
+        otherChats: finalChats.length - 1, // Excluding ChatGD Assistant
       });
-      setChats(allChats);
       
-      // Persist document/bookmark chat contexts to AsyncStorage
-      savePersistedChatContexts(allChats);
+      setChats(finalChats);
+      
+      // CRITICAL: Persist document/bookmark chat contexts to AsyncStorage
+      // This ensures contexts survive app restarts and reloads
+      savePersistedChatContexts(finalChats).then(() => {
+        console.log('✅ Successfully persisted all chat contexts after loadChats');
+      }).catch(error => {
+        console.error('❌ Failed to persist chat contexts after loadChats:', error);
+      });
       
     } catch (error) {
       console.error('Failed to load chats:', error);
@@ -1637,11 +2334,31 @@ export default function ChatsScreen() {
   };
 
   const loadWorkspaces = async () => {
+    // Request deduplication: reuse in-flight request if one exists
+    if (workspaceRequestRef.current) {
+      console.log('🔄 Reusing existing workspace request');
+      try {
+        const response = await workspaceRequestRef.current;
+        if (response && (response as any).success && (response as any).data) {
+          const workspacesData = Array.isArray((response as any).data) 
+            ? (response as any).data 
+            : ((response as any).data.workspaces || []);
+          setWorkspaces(workspacesData);
+        }
+      } catch (error) {
+        // Error already handled by original request
+      }
+      return;
+    }
+
     try {
-      const response = await Promise.race([
-        (api as any).getMobileWorkspaces(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
-      ]);
+      // Create request and store in ref for deduplication
+      workspaceRequestRef.current = (api as any).getMobileWorkspaces();
+      
+      const response = await workspaceRequestRef.current;
+      
+      // Clear ref after request completes
+      workspaceRequestRef.current = null;
       
       if (response && (response as any).success && (response as any).data) {
         // Handle both response structures: data.workspaces or data as array
@@ -1656,12 +2373,19 @@ export default function ChatsScreen() {
         setWorkspaces([]);
       }
     } catch (error: any) {
-      if (error?.message === 'timeout' || error?.message?.includes('timeout')) {
-        console.warn('⚠️ Workspace loading timed out - workspace chats unavailable');
+      // Clear ref on error
+      workspaceRequestRef.current = null;
+      
+      // Silently handle timeout - this is expected if backend is slow/unavailable
+      // Timeout errors are already logged at API level, no need to log again here
+      if (error?.message?.includes('timeout') || error?.message?.includes('exceeded')) {
+        // Don't log timeout errors - they're handled gracefully
+        setWorkspaces([]);
       } else {
+        // Only log unexpected errors
         console.warn('⚠️ Failed to load workspaces:', error?.message);
+        setWorkspaces([]);
       }
-      setWorkspaces([]);
     }
   };
 
@@ -1701,62 +2425,164 @@ export default function ChatsScreen() {
 
   const loadUsers = async () => {
     try {
-      console.log('👥 Loading workspace users for direct messages and @ mentions...');
+      setUsersLoading(true);
+      console.log('👥 Loading all users from all workspaces for direct messages and @ mentions...');
       
-      // Use workspace users endpoint - gets all users from workspaces you have access to
-      const response = await Promise.race([
-        (api as any).getWorkspaceUsers(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
-      ]);
+      // Strategy 1: Try the workspace-users endpoint first (should get all users from all workspaces)
+      let usersList: any[] = [];
+      let usersLoaded = false;
       
-      // Handle timeout or failed response gracefully
-      if (!response || (response as any).success === false) {
-        console.warn('⚠️ Workspace users API unavailable - trying fallback endpoint');
+      try {
+        // Timeout is now handled in the API method itself (10s)
+        const response = await (api as any).getWorkspaceUsers();
         
-        // Fallback: Try the search users endpoint
+        console.log('👥 Workspace users API response:', { 
+          success: (response as any)?.success, 
+          hasUsers: !!(response as any)?.users,
+          hasData: !!(response as any)?.data,
+          usersCount: (response as any)?.users?.length || (response as any)?.data?.length || 0
+        });
+        
+        if (response && (response as any).success !== false) {
+          // Handle different response formats
+          if ((response as any)?.users) {
+            usersList = (response as any).users;
+          } else if ((response as any)?.data) {
+            usersList = Array.isArray((response as any).data) ? (response as any).data : [];
+          } else if (Array.isArray(response)) {
+            usersList = response as any[];
+          }
+          
+          if (usersList.length > 0) {
+            usersLoaded = true;
+            console.log(`✅ Loaded ${usersList.length} users from workspace-users endpoint`);
+          }
+        }
+      } catch (error: any) {
+        console.warn('⚠️ Workspace users endpoint failed:', error?.message);
+      }
+      
+      // Strategy 2: If primary endpoint failed or returned empty, fetch from each workspace
+      if (!usersLoaded || usersList.length === 0) {
+        console.log('🔄 Fetching users from individual workspaces...');
+        
+        try {
+          // REUSE existing workspaces state instead of calling API again
+          // This prevents duplicate API calls and timeouts
+          let workspacesData: any[] = [];
+          
+          if (workspaces.length > 0) {
+            // Use existing workspaces from state
+            workspacesData = workspaces;
+            console.log(`📋 Using ${workspacesData.length} workspaces from state - fetching members from each...`);
+          } else {
+            // Only call API if workspaces haven't been loaded yet
+            console.log('📋 Workspaces not in state, loading from API...');
+            const workspacesResponse = await (api as any).getMobileWorkspaces();
+            
+            if (workspacesResponse && (workspacesResponse as any).success && (workspacesResponse as any).data) {
+              workspacesData = Array.isArray((workspacesResponse as any).data) 
+                ? (workspacesResponse as any).data 
+                : ((workspacesResponse as any).data.workspaces || []);
+              console.log(`📋 Found ${workspacesData.length} workspaces from API - fetching members from each...`);
+            }
+          }
+          
+          if (workspacesData.length > 0) {
+            
+            // Fetch members from each workspace in parallel
+            const memberPromises = workspacesData.map(async (workspace: any) => {
+              try {
+                const membersResponse = await Promise.race([
+                  (api as any).getWorkspaceMembers(workspace.id),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+                ]);
+                
+                if (membersResponse && (membersResponse as any).success && (membersResponse as any).data) {
+                  const membersData = (membersResponse as any).data.members || (membersResponse as any).data || [];
+                  return Array.isArray(membersData) ? membersData : [];
+                }
+                return [];
+              } catch (error: any) {
+                console.warn(`⚠️ Failed to load members from workspace ${workspace.id}:`, error?.message);
+                return [];
+              }
+            });
+            
+            const allMembersArrays = await Promise.all(memberPromises);
+            
+            // Flatten and deduplicate users by ID
+            const allMembers = allMembersArrays.flat();
+            const uniqueUsersMap = new Map<number, any>();
+            
+            allMembers.forEach((member: any) => {
+              // Handle different member formats (user object or direct user data)
+              const user = member.user || member;
+              if (user && user.id) {
+                if (!uniqueUsersMap.has(user.id)) {
+                  uniqueUsersMap.set(user.id, {
+                    id: user.id,
+                    username: user.username || user.name || user.email?.split('@')[0] || 'Unknown',
+                    email: user.email || '',
+                    ...user
+                  });
+                }
+              }
+            });
+            
+            usersList = Array.from(uniqueUsersMap.values());
+            console.log(`✅ Loaded ${usersList.length} unique users from ${workspacesData.length} workspaces`);
+            usersLoaded = true;
+          } else {
+            console.log('⚠️ No workspaces available to fetch users from');
+          }
+        } catch (error: any) {
+          console.warn('⚠️ Failed to load users from workspaces:', error?.message);
+        }
+      }
+      
+      // Strategy 3: Final fallback - try searchUsersForChat with empty query
+      if (!usersLoaded || usersList.length === 0) {
+        console.log('🔄 Trying searchUsersForChat as final fallback...');
         try {
           const fallbackResponse = await Promise.race([
             api.searchUsersForChat(''),
             new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
           ]);
           
-          if (fallbackResponse && (fallbackResponse as any).users) {
-            setUsers((fallbackResponse as any).users);
-            console.log(`✅ Loaded ${(fallbackResponse as any).users.length} users from fallback`);
-            return;
+          console.log('👥 Fallback search users response:', { 
+            success: (fallbackResponse as any)?.success,
+            hasUsers: !!(fallbackResponse as any)?.users,
+            hasData: !!(fallbackResponse as any)?.data,
+            usersCount: (fallbackResponse as any)?.users?.length || (fallbackResponse as any)?.data?.length || 0
+          });
+          
+          // Handle different response formats from searchUsersForChat
+          let fallbackUsers: any[] = [];
+          if ((fallbackResponse as any)?.users) {
+            fallbackUsers = (fallbackResponse as any).users;
+          } else if ((fallbackResponse as any)?.data) {
+            fallbackUsers = Array.isArray((fallbackResponse as any).data) ? (fallbackResponse as any).data : [];
+          } else if (Array.isArray(fallbackResponse)) {
+            fallbackUsers = fallbackResponse as any[];
           }
-        } catch (fallbackError) {
-          console.warn('⚠️ Fallback also failed - user chat features limited');
+          
+          if (fallbackUsers.length > 0) {
+            usersList = fallbackUsers;
+            console.log(`✅ Loaded ${fallbackUsers.length} users from searchUsersForChat fallback`);
+            usersLoaded = true;
+          }
+        } catch (fallbackError: any) {
+          console.warn('⚠️ Final fallback also failed:', fallbackError?.message);
         }
-        
-        setUsers([]);
-        return;
       }
       
-      console.log('👥 Workspace users API response:', { 
-        success: (response as any)?.success, 
-        hasUsers: !!(response as any)?.users,
-        hasData: !!(response as any)?.data,
-        usersCount: (response as any)?.users?.length || (response as any)?.data?.length || 0
-      });
-      
-      // Handle different response formats
-      let usersList: any[] = [];
-      if ((response as any)?.users) {
-        usersList = (response as any).users;
-      } else if ((response as any)?.data) {
-        // Handle case where users are in data array
-        usersList = Array.isArray((response as any).data) ? (response as any).data : [];
-      } else if (Array.isArray(response)) {
-        // Handle case where response is directly an array
-        usersList = response as any[];
-      }
-      
+      // Set the final users list
       if (usersList.length > 0) {
         setUsers(usersList);
-        console.log(`✅ Loaded ${usersList.length} workspace users`);
+        console.log(`✅ Successfully loaded ${usersList.length} total users for direct messaging`);
       } else {
-        console.warn('⚠️ No workspace users found - you may not be part of any workspaces yet');
+        console.warn('⚠️ No users found - you may not be part of any workspaces yet');
         setUsers([]);
       }
     } catch (error: any) {
@@ -1767,6 +2593,8 @@ export default function ChatsScreen() {
         console.warn('⚠️ Failed to load workspace users:', error?.message);
       }
       setUsers([]);
+    } finally {
+      setUsersLoading(false);
     }
   };
 
@@ -1805,9 +2633,48 @@ export default function ChatsScreen() {
 
   const loadMessages = async (chatId: number, forceReload: boolean = false) => {
     // CRITICAL: Prevent unnecessary reloads - only load if switching to a different chat or force reload is requested
+    // ALSO: Don't reload if we're currently streaming or just finished streaming (preserve streamed content)
+    // IMPORTANT: Always reload if messages.length === 0 (user navigated back to conversation)
+    // ALSO: Don't reload if a message was just sent (within last 3 seconds) to prevent duplicates
+    const timeSinceLastMessage = Date.now() - lastMessageSentTimeRef.current;
+    const shouldSkipReloadDueToRecentSend = timeSinceLastMessage < 3000;
+    
+    const isCurrentlyStreaming = isStreamingRef.current || isStreamCompleteRef.current;
     if (!forceReload && loadedChatIdRef.current === chatId && messages.length > 0) {
+      if (isCurrentlyStreaming) {
+        console.log(`⏭️ [loadMessages] Skipping reload - currently streaming or just finished streaming for chat ${chatId}`);
+        return;
+      }
+      if (shouldSkipReloadDueToRecentSend) {
+        console.log(`⏭️ [loadMessages] Skipping reload - message was just sent (within 3 seconds) for chat ${chatId}`);
+        return;
+      }
       console.log(`⏭️ [loadMessages] Skipping reload - messages already loaded for chat ${chatId}`);
       return;
+    }
+    
+    // CRITICAL: If messages are empty but we think this chat is loaded, force reload
+    // This handles the case when user navigates away and back - messages were cleared but loadedChatIdRef might still match
+    // BUT: Don't force reload if a message was just sent (to prevent duplicates)
+    if (!forceReload && loadedChatIdRef.current === chatId && messages.length === 0) {
+      if (shouldSkipReloadDueToRecentSend) {
+        console.log(`⏭️ [loadMessages] Messages empty but message just sent - skipping reload to prevent duplicates`);
+        return;
+      }
+      console.log(`🔄 [loadMessages] Messages empty for chat ${chatId} - forcing reload`);
+      forceReload = true;
+    }
+    
+    // If we're streaming and force reload is requested, wait a bit for streaming to complete
+    if (forceReload && isCurrentlyStreaming) {
+      console.log(`⏳ [loadMessages] Streaming in progress, waiting before reload...`);
+      // Wait for streaming to complete (max 5 seconds)
+      let waitCount = 0;
+      while ((isStreamingRef.current || isStreamCompleteRef.current) && waitCount < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        waitCount++;
+      }
+      console.log(`✅ [loadMessages] Streaming completed, proceeding with reload`);
     }
     
     setMessagesLoading(true);
@@ -1876,11 +2743,14 @@ export default function ChatsScreen() {
             const response = await api.getChatMessages(chatId);
             if (response.success && (response as any).messages) {
               // Web chat.tsx returns: { success: true, messages: ChatMessage[] }
+              // Handle both formats: { id: ... } or { data: { id: ... } }
+              // Use ref to ensure we have latest value
+              const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
               const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => ({
                 id: msg.id,
                 content: msg.content || '',
                 sender: msg.sender || null,
-                is_own_message: msg.sender_id === userProfile?.id,
+                is_own_message: !!(userId && msg.sender_id && (msg.sender_id === userId || String(msg.sender_id) === String(userId))),
                 created_at: msg.created_at || new Date().toISOString(),
                 document_context: msg.metadata?.attachments?.[0] ? {
                   id: msg.metadata.attachments[0].file_id,
@@ -1891,7 +2761,84 @@ export default function ChatsScreen() {
               
               // Deduplicate messages before setting to prevent duplicate key errors
               const deduplicatedMessages = deduplicateMessages(convertedMessages);
-              setMessages(deduplicatedMessages);
+              
+              // CRITICAL: If streaming is active or recently completed, DON'T merge - let streaming updates handle the UI
+              // BUT: If messages are empty, we MUST load them (user navigated back to conversation)
+              const isCurrentlyStreaming = isStreamingRef.current || isStreamCompleteRef.current;
+              const recentlyCompleted = Date.now() - lastStreamCompleteTimeRef.current < 10000;
+              const messagesAreEmpty = messages.length === 0;
+              
+              // CRITICAL: When switching chats or force reloading, REPLACE messages (don't merge)
+              const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatId;
+              const shouldReplace = forceReload || isSwitchingChats || messagesAreEmpty;
+              
+              if ((isCurrentlyStreaming || recentlyCompleted) && !messagesAreEmpty && !shouldReplace) {
+                console.log(`⏸️ [loadMessages] Streaming active or recently completed - skipping message update to preserve streamed content`);
+                loadedChatIdRef.current = chatId;
+                return;
+              }
+              
+              // If messages are empty, always load them (user navigated back)
+              if (messagesAreEmpty) {
+                console.log(`🔄 [loadMessages] Messages empty - loading messages for chat ${chatId} (streaming check bypassed)`);
+              }
+              
+              if (shouldReplace) {
+                // Replace messages completely - this is a different chat or force reload
+                // BUT: If messages were just sent, merge instead of replace to preserve optimistic updates
+                const timeSinceLastMessage = Date.now() - lastMessageSentTimeRef.current;
+                const shouldMergeInstead = timeSinceLastMessage < 3000 && messages.length > 0;
+                
+                if (shouldMergeInstead) {
+                  console.log(`🔄 [loadMessages] Merging instead of replacing (message just sent) for chat ${chatId}`);
+                  setMessages(prev => {
+                    const mergedMessages = [...prev];
+                    const existingIds = new Set(prev.map(m => m.id));
+                    deduplicatedMessages.forEach(backendMsg => {
+                      if (!existingIds.has(backendMsg.id)) {
+                        mergedMessages.push(backendMsg);
+                      }
+                    });
+                    return deduplicatedMessages.length > mergedMessages.length ? deduplicatedMessages : mergedMessages;
+                  });
+                } else {
+                  console.log(`🔄 [loadMessages] Replacing messages for chat ${chatId} (forceReload: ${forceReload}, switching: ${isSwitchingChats}, empty: ${messagesAreEmpty})`);
+                  setMessages(deduplicatedMessages);
+                }
+              } else {
+                // Same chat, merge messages (for updates while viewing the same chat)
+                console.log(`🔄 [loadMessages] Merging messages for chat ${chatId} (same chat, incremental update)`);
+                setMessages(prev => {
+                  const mergedMessages = [...prev];
+                  const existingIds = new Set(prev.map(m => m.id));
+                  deduplicatedMessages.forEach(backendMsg => {
+                    if (!existingIds.has(backendMsg.id)) {
+                      mergedMessages.push(backendMsg);
+                    } else {
+                      const existingIndex = mergedMessages.findIndex(m => m.id === backendMsg.id);
+                      if (existingIndex >= 0) {
+                        const existingMsg = mergedMessages[existingIndex];
+                        const isRecentlyStreamed = lastStreamedMessageIndexRef.current === existingIndex && 
+                                                 Date.now() - lastStreamCompleteTimeRef.current < 10000;
+                        const backendIsEmpty = !backendMsg.content || backendMsg.content.trim().length === 0;
+                        const existingIsLonger = existingMsg.content.length > backendMsg.content.length;
+                        
+                        const contentToUse = (isRecentlyStreamed || backendIsEmpty || existingIsLonger)
+                          ? existingMsg.content 
+                          : backendMsg.content;
+                        
+                        mergedMessages[existingIndex] = { ...backendMsg, content: contentToUse };
+                      }
+                    }
+                  });
+                  mergedMessages.sort((a, b) => {
+                    const timeA = new Date(a.created_at).getTime();
+                    const timeB = new Date(b.created_at).getTime();
+                    return timeA - timeB;
+                  });
+                  return mergedMessages;
+                });
+              }
               loadedChatIdRef.current = chatId; // Track that we've loaded this chat
             } else {
               setMessages([]);
@@ -1908,7 +2855,13 @@ export default function ChatsScreen() {
                 const { fetchChatConversation } = useChatStore.getState();
                 await fetchChatConversation(chatId);
                 const { currentHistory: fallbackHistory } = useChatStore.getState();
-                if (fallbackHistory && fallbackHistory.messages.length > 0) {
+                
+                // CRITICAL: Verify that fallbackHistory matches the chatId we're loading
+                const fallbackHistoryId = fallbackHistory ? (typeof fallbackHistory.id === 'string' ? parseInt(String(fallbackHistory.id), 10) : Number(fallbackHistory.id)) : null;
+                const fallbackTargetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+                const fallbackHistoryMatches = fallbackHistoryId !== null && !isNaN(fallbackHistoryId) && !isNaN(fallbackTargetId) && fallbackHistoryId === fallbackTargetId;
+                
+                if (fallbackHistory && fallbackHistory.messages.length > 0 && fallbackHistoryMatches) {
                   const convertedMessages: ChatMessage[] = fallbackHistory.messages.map((msg, index) => {
                     const backendMsg = msg as any;
                     let timestamp = backendMsg.created_at || backendMsg.timestamp;
@@ -1925,7 +2878,60 @@ export default function ChatsScreen() {
                   });
                   // Deduplicate messages before setting to prevent duplicate key errors
                   const deduplicatedMessages = deduplicateMessages(convertedMessages);
-                  setMessages(deduplicatedMessages);
+                  
+                  // CRITICAL: If streaming is active or recently completed, DON'T merge - let streaming updates handle the UI
+                  // BUT: If messages are empty, we MUST load them (user navigated back to conversation)
+                  const isCurrentlyStreaming = isStreamingRef.current || isStreamCompleteRef.current;
+                  const recentlyCompleted = Date.now() - lastStreamCompleteTimeRef.current < 10000;
+                  const messagesAreEmpty = messages.length === 0;
+                  
+                  // CRITICAL: When switching chats or force reloading, REPLACE messages (don't merge)
+                  const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatId;
+                  const shouldReplace = forceReload || isSwitchingChats || messagesAreEmpty;
+                  
+                  if ((isCurrentlyStreaming || recentlyCompleted) && !messagesAreEmpty && !shouldReplace) {
+                    console.log(`⏸️ [loadMessages] Streaming active or recently completed - skipping message update to preserve streamed content`);
+                    loadedChatIdRef.current = chatId;
+                    return;
+                  }
+                  
+                  // If messages are empty, always load them (user navigated back)
+                  if (messagesAreEmpty) {
+                    console.log(`🔄 [loadMessages] Messages empty - loading messages for chat ${chatId} (streaming check bypassed)`);
+                  }
+                  
+                  if (shouldReplace) {
+                    // Replace messages completely - this is a different chat or force reload
+                    console.log(`🔄 [loadMessages] Replacing messages for chat ${chatId} (forceReload: ${forceReload}, switching: ${isSwitchingChats}, empty: ${messagesAreEmpty})`);
+                    setMessages(deduplicatedMessages);
+                  } else {
+                    // Same chat, merge messages (for updates while viewing the same chat)
+                    console.log(`🔄 [loadMessages] Merging messages for chat ${chatId} (same chat, incremental update)`);
+                    setMessages(prev => {
+                      const mergedMessages = [...prev];
+                      const existingIds = new Set(prev.map(m => m.id));
+                      deduplicatedMessages.forEach(backendMsg => {
+                        if (!existingIds.has(backendMsg.id)) {
+                          mergedMessages.push(backendMsg);
+                        } else {
+                          const existingIndex = mergedMessages.findIndex(m => m.id === backendMsg.id);
+                          if (existingIndex >= 0) {
+                            const existingMsg = mergedMessages[existingIndex];
+                            const contentToUse = existingMsg.content.length > backendMsg.content.length 
+                              ? existingMsg.content 
+                              : backendMsg.content;
+                            mergedMessages[existingIndex] = { ...backendMsg, content: contentToUse };
+                          }
+                        }
+                      });
+                      mergedMessages.sort((a, b) => {
+                        const timeA = new Date(a.created_at).getTime();
+                        const timeB = new Date(b.created_at).getTime();
+                        return timeA - timeB;
+                      });
+                      return mergedMessages;
+                    });
+                  }
                   loadedChatIdRef.current = chatId; // Track that we've loaded this chat
                 } else {
                   setMessages([]);
@@ -1965,9 +2971,15 @@ export default function ChatsScreen() {
       
       // Get the current history from the store
       const { currentHistory: storeHistory } = useChatStore.getState();
-      console.log('📋 Current history from store:', storeHistory);
+      console.log('📋 Current history from store:', storeHistory, 'for chatId:', chatId);
       
-      if (storeHistory && storeHistory.messages.length > 0) {
+      // CRITICAL: Verify that currentHistory matches the chatId we're loading
+      // This prevents showing messages from a different chat
+      const historyId = storeHistory ? (typeof storeHistory.id === 'string' ? parseInt(String(storeHistory.id), 10) : Number(storeHistory.id)) : null;
+      const targetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+      const historyMatches = historyId !== null && !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
+      
+      if (storeHistory && storeHistory.messages.length > 0 && historyMatches) {
         // Convert chat store messages to the expected format
         const convertedMessages: ChatMessage[] = storeHistory.messages.map((msg, index) => {
           // Use actual message timestamp from backend - the backend provides 'created_at' field
@@ -2001,9 +3013,89 @@ export default function ChatsScreen() {
         
         // Deduplicate messages before setting to prevent duplicate key errors
         const deduplicatedMessages = deduplicateMessages(convertedMessages);
-        setMessages(deduplicatedMessages);
+        
+        // CRITICAL: If streaming is active or recently completed, DON'T merge - let streaming updates handle the UI
+        // Only merge if streaming is NOT active to avoid overwriting streamed content
+        // BUT: If messages are empty, we MUST load them (user navigated back to conversation)
+        const isCurrentlyStreaming = isStreamingRef.current || isStreamCompleteRef.current;
+        const recentlyCompleted = Date.now() - lastStreamCompleteTimeRef.current < 10000; // Within 10 seconds of completion
+        const messagesAreEmpty = messages.length === 0;
+        
+        if ((isCurrentlyStreaming || recentlyCompleted) && !messagesAreEmpty) {
+          console.log(`⏸️ [loadMessages] Streaming active or recently completed - skipping message update to preserve streamed content`);
+          // Don't update messages while streaming or right after - streaming interval will handle updates
+          loadedChatIdRef.current = chatId; // Still track that we've loaded this chat
+          return;
+        }
+        
+        // If messages are empty, always load them (user navigated back)
+        if (messagesAreEmpty) {
+          console.log(`🔄 [loadMessages] Messages empty - loading messages for chat ${chatId} (streaming check bypassed)`);
+        }
+        
+        // CRITICAL: When switching chats or force reloading, REPLACE messages (don't merge)
+        // This prevents messages from one chat appearing in another
+        const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatId;
+        const shouldReplace = forceReload || isSwitchingChats || messages.length === 0;
+        
+        if (shouldReplace) {
+          // Replace messages completely - this is a different chat or force reload
+          console.log(`🔄 [loadMessages] Replacing messages for chat ${chatId} (forceReload: ${forceReload}, switching: ${isSwitchingChats}, empty: ${messages.length === 0})`);
+          setMessages(deduplicatedMessages);
+        } else {
+          // Same chat, merge messages (for updates while viewing the same chat)
+          console.log(`🔄 [loadMessages] Merging messages for chat ${chatId} (same chat, incremental update)`);
+          setMessages(prev => {
+            // Merge: keep existing messages, add backend messages that aren't already present
+            const mergedMessages = [...prev];
+            const existingIds = new Set(prev.map(m => m.id));
+            
+            // Add backend messages that aren't already in the list
+            deduplicatedMessages.forEach(backendMsg => {
+              if (!existingIds.has(backendMsg.id)) {
+                mergedMessages.push(backendMsg);
+              } else {
+                // Update existing message with backend data (but preserve content if it's longer - might be streamed)
+                const existingIndex = mergedMessages.findIndex(m => m.id === backendMsg.id);
+                if (existingIndex >= 0) {
+                  const existingMsg = mergedMessages[existingIndex];
+                  // CRITICAL: Preserve existing content if:
+                  // 1. It's longer than backend content (likely streamed)
+                  // 2. Backend content is empty or very short (backend hasn't saved yet)
+                  // 3. This is the recently streamed message
+                  const isRecentlyStreamed = lastStreamedMessageIndexRef.current === existingIndex && 
+                                           Date.now() - lastStreamCompleteTimeRef.current < 10000;
+                  const backendIsEmpty = !backendMsg.content || backendMsg.content.trim().length === 0;
+                  const existingIsLonger = existingMsg.content.length > backendMsg.content.length;
+                  
+                  const contentToUse = (isRecentlyStreamed || backendIsEmpty || existingIsLonger)
+                    ? existingMsg.content 
+                    : backendMsg.content;
+                  
+                  mergedMessages[existingIndex] = {
+                    ...backendMsg,
+                    content: contentToUse
+                  };
+                }
+              }
+            });
+            
+            // Sort by created_at to maintain order
+            mergedMessages.sort((a, b) => {
+              const timeA = new Date(a.created_at).getTime();
+              const timeB = new Date(b.created_at).getTime();
+              return timeA - timeB;
+            });
+            
+            return mergedMessages;
+          });
+        }
         loadedChatIdRef.current = chatId; // Track that we've loaded this chat
       } else {
+        // History doesn't match chatId or is empty - clear messages to prevent showing wrong chat's messages
+        if (!historyMatches) {
+          console.warn(`⚠️ [loadMessages] History ID (${historyId}) doesn't match chatId (${targetId}) - clearing messages to prevent cross-chat contamination`);
+        }
         // For empty chats, don't show any welcome message - just show empty chat
         setMessages([]);
         loadedChatIdRef.current = chatId; // Track even empty chats to prevent reloads
@@ -2038,10 +3130,23 @@ export default function ChatsScreen() {
   };
 
   // Helper function to start/continue character streaming
-  const startOrContinueStreaming = (assistantMsgIndex: number) => {
-    console.log('🎬 startOrContinueStreaming called, isStreaming:', isStreamingRef.current, 'contentBuffer length:', contentBufferRef.current.length, 'displayedChars:', displayedCharsRef.current, 'isFakeStreaming:', isFakeStreamingRef.current);
+  const startOrContinueStreaming = (assistantMsgIndex: number, isTransition: boolean = false) => {
+    console.log('🎬 startOrContinueStreaming called, isStreaming:', isStreamingRef.current, 'contentBuffer length:', contentBufferRef.current.length, 'displayedChars:', displayedCharsRef.current, 'isFakeStreaming:', isFakeStreamingRef.current, 'isTransition:', isTransition);
     
-    // If already streaming with an interval, clear it first to restart
+    // CRITICAL: During transitions (preview→refinement, fake→preview), don't clear interval
+    // Just update the buffer and let the existing interval seamlessly continue
+    // This prevents idle gaps on screen
+    if (isTransition && streamingIntervalRef.current) {
+      console.log('🔄 Transition detected - keeping existing interval running, just updating buffer');
+      // Interval is already running, it will automatically pick up the new buffer content
+      // Just ensure displayedChars is reset if buffer was replaced
+      if (displayedCharsRef.current > contentBufferRef.current.length) {
+        displayedCharsRef.current = 0; // Reset to start streaming new content
+      }
+      return; // Don't restart interval, let it continue
+    }
+    
+    // If already streaming with an interval and NOT a transition, clear it first to restart
     if (streamingIntervalRef.current) {
       clearInterval(streamingIntervalRef.current);
       streamingIntervalRef.current = null;
@@ -2060,8 +3165,16 @@ export default function ChatsScreen() {
       displayedCharsRef.current = Math.min(displayedCharsRef.current, contentBufferRef.current.length);
     }
     
-    // Don't start if we've already displayed all content (unless it's fake streaming that needs to continue)
+    // CRITICAL: When refinement starts, displayedChars might be 0 while buffer has content
+    // Always start streaming if buffer has content, even if displayedChars is 0
+    // This ensures refinement content starts displaying immediately
     if (displayedCharsRef.current >= contentBufferRef.current.length && !isFakeStreamingRef.current) {
+      // All current content is displayed, but if we're in refinement phase and buffer might grow, keep interval running
+      if (!isPreviewPhaseRef.current && !isStreamCompleteRef.current) {
+        // Refinement phase - keep interval running to wait for more chunks
+        console.log('⏸️ All current refinement content displayed, waiting for more chunks...');
+        return;
+      }
       console.log('⏸️ All content already displayed, skipping');
       return;
     }
@@ -2070,9 +3183,29 @@ export default function ChatsScreen() {
     isStreamingRef.current = true;
     
     streamingIntervalRef.current = setInterval(() => {
+      // CRITICAL: Stop fake streaming only when enough preview/refinement content has displayed
+      // Wait until at least 30 characters are visible (or all content if buffer is shorter)
+      // This ensures smooth transition without gaps - fake streaming continues until preview is clearly visible
+      const MIN_CHARS_BEFORE_STOPPING_FAKE_STREAMING = 30;
+      if (isFakeStreamingRef.current && contentBufferRef.current.length > 0) {
+        const hasEnoughChars = displayedCharsRef.current >= MIN_CHARS_BEFORE_STOPPING_FAKE_STREAMING;
+        const allContentDisplayed = displayedCharsRef.current >= contentBufferRef.current.length;
+        // Stop fake streaming when we have enough chars visible OR all content is displayed (whichever comes first)
+        if (hasEnoughChars || allContentDisplayed) {
+          console.log('🔄 Disabling fake streaming - real content is now displaying (', displayedCharsRef.current, '/', contentBufferRef.current.length, 'chars visible)');
+          isFakeStreamingRef.current = false;
+        }
+      }
+      
       // Check if we have more content to display
       if (displayedCharsRef.current >= contentBufferRef.current.length) {
         // All current content is displayed
+        if (isStreamCompleteRef.current) {
+          // Stream is complete and all content is displayed - stop streaming
+          console.log('✅ All content displayed and stream complete - stopping streaming interval');
+          stopStreaming(assistantMsgIndex, true);
+          return;
+        }
         // Keep interval running to wait for more chunks (they might arrive)
         return;
       }
@@ -2120,20 +3253,39 @@ export default function ChatsScreen() {
     }
     isStreamingRef.current = false;
     
+    // Keep isStreamCompleteRef set for a bit longer to prevent loadMessages from overwriting streamed content
+    // Reset after a delay to allow any pending loadMessages calls to detect it
     if (isFinal) {
-      console.log(`✅ Streaming complete - displayed all ${displayedCharsRef.current} characters`);
-      // Final update: never clear already-shown content (fix mobile response clearing)
+      lastStreamCompleteTimeRef.current = Date.now();
+      lastStreamedMessageIndexRef.current = assistantMsgIndex;
+      setTimeout(() => {
+        isStreamCompleteRef.current = false; // Reset for next stream after delay
+      }, 10000); // 10 second delay to protect streamed content (backend needs time to save)
+    } else {
+      isStreamCompleteRef.current = false; // Reset immediately if not final
+    }
+    
+    if (isFinal) {
+      console.log(`✅ Streaming complete - displayed ${displayedCharsRef.current}/${contentBufferRef.current.length} characters`);
+      // Final update: always use full content buffer, never clear already-shown content (fix mobile response clearing)
       const finalContent = (contentBufferRef.current && contentBufferRef.current.length > 0)
         ? contentBufferRef.current
         : '';
+      
+      // Ensure displayedChars matches buffer length for final update
+      displayedCharsRef.current = finalContent.length;
+      
+      console.log(`✅ Finalizing message with content length: ${finalContent.length}`);
       setMessages(prev => {
         const newMessages = [...prev];
+        // Always use the full content buffer, never clear it
         const keepContent = finalContent || newMessages[assistantMsgIndex]?.content || '';
         if (newMessages[assistantMsgIndex]) {
           newMessages[assistantMsgIndex] = {
             ...newMessages[assistantMsgIndex],
             content: keepContent
           };
+          console.log(`✅ Updated message ${assistantMsgIndex} with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
         } else {
           const assistantMessage: ChatMessage = {
             id: generateUniqueMessageId(),
@@ -2143,6 +3295,7 @@ export default function ChatsScreen() {
             created_at: new Date().toISOString()
           };
           newMessages.push(assistantMessage);
+          console.log(`✅ Created new assistant message with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
         }
         return newMessages;
       });
@@ -2207,7 +3360,10 @@ export default function ChatsScreen() {
       displayedCharsRef.current = 0;
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = false;
+      isStreamCompleteRef.current = false;
       isFakeStreamingRef.current = false;
+      lastStreamedMessageIndexRef.current = null;
+      lastStreamCompleteTimeRef.current = 0;
 
       // For AI assistant chats, use streaming
       if (selectedChat.type === 'ai_assistant' || selectedChat.type === 'document_focused' || selectedChat.type === 'bookmark_focused') {
@@ -2219,6 +3375,9 @@ export default function ChatsScreen() {
         isPreviewPhaseRef.current = true;
         isFakeStreamingRef.current = true; // Enable fake streaming display (ProcessingMessageDisplay)
         isStreamingRef.current = false;
+        isStreamCompleteRef.current = false;
+        lastStreamedMessageIndexRef.current = null;
+        lastStreamCompleteTimeRef.current = 0;
         
          // Create placeholder assistant message - fake streaming from file will populate it
           const placeholderMessage: ChatMessage = {
@@ -2231,10 +3390,17 @@ export default function ChatsScreen() {
         setMessages(prev => {
           assistantMessageIndex = prev.length; // Update to correct index after user message is added
           console.log('📝 Created placeholder message at index', assistantMessageIndex, 'fake streaming from file will handle display');
+          
+          // CRITICAL: Set streamingMessageIndex INSIDE setMessages callback AND update ref immediately
+          // This ensures ProcessingMessageDisplay can immediately show fake streaming
+          streamingMessageIndexRef.current = assistantMessageIndex; // Set ref immediately for synchronous access
+          setStreamingMessageIndex(assistantMessageIndex); // Set state for re-render
+          console.log('🎬 Started fake streaming for message index:', assistantMessageIndex, 'isFakeStreaming:', isFakeStreamingRef.current, 'sendingMessage:', true);
+          
           return [...prev, placeholderMessage];
         });
         
-        // Don't start streaming here - fake streaming from file is already running
+        // Fake streaming is now active - ProcessingMessageDisplay will show until preview arrives
         // Send the raw query as-is, without adding Document:/Question:/Context: prefixes
         // The backend will handle context via document_ids in streamFilters
         const chatContext = userMessage.content;
@@ -2386,8 +3552,9 @@ export default function ChatsScreen() {
           documentContextId: selectedChat?.document_context?.id
         });
 
-        // Use SSE streaming for AI chat
-        await (api as any).sendChatMessageStream(
+        // Use chunked polling for AI chat (resilient alternative to streaming)
+        // Polling works better on mobile networks and survives app backgrounding
+        await (api as any).sendChatMessagePolling(
           chatContext,
           streamFilters,
           abortControllerRef.current?.signal,
@@ -2444,7 +3611,10 @@ export default function ChatsScreen() {
                 // Replace fake content with real content
                 contentBufferRef.current = instantContent;
                 isPreviewPhaseRef.current = true;
-                isFakeStreamingRef.current = false; // Real content arrived, stop fake streaming
+                // CRITICAL: DON'T stop fake streaming here - let it continue until content actually starts displaying
+                // Even though we set displayedCharsRef below, let the streaming interval check handle stopping fake streaming
+                // This ensures no gap and consistent behavior with other cases
+                // Note: Keep streamingMessageIndex set so real streaming can continue
                 
                 // Display first chunk immediately (match web behavior - show more for better UX)
                 const initialCharsToShow = Math.min(50, instantContent.length); // Increased from 20 to 50 for better visibility
@@ -2491,7 +3661,8 @@ export default function ChatsScreen() {
               case 'fallback_response':
                 // Handle non-streaming response - replace fake streaming with real content
                 console.log('📝 Received fallback response:', data.content);
-                isFakeStreamingRef.current = false; // Real content arrived, stop fake streaming
+                // CRITICAL: DON'T stop fake streaming here - let it continue until content actually starts displaying
+                // Fake streaming will be stopped automatically in the streaming interval when displayedCharsRef.current > 0
                 contentBufferRef.current = data.content || '';
                 displayedCharsRef.current = 0;
                 
@@ -2522,44 +3693,95 @@ export default function ChatsScreen() {
                 break;
 
               case 'chunk':
-              case 'preview_chunk':
+              case 'preview_chunk': {
                 // TEMPLATE PREVIEW: Show after search completes (replaces instant preview)
                 // Matches web: upload.tsx lines 4671-4706
                 const previewChunkContent = data.content || data.response || '';
+                const previewStarted = data.preview_started || false;
+                const isPreviewPhase = data.is_preview_phase !== undefined ? data.is_preview_phase : true;
+                
+                // CRITICAL: Check if phase transition detected (is_preview_phase changed from true to false)
+                // This handles the case where a chunk arrives with is_preview_phase: false
+                const phaseTransitionDetected = isPreviewPhaseRef.current === true && isPreviewPhase === false;
+                
+                if (phaseTransitionDetected) {
+                  console.log('🔄 [FRONTEND] Phase transition detected in preview_chunk handler: preview -> refinement');
+                  console.log('🔄 [FRONTEND] This chunk is actually refinement - will be handled by refinement_chunk case');
+                  // Don't process as preview - this should be handled as refinement
+                  // The polling code should send this as refinement_chunk, but handle it here as fallback
+                  break; // Skip preview processing, wait for refinement_chunk event
+                }
+                
                 console.log('📦 Template preview chunk received:', {
                   chunk_index: data.chunk_index,
                   contentLength: previewChunkContent.length,
-                  preview: previewChunkContent.substring(0, 50)
+                  preview: previewChunkContent.substring(0, 50),
+                  preview_started: previewStarted,
+                  is_preview_phase: isPreviewPhase
                 });
                 
-                isFakeStreamingRef.current = false; // Real content arrived
+                // CRITICAL: Process preview chunk if we have content, regardless of preview_started flag
+                // The preview_started flag might not be reliable, but actual content is
+                if (!previewChunkContent || previewChunkContent.length === 0) {
+                  console.log('⏳ Preview chunk has no content - keeping fake streaming active');
+                  // Don't process empty chunks - wait for content
+                  break;
+                }
                 
-                if (data.chunk_index === 0 || contentBufferRef.current.includes('Searching for')) {
+                // CRITICAL: Don't stop fake streaming here - let it continue until preview actually starts displaying
+                // Fake streaming will be stopped in startOrContinueStreaming when content actually starts showing
+                
+                console.log('📦 Processing preview chunk - content length:', previewChunkContent.length, 'buffer will be:', contentBufferRef.current.length + previewChunkContent.length);
+                
+                // Preview has started - process the chunk
+                if (data.chunk_index === 0 || contentBufferRef.current.length === 0 || contentBufferRef.current.includes('Searching for')) {
                   // First chunk - REPLACE instant preview (like web)
                   console.log('📦 First preview chunk - replacing instant preview');
                   
-                  // Stop existing display timer and reset (like web)
-                  if (streamingIntervalRef.current) {
-                    clearInterval(streamingIntervalRef.current);
-                    streamingIntervalRef.current = null;
-                  }
+                  // CRITICAL: Don't stop streaming interval - seamlessly transition to preview
+                  // Keep the interval running, just update the buffer and let it continue displaying
+                  // This ensures no idle gap between fake streaming and preview
                   
                   // Reset buffer and display (like web: contentBuffer = previewChunkContent; displayedContent = '')
                   contentBufferRef.current = previewChunkContent;
-                  displayedCharsRef.current = 0;
-                  isPreviewPhaseRef.current = true;
+                  displayedCharsRef.current = 0; // Reset to start streaming preview from beginning
+                  isPreviewPhaseRef.current = isPreviewPhase;
                   
-                  // Ensure message exists
+                  // CRITICAL: Display first characters IMMEDIATELY to prevent gap
+                  // Don't wait for interval - show content right away for seamless transition
+                  const initialCharsToShow = Math.min(30, previewChunkContent.length);
+                  displayedCharsRef.current = initialCharsToShow;
+                  const initialDisplayText = previewChunkContent.substring(0, initialCharsToShow);
+                  
+                  // CRITICAL: Stop fake streaming IMMEDIATELY when preview content arrives
+                  // We have content ready to display, so fake streaming should stop right away
+                  // This ensures ProcessingMessageDisplay disappears as soon as preview content is set
+                  if (isFakeStreamingRef.current) {
+                    console.log('🔄 Stopping fake streaming immediately - preview content ready');
+                    isFakeStreamingRef.current = false;
+                  }
+                  
+                  // Mark as recently streamed to protect from loadMessages
+                  lastStreamedMessageIndexRef.current = assistantMessageIndex;
+                  lastStreamCompleteTimeRef.current = Date.now();
+                  
+                  // Ensure message exists and update with initial content IMMEDIATELY
                   setMessages(prev => {
                     const newMessages = [...prev];
                     if (!newMessages[assistantMessageIndex]) {
                       newMessages.push({
                         id: generateUniqueMessageId(),
-                        content: '',
+                        content: initialDisplayText,
                         sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
                         is_own_message: false,
                         created_at: new Date().toISOString()
                       });
+                    } else {
+                      // Update existing message with initial content immediately
+                      newMessages[assistantMessageIndex] = {
+                        ...newMessages[assistantMessageIndex],
+                        content: initialDisplayText
+                      };
                     }
                     return newMessages;
                   });
@@ -2567,61 +3789,161 @@ export default function ChatsScreen() {
                   // Subsequent chunks - append (like web: contentBuffer += previewChunkContent)
                   contentBufferRef.current += previewChunkContent;
                   console.log('📦 Appended preview chunk', data.chunk_index, '- buffer now:', contentBufferRef.current.length);
+                  
+                  // Mark as recently streamed to protect from loadMessages
+                  lastStreamedMessageIndexRef.current = assistantMessageIndex;
+                  lastStreamCompleteTimeRef.current = Date.now();
                 }
                 
                 // Display with smooth typing effect (like web: displayContentImmediately)
+                // Fake streaming will be stopped when preview actually starts displaying
+                console.log('📦 Starting preview streaming - buffer length:', contentBufferRef.current.length);
                 startOrContinueStreaming(assistantMessageIndex);
                 break;
+              }
 
               case 'preview_complete':
-                console.log('✅ Preview complete');
-                // Ensure preview is fully displayed before moving to refinement
-                if (displayedCharsRef.current < contentBufferRef.current.length) {
-                  // Still streaming preview, let it finish
-                  console.log('⏳ Preview still streaming, waiting for completion...');
-                } else {
-                  console.log('✅ Preview fully displayed, ready for refinement');
-                }
+                console.log('✅ Preview complete - phase transition detected');
+                console.log('📊 Preview content length:', data.preview_length || contentBufferRef.current.length);
+                // Mark preview as complete - refinement will start next
+                // Don't reset anything here - wait for first refinement_chunk to reset
+                // This signal just indicates that the next chunk will be refinement
                 break;
 
-              case 'refinement_chunk':
+              case 'refinement_chunk': {
                 // REFINEMENT (main response): Replace preview immediately
                 // Matches web: upload.tsx lines 4714-4739
                 const refinementChunkContent = data.content || data.response || '';
+                
+                // CRITICAL: Skip empty refinement chunks
+                if (!refinementChunkContent || refinementChunkContent.length === 0) {
+                  console.log('⏳ Refinement chunk has no content - skipping');
+                  break;
+                }
+                
+                const isPreviewPhaseFromData = data.is_preview_phase !== undefined ? data.is_preview_phase : false;
+                
+                // CRITICAL: Check is_preview_phase flag from polling response
+                // If flag changed from true to false, this is the phase transition
+                const phaseTransitionDetected = isPreviewPhaseRef.current === true && isPreviewPhaseFromData === false;
+                
+                // CRITICAL: Detect first refinement chunk
+                // This can happen in two scenarios:
+                // 1. Preview was shown, then refinement arrives (phase transition)
+                // 2. Preview was skipped, refinement arrives directly (fake streaming still active)
+                // Preview was skipped if: fake streaming is active AND we're receiving refinement (is_preview_phase: false)
+                // OR if fake streaming is active AND contentBuffer is empty (no preview content was ever set)
+                const previewWasSkipped = isFakeStreamingRef.current && (
+                  isPreviewPhaseFromData === false || 
+                  contentBufferRef.current.length === 0
+                );
+                const isFirstRefinement = data.is_first_refinement || phaseTransitionDetected || previewWasSkipped || (data.chunk_index === 0 && (isPreviewPhaseRef.current || isFakeStreamingRef.current));
+                
                 console.log('🔄 Refinement chunk received', { 
                   chunk_index: data.chunk_index, 
                   contentLength: refinementChunkContent.length, 
-                  preview: refinementChunkContent.substring(0, 40) 
+                  preview: refinementChunkContent.substring(0, 40),
+                  is_first_refinement: isFirstRefinement,
+                  is_preview_phase_flag: isPreviewPhaseFromData,
+                  current_phase: isPreviewPhaseRef.current ? 'preview' : 'refinement',
+                  phase_transition_detected: phaseTransitionDetected,
+                  preview_was_skipped: previewWasSkipped,
+                  fake_streaming_active: isFakeStreamingRef.current
                 });
                 
-                isFakeStreamingRef.current = false;
-                
-                if (data.chunk_index === 0) {
-                  // First refinement chunk - IMMEDIATE transition (like web, NO WAITING)
-                  console.log('🔄 First refinement chunk - IMMEDIATE cutover from preview');
-                  
-                  // Stop preview display IMMEDIATELY (like web: clearInterval(displayTimer))
-                  if (streamingIntervalRef.current) {
-                    clearInterval(streamingIntervalRef.current);
-                    streamingIntervalRef.current = null;
+                // CRITICAL: Handle first refinement chunk - covers all cases:
+                // 1. Preview was shown, then refinement arrives (phaseTransitionDetected)
+                // 2. Preview was skipped, refinement arrives directly (previewWasSkipped)
+                // 3. First chunk of refinement (chunk_index === 0)
+                if (isFirstRefinement) {
+                  // First refinement chunk - IMMEDIATE transition
+                  if (previewWasSkipped) {
+                    console.log('🔄 First refinement chunk - backend skipped preview, transitioning directly from fake streaming');
+                    console.log('🔄 Fake streaming active:', isFakeStreamingRef.current, 'Content buffer empty:', contentBufferRef.current.length === 0);
+                  } else {
+                    console.log('🔄 First refinement chunk - IMMEDIATE cutover from preview');
+                    console.log('🔄 Replacing preview content with refinement content');
                   }
                   
-                  // Reset for refinement phase (like web: contentBuffer = refinementChunkContent; displayedContent = '')
+                  // CRITICAL: Don't stop streaming interval - seamlessly transition from preview to refinement
+                  // Keep the interval running, just update the buffer and let it continue displaying
+                  // This ensures no idle gap between preview and refinement
+                  
+                  // CRITICAL: DON'T stop fake streaming here - let it continue until refinement characters actually start displaying
+                  // If preview was skipped, we're transitioning from fake streaming to refinement
+                  // Fake streaming will be stopped automatically in the streaming interval when displayedCharsRef.current > 0
+                  // This prevents the idle gap between fake streaming stopping and refinement characters appearing
+                  // The check at line 2847-2849 will handle stopping fake streaming when content actually displays
+                  
+                  // CRITICAL: Always reset for refinement phase - replace preview completely
+                  // The backend provides refinement content separately from preview
+                  // We need to replace the preview buffer with refinement content
                   contentBufferRef.current = refinementChunkContent;
-                  displayedCharsRef.current = 0;
+                  displayedCharsRef.current = 0; // Reset counter, but display immediately below
                   isPreviewPhaseRef.current = false;
                   
-                  // Restart display immediately (like web: displayContentImmediately)
-                  startOrContinueStreaming(assistantMessageIndex);
+                  // CRITICAL: Display first characters IMMEDIATELY to prevent gap
+                  // Don't wait for interval - show content right away for seamless transition
+                  const initialCharsToShow = Math.min(30, refinementChunkContent.length);
+                  displayedCharsRef.current = initialCharsToShow;
+                  const initialDisplayText = refinementChunkContent.substring(0, initialCharsToShow);
+                  
+                  // If streaming interval is not running, start it (seamless transition)
+                  // If it's already running, it will automatically pick up the new buffer content
+                  
+                  console.log('🔄 Reset complete - refinement buffer:', refinementChunkContent.length, 'chars, showing', initialCharsToShow, 'immediately');
+                  
+                  // Ensure message exists and update with initial content IMMEDIATELY
+                  setMessages(prev => {
+                    const newMessages = [...prev];
+                    if (!newMessages[assistantMessageIndex]) {
+                      const assistantMessage: ChatMessage = {
+                        id: generateUniqueMessageId(),
+                        content: initialDisplayText,
+                        sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
+                        is_own_message: false,
+                        created_at: new Date().toISOString()
+                      };
+                      newMessages.push(assistantMessage);
+                      console.log(`🔄 Created message ${assistantMessageIndex} for refinement with initial content`);
+                    } else {
+                      // Update existing message with initial content immediately
+                      newMessages[assistantMessageIndex] = {
+                        ...newMessages[assistantMessageIndex],
+                        content: initialDisplayText
+                      };
+                      console.log(`🔄 Updated message ${assistantMessageIndex} with initial refinement content`);
+                    }
+                    return newMessages;
+                  });
+                  
+                  // Mark as recently streamed to protect from loadMessages
+                  lastStreamedMessageIndexRef.current = assistantMessageIndex;
+                  lastStreamCompleteTimeRef.current = Date.now();
+                  
+                  // Ensure streaming continues seamlessly (like web: displayContentImmediately)
+                  // Smooth transition: fake streaming → refinement (when preview skipped)
+                  // Or: preview → refinement (when preview was shown)
+                  // CRITICAL: Use transition flag to keep interval running seamlessly
+                  // If interval is already running, it will pick up the new buffer automatically
+                  // If not running, start it
+                  console.log('🔄 Ensuring refinement streaming continues - smooth transition from', previewWasSkipped ? 'fake streaming' : 'preview');
+                  startOrContinueStreaming(assistantMessageIndex, true); // true = transition from preview/fake streaming
                 } else {
                   // Subsequent chunks - append (like web: contentBuffer += refinementChunkContent)
+                  // CRITICAL: DON'T stop fake streaming here either - let the streaming interval handle it
+                  // Fake streaming will be stopped automatically when characters actually start displaying
+                  // This ensures seamless transition even if first chunk was missed
+                  
                   contentBufferRef.current += refinementChunkContent;
                   console.log('🔄 Appended refinement chunk', data.chunk_index, '- buffer now:', contentBufferRef.current.length);
                   
                   // Ensure streaming continues (like web: displayContentImmediately)
-                  startOrContinueStreaming(assistantMessageIndex);
+                  // Not a transition - just appending, so keep existing interval if running
+                  startOrContinueStreaming(assistantMessageIndex, true); // true = keep interval running if exists
                 }
                 break;
+              }
 
               case 'complete':
                 console.log('✅ Stream complete');
@@ -2648,6 +3970,11 @@ export default function ChatsScreen() {
                   if (returnedChatId !== currentChatId) {
                     console.log('🔄 Backend returned new chat_history_id:', returnedChatId, 'updating selectedChat from', currentChatId);
                     
+                    // CRITICAL: Update loadedChatIdRef FIRST to prevent loadMessages from reloading
+                    // This must happen before setSelectedChat to prevent message clearing
+                    loadedChatIdRef.current = returnedChatId;
+                    console.log('✅ Updated loadedChatIdRef to prevent message reload:', returnedChatId);
+                    
                     // Update selectedChat to use the new chat_history_id
                     setSelectedChat(prev => {
                       if (prev) {
@@ -2666,21 +3993,54 @@ export default function ChatsScreen() {
                           hasWorkspace: !!updatedChat.workspace
                         });
                         
-                        // Also update the chat in the chats list immediately
+                        // CRITICAL: Update the chat in the chats list, removing old ID and adding new ID
+                        // This transfers context from temporary ID (-2) to real ID
                         setChats(prevChats => {
-                          // Remove old chat with temp ID and add new chat with real ID
+                          // Remove old chat with temp ID (-2) and add new chat with real ID
                           const chatsWithoutOld = prevChats.filter(chat => chat.id !== currentChatId);
-                          const updatedChats = [updatedChat, ...chatsWithoutOld];
                           
-                          console.log('🔄 Updated chats list:', {
+                          // Ensure ChatGD Assistant stays first, then add updated chat
+                          const chatAssistant = chatsWithoutOld.find(chat => chat.id === -1);
+                          const otherChats = chatsWithoutOld.filter(chat => chat.id !== -1);
+                          
+                          let updatedChats: Chat[];
+                          if (chatAssistant) {
+                            updatedChats = [chatAssistant, updatedChat, ...otherChats];
+                          } else {
+                            updatedChats = [updatedChat, ...otherChats];
+                          }
+                          
+                          console.log('🔄 [ID UPDATE] Updated chats list with new ID:', {
                             removedId: currentChatId,
                             addedId: returnedChatId,
-                            totalChats: updatedChats.length
+                            totalChats: updatedChats.length,
+                            hasBookmarkContext: !!updatedChat.bookmark_context,
+                            bookmarkName: updatedChat.bookmark_context?.name,
+                            hasDocumentContext: !!updatedChat.document_context,
+                            type: updatedChat.type
                           });
                           
-                          // CRITICAL: Persist the updated chat context immediately
-                          // This ensures document/bookmark/workspace context is saved with the new ID
-                          savePersistedChatContexts(updatedChats);
+                          // CRITICAL: Persist the updated chat context with NEW ID
+                          // This transfers context from old ID (-2) to new ID (real ID)
+                          // Also need to remove old ID from AsyncStorage
+                          savePersistedChatContexts(updatedChats).then(async () => {
+                            // CRITICAL: Remove old ID (-2) from AsyncStorage if it exists
+                            if (currentChatId === -2) {
+                              try {
+                                const stored = await AsyncStorage.getItem(CHAT_CONTEXTS_KEY);
+                                if (stored) {
+                                  const parsed = JSON.parse(stored);
+                                  if (parsed['-2']) {
+                                    delete parsed['-2'];
+                                    await AsyncStorage.setItem(CHAT_CONTEXTS_KEY, JSON.stringify(parsed));
+                                    console.log('🗑️ Removed old temporary chat ID -2 from AsyncStorage, context transferred to', returnedChatId);
+                                  }
+                                }
+                              } catch (error) {
+                                console.error('❌ Failed to remove old chat ID from AsyncStorage:', error);
+                              }
+                            }
+                          });
                           
                           return updatedChats;
                         });
@@ -2690,10 +4050,9 @@ export default function ChatsScreen() {
                       return prev;
                     });
                     
-                    // Reload chat list to ensure the new chat appears with latest data from backend
-                    setTimeout(() => {
-                      loadChats();
-                    }, 500);
+                    // CRITICAL: Don't reload chat list immediately after updating ID - it clears messages
+                    // The chat list is already updated locally, so we don't need to reload everything
+                    // This prevents messages from being cleared when the chat ID is updated
                   } else {
                     console.log('✅ Chat history ID matches current chat:', returnedChatId);
                   }
@@ -2706,24 +4065,68 @@ export default function ChatsScreen() {
                 }
                 
                 // Complete event - finalize (like web)
+                // Mark stream as complete so interval knows to stop when all content is displayed
+                isStreamCompleteRef.current = true;
+                
                 // Buffer already has full content from chunks, just ensure phase is correct
                 if (data.response != null && String(data.response).length > 0) {
                   // Backend included full response in complete event - use it
                   const resp = String(data.response);
                   console.log('✅ Complete with final response', { length: resp.length });
-                  contentBufferRef.current = resp;
-                  displayedCharsRef.current = 0;
-                  isPreviewPhaseRef.current = false;
-                  startOrContinueStreaming(assistantMessageIndex);
+                  
+                  // CRITICAL: Only reset displayedChars if:
+                  // 1. We're transitioning from preview to refinement (content is different)
+                  // 2. OR refinement phase already started (isPreviewPhaseRef.current === false)
+                  // 3. OR content is actually different from what's in the buffer
+                  const isContentDifferent = resp !== contentBufferRef.current;
+                  const isRefinementPhase = !isPreviewPhaseRef.current;
+                  
+                  if (isContentDifferent && isRefinementPhase) {
+                    // Refinement content is different - replace and restart streaming
+                    console.log('🔄 Complete: Refinement content differs, replacing preview');
+                    contentBufferRef.current = resp;
+                    displayedCharsRef.current = 0;
+                    isPreviewPhaseRef.current = false;
+                    startOrContinueStreaming(assistantMessageIndex);
+                  } else if (isContentDifferent && !isRefinementPhase) {
+                    // Content is different but we're still in preview - this shouldn't happen
+                    // But if it does, update buffer without resetting displayedChars
+                    console.log('⚠️ Complete: Content differs but still in preview phase - updating buffer only');
+                    contentBufferRef.current = resp;
+                    // Don't reset displayedChars - continue from where we are
+                    isPreviewPhaseRef.current = false;
+                    // Continue streaming if not already complete
+                    if (displayedCharsRef.current < contentBufferRef.current.length) {
+                      startOrContinueStreaming(assistantMessageIndex);
+                    }
+                  } else {
+                    // Content is the same - just finalize, don't restart streaming
+                    console.log('✅ Complete: Content matches buffer - finalizing without restart');
+                    contentBufferRef.current = resp;
+                    isPreviewPhaseRef.current = false;
+                    // Don't reset displayedChars - content is already being displayed
+                    // Just ensure we display the full content if not already complete
+                    if (displayedCharsRef.current < contentBufferRef.current.length) {
+                      startOrContinueStreaming(assistantMessageIndex);
+                    } else {
+                      // All content already displayed - finalize immediately
+                      stopStreaming(assistantMessageIndex, true);
+                    }
+                  }
                 } else {
                   // No response in complete - buffer already has content from chunks
                   console.log('✅ Complete without response - buffer has', contentBufferRef.current.length, 'chars');
                   isPreviewPhaseRef.current = false;
                   // Streaming should already be active, just ensure phase is correct
+                  // If all content is already displayed, stop immediately
+                  if (displayedCharsRef.current >= contentBufferRef.current.length) {
+                    console.log('✅ All content already displayed - stopping streaming immediately');
+                    stopStreaming(assistantMessageIndex, true);
+                  }
                 }
                 
                 // Let streaming finish naturally (like web)
-                // The streaming interval will stop automatically when displayedChars >= buffer.length
+                // The streaming interval will stop automatically when displayedChars >= buffer.length AND isStreamCompleteRef is true
                 break;
 
               default:
@@ -2750,23 +4153,36 @@ export default function ChatsScreen() {
         // After streaming completes, update chat list
         // Use ref to get the latest chat ID (which might have been updated by the complete event handler)
         setTimeout(() => {
-          const chatIdToUpdate = currentChatIdRef.current || selectedChat?.id;
+          const chatIdToUpdate = currentChatIdRef.current || selectedChatRef.current?.id;
           if (!chatIdToUpdate || chatIdToUpdate === -1) return;
           
           setChats(prev => {
             // Check if chat exists in list
             const existingChat = prev.find(chat => chat.id === chatIdToUpdate);
             if (existingChat) {
-              // Update existing chat
+              // Update existing chat - CRITICAL: Preserve bookmark_context, document_context, workspace, and type
+              // This ensures bookmark chats stay purple and document chats stay green after sending messages
               return prev.map(chat => 
                 chat.id === chatIdToUpdate 
-                  ? { ...chat, last_message: (contentBufferRef.current || '').substring(0, 50) + '...', updated_at: new Date().toISOString() }
+                  ? { 
+                      ...chat, 
+                      last_message: (contentBufferRef.current || '').substring(0, 50) + '...', 
+                      updated_at: new Date().toISOString(),
+                      // Preserve context and type - don't lose bookmark/document context
+                      bookmark_context: chat.bookmark_context,
+                      document_context: chat.document_context,
+                      workspace: chat.workspace,
+                      type: chat.type
+                    }
                   : chat
               );
             } else {
-              // Chat doesn't exist in list yet (might be a new chat), reload chat list
-              console.log('🔄 Chat not found in list, reloading chat list...');
-              loadChats();
+              // Chat doesn't exist in list yet (might be a new chat)
+              // CRITICAL: Don't reload chat list - it clears messages!
+              // Instead, just add the chat to the list with the current content
+              console.log('⚠️ Chat not found in list, but NOT reloading to preserve messages. Chat ID:', chatIdToUpdate);
+              // The chat was already added to the list when ID was updated, so this shouldn't happen
+              // But if it does, preserve messages by not calling loadChats()
               return prev;
             }
           });
@@ -2775,22 +4191,25 @@ export default function ChatsScreen() {
         console.log('📤 [CHATS-WEB] ===== SENDING USER DIRECT MESSAGE =====');
         console.log('📤 [CHATS-WEB] Chat ID:', selectedChat.id);
         console.log('📤 [CHATS-WEB] Message text:', messageText);
-        console.log('📤 [CHATS-WEB] User ID:', userProfile?.id);
+        // Get user ID from ref to ensure we have latest value
+        const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
+        console.log('📤 [CHATS-WEB] User ID:', userId);
         
         // Emit typing stopped (validate all required fields)
         if (socketRef.current && 
-            userProfile && 
-            selectedChat.id != null && 
-            userProfile.id != null) {
+            userId && 
+            selectedChat.id != null) {
           console.log('📤 [CHATS-WEB] Emitting typing stopped event');
           socketRef.current.emit('user_typing', { 
             chat_id: selectedChat.id,
-            user_id: userProfile.id,
+            user_id: userId,
             is_typing: false
           });
         }
         
-        // Send direct message using web endpoint (same as web chat.tsx)
+        // Reserve message ID immediately to prevent WebSocket duplicates
+        // We'll use a temporary ID that will be replaced with the real ID from API response
+        const tempMessageId = Date.now(); // Temporary ID to track this send operation
         console.log('📤 [CHATS-WEB] Calling API to send user direct message...');
         const response = await api.sendChatMessageToChat(messageText, selectedChat.id);
         console.log('📤 [CHATS-WEB] API response received:', {
@@ -2805,13 +4224,96 @@ export default function ChatsScreen() {
           // Web chat.tsx returns: { success: true, message: ChatMessage }
           const newMsg = (response as any).message;
           console.log('📤 [CHATS-WEB] Message sent successfully, adding to UI');
-          setMessages(prev => [...prev, {
-            id: newMsg.id,
-            content: newMsg.content,
-            sender: newMsg.sender,
-            is_own_message: true,
-            created_at: newMsg.created_at || new Date().toISOString()
-          }]);
+          
+          // CRITICAL: Add message ID to recently sent set IMMEDIATELY to prevent WebSocket duplicates
+          // This must happen before setMessages to ensure WebSocket handler sees it
+          recentlySentMessageIdsRef.current.add(newMsg.id);
+          lastMessageSentTimeRef.current = Date.now();
+          
+          // Add message only if it doesn't already exist (prevent duplicates from WebSocket)
+          setMessages(prev => {
+            // FIRST CHECK: Is this message ID in recently sent set?
+            if (recentlySentMessageIdsRef.current.has(newMsg.id)) {
+              // Double-check: verify message isn't already in the list
+              const alreadyExists = prev.find(msg => msg.id === newMsg.id);
+              if (alreadyExists) {
+                console.log('📤 [CHATS-WEB] Duplicate detected - message already in list, skipping:', newMsg.id);
+                return prev;
+              }
+              // If not in list but in ref, it means WebSocket already added it - skip
+              console.log('📤 [CHATS-WEB] Duplicate detected - message ID in recently sent set, skipping:', newMsg.id);
+              return prev;
+            }
+            
+            // SECOND CHECK: Exact ID match in current messages
+            const existingIndex = prev.findIndex(msg => msg.id === newMsg.id);
+            if (existingIndex !== -1) {
+              console.log('📤 [CHATS-WEB] Message already exists, updating if needed:', newMsg.id);
+              // Update existing message to ensure is_own_message is correct
+              const existingMsg = prev[existingIndex];
+              if (existingMsg.is_own_message !== true) {
+                console.log('🔄 [CHATS-WEB] Fixing message ownership flag:', newMsg.id);
+                const updated = [...prev];
+                updated[existingIndex] = { ...existingMsg, is_own_message: true };
+                return updated;
+              }
+              // Add to recently sent set to prevent future duplicates
+              recentlySentMessageIdsRef.current.add(newMsg.id);
+              setTimeout(() => {
+                recentlySentMessageIdsRef.current.delete(newMsg.id);
+              }, 10000);
+              return prev;
+            }
+            
+            // THIRD CHECK: Content + timestamp match (for duplicates with different IDs)
+            // Use larger time window (30 seconds) to account for timezone differences (EST vs UTC)
+            const duplicateByContent = prev.find(msg => {
+              if (msg.content !== newMsg.content) {
+                return false;
+              }
+              // Check if it's our own message (either flag is true or in recently sent set)
+              const isOwnMessage = msg.is_own_message === true || recentlySentMessageIdsRef.current.has(msg.id);
+              if (!isOwnMessage) {
+                return false;
+              }
+              // Normalize timestamps - ensure UTC parsing by appending Z if missing
+              const msgTimeStr = msg.created_at + (msg.created_at.includes('T') && !msg.created_at.match(/[Z+-]/) ? 'Z' : '');
+              const newMsgTimeStr = (newMsg.created_at || new Date().toISOString()) + ((newMsg.created_at || '').includes('T') && !(newMsg.created_at || '').match(/[Z+-]/) ? 'Z' : '');
+              const msgTime = new Date(msgTimeStr).getTime();
+              const newMsgTime = new Date(newMsgTimeStr).getTime();
+              const timeDiff = Math.abs(msgTime - newMsgTime);
+              // Use 30 second window to account for EST/UTC differences and network delays
+              return timeDiff < 30000;
+            });
+            
+            if (duplicateByContent) {
+              const msgTimeStr = duplicateByContent.created_at + (duplicateByContent.created_at.includes('T') && !duplicateByContent.created_at.match(/[Z+-]/) ? 'Z' : '');
+              const newMsgTimeStr = (newMsg.created_at || new Date().toISOString()) + ((newMsg.created_at || '').includes('T') && !(newMsg.created_at || '').match(/[Z+-]/) ? 'Z' : '');
+              const timeDiff = Math.abs(new Date(msgTimeStr).getTime() - new Date(newMsgTimeStr).getTime());
+              console.log('📤 [CHATS-WEB] Duplicate message detected by content+time, skipping:', newMsg.id, 'existing:', duplicateByContent.id, 'timeDiff:', timeDiff, 'ms');
+              // Add to recently sent set to prevent future duplicates
+              recentlySentMessageIdsRef.current.add(newMsg.id);
+              setTimeout(() => {
+                recentlySentMessageIdsRef.current.delete(newMsg.id);
+              }, 10000);
+              return prev;
+            }
+            
+            console.log('📤 [CHATS-WEB] Adding optimistic message:', newMsg.id, 'is_own_message: true');
+            // Message ID already added to ref above, just need to clear it after timeout
+            // Clear it after 10 seconds to prevent memory leak
+            setTimeout(() => {
+              recentlySentMessageIdsRef.current.delete(newMsg.id);
+            }, 10000);
+            
+            return [...prev, {
+              id: newMsg.id,
+              content: newMsg.content,
+              sender: newMsg.sender,
+              is_own_message: true,
+              created_at: newMsg.created_at || new Date().toISOString()
+            }];
+          });
           
           // Update chat list
           setChats(prev => prev.map(chat => 
@@ -2827,22 +4329,24 @@ export default function ChatsScreen() {
         console.log('📤 [CHATS-WEB] ===== SENDING WORKSPACE MESSAGE =====');
         console.log('📤 [CHATS-WEB] Chat ID:', selectedChat.id);
         console.log('📤 [CHATS-WEB] Message text:', messageText);
-        console.log('📤 [CHATS-WEB] User ID:', userProfile?.id);
+        // Get user ID from ref to ensure we have latest value
+        const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
+        console.log('📤 [CHATS-WEB] User ID:', userId);
         
         // Emit typing stopped (validate all required fields)
         if (socketRef.current && 
-            userProfile && 
-            selectedChat.id != null && 
-            userProfile.id != null) {
+            userId && 
+            selectedChat.id != null) {
           console.log('📤 [CHATS-WEB] Emitting typing stopped event');
           socketRef.current.emit('user_typing', { 
             chat_id: selectedChat.id,
-            user_id: userProfile.id,
+            user_id: userId,
             is_typing: false
           });
         }
         
-        // Send workspace message using web endpoint (same as web chat.tsx)
+        // Reserve message ID immediately to prevent WebSocket duplicates
+        const tempMessageId = Date.now(); // Temporary ID to track this send operation
         console.log('📤 [CHATS-WEB] Calling API to send workspace message...');
         const response = await api.sendChatMessageToChat(messageText, selectedChat.id);
         console.log('📤 [CHATS-WEB] API response received:', {
@@ -2857,13 +4361,96 @@ export default function ChatsScreen() {
           // Web chat.tsx returns: { success: true, message: ChatMessage }
           const newMsg = (response as any).message;
           console.log('📤 [CHATS-WEB] Message sent successfully, adding to UI');
-          setMessages(prev => [...prev, {
-            id: newMsg.id,
-            content: newMsg.content,
-            sender: newMsg.sender,
-            is_own_message: true,
-            created_at: newMsg.created_at || new Date().toISOString()
-          }]);
+          
+          // CRITICAL: Add message ID to recently sent set IMMEDIATELY to prevent WebSocket duplicates
+          // This must happen before setMessages to ensure WebSocket handler sees it
+          recentlySentMessageIdsRef.current.add(newMsg.id);
+          lastMessageSentTimeRef.current = Date.now();
+          
+          // Add message only if it doesn't already exist (prevent duplicates from WebSocket)
+          setMessages(prev => {
+            // FIRST CHECK: Is this message ID in recently sent set?
+            if (recentlySentMessageIdsRef.current.has(newMsg.id)) {
+              // Double-check: verify message isn't already in the list
+              const alreadyExists = prev.find(msg => msg.id === newMsg.id);
+              if (alreadyExists) {
+                console.log('📤 [CHATS-WEB] Duplicate detected - message already in list, skipping:', newMsg.id);
+                return prev;
+              }
+              // If not in list but in ref, it means WebSocket already added it - skip
+              console.log('📤 [CHATS-WEB] Duplicate detected - message ID in recently sent set, skipping:', newMsg.id);
+              return prev;
+            }
+            
+            // SECOND CHECK: Exact ID match in current messages
+            const existingIndex = prev.findIndex(msg => msg.id === newMsg.id);
+            if (existingIndex !== -1) {
+              console.log('📤 [CHATS-WEB] Message already exists, updating if needed:', newMsg.id);
+              // Update existing message to ensure is_own_message is correct
+              const existingMsg = prev[existingIndex];
+              if (existingMsg.is_own_message !== true) {
+                console.log('🔄 [CHATS-WEB] Fixing message ownership flag:', newMsg.id);
+                const updated = [...prev];
+                updated[existingIndex] = { ...existingMsg, is_own_message: true };
+                return updated;
+              }
+              // Add to recently sent set to prevent future duplicates
+              recentlySentMessageIdsRef.current.add(newMsg.id);
+              setTimeout(() => {
+                recentlySentMessageIdsRef.current.delete(newMsg.id);
+              }, 10000);
+              return prev;
+            }
+            
+            // THIRD CHECK: Content + timestamp match (for duplicates with different IDs)
+            // Use larger time window (30 seconds) to account for timezone differences (EST vs UTC)
+            const duplicateByContent = prev.find(msg => {
+              if (msg.content !== newMsg.content) {
+                return false;
+              }
+              // Check if it's our own message (either flag is true or in recently sent set)
+              const isOwnMessage = msg.is_own_message === true || recentlySentMessageIdsRef.current.has(msg.id);
+              if (!isOwnMessage) {
+                return false;
+              }
+              // Normalize timestamps - ensure UTC parsing by appending Z if missing
+              const msgTimeStr = msg.created_at + (msg.created_at.includes('T') && !msg.created_at.match(/[Z+-]/) ? 'Z' : '');
+              const newMsgTimeStr = (newMsg.created_at || new Date().toISOString()) + ((newMsg.created_at || '').includes('T') && !(newMsg.created_at || '').match(/[Z+-]/) ? 'Z' : '');
+              const msgTime = new Date(msgTimeStr).getTime();
+              const newMsgTime = new Date(newMsgTimeStr).getTime();
+              const timeDiff = Math.abs(msgTime - newMsgTime);
+              // Use 30 second window to account for EST/UTC differences and network delays
+              return timeDiff < 30000;
+            });
+            
+            if (duplicateByContent) {
+              const msgTimeStr = duplicateByContent.created_at + (duplicateByContent.created_at.includes('T') && !duplicateByContent.created_at.match(/[Z+-]/) ? 'Z' : '');
+              const newMsgTimeStr = (newMsg.created_at || new Date().toISOString()) + ((newMsg.created_at || '').includes('T') && !(newMsg.created_at || '').match(/[Z+-]/) ? 'Z' : '');
+              const timeDiff = Math.abs(new Date(msgTimeStr).getTime() - new Date(newMsgTimeStr).getTime());
+              console.log('📤 [CHATS-WEB] Duplicate message detected by content+time, skipping:', newMsg.id, 'existing:', duplicateByContent.id, 'timeDiff:', timeDiff, 'ms');
+              // Add to recently sent set to prevent future duplicates
+              recentlySentMessageIdsRef.current.add(newMsg.id);
+              setTimeout(() => {
+                recentlySentMessageIdsRef.current.delete(newMsg.id);
+              }, 10000);
+              return prev;
+            }
+            
+            console.log('📤 [CHATS-WEB] Adding optimistic message:', newMsg.id, 'is_own_message: true');
+            // Message ID already added to ref above, just need to clear it after timeout
+            // Clear it after 10 seconds to prevent memory leak
+            setTimeout(() => {
+              recentlySentMessageIdsRef.current.delete(newMsg.id);
+            }, 10000);
+            
+            return [...prev, {
+              id: newMsg.id,
+              content: newMsg.content,
+              sender: newMsg.sender,
+              is_own_message: true,
+              created_at: newMsg.created_at || new Date().toISOString()
+            }];
+          });
           
           // Update chat list
           setChats(prev => prev.map(chat => 
@@ -2913,7 +4500,7 @@ export default function ChatsScreen() {
         chatType: selectedChat?.type,
         chatId: selectedChat?.id,
         messageText: newMessage?.trim() || 'N/A',
-        userId: userProfile?.id
+        userId: userProfileRef.current?.data?.id || userProfileRef.current?.id
       });
       
       // Determine user-friendly error message based on error type
@@ -2921,7 +4508,17 @@ export default function ChatsScreen() {
         "Based on your query, I can provide some general guidance, though I may not have access to your specific documents at the moment. " +
         "Please try again in a moment, or feel free to rephrase your question if you'd like to continue our conversation.";
       
-      if (error.message?.includes('Network request timed out') || 
+      if (error.message?.includes('429') || error.message?.includes('Rate limit') || error.message?.includes('rate limit')) {
+        fallbackResponse = "⏱️ Rate limit exceeded. Please wait a moment before trying again.\n\n" +
+          "You've sent too many requests in a short period. This helps ensure fair usage for all users.\n\n" +
+          "Please wait a few seconds and try again.";
+        
+        // Stop fake streaming immediately for rate limit errors
+        if (isFakeStreamingRef.current) {
+          stopStreaming(assistantMessageIndex, false);
+          isFakeStreamingRef.current = false;
+        }
+      } else if (error.message?.includes('Network request timed out') || 
           error.message?.includes('timeout') ||
           error.message?.includes('ECONNABORTED') ||
           error.message?.includes('TypeError: Network request timed out')) {
@@ -2949,7 +4546,8 @@ export default function ChatsScreen() {
       }
       
       // Replace fake streaming with error fallback content
-      isFakeStreamingRef.current = false; // No longer fake, this is the final content
+      // CRITICAL: DON'T stop fake streaming here - let it continue until error content actually starts displaying
+      // Fake streaming will be stopped automatically in the streaming interval when displayedCharsRef.current > 0
       contentBufferRef.current = fallbackResponse;
       displayedCharsRef.current = 0;
       isPreviewPhaseRef.current = true;
@@ -2973,39 +4571,72 @@ export default function ChatsScreen() {
     }
   };
 
-  const selectChat = (chat: Chat) => {
-    // Abort any ongoing requests when switching chats
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+  // Helper function to restore context for a chat (reusable)
+  const restoreChatContext = (chat: Chat) => {
+    // Check if user explicitly removed context for this chat
+    // CRITICAL: Don't check for temporary chats (id -2) - they're newly created and context should always be restored
+    const isTemporaryChat = chat.id === -2;
+    const explicitlyRemoved = !isTemporaryChat && chat.id != null && chat.id !== -1 && contextRemovedChatIdsRef.current.has(Number(chat.id));
+    if (explicitlyRemoved) {
+      console.log('🚫 Context explicitly removed by user for chat:', chat.id);
+      setSelectedMention(null);
+      return;
     }
     
-    // Stop streaming if active
-    if (streamingIntervalRef.current) {
-      clearInterval(streamingIntervalRef.current);
-      streamingIntervalRef.current = null;
+    // CRITICAL: Check chat object's context FIRST (most reliable - from chats list)
+    // This ensures context is restored even if backend doesn't have it yet
+    const bookmarkContext = chat.bookmark_context;
+    const documentContext = chat.document_context;
+    const workspaceContext = chat.workspace;
+    
+    if (bookmarkContext) {
+      console.log('📖 [RESTORE] Restoring bookmark context from chat object:', {
+        chatId: chat.id,
+        bookmarkId: bookmarkContext.id,
+        bookmarkName: bookmarkContext.name
+      });
+      setSelectedMention({ 
+        type: 'bookmark', 
+        id: bookmarkContext.id, 
+        name: bookmarkContext.name, 
+        data: bookmarkContext 
+      });
+      return;
     }
-    isStreamingRef.current = false;
     
-    setSendingMessage(false);
-    stopBounceAnimation();
+    if (documentContext) {
+      console.log('📖 Restoring document context from chat object:', documentContext.name);
+      setSelectedMention({ 
+        type: 'file', 
+        id: documentContext.id, 
+        name: documentContext.name, 
+        data: documentContext 
+      });
+      return;
+    }
     
-    setSelectedChat(chat);
+    if (workspaceContext) {
+      console.log('📖 Restoring workspace context from chat object:', workspaceContext.name);
+      setSelectedMention({ 
+        type: 'workspace', 
+        id: workspaceContext.id, 
+        name: workspaceContext.name, 
+        data: workspaceContext 
+      });
+      return;
+    }
     
-    // Load messages first, then restore context (persistent_context is loaded with messages)
-    loadMessages(chat.id).then(() => {
-      // Restore document/bookmark/workspace context from persistent_context or chat object unless the user explicitly removed it
-      const explicitlyRemoved = chat.id != null && chat.id !== -1 && contextRemovedChatIdsRef.current.has(Number(chat.id));
-      if (explicitlyRemoved) {
-        setSelectedMention(null);
-        return;
-      }
-      
-      // First, try to restore from persistent_context (from backend - most up-to-date)
-      const { currentHistory } = useChatStore.getState();
-      const persistentContext = currentHistory?.persistent_context;
-      
-      if (persistentContext) {
+    // Fallback: try to restore from persistent_context (from backend - most up-to-date)
+    // This code only runs if chat object doesn't have context
+    const { currentHistory } = useChatStore.getState();
+    const persistentContext = currentHistory?.persistent_context;
+    
+    // Verify currentHistory matches this chat
+    const historyId = currentHistory ? (typeof currentHistory.id === 'string' ? parseInt(String(currentHistory.id), 10) : Number(currentHistory.id)) : null;
+    const chatId = typeof chat.id === 'string' ? parseInt(String(chat.id), 10) : Number(chat.id);
+    const historyMatches = historyId !== null && !isNaN(historyId) && !isNaN(chatId) && historyId === chatId;
+    
+    if (persistentContext && historyMatches) {
         // Restore context from persistent_context (backend stored context)
         if (persistentContext.context_file_ids && persistentContext.context_file_ids.length > 0) {
           const fileId = persistentContext.context_file_ids[0];
@@ -3079,80 +4710,246 @@ export default function ChatsScreen() {
         }
       }
       
-      // Fallback: restore from local chat object (document_context, bookmark_context)
-      if (chat.document_context) {
-        // Capture document_context to avoid TypeScript issues in async callbacks
-        const docContext = chat.document_context;
-        // If the name looks like a query (contains common question words), try to find in loaded documents first
-        const nameLooksLikeQuery = /^(what|how|why|when|where|summarize|explain|describe|tell me|show me)/i.test(docContext.name.trim());
-        if (nameLooksLikeQuery || docContext.name === 'Document' || docContext.name.startsWith('Document ')) {
-          // First, try to find file in loaded documents list (avoid API call)
-          const fileInList = documents.find(d => d.id === docContext.id);
-          if (fileInList) {
-            setSelectedMention({ 
-              type: 'file', 
-              id: docContext.id, 
-              name: fileInList.name, 
-              data: { ...docContext, name: fileInList.name } 
-            });
-            // Update the chat's document_context too
-            setChats(prev => prev.map(c => 
-              c.id === chat.id && c.document_context 
-                ? { ...c, document_context: { ...c.document_context, name: fileInList.name } }
-                : c
-            ));
-          } else {
-            // Only fetch from API if not found in loaded documents
-            api.getFileById(docContext.id).then((response: any) => {
-              if (response.success && response.file) {
-                const actualName = response.file.original_filename || response.file.filename || docContext.name;
-                setSelectedMention({ 
-                  type: 'file', 
-                  id: docContext.id, 
-                  name: actualName, 
-                  data: { ...docContext, name: actualName } 
-                });
-                // Update the chat's document_context too
-                setChats(prev => prev.map(c => 
-                  c.id === chat.id && c.document_context 
-                    ? { ...c, document_context: { ...c.document_context, name: actualName } }
-                    : c
-                ));
-              } else {
-                // Fallback: use existing name even if it looks like a query
-                setSelectedMention({ type: 'file', id: docContext.id, name: docContext.name, data: docContext });
-              }
-            }).catch(() => {
-              // On error, use existing name
-              setSelectedMention({ type: 'file', id: docContext.id, name: docContext.name, data: docContext });
-            });
-          }
-        } else {
-          // Name looks valid, use it directly
-          setSelectedMention({ type: 'file', id: docContext.id, name: docContext.name, data: docContext });
-        }
-      } else if (chat.bookmark_context) {
-        setSelectedMention({ type: 'bookmark', id: chat.bookmark_context.id, name: chat.bookmark_context.name, data: chat.bookmark_context });
-      } else if (chat.workspace) {
-        setSelectedMention({ type: 'workspace', id: chat.workspace.id, name: chat.workspace.name, data: chat.workspace });
+      // No context found anywhere - clear selectedMention
+      // This prevents context from one chat showing up in another chat
+      console.log('ℹ️ No context found for chat:', chat.id, '- clearing selectedMention');
+      setSelectedMention(null);
+  };
+
+  // CRITICAL: Update chat object when bookmark/document context is selected
+  // This ensures the chat type and context are preserved in the chats list
+  useEffect(() => {
+    if (!selectedChat || !selectedMention) return;
+    
+    // Only update if we have a bookmark or document context
+    if (selectedMention.type === 'bookmark' && selectedMention.data) {
+      const bookmarkData = selectedMention.data;
+      // Check if chat already has this bookmark context
+      if (selectedChat.bookmark_context?.id !== bookmarkData.id || selectedChat.type !== 'bookmark_focused') {
+        console.log('🔄 [BOOKMARK] Updating chat with bookmark context:', {
+          chatId: selectedChat.id,
+          bookmarkName: bookmarkData.name,
+          bookmarkId: bookmarkData.id,
+          currentType: selectedChat.type,
+          currentBookmarkId: selectedChat.bookmark_context?.id
+        });
+        
+        const updatedChat = {
+          ...selectedChat,
+          type: 'bookmark_focused' as const,
+          bookmark_context: bookmarkData,
+          title: `Chat about ${bookmarkData.name}`
+        };
+        
+        setSelectedChat(updatedChat);
+        
+        // Also update the chat in the chats list and persist IMMEDIATELY
+        setChats(prev => {
+          const updated = prev.map(chat => 
+            chat.id === selectedChat.id ? updatedChat : chat
+          );
+          
+          // CRITICAL: Save immediately to AsyncStorage
+          console.log('💾 [BOOKMARK] Saving bookmark context to AsyncStorage for chat', selectedChat.id);
+          savePersistedChatContexts(updated).then(() => {
+            console.log('✅ [BOOKMARK] Successfully saved bookmark context to AsyncStorage');
+          }).catch(error => {
+            console.error('❌ [BOOKMARK] Failed to save bookmark context:', error);
+          });
+          
+          return updated;
+        });
       } else {
-        setSelectedMention(null);
+        console.log('⏭️ [BOOKMARK] Chat already has bookmark context, skipping update');
       }
-    }).catch((error) => {
+    } else if (selectedMention.type === 'file' && selectedMention.data) {
+      const fileData = selectedMention.data;
+      // Check if chat already has this document context
+      if (selectedChat.document_context?.id !== fileData.id || selectedChat.type !== 'document_focused') {
+        console.log('🔄 Updating chat with document context:', fileData.name);
+        // Use a helper to truncate filename safely (defined later in component)
+        const truncateName = (name: string, maxLength: number = 40) => {
+          const nameWithoutExt = name.replace(/\.[^/.]+$/, '');
+          return nameWithoutExt.length <= maxLength 
+            ? nameWithoutExt 
+            : nameWithoutExt.substring(0, maxLength - 3) + '...';
+        };
+        
+        const updatedChat = {
+          ...selectedChat,
+          type: 'document_focused' as const,
+          document_context: fileData,
+          title: `Document: ${truncateName(fileData.name)}`
+        };
+        
+        setSelectedChat(updatedChat);
+        
+        // Also update the chat in the chats list and persist
+        setChats(prev => {
+          const updated = prev.map(chat => 
+            chat.id === selectedChat.id ? updatedChat : chat
+          );
+          savePersistedChatContexts(updated);
+          return updated;
+        });
+      }
+    }
+  }, [selectedMention, selectedChat?.id]); // Only depend on selectedMention and chat ID
+
+  const selectChat = (chat: Chat) => {
+    // Reset going back flag when selecting a chat
+    setIsGoingBack(false);
+    
+    // Abort any ongoing requests when switching chats
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    // Stop streaming if active
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+    }
+    
+    // CRITICAL: Reset all streaming state when switching chats to ensure messages load correctly
+    isStreamingRef.current = false;
+    isStreamCompleteRef.current = false;
+    lastStreamCompleteTimeRef.current = 0; // Reset completion time so streaming guard doesn't block
+    lastStreamedMessageIndexRef.current = null; // Reset last streamed message index
+    contentBufferRef.current = '';
+    displayedCharsRef.current = 0;
+    isPreviewPhaseRef.current = true;
+    isFakeStreamingRef.current = false;
+    streamingMessageIndexRef.current = null;
+    setStreamingMessageIndex(null);
+    
+    setSendingMessage(false);
+    stopBounceAnimation();
+    
+    // CRITICAL: Clear messages immediately when switching to a different chat
+    // This prevents messages from one chat appearing in another
+    const previousChatId = selectedChat?.id;
+    const newChatId = chat.id;
+    if (previousChatId !== newChatId) {
+      console.log(`🔄 Switching from chat ${previousChatId} to ${newChatId} - clearing messages and context`);
+      setMessages([]); // Clear messages immediately to prevent cross-chat contamination
+      loadedChatIdRef.current = null; // Reset loaded chat ID so loadMessages will reload
+      // CRITICAL: Clear context when switching to a different chat
+      // restoreChatContext will restore the correct context for the new chat
+      setSelectedMention(null);
+    }
+    
+    // CRITICAL: Chat Assistant (ID -1) should NEVER have context
+    // Always clear context and selectedMention when selecting Chat Assistant
+    if (chat.id === -1) {
+      console.log('🔵 [SELECT] Selecting Chat Assistant - clearing all context');
+      setSelectedMention(null);
+      // Ensure Chat Assistant has no context
+      const chatAssistantClean: Chat = {
+        ...chat,
+        document_context: undefined,
+        bookmark_context: undefined,
+        workspace: undefined,
+        type: 'ai_assistant',
+        title: chat.title || 'ChatGD Assistant'
+      };
+      setSelectedChat(chatAssistantClean);
+      
+      // Also update in chats list to ensure it doesn't have context
+      setChats(prev => {
+        const updated = prev.map(c => 
+          c.id === -1 ? chatAssistantClean : c
+        );
+        savePersistedChatContexts(updated);
+        return updated;
+      });
+      
+      // Load messages for Chat Assistant
+      loadMessages(-1, true).then(() => {
+        console.log('🔵 [SELECT] Chat Assistant messages loaded');
+      }).catch((error: any) => {
+        console.error('❌ Error loading Chat Assistant messages:', error);
+      });
+      
+      return; // Early return - don't process Chat Assistant like other chats
+    }
+    
+    // CRITICAL: Ensure chat's document_context, bookmark_context, and type are preserved from chats list
+    // This ensures document_focused chats maintain their green icon and context
+    const chatWithContext = chats.find(c => c.id === chat.id);
+    
+    // CRITICAL: Always check if chat has context and preserve it, even if type is wrong
+    let chatToSelect: Chat;
+    if (chatWithContext && (chatWithContext.document_context || chatWithContext.bookmark_context || chatWithContext.workspace)) {
+      // Chat has context in the list - use it
+      chatToSelect = {
+        ...chat,
+        document_context: chatWithContext.document_context || chat.document_context,
+        bookmark_context: chatWithContext.bookmark_context || chat.bookmark_context,
+        workspace: chatWithContext.workspace || chat.workspace,
+        // ALWAYS set type based on context, not what backend says
+        type: chatWithContext.bookmark_context ? 'bookmark_focused' :
+              chatWithContext.document_context ? 'document_focused' :
+              chatWithContext.workspace ? 'workspace' :
+              chatWithContext.type === 'bookmark_focused' || chatWithContext.type === 'document_focused' || chatWithContext.type === 'workspace' ? chatWithContext.type :
+              chat.type === 'bookmark_focused' || chat.type === 'document_focused' || chat.type === 'workspace' ? chat.type :
+              'ai_assistant' // Fallback only if no context
+      };
+      console.log(`🔍 Selecting chat ${chat.id} with context:`, {
+        type: chatToSelect.type,
+        hasBookmark: !!chatToSelect.bookmark_context,
+        hasDocument: !!chatToSelect.document_context,
+        title: chatToSelect.title
+      });
+    } else if (chat.bookmark_context || chat.document_context || chat.workspace) {
+      // Chat object itself has context (from backend or elsewhere) - use it
+      chatToSelect = {
+        ...chat,
+        type: chat.bookmark_context ? 'bookmark_focused' :
+              chat.document_context ? 'document_focused' :
+              chat.workspace ? 'workspace' :
+              chat.type
+      };
+      console.log(`🔍 Selecting chat ${chat.id} with context from chat object:`, {
+        type: chatToSelect.type,
+        hasBookmark: !!chatToSelect.bookmark_context,
+        hasDocument: !!chatToSelect.document_context
+      });
+    } else {
+      // No context found - use chat as-is
+      chatToSelect = chat;
+    }
+    
+    setSelectedChat(chatToSelect);
+    
+    // CRITICAL: Restore context IMMEDIATELY before loading messages
+    // This ensures context is set even if loadMessages fails or takes time
+    console.log('🔍 [SELECT] Restoring context immediately for chat:', {
+      chatId: chatToSelect.id,
+      type: chatToSelect.type,
+      hasBookmark: !!chatToSelect.bookmark_context,
+      bookmarkName: chatToSelect.bookmark_context?.name
+    });
+    restoreChatContext(chatToSelect);
+    
+    // Load messages first, then restore context again (persistent_context is loaded with messages)
+    loadMessages(chatToSelect.id, true).then(() => { // Force reload when switching chats
+      // Restore context again after messages load (in case backend has updated context)
+      console.log('🔍 [SELECT] Restoring context after messages loaded');
+      restoreChatContext(chatToSelect);
+    }).catch((error: any) => {
       console.error('Failed to load messages and restore context:', error);
       // On error, still try to restore from local chat object
-      const explicitlyRemoved = chat.id != null && chat.id !== -1 && contextRemovedChatIdsRef.current.has(Number(chat.id));
-      if (!explicitlyRemoved && chat.document_context) {
-        setSelectedMention({ type: 'file', id: chat.document_context.id, name: chat.document_context.name, data: chat.document_context });
-      } else if (!explicitlyRemoved && chat.bookmark_context) {
-        setSelectedMention({ type: 'bookmark', id: chat.bookmark_context.id, name: chat.bookmark_context.name, data: chat.bookmark_context });
-      } else {
-        setSelectedMention(null);
-      }
+      restoreChatContext(chatToSelect);
     });
   };
 
   const goBackToChats = () => {
+    // CRITICAL: Set going back flag FIRST to immediately switch to chat list view
+    // This prevents showing chat messages view with null selectedChat (which shows "Chat" in header)
+    setIsGoingBack(true);
+    
     // Abort any ongoing requests when leaving chat
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -3164,16 +4961,166 @@ export default function ChatsScreen() {
       clearInterval(streamingIntervalRef.current);
       streamingIntervalRef.current = null;
     }
+    
+    // CRITICAL: Reset ALL streaming state when leaving chat
+    // This ensures messages reload properly when returning
     isStreamingRef.current = false;
+    isStreamCompleteRef.current = false;
+    isFakeStreamingRef.current = false;
+    lastStreamCompleteTimeRef.current = 0; // Reset completion time so streaming guard doesn't block reload
+    lastStreamedMessageIndexRef.current = null;
+    contentBufferRef.current = '';
+    displayedCharsRef.current = 0;
+    isPreviewPhaseRef.current = true;
+    streamingMessageIndexRef.current = null;
+    setStreamingMessageIndex(null);
     
     setSendingMessage(false);
     stopBounceAnimation();
     
+    // CRITICAL: Preserve chat's document_context and type in the chats list before clearing selectedChat
+    // This ensures the chat maintains its document_focused type and green icon when selected again
+    // ALSO: If chat doesn't exist in list (temporary id -2), add it so it appears when going back
+    // IMPORTANT: Chat Assistant (ID -1) should NEVER have context preserved
+    if (selectedChat && selectedChat.id !== -1 && (selectedChat.document_context || selectedChat.bookmark_context || selectedChat.workspace)) {
+      console.log('🔙 [GOBACK] Going back - preserving context for chat:', {
+        chatId: selectedChat.id,
+        type: selectedChat.type,
+        hasBookmark: !!selectedChat.bookmark_context,
+        hasDocument: !!selectedChat.document_context,
+        bookmarkName: selectedChat.bookmark_context?.name
+      });
+      
+      // CRITICAL: Set flag to prevent loadChats from overwriting context
+      isPreservingContextRef.current = true;
+      contextPreservationTimeRef.current = Date.now();
+      
+      // CRITICAL: Use functional update to ensure we have the latest state
+      // Also save to AsyncStorage immediately to prevent race conditions with useFocusEffect
+      setChats(prev => {
+        const existingChat = prev.find(chat => chat.id === selectedChat.id);
+        
+        console.log('🔙 [GOBACK] Found existing chat in list:', {
+          chatId: selectedChat.id,
+          exists: !!existingChat,
+          currentType: existingChat?.type,
+          currentHasBookmark: !!existingChat?.bookmark_context
+        });
+        
+        let updatedChats: Chat[];
+        
+        if (existingChat) {
+          // Update existing chat - CRITICAL: Always preserve bookmark/document context from selectedChat
+          updatedChats = prev.map(chat => {
+            if (chat.id === selectedChat.id) {
+              // ALWAYS use selectedChat's context and type - it's the most up-to-date
+              const updatedChat = {
+                ...chat,
+                // Preserve context from selectedChat (most recent)
+                document_context: selectedChat.document_context || chat.document_context,
+                bookmark_context: selectedChat.bookmark_context || chat.bookmark_context,
+                workspace: selectedChat.workspace || chat.workspace,
+                // ALWAYS use selectedChat's type if it's a context chat, otherwise preserve existing
+                type: selectedChat.bookmark_context ? 'bookmark_focused' :
+                      selectedChat.document_context ? 'document_focused' :
+                      selectedChat.workspace ? 'workspace' :
+                      selectedChat.type === 'bookmark_focused' || selectedChat.type === 'document_focused' || selectedChat.type === 'workspace' ? selectedChat.type :
+                      chat.type,
+                // Preserve title from selectedChat if it's more descriptive
+                title: selectedChat.title || chat.title
+              };
+              
+              console.log(`💾 [GOBACK] Preserving context for chat ${chat.id} when going back:`, {
+                oldType: chat.type,
+                newType: updatedChat.type,
+                hasBookmarkContext: !!updatedChat.bookmark_context,
+                bookmarkName: updatedChat.bookmark_context?.name,
+                hasDocumentContext: !!updatedChat.document_context,
+                title: updatedChat.title
+              });
+              
+              return updatedChat;
+            }
+            return chat;
+          });
+        } else {
+          // Chat doesn't exist in list (temporary id -2 or new chat) - add it
+          console.log(`📋 Adding chat ${selectedChat.id} to list (preserving context):`, {
+            type: selectedChat.type,
+            hasBookmarkContext: !!selectedChat.bookmark_context,
+            hasDocumentContext: !!selectedChat.document_context
+          });
+          
+          const chatAssistant = prev.find(chat => chat.id === -1);
+          const otherChats = prev.filter(chat => chat.id !== -1);
+          
+          if (chatAssistant) {
+            updatedChats = [chatAssistant, selectedChat, ...otherChats];
+          } else {
+            updatedChats = [selectedChat, ...prev];
+          }
+        }
+        
+        // CRITICAL: Save to AsyncStorage immediately and wait for it to complete
+        // This prevents race conditions where useFocusEffect calls loadChats() before save completes
+        console.log(`💾 Saving ${updatedChats.length} chats to AsyncStorage, including chat ${selectedChat.id} with bookmark context:`, {
+          chatId: selectedChat.id,
+          type: updatedChats.find(c => c.id === selectedChat.id)?.type,
+          hasBookmark: !!updatedChats.find(c => c.id === selectedChat.id)?.bookmark_context
+        });
+        
+        // CRITICAL: Save to AsyncStorage and keep flag set for 3 seconds
+        savePersistedChatContexts(updatedChats).then(() => {
+          console.log('✅ Successfully saved chat contexts to AsyncStorage, including bookmark context for chat', selectedChat.id);
+          // Keep flag set for 3 seconds to prevent loadChats from overwriting
+          setTimeout(() => {
+            isPreservingContextRef.current = false;
+            console.log('🔓 Context preservation flag cleared');
+          }, 3000);
+        }).catch(error => {
+          console.error('❌ Failed to save chat contexts when going back:', error);
+          isPreservingContextRef.current = false;
+        });
+        
+        return updatedChats;
+      });
+    }
+    
+    // Clear fileId params to ensure params are cleared (even if it doesn't update immediately)
+    router.setParams({});
+    
+    // CRITICAL: If Chat Assistant had context somehow, clear it before going back
+    // This prevents Chat Assistant from inheriting context from previous chats
+    if (selectedChat && selectedChat.id === -1 && (selectedChat.bookmark_context || selectedChat.document_context || selectedChat.workspace)) {
+      console.log('⚠️ [GOBACK] Chat Assistant had context, clearing it before going back');
+      setChats(prev => {
+        const updated: Chat[] = prev.map(chat => 
+          chat.id === -1 ? {
+            ...chat,
+            document_context: undefined,
+            bookmark_context: undefined,
+            workspace: undefined,
+            type: 'ai_assistant' as const,
+            title: 'ChatGD Assistant'
+          } : chat
+        );
+        savePersistedChatContexts(updated);
+        return updated;
+      });
+    }
+    
     setSelectedChat(null);
     setMessages([]);
     loadedChatIdRef.current = null; // Clear loaded chat ID when leaving chat
-    // Clear any existing mention when leaving chat
-    setSelectedMention(null);
+    
+    // CRITICAL: Clear selectedMention if we're leaving Chat Assistant
+    // This prevents context from persisting when switching to Chat Assistant
+    if (selectedChat && selectedChat.id === -1) {
+      console.log('🔵 [GOBACK] Clearing selectedMention when leaving Chat Assistant');
+      setSelectedMention(null);
+    }
+    // For other chats, DO NOT clear selectedMention when going back - context should persist
+    // The context will be restored when the chat is selected again via restoreChatContext
   };
 
   // Mention functionality
@@ -3227,12 +5174,12 @@ export default function ChatsScreen() {
     
     // Emit typing event for user chats (user_direct and workspace only)
     // Validate all required fields exist before emitting to prevent server errors
+    const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
     if (selectedChat && 
         (selectedChat.type === 'user_direct' || selectedChat.type === 'workspace') && 
         socketRef.current && 
-        userProfile && 
-        selectedChat.id != null && 
-        userProfile.id != null) {
+        userId && 
+        selectedChat.id != null) {
       // Clear existing timeout
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
@@ -3241,20 +5188,20 @@ export default function ChatsScreen() {
       // Emit typing started
       socketRef.current.emit('user_typing', { 
         chat_id: selectedChat.id,
-        user_id: userProfile.id,
+        user_id: userId,
         is_typing: true
       });
       
       // Auto-stop typing after 3 seconds of inactivity
       typingTimeoutRef.current = setTimeout(() => {
+        const userIdForTyping = userProfileRef.current?.data?.id || userProfileRef.current?.id;
         if (socketRef.current && 
             selectedChat && 
-            userProfile && 
-            selectedChat.id != null && 
-            userProfile.id != null) {
+            userIdForTyping && 
+            selectedChat.id != null) {
           socketRef.current.emit('user_typing', { 
             chat_id: selectedChat.id,
-            user_id: userProfile.id,
+            user_id: userIdForTyping,
             is_typing: false
           });
         }
@@ -3311,10 +5258,10 @@ export default function ChatsScreen() {
 
   const getMentionColor = (type: string) => {
     switch (type) {
-      case 'user': return '#007AFF';
-      case 'bookmark': return '#FF9500';
-      case 'file': return '#34C759';
-      case 'workspace': return '#5856D6';
+      case 'user': return '#FF3B30'; // Match user_direct color from getChatTypeInfo
+      case 'bookmark': return '#AF52DE'; // Match bookmark_focused color from getChatTypeInfo
+      case 'file': return '#34C759'; // Match document_focused color from getChatTypeInfo
+      case 'workspace': return '#FF9500'; // Match workspace color from getChatTypeInfo
       default: return '#666';
     }
   };
@@ -3595,21 +5542,89 @@ export default function ChatsScreen() {
           return;
       }
       
-      // Check if a chat with the same ID already exists before adding
-      setChats(prev => {
-        const existingChat = prev.find(chat => chat.id === newChat.id);
-        if (existingChat) {
-          // Chat already exists, just select it instead of creating a duplicate
-          console.log(`⚠️ Chat ${newChat.id} already exists, selecting existing chat instead of creating duplicate`);
-          return prev;
-        }
-        const updatedChats = [newChat, ...prev];
-        // Persist chat context immediately for user_direct, workspace, document, and bookmark chats
-        savePersistedChatContexts(updatedChats);
-        return updatedChats;
-      });
+      // Check if a chat with the same context already exists (for bookmark/document chats)
+      // This prevents creating duplicate chats when user creates the same bookmark/document chat multiple times
+      if (newChat.bookmark_context || newChat.document_context) {
+        setChats(prev => {
+          // Check if a chat with the same bookmark/document context already exists
+          const existingContextChat = prev.find(chat => 
+            (newChat.bookmark_context && chat.bookmark_context?.id === newChat.bookmark_context.id) ||
+            (newChat.document_context && chat.document_context?.id === newChat.document_context.id)
+          );
+          
+          if (existingContextChat) {
+            // Chat with same context already exists, select it instead of creating duplicate
+            console.log(`⚠️ Chat with same context already exists (${existingContextChat.id}), selecting existing chat`);
+            setSelectedChat(existingContextChat);
+            setShowNewChatModal(false);
+            // Restore context for the existing chat
+            restoreChatContext(existingContextChat);
+            return prev;
+          }
+          
+          // No existing chat with same context, add new chat
+          const chatAssistant = prev.find(chat => chat.id === -1);
+          const otherChats = prev.filter(chat => chat.id !== -1);
+          
+          let updatedChats: Chat[];
+          if (chatAssistant) {
+            updatedChats = [chatAssistant, newChat, ...otherChats];
+          } else {
+            updatedChats = [newChat, ...prev];
+          }
+          
+          // Persist chat context immediately for user_direct, workspace, document, and bookmark chats
+          savePersistedChatContexts(updatedChats);
+          return updatedChats;
+        });
+      } else {
+        // For other chat types, check by ID
+        setChats(prev => {
+          const existingChat = prev.find(chat => chat.id === newChat.id);
+          if (existingChat) {
+            // Chat already exists, just select it instead of creating a duplicate
+            console.log(`⚠️ Chat ${newChat.id} already exists, selecting existing chat instead of creating duplicate`);
+            return prev;
+          }
+          const updatedChats = [newChat, ...prev];
+          // Persist chat context immediately for user_direct, workspace, document, and bookmark chats
+          savePersistedChatContexts(updatedChats);
+          return updatedChats;
+        });
+      }
       setShowNewChatModal(false);
       setSelectedChat(newChat);
+      
+      // Set selectedMention based on the context type so it appears in the conversation window
+      if (newChat.document_context) {
+        setSelectedMention({
+          type: 'file',
+          id: newChat.document_context.id,
+          name: newChat.document_context.name,
+          data: newChat.document_context
+        });
+      } else if (newChat.bookmark_context) {
+        setSelectedMention({
+          type: 'bookmark',
+          id: newChat.bookmark_context.id,
+          name: newChat.bookmark_context.name,
+          data: newChat.bookmark_context
+        });
+      } else if (newChat.workspace) {
+        setSelectedMention({
+          type: 'workspace',
+          id: newChat.workspace.id,
+          name: newChat.workspace.name,
+          data: newChat.workspace
+        });
+      } else if (newChat.type === 'user_direct' && selectedUser) {
+        setSelectedMention({
+          type: 'user',
+          id: selectedUser.id,
+          name: selectedUser.username,
+          data: selectedUser
+        });
+      }
       
       // Reset selections and search states
       setSelectedDocument(null);
@@ -3645,9 +5660,32 @@ export default function ChatsScreen() {
 
   const formatMessageTime = (dateString: string) => {
     try {
-      // Dates from backend are in UTC (with 'Z' suffix)
-      // JavaScript's new Date() automatically converts UTC to local timezone
-      const date = new Date(dateString);
+      if (!dateString) {
+        return '';
+      }
+      
+      // Dates from backend are stored in UTC
+      // Ensure we parse as UTC if no timezone indicator is present
+      let date: Date;
+      
+      // Check if timestamp has timezone indicator
+      const hasTimezone = dateString.endsWith('Z') || dateString.match(/[+-]\d{2}:\d{2}$/);
+      
+      if (!hasTimezone && dateString.includes('T')) {
+        // Timestamp is in ISO format but missing timezone - treat as UTC
+        // Parse the UTC components explicitly
+        const isoString = dateString.endsWith('Z') ? dateString : dateString + 'Z';
+        date = new Date(isoString);
+      } else if (!hasTimezone) {
+        // Not ISO format - try parsing as-is, but log warning
+        date = new Date(dateString);
+        if (__DEV__) {
+          console.warn('⚠️ Timestamp without timezone indicator:', dateString);
+        }
+      } else {
+        // Has timezone indicator - parse normally
+        date = new Date(dateString);
+      }
       
       if (isNaN(date.getTime())) {
         if (__DEV__) {
@@ -3656,7 +5694,7 @@ export default function ChatsScreen() {
         return 'Invalid Date';
       }
       
-      // Format using local time (already converted from UTC by new Date())
+      // Format using local time (JavaScript automatically converts UTC to local timezone)
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } catch (error) {
       if (__DEV__) {
@@ -3668,9 +5706,32 @@ export default function ChatsScreen() {
 
   const formatChatTime = (dateString: string) => {
     try {
-      // Dates from backend are in UTC (with 'Z' suffix)
-      // JavaScript's new Date() automatically converts UTC to local timezone
-      const date = new Date(dateString);
+      if (!dateString) {
+        return 'Unknown';
+      }
+      
+      // Dates from backend are stored in UTC
+      // Ensure we parse as UTC if no timezone indicator is present
+      let date: Date;
+      
+      // Check if timestamp has timezone indicator
+      const hasTimezone = dateString.endsWith('Z') || dateString.match(/[+-]\d{2}:\d{2}$/);
+      
+      if (!hasTimezone && dateString.includes('T')) {
+        // Timestamp is in ISO format but missing timezone - treat as UTC
+        // Parse the UTC components explicitly
+        const isoString = dateString.endsWith('Z') ? dateString : dateString + 'Z';
+        date = new Date(isoString);
+      } else if (!hasTimezone) {
+        // Not ISO format - try parsing as-is, but log warning
+        date = new Date(dateString);
+        if (__DEV__) {
+          console.warn('⚠️ Timestamp without timezone indicator:', dateString);
+        }
+      } else {
+        // Has timezone indicator - parse normally
+        date = new Date(dateString);
+      }
       
       if (isNaN(date.getTime())) {
         if (__DEV__) {
@@ -3679,7 +5740,7 @@ export default function ChatsScreen() {
         return 'Unknown';
       }
       
-      // Format using local time (already converted from UTC by new Date())
+      // Format using local time (JavaScript automatically converts UTC to local timezone)
       return formatRelativeDate(date);
     } catch (error) {
       if (__DEV__) {
@@ -3761,21 +5822,91 @@ export default function ChatsScreen() {
     // }
 
     const getChatIcon = () => {
+      // Priority 1: Check direct context properties FIRST (most reliable)
+      // This ensures we get the right icon even if type wasn't set correctly
+      if (item.bookmark_context) {
+        return { name: 'bookmark' as const, color: '#AF52DE' };
+      }
+      if (item.document_context && item.document_context.id) {
+        return { name: 'document-text' as const, color: '#34C759' };
+      }
+      if (item.workspace && item.workspace.id) {
+        return { name: 'business' as const, color: '#FF9500' };
+      }
+      
+      // Priority 2: Check chat type (fallback if no direct context)
       switch (item.type) {
-        case 'ai_assistant':
-          return { name: 'chatbubbles' as const, color: '#007AFF' };
         case 'document_focused':
           return { name: 'document-text' as const, color: '#34C759' };
-        case 'workspace':
-          return { name: 'people' as const, color: '#FF9500' };
-        case 'user_direct':
-          return { name: 'person' as const, color: '#FF3B30' };
         case 'bookmark_focused':
           return { name: 'bookmark' as const, color: '#AF52DE' };
+        case 'workspace':
+          return { name: 'business' as const, color: '#FF9500' };
+        case 'user_direct':
+          return { name: 'person' as const, color: '#FF3B30' };
+        case 'ai_assistant':
+          // Continue to check chatStore
+          break;
         default:
-          console.log('⚠️ Unknown chat type:', item.type, 'for chat:', item.id);
           return { name: 'chatbubble' as const, color: '#007AFF' };
       }
+      
+      // Priority 3: Check persistent_context and top-level properties from chatStore
+      // This handles cases where context exists but isn't set on the chat item
+      if (item.id > 0) {
+        try {
+          const { histories } = useChatStore.getState();
+          const chatHistory = histories?.find(h => {
+            const historyId = typeof h.id === 'string' ? parseInt(String(h.id), 10) : Number(h.id);
+            const targetId = typeof item.id === 'string' ? parseInt(String(item.id), 10) : Number(item.id);
+            return !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
+          });
+          
+          if (chatHistory) {
+            const historyData = chatHistory as any;
+            const persistentContext = historyData.persistent_context || historyData.persistentContext;
+            
+            // Check top-level properties first (these are set when chat is created)
+            if (historyData.selected_bookmarks?.length > 0) {
+              return { name: 'bookmark' as const, color: '#AF52DE' };
+            }
+            if (historyData.selected_files?.length > 0) {
+              return { name: 'document-text' as const, color: '#34C759' };
+            }
+            if (historyData.selected_workspaces?.length > 0) {
+              return { name: 'business' as const, color: '#FF9500' };
+            }
+            if (historyData.selected_users?.length > 0) {
+              return { name: 'person' as const, color: '#FF3B30' };
+            }
+            
+            // Then check persistent_context (this is updated as chat progresses)
+            if (persistentContext) {
+              // Check for bookmark context
+              if (persistentContext.context_bookmark_ids?.length > 0 || persistentContext.selected_bookmarks?.length > 0) {
+                return { name: 'bookmark' as const, color: '#AF52DE' };
+              }
+              // Check for document context
+              if (persistentContext.context_file_ids?.length > 0 || persistentContext.selected_files?.length > 0) {
+                return { name: 'document-text' as const, color: '#34C759' };
+              }
+              // Check for workspace context
+              if (persistentContext.context_workspace_ids?.length > 0 || persistentContext.selected_workspaces?.length > 0) {
+                return { name: 'business' as const, color: '#FF9500' };
+              }
+              // Check for user context
+              if (persistentContext.context_user_ids?.length > 0 || persistentContext.selected_users?.length > 0) {
+                return { name: 'person' as const, color: '#FF3B30' };
+              }
+            }
+          }
+        } catch (error) {
+          // Silently fail if chatStore check fails
+        }
+      }
+      
+      // Priority 4: Final fallback - default ai_assistant icon
+      return { name: 'chatbubbles' as const, color: '#007AFF' };
     };
 
     const { name: iconName, color } = getChatIcon();
@@ -3787,136 +5918,193 @@ export default function ChatsScreen() {
     const safeUnreadCount = Number(item.unread_count || 0);
 
     return (
-      <TouchableOpacity style={dynamicStyles.chatItem} onPress={() => selectChat(item)}>
-        <View style={[dynamicStyles.chatAvatar, { backgroundColor: `${color}20` }]}>
-          <Ionicons name={iconName} size={24} color={color} />
-        </View>
-        <View style={dynamicStyles.chatContent}>
-          <View style={dynamicStyles.chatItemHeader}>
-            <Text style={dynamicStyles.chatTitle} numberOfLines={1}>
-              {safeTitle}
-            </Text>
-            <Text style={dynamicStyles.chatTime}>
-              {formatChatTime(safeUpdatedAt)}
-            </Text>
+      <Swipeable
+        ref={(ref) => {
+          if (ref) {
+            chatSwipeableRefs.current.set(item.id, ref);
+          } else {
+            chatSwipeableRefs.current.delete(item.id);
+          }
+        }}
+        renderRightActions={() => renderChatMenuAction(item.id)}
+        onSwipeableWillOpen={() => {
+          swipingChatId.current = item.id;
+          // Close other swipeables when one opens
+          chatSwipeableRefs.current.forEach((ref, id) => {
+            if (id !== item.id && ref) {
+              ref.close();
+            }
+          });
+        }}
+        onSwipeableClose={() => {
+          // Reset swipe flag immediately when closing
+          if (swipingChatId.current === item.id) {
+            swipingChatId.current = null;
+          }
+        }}
+        overshootRight={false}
+        rightThreshold={40}
+        friction={2}
+        overshootFriction={8}
+        containerStyle={{ backgroundColor: 'transparent' }}
+      >
+        <View style={{ backgroundColor: colors.card || '#fff', width: '100%' }}>
+          <TouchableOpacity 
+            style={dynamicStyles.chatItem}
+            activeOpacity={0.7}
+            onPress={() => {
+              // Don't open chat if we just swiped this specific chat
+              if (swipingChatId.current !== item.id) {
+                selectChat(item);
+              }
+            }}
+          >
+          <View style={[dynamicStyles.chatAvatar, { backgroundColor: `${color}20` }]}>
+            <Ionicons name={iconName} size={24} color={color} />
           </View>
-          <View style={dynamicStyles.chatFooter}>
-            <Text style={dynamicStyles.lastMessage} numberOfLines={2}>
-              {safeLastMessage}
-            </Text>
-            {safeUnreadCount > 0 && (
-              <View style={dynamicStyles.unreadBadge}>
-                <Text style={dynamicStyles.unreadText}>
-                  {String(safeUnreadCount)}
+          <View style={dynamicStyles.chatContent}>
+            <View style={dynamicStyles.chatItemHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <Text style={dynamicStyles.chatTitle} numberOfLines={1} ellipsizeMode="tail">
+                  {safeTitle}
                 </Text>
+                {favoriteChatIds.has(item.id) && (
+                  <Ionicons name="star" size={16} color="#FFD700" style={{ marginLeft: 6 }} />
+                )}
               </View>
-            )}
+              <Text style={dynamicStyles.chatTime}>
+                {formatChatTime(safeUpdatedAt)}
+              </Text>
+            </View>
+            <View style={dynamicStyles.chatFooter}>
+              <Text style={dynamicStyles.lastMessage} numberOfLines={2}>
+                {safeLastMessage}
+              </Text>
+              {safeUnreadCount > 0 && (
+                <View style={dynamicStyles.unreadBadge}>
+                  <Text style={dynamicStyles.unreadText}>
+                    {String(safeUnreadCount)}
+                  </Text>
+                </View>
+              )}
+            </View>
           </View>
+          </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </Swipeable>
     );
   };
 
   // Helper function to render message content with proper list formatting
   const renderMessageContent = (content: string, isOwnMessage: boolean) => {
-    const lines = content.split('\n');
-    const elements: React.ReactNode[] = [];
-    let currentList: { type: 'bullet' | 'numbered' | null; items: string[] } = { type: null, items: [] };
+    // Simple rendering - just display text as-is without complex parsing
+    if (!content || content.trim().length === 0) {
+      return null;
+    }
     
-    const flushList = () => {
-      if (currentList.items.length > 0) {
-        if (currentList.type === 'bullet') {
-          elements.push(
-            <View key={`list-${elements.length}`} style={{ marginVertical: 1 }}>
-              {currentList.items.map((item, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', marginBottom: 2, paddingLeft: 4, flexShrink: 1 }}>
-                  <Text style={[
-                    dynamicStyles.messageText,
-                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { marginRight: 8, flexShrink: 0 }
-                  ]}>•</Text>
-                  <Text style={[
-                    dynamicStyles.messageText,
-                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { flex: 1, flexShrink: 1, minWidth: 0 }
-                  ]}>{item.trim()}</Text>
-                </View>
-              ))}
-            </View>
-          );
-        } else if (currentList.type === 'numbered') {
-          elements.push(
-            <View key={`list-${elements.length}`} style={{ marginVertical: 1 }}>
-              {currentList.items.map((item, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', marginBottom: 2, paddingLeft: 4, flexShrink: 1 }}>
-                  <Text style={[
-                    dynamicStyles.messageText,
-                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { marginRight: 8, minWidth: 20, flexShrink: 0 }
-                  ]}>{idx + 1}.</Text>
-                  <Text style={[
-                    dynamicStyles.messageText,
-                    isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-                    { flex: 1, flexShrink: 1, minWidth: 0 }
-                  ]}>{item.trim()}</Text>
-                </View>
-              ))}
-            </View>
-          );
-        }
-        currentList = { type: null, items: [] };
-      }
-    };
+    return (
+      <Text 
+        style={[
+          dynamicStyles.messageText,
+          isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText
+        ]}
+      >
+        {content}
+      </Text>
+    );
+  };
 
-    lines.forEach((line, lineIdx) => {
-      const trimmedLine = line.trim();
-      
-      // Check for bullet list item (- or *)
-      if (/^[-*]\s+/.test(trimmedLine)) {
-        if (currentList.type !== 'bullet') {
-          flushList();
-          currentList.type = 'bullet';
+  // Delete chat handler
+  const handleDeleteChat = async (chatId: number) => {
+    Alert.alert(
+      'Delete Chat',
+      'Are you sure you want to delete this chat?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Don't allow deleting the default ChatGD Assistant chat
+              if (chatId === -1) {
+                Alert.alert('Error', 'Cannot delete the ChatGD Assistant chat');
+                return;
+              }
+              
+              // Use chatStore to delete
+              const success = await useChatStore.getState().deleteChatHistory(chatId);
+              
+              if (success) {
+                // Remove from local chats list
+                setChats(prev => prev.filter(chat => chat.id !== chatId));
+                
+                // If this was the selected chat, clear selection
+                if (selectedChat?.id === chatId) {
+                  setSelectedChat(null);
+                  setMessages([]);
+                }
+                
+                // Close any open swipeables
+                chatSwipeableRefs.current.forEach(ref => {
+                  if (ref) {
+                    ref.close();
+                  }
+                });
+              } else {
+                Alert.alert('Error', 'Failed to delete chat');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete chat');
+            }
+          }
         }
-        currentList.items.push(trimmedLine.replace(/^[-*]\s+/, ''));
-        return;
+      ]
+    );
+  };
+
+  // Handle add/remove favorite
+  const handleToggleFavorite = async (chatId: number) => {
+    try {
+      const isFavorite = favoriteChatIds.has(chatId);
+      const newFavorites = new Set(favoriteChatIds);
+      
+      if (isFavorite) {
+        newFavorites.delete(chatId);
+        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+        setFavoriteChatIds(newFavorites);
+      } else {
+        newFavorites.add(chatId);
+        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+        setFavoriteChatIds(newFavorites);
       }
       
-      // Check for numbered list item (1. 2. etc.)
-      if (/^\d+\.\s+/.test(trimmedLine)) {
-        if (currentList.type !== 'numbered') {
-          flushList();
-          currentList.type = 'numbered';
-        }
-        currentList.items.push(trimmedLine.replace(/^\d+\.\s+/, ''));
-        return;
+      setMenuChatId(null);
+      // Close swipeable
+      const swipeableRef = chatSwipeableRefs.current.get(chatId);
+      if (swipeableRef) {
+        swipeableRef.close();
       }
-      
-      // Not a list item - flush current list and add as regular text
-      flushList();
-      
-      if (trimmedLine) {
-        elements.push(
-          <Text 
-            key={`line-${lineIdx}`}
-            style={[
-              dynamicStyles.messageText,
-              isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
-              lineIdx > 0 ? { marginTop: 6 } : {}
-            ]}
-          >
-            {line}
-          </Text>
-        );
-      } else if (lineIdx < lines.length - 1) {
-        // Empty line (but not the last one) - add spacing
-        elements.push(<View key={`spacer-${lineIdx}`} style={{ height: 4 }} />);
-      }
-    });
-    
-    // Flush any remaining list
-    flushList();
-    
-    return <View style={{ flexShrink: 1 }}>{elements}</View>;
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update favorite');
+    }
+  };
+
+  // Render menu action for chat swipeable
+  const renderChatMenuAction = (chatId: number) => {
+    return (
+      <View style={dynamicStyles.menuActionContainer}>
+        <RectButton
+          style={dynamicStyles.menuActionButton}
+          onPress={() => {
+            setMenuChatId(chatId);
+          }}
+        >
+          <Ionicons name="ellipsis-vertical" size={24} color="#fff" />
+          <Text style={dynamicStyles.menuActionText}>More</Text>
+        </RectButton>
+      </View>
+    );
   };
 
   const renderMessageItem = ({ item }: { item: ChatMessage }) => {
@@ -3952,6 +6140,17 @@ export default function ChatsScreen() {
     } else {
       // Assistant messages: no bubbles for document/bookmark/ai_assistant, bubbles for user/workspace
       const hasContent = item.content && item.content.trim().length > 0;
+      // Check if this is the message being streamed by finding its index in the messages array
+      const currentMessageIndex = messages.findIndex(m => m.id === item.id);
+      // Use ref for immediate check, fallback to state for re-renders
+      const streamingIndex = streamingMessageIndexRef.current !== null ? streamingMessageIndexRef.current : streamingMessageIndex;
+      const isStreamingThisMessage = streamingIndex !== null && currentMessageIndex === streamingIndex;
+      // Fake streaming is active only if: sending is active, this is the streaming message, and fake streaming ref is true
+      const isFakeStreamingActive = sendingMessage && isStreamingThisMessage && isFakeStreamingRef.current;
+      // Real streaming is active if this message is being streamed and streaming ref is true
+      const isRealStreamingActive = isStreamingThisMessage && isStreamingRef.current;
+      // Hide time during fake or real streaming
+      const isStreamingActive = isFakeStreamingActive || isRealStreamingActive;
       
       if (isDocumentOrBookmarkChat) {
         // No bubbles (ChatGPT style). Fake streaming runs IN THIS SAME SLOT (above the time), then preview/refinement replace it.
@@ -3964,18 +6163,12 @@ export default function ChatsScreen() {
               ? renderMessageContent(item.content, item.is_own_message)
               : (
                   <ProcessingMessageDisplay
-                    isProcessing={true}
+                    isProcessing={isFakeStreamingActive}
                     hasRealData={false}
                     processingType="general"
                     onComplete={() => {}}
                   />
                 )}
-            <Text style={[
-              dynamicStyles.messageTimeNoBubble,
-              dynamicStyles.otherMessageTimeNoBubble
-            ]}>
-              {formatMessageTime(item.created_at)}
-            </Text>
           </View>
         );
       } else {
@@ -3992,12 +6185,6 @@ export default function ChatsScreen() {
               dynamicStyles.otherBubble
             ]}>
               {renderMessageContent(item.content, item.is_own_message)}
-              <Text style={[
-                dynamicStyles.messageTime,
-                dynamicStyles.otherMessageTime
-              ]}>
-                {formatMessageTime(item.created_at)}
-              </Text>
             </View>
           </View>
         );
@@ -4085,9 +6272,8 @@ export default function ChatsScreen() {
           onPress={() => {
             // Go back to chat list, or previous screen if no chat selected
             if (selectedChat) {
-              // Re-sort chats when returning from conversation
-              setSelectedChat(null);
-              // The useEffect watching selectedChat will handle the sorting
+              // Use goBackToChats to properly handle cleanup without clearing context
+              goBackToChats();
             } else {
               router.back();
             }
@@ -4097,7 +6283,23 @@ export default function ChatsScreen() {
         </TouchableOpacity>
         
         <View style={dynamicStyles.chatHeaderInfo}>
-          <Text style={dynamicStyles.chatTitle}>{selectedChat?.title || 'Chat'}</Text>
+          <Text style={dynamicStyles.chatTitle} numberOfLines={1} ellipsizeMode="tail">
+            {(() => {
+              // CRITICAL: Always use document_context/bookmark_context name if available
+              // This ensures the title doesn't change when chat is refreshed or reloaded
+              if (selectedChat?.document_context?.name) {
+                return `Document: ${truncateFilename(selectedChat.document_context.name)}`;
+              }
+              if (selectedChat?.bookmark_context?.name) {
+                return `Bookmark: ${selectedChat.bookmark_context.name}`;
+              }
+              if (selectedChat?.workspace?.name) {
+                return selectedChat.workspace.name;
+              }
+              // Fallback to title property
+              return selectedChat?.title || 'Chat';
+            })()}
+          </Text>
           <Text style={dynamicStyles.chatSubtitle}>
             {selectedChat?.type === 'ai_assistant' ? 'ChatGD Assistant' : 
              selectedChat?.type === 'document_focused' ? 'Document Chat' :
@@ -4172,6 +6374,9 @@ export default function ChatsScreen() {
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
               onTouchStart={() => setShowQuickChatTypes(false)}
+              scrollEnabled={true}
+              nestedScrollEnabled={true}
+              removeClippedSubviews={false}
             />
             
 
@@ -4191,7 +6396,13 @@ export default function ChatsScreen() {
               <Text style={dynamicStyles.mentionText}>
                 {selectedMention.type === 'file' ? truncateFilename(selectedMention.name) : selectedMention.name}
               </Text>
-              <TouchableOpacity onPress={removeMention} style={dynamicStyles.removeMentionButton}>
+              <TouchableOpacity 
+                onPress={(e) => {
+                  e.stopPropagation();
+                  removeMention();
+                }} 
+                style={dynamicStyles.removeMentionButton}
+              >
                 <Ionicons name="close" size={16} color="#666" />
               </TouchableOpacity>
             </View>
@@ -4301,13 +6512,13 @@ export default function ChatsScreen() {
             <TouchableOpacity
               style={[
                 dynamicStyles.sendButton,
-                ((!newMessage.trim() && !sendingMessage) || sendingMessage) && { opacity: 0.5 }
+                (!newMessage.trim() && !sendingMessage) && { opacity: 0.5 }
               ]}
-              onPress={sendMessage}
-              disabled={sendingMessage || !newMessage.trim()}
+              onPress={sendingMessage ? stopProcessing : sendMessage}
+              disabled={!newMessage.trim() && !sendingMessage}
             >
               {sendingMessage ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <Ionicons name="close" size={20} color="#fff" />
               ) : (
                 <Ionicons name="send" size={20} color="#fff" />
               )}
@@ -4323,9 +6534,10 @@ export default function ChatsScreen() {
     <Modal
       visible={showNewChatModal}
       animationType="slide"
-      presentationStyle="pageSheet"
+      presentationStyle="fullScreen"
+      statusBarTranslucent={false}
     >
-      <SafeAreaView style={dynamicStyles.container}>
+      <View style={[dynamicStyles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={dynamicStyles.header}>
           <TouchableOpacity onPress={() => {
             setShowNewChatModal(false);
@@ -4520,7 +6732,13 @@ export default function ChatsScreen() {
               </View>
               
               <View style={{ marginTop: 8 }}>
-                {modalFilteredUsers.length === 0 ? (
+                {usersLoading ? (
+                  <View style={{ padding: 16, alignItems: 'center' }}>
+                    <Text style={{ color: '#666', fontStyle: 'italic', textAlign: 'center' }}>
+                      Loading users...
+                    </Text>
+                  </View>
+                ) : modalFilteredUsers.length === 0 ? (
                   <View style={{ padding: 16, alignItems: 'center' }}>
                     <Ionicons name="people-outline" size={48} color="#ccc" style={{ marginBottom: 8 }} />
                     <Text style={{ color: '#666', fontStyle: 'italic', textAlign: 'center' }}>
@@ -4590,7 +6808,7 @@ export default function ChatsScreen() {
           )}
         </ScrollView>
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 
@@ -4645,6 +6863,7 @@ export default function ChatsScreen() {
       paddingVertical: 12,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
+      backgroundColor: colors.card || '#fff',
     },
     chatAvatar: {
       width: 44,
@@ -4735,26 +6954,28 @@ export default function ChatsScreen() {
     messageContainer: {
       paddingHorizontal: 16,
       paddingVertical: 1, // Minimal vertical padding
+      width: '100%',
+      flexDirection: 'row',
     },
     messageContainerNoBubble: {
       paddingHorizontal: 16,
       paddingVertical: 8,
       maxWidth: '100%',
       flexShrink: 1,
-      // Removed alignSelf - let parent container control alignment
+      flexDirection: 'row',
     },
     ownMessage: {
-      alignItems: 'flex-end',
+      justifyContent: 'flex-end',
     },
     otherMessage: {
-      alignItems: 'flex-start',
+      justifyContent: 'flex-start',
     },
     ownMessageNoBubble: {
-      alignItems: 'flex-end',
+      justifyContent: 'flex-end',
       paddingLeft: 60,
     },
     otherMessageNoBubble: {
-      alignItems: 'flex-start',
+      justifyContent: 'flex-start',
       paddingRight: 60,
     },
     messageBubble: {
@@ -4808,10 +7029,69 @@ export default function ChatsScreen() {
     ownMessageTimeNoBubble: {
       color: colors.textSecondary,
     },
-    otherMessageTimeNoBubble: {
-      color: colors.textSecondary,
-    },
-    inputContainer: {
+  otherMessageTimeNoBubble: {
+    color: colors.textSecondary,
+  },
+  menuActionContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    height: '100%',
+  },
+  menuActionButton: {
+    backgroundColor: '#666',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    height: '100%',
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  menuActionText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  chatMenuModal: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  chatMenuContent: {
+    backgroundColor: colors.card || '#fff',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  chatMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  chatMenuItemText: {
+    fontSize: 16,
+    color: colors.text || '#000',
+    marginLeft: 12,
+  },
+  chatMenuItemDanger: {
+    color: '#FF3B30',
+  },
+  deleteActionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  inputContainer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
       paddingHorizontal: 16,
@@ -5053,10 +7333,75 @@ export default function ChatsScreen() {
   }), [colors, keyboardHeight]);
 
   // Show chat list or individual chat based on selection
+  // Render chat menu modal
+  const renderChatMenuModal = () => {
+    if (!menuChatId) return null;
+    
+    return (
+      <Modal
+        visible={menuChatId !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMenuChatId(null)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.chatMenuModal}
+          activeOpacity={1}
+          onPress={() => setMenuChatId(null)}
+        >
+          <View style={dynamicStyles.chatMenuContent} onStartShouldSetResponder={() => true}>
+            <TouchableOpacity
+              style={dynamicStyles.chatMenuItem}
+              onPress={() => {
+                handleToggleFavorite(menuChatId);
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons 
+                name={favoriteChatIds.has(menuChatId) ? "star" : "star-outline"} 
+                size={20} 
+                color={favoriteChatIds.has(menuChatId) ? "#FFD700" : "#007AFF"} 
+              />
+              <Text style={dynamicStyles.chatMenuItemText}>
+                {favoriteChatIds.has(menuChatId) ? "Remove from Favorite" : "Add to Favorite"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={dynamicStyles.chatMenuItem}
+              onPress={() => {
+                setMenuChatId(null);
+                // Close swipeable first
+                const swipeableRef = chatSwipeableRefs.current.get(menuChatId);
+                if (swipeableRef) {
+                  swipeableRef.close();
+                }
+                // Then show delete confirmation
+                setTimeout(() => {
+                  handleDeleteChat(menuChatId);
+                }, 300);
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+              <Text style={[dynamicStyles.chatMenuItemText, dynamicStyles.chatMenuItemDanger]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
+
+  // If fileId param is present, show chat messages view immediately (will be set by useEffect)
+  // This prevents showing the chat list first when navigating from files screen
+  // BUT: If user is going back, always show chat list (even if params haven't updated yet)
+  const hasFileIdParam = !!params.fileId;
+  const shouldShowChatMessages = !isGoingBack && (selectedChat || hasFileIdParam);
+  
   return (
     <>
-      {selectedChat ? renderChatMessages() : renderChatsList()}
+      {shouldShowChatMessages ? renderChatMessages() : renderChatsList()}
       {renderNewChatModal()}
+      {renderChatMenuModal()}
       {/* Search Type Menu Modal */}
       <Modal
         visible={showSearchTypeMenu}
@@ -5137,6 +7482,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
+    backgroundColor: '#fff',
   },
   chatAvatar: {
     width: 44,
@@ -5231,12 +7577,13 @@ const styles = StyleSheet.create({
   messageContainer: {
     paddingHorizontal: 12,
     paddingVertical: 1, // Minimal vertical padding
+    flexDirection: 'row',
   },
   ownMessage: {
-    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
   },
   otherMessage: {
-    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
   },
   messageBubble: {
     maxWidth: '80%',

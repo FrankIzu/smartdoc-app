@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 // @ts-ignore - react-native-fetch-api provides true ReadableStream support
 import { fetch as streamingFetch } from 'react-native-fetch-api';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
@@ -14,6 +14,21 @@ interface ApiResponse<T = any> {
   user?: any;
   response?: string;
   chat_id?: string;
+  status?: string;  // Status field for polling responses (e.g., 'not_found', 'cancelled', 'processing')
+  content?: string;  // Content from chat polling responses
+  cursor?: number;  // Cursor position for chat polling
+  done?: boolean;  // Whether chat polling is complete
+  preview_started?: boolean;  // Whether preview phase has started
+  is_preview_phase?: boolean;  // Whether currently in preview phase
+  chat_history_id?: number;  // Chat history ID from chat responses
+  metadata?: any;  // Metadata object from chat responses
+  error?: string;  // Error message from chat polling responses
+  job_id?: string;  // Job ID from chat job start responses
+  upload_id?: string;  // Upload ID from chunked upload responses
+  total_chunks?: number;  // Total chunks from chunked upload responses
+  chunk_size?: number;  // Chunk size from chunked upload responses
+  uploaded_chunks?: number[];  // Array of uploaded chunk indices from upload status responses
+  paused?: boolean;  // Whether upload is paused from upload status responses
   citations?: Array<{
     source_type: string;
     source_name: string;
@@ -71,6 +86,13 @@ const MOBILE_ENDPOINTS = {
   // Files (all operations go through backend encryption)
   FILES: '/api/v1/mobile/files',
   UPLOAD: '/api/v1/mobile/upload', // Backend encrypts on save
+  UPLOAD_INIT: '/api/v1/mobile/upload/init',
+  UPLOAD_CHUNK: '/api/v1/mobile/upload/chunk',
+  UPLOAD_COMPLETE: '/api/v1/mobile/upload/complete',
+  UPLOAD_STATUS: '/api/v1/mobile/upload/status',
+  UPLOAD_CANCEL: '/api/v1/mobile/upload/cancel',
+  UPLOAD_PAUSE: '/api/v1/mobile/upload/pause',
+  UPLOAD_RESUME: '/api/v1/mobile/upload/resume',
   FILE_BY_ID: (id: number) => `/api/v1/mobile/get-file/${id}`,
   FILE_DOWNLOAD: (id: number) => `/api/v1/mobile/file/${id}/download`, // Backend decrypts on download
   FILE_VIEW: (id: number) => `/api/v1/mobile/file/${id}/view`, // Backend decrypts for viewing
@@ -82,6 +104,9 @@ const MOBILE_ENDPOINTS = {
   CHAT_HISTORY: '/api/v1/mobile/chat/history',
   CHAT_SEND: '/api/v1/mobile/chat/send',
   CHAT_SMART_STREAM: '/api/v1/mobile/chat/smart/stream',
+  CHAT_SMART_START: '/api/v1/mobile/chat/smart/start',
+  CHAT_SMART_CHUNK: '/api/v1/mobile/chat/smart/chunk',
+  CHAT_SMART_CANCEL: '/api/v1/mobile/chat/smart/cancel',
   
   // Forms
   FORMS: '/api/v1/mobile/forms',
@@ -758,6 +783,493 @@ class ApiService {
     }
   }
 
+  // ==================== CHUNKED UPLOAD METHODS ====================
+  // Resilient file upload with chunking, resume, and retry support
+
+  /**
+   * Initialize a chunked upload session
+   */
+  async initChunkedUpload(
+    filename: string,
+    fileSize: number,
+    fileType: string = 'application/octet-stream',
+    workspaceId?: number
+  ): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_INIT, {
+        filename,
+        file_size: fileSize,
+        file_type: fileType,
+        workspace_id: workspaceId
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to initialize upload');
+    }
+  }
+
+  /**
+   * Upload a single chunk
+   */
+  async uploadChunk(
+    uploadId: string,
+    chunkIndex: number,
+    totalChunks: number,
+    chunkBlob: Blob,
+    onProgress?: (progress: number) => void
+  ): Promise<ApiResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('upload_id', uploadId);
+      formData.append('chunk_index', chunkIndex.toString());
+      formData.append('total_chunks', totalChunks.toString());
+      formData.append('chunk', chunkBlob as any);
+
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_CHUNK, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+          if (onProgress && progressEvent.total) {
+            const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            onProgress(progress);
+          }
+        },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to upload chunk');
+    }
+  }
+
+  /**
+   * Complete chunked upload
+   */
+  async completeChunkedUpload(uploadId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_COMPLETE, {
+        upload_id: uploadId
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to complete upload');
+    }
+  }
+
+  /**
+   * Get upload status (for resume)
+   */
+  async getUploadStatus(uploadId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_STATUS, {
+        params: { upload_id: uploadId }
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to get upload status');
+    }
+  }
+
+  /**
+   * Cancel upload
+   */
+  async cancelUpload(uploadId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_CANCEL, {
+        upload_id: uploadId
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to cancel upload');
+    }
+  }
+
+  /**
+   * Pause upload
+   */
+  async pauseUpload(uploadId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_PAUSE, {
+        upload_id: uploadId
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to pause upload');
+    }
+  }
+
+  /**
+   * Resume upload
+   */
+  async resumeUpload(uploadId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_RESUME, {
+        upload_id: uploadId
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to resume upload');
+    }
+  }
+
+  /**
+   * Upload file with retry (for small files < 5MB)
+   */
+  async uploadFileWithRetry(
+    file: FormData,
+    maxRetries: number = 3,
+    onProgress?: (progress: number) => void
+  ): Promise<ApiResponse> {
+    let lastError: any;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 [RETRY] Upload attempt ${attempt}/${maxRetries}`);
+        return await this.uploadFile(file, onProgress);
+      } catch (error: any) {
+        lastError = error;
+        const isNetworkError = 
+          error.message?.includes('Network') ||
+          error.message?.includes('timeout') ||
+          error.message?.includes('ECONNRESET') ||
+          error.message?.includes('ETIMEDOUT');
+        
+        if (attempt < maxRetries && isNetworkError) {
+          // Exponential backoff: 2s, 4s, 8s
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`⏳ [RETRY] Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // Last attempt or non-network error - throw
+        throw error;
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
+   * Upload file using chunked upload (for large files >= 5MB)
+   * Supports resume, pause, cancel, parallel uploads, and AppState monitoring
+   */
+  async uploadFileChunked(
+    fileUri: string,
+    filename: string,
+    fileType: string = 'application/octet-stream',
+    workspaceId?: number,
+    chunkSize: number = 5 * 1024 * 1024, // 5MB default
+    signal?: AbortSignal,
+    onProgress?: (progress: number, message?: string, phase?: string) => void,
+    onPause?: () => void,
+    onResume?: () => void,
+    maxParallelUploads: number = 3 // Number of chunks to upload simultaneously
+  ): Promise<ApiResponse> {
+    try {
+      // Read file to get size
+      const response = await fetch(fileUri);
+      const blob = await response.blob();
+      const fileSize = blob.size;
+      
+      console.log(`📤 [CHUNKED] Starting chunked upload: ${filename} (${fileSize} bytes)`);
+      
+      // Step 1: Initialize upload
+      const initResponse = await this.initChunkedUpload(filename, fileSize, fileType, workspaceId);
+      if (!initResponse.success || !initResponse.upload_id) {
+        throw new Error(initResponse.message || 'Failed to initialize upload');
+      }
+      
+      const uploadId = initResponse.upload_id;
+      const totalChunks = initResponse.total_chunks;
+      const actualChunkSize = initResponse.chunk_size || chunkSize;
+      
+      // Validate required fields
+      if (!uploadId) {
+        throw new Error('Upload ID is required');
+      }
+      if (!totalChunks || totalChunks <= 0) {
+        throw new Error('Total chunks is required and must be greater than 0');
+      }
+      
+      // TypeScript type narrowing: after validation, totalChunks is definitely a number
+      const validatedTotalChunks: number = totalChunks;
+      
+      console.log(`📤 [CHUNKED] Upload initialized: ${uploadId}, ${validatedTotalChunks} chunks`);
+      
+      // Step 2: Check for resume (get already uploaded chunks)
+      let uploadedChunks = new Set<number>();
+      try {
+        const statusResponse = await this.getUploadStatus(uploadId);
+        if (statusResponse.success && statusResponse.uploaded_chunks) {
+          uploadedChunks = new Set(statusResponse.uploaded_chunks);
+          console.log(`📤 [CHUNKED] Resuming upload: ${uploadedChunks.size}/${validatedTotalChunks} chunks already uploaded`);
+        }
+      } catch (statusError) {
+        console.warn('⚠️ [CHUNKED] Could not get upload status, starting fresh');
+      }
+      
+      // Step 3: Upload chunks (with parallel support and AppState monitoring)
+      let isPaused = false;
+      let isCancelled = false;
+      let appStatePaused = false;
+      
+      // AppState monitoring - pause uploads when app goes to background
+      const appStateSubscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+        if (nextAppState === 'background' || nextAppState === 'inactive') {
+          if (!appStatePaused) {
+            console.log('📱 [CHUNKED] App went to background, pausing upload...');
+            appStatePaused = true;
+            isPaused = true;
+            onPause?.();
+            // Pause on backend
+            this.pauseUpload(uploadId).catch(err => {
+              console.warn('⚠️ [CHUNKED] Failed to pause upload on backend:', err);
+            });
+          }
+        } else if (nextAppState === 'active') {
+          if (appStatePaused) {
+            console.log('📱 [CHUNKED] App returned to foreground, resuming upload...');
+            appStatePaused = false;
+            isPaused = false;
+            onResume?.();
+            // Resume on backend
+            this.resumeUpload(uploadId).catch(err => {
+              console.warn('⚠️ [CHUNKED] Failed to resume upload on backend:', err);
+            });
+          }
+        }
+      });
+      
+      try {
+        // Prepare chunks to upload (skip already uploaded)
+        const chunksToUpload: number[] = [];
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+          if (!uploadedChunks.has(chunkIndex)) {
+            chunksToUpload.push(chunkIndex);
+          } else {
+            const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+            onProgress?.(progress, `Chunk ${chunkIndex + 1}/${totalChunks} (already uploaded)`, 'upload');
+          }
+        }
+        
+        // Upload chunks in parallel batches
+        const uploadChunkWithRetry = async (chunkIndex: number): Promise<void> => {
+          // Check abort signal
+          if (signal?.aborted) {
+            throw new Error('Upload cancelled');
+          }
+          
+          // Check if paused (manual or AppState)
+          while (isPaused && !signal?.aborted) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            try {
+              const status = await this.getUploadStatus(uploadId);
+              if (!status.paused && !appStatePaused) {
+                isPaused = false;
+                onResume?.();
+                console.log('▶️ [CHUNKED] Upload resumed');
+              }
+            } catch (e) {
+              // Ignore status check errors
+            }
+          }
+          
+          if (signal?.aborted) {
+            throw new Error('Upload cancelled');
+          }
+          
+          // Read chunk from blob
+          const start = chunkIndex * actualChunkSize;
+          const end = Math.min(start + actualChunkSize, fileSize);
+          const chunkBlob = blob.slice(start, end);
+          
+          // Upload chunk with retry
+          let chunkUploaded = false;
+          let retryCount = 0;
+          const maxChunkRetries = 3;
+          
+          while (!chunkUploaded && retryCount < maxChunkRetries) {
+            try {
+              await this.uploadChunk(
+                uploadId,
+                chunkIndex,
+                validatedTotalChunks,
+                chunkBlob,
+                (chunkProgress) => {
+                  // Calculate overall progress including all chunks
+                  const completedChunks = uploadedChunks.size;
+                  const currentChunkProgress = chunkProgress / 100; // 0-1
+                  const overallProgress = Math.round(
+                    ((completedChunks + currentChunkProgress) / validatedTotalChunks) * 100
+                  );
+                  onProgress?.(overallProgress, `Uploading chunk ${chunkIndex + 1}/${validatedTotalChunks}`, 'upload');
+                }
+              );
+              chunkUploaded = true;
+              uploadedChunks.add(chunkIndex);
+              console.log(`✅ [CHUNKED] Chunk ${chunkIndex + 1}/${totalChunks} uploaded`);
+            } catch (chunkError: any) {
+              retryCount++;
+              if (retryCount >= maxChunkRetries) {
+                throw new Error(`Failed to upload chunk ${chunkIndex + 1} after ${maxChunkRetries} attempts: ${chunkError.message}`);
+              }
+              // Exponential backoff
+              const delay = Math.pow(2, retryCount) * 1000;
+              console.log(`⏳ [CHUNKED] Retrying chunk ${chunkIndex + 1} in ${delay}ms...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+        };
+        
+        // Upload chunks in parallel batches
+        for (let i = 0; i < chunksToUpload.length; i += maxParallelUploads) {
+          // Check abort signal before starting batch
+          if (signal?.aborted) {
+            console.log('🛑 [CHUNKED] Abort signal received, cancelling upload');
+            await this.cancelUpload(uploadId);
+            throw new Error('Upload cancelled');
+          }
+          
+          // Wait if paused
+          while (isPaused && !signal?.aborted) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            try {
+              const status = await this.getUploadStatus(uploadId);
+              if (!status.paused && !appStatePaused) {
+                isPaused = false;
+                onResume?.();
+                console.log('▶️ [CHUNKED] Upload resumed');
+              }
+            } catch (e) {
+              // Ignore status check errors
+            }
+          }
+          
+          if (signal?.aborted) {
+            await this.cancelUpload(uploadId);
+            throw new Error('Upload cancelled');
+          }
+          
+          // Upload batch of chunks in parallel
+          const batch = chunksToUpload.slice(i, i + maxParallelUploads);
+          console.log(`📤 [CHUNKED] Uploading batch: chunks ${batch.map(c => c + 1).join(', ')} (${batch.length} parallel)`);
+          
+          await Promise.all(batch.map(chunkIndex => uploadChunkWithRetry(chunkIndex)));
+          
+          // Update progress after batch
+          const progress = Math.round((uploadedChunks.size / validatedTotalChunks) * 100);
+          onProgress?.(progress, `Uploaded ${uploadedChunks.size}/${validatedTotalChunks} chunks`, 'upload');
+        }
+      } finally {
+        // Clean up AppState listener
+        appStateSubscription.remove();
+      }
+      
+      // Step 4: Complete upload
+      console.log(`📦 [CHUNKED] All chunks uploaded, finalizing...`);
+      onProgress?.(95, 'Finalizing upload...', 'finalizing');
+      const completeResponse = await this.completeChunkedUpload(uploadId);
+      
+      if (!completeResponse.success) {
+        throw new Error(completeResponse.message || 'Failed to complete upload');
+      }
+      
+      onProgress?.(100, 'Upload complete', 'completed');
+      console.log(`✅ [CHUNKED] Upload completed: ${uploadId}`);
+      
+      return completeResponse;
+      
+    } catch (error: any) {
+      console.error('❌ [CHUNKED] Chunked upload failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Hybrid upload - automatically chooses chunked or retry based on file size
+   * Files >= 5MB use chunked upload, smaller files use retry
+   */
+  async uploadFileHybrid(
+    file: FormData | { uri: string; name: string; type?: string; size?: number },
+    workspaceId?: number,
+    signal?: AbortSignal,
+    onProgress?: (progress: number, message?: string, phase?: string) => void,
+    onPause?: () => void,
+    onResume?: () => void
+  ): Promise<ApiResponse> {
+    const CHUNKED_THRESHOLD = 5 * 1024 * 1024; // 5MB
+    
+    // Determine file size
+    let fileSize: number;
+    let fileUri: string;
+    let filename: string;
+    let fileType: string;
+    
+    if (file instanceof FormData) {
+      // FormData - use simple retry (can't easily get size from FormData)
+      console.log('📤 [HYBRID] Using retry upload (FormData)');
+      return await this.uploadFileWithRetry(file, 3, (progress) => {
+        onProgress?.(progress, 'Uploading file...', 'upload');
+      });
+    } else {
+      // File object with URI
+      fileUri = file.uri;
+      filename = file.name;
+      fileType = file.type || 'application/octet-stream';
+      fileSize = file.size || 0;
+      
+      // If size not provided, try to get it
+      if (!fileSize) {
+        try {
+          const response = await fetch(fileUri);
+          const blob = await response.blob();
+          fileSize = blob.size;
+        } catch (e) {
+          console.warn('⚠️ [HYBRID] Could not determine file size, using retry upload');
+          // Fallback to retry upload
+          const formData = new FormData();
+          formData.append('file', {
+            uri: fileUri,
+            type: fileType,
+            name: filename,
+          } as any);
+          return await this.uploadFileWithRetry(formData, 3, (progress) => {
+            onProgress?.(progress, 'Uploading file...', 'upload');
+          });
+        }
+      }
+    }
+    
+    // Choose method based on size
+    if (fileSize >= CHUNKED_THRESHOLD) {
+      console.log(`📤 [HYBRID] Using chunked upload (${fileSize} bytes >= ${CHUNKED_THRESHOLD})`);
+      return await this.uploadFileChunked(
+        fileUri!,
+        filename!,
+        fileType!,
+        workspaceId,
+        5 * 1024 * 1024, // 5MB chunks
+        signal,
+        onProgress,
+        onPause,
+        onResume,
+        3 // maxParallelUploads: upload 3 chunks simultaneously
+      );
+    } else {
+      console.log(`📤 [HYBRID] Using retry upload (${fileSize} bytes < ${CHUNKED_THRESHOLD})`);
+      const formData = new FormData();
+      formData.append('file', {
+        uri: fileUri!,
+        type: fileType!,
+        name: filename!,
+      } as any);
+      return await this.uploadFileWithRetry(formData, 3, (progress) => {
+        onProgress?.(progress, 'Uploading file...', 'upload');
+      });
+    }
+  }
+
   /**
    * Get file by ID. Pass workspaceId when the file was listed from a workspace so the
    * backend can apply the same visibility (workspace membership) as the list endpoints.
@@ -1270,6 +1782,10 @@ class ApiService {
         });
         
         if (!response.ok) {
+          // Handle specific HTTP status codes
+          if (response.status === 429) {
+            throw new Error(`Rate limit exceeded. Please wait a moment before sending another message.`);
+          }
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         
@@ -1478,7 +1994,9 @@ class ApiService {
       // Determine user-friendly error message
       let userFriendlyMessage = 'Sorry, there was an issue processing your request.';
       
-      if (error.message?.includes('timeout') || error.message?.includes('Timeout')) {
+      if (error.message?.includes('429') || error.message?.includes('Rate limit') || error.message?.includes('rate limit')) {
+        userFriendlyMessage = 'Rate limit exceeded. Please wait a moment before sending another message.';
+      } else if (error.message?.includes('timeout') || error.message?.includes('Timeout')) {
         userFriendlyMessage = 'Connection timed out. Please check your internet connection and try again.';
       } else if (error.message?.includes('Network Error') || error.message?.includes('ERR_NETWORK')) {
         userFriendlyMessage = 'Unable to connect to the server. Please check your internet connection.';
@@ -1493,6 +2011,595 @@ class ApiService {
       }
       
       throw new Error(error.message || 'Chat stream failed');
+    }
+  }
+
+  /**
+   * Chunked Polling Chat - Resilient alternative to streaming
+   * Uses job-based polling instead of long-lived SSE connections
+   */
+  async startChatJob(
+    message: string,
+    filters?: any
+  ): Promise<ApiResponse> {
+    try {
+      console.log('💬 [POLLING] Starting chat job');
+      
+      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
+      // Build payload (same as streaming)
+      const normalizeIds = this.normalizeIds.bind(this);
+      const payload: any = {
+        message,
+        response_mode: filters?.response_mode || 'flexible',
+        stream: false, // Backend will use non-streaming mode
+        preview_mode: false, // Polling doesn't use preview mode
+        search_type: filters?.search_type || 'refined',
+      };
+
+      const toNum = (v: any) => (v == null || v === '') ? null : Number(v);
+      const toNumList = (arr: any) => normalizeIds(Array.isArray(arr) ? arr : []);
+
+      // Add context IDs (same normalization as streaming)
+      if (filters) {
+        if (filters.selected_files || filters.context_file_ids) {
+          const fileIds = toNumList(filters.selected_files || filters.context_file_ids);
+          if (fileIds.length > 0) {
+            payload.selected_files = fileIds;
+            payload.context_file_ids = fileIds;
+          }
+        }
+
+        if (filters.selected_bookmarks || filters.context_bookmark_ids) {
+          const bookmarkIds = toNumList(filters.selected_bookmarks || filters.context_bookmark_ids);
+          if (bookmarkIds.length > 0) {
+            payload.selected_bookmarks = bookmarkIds;
+            payload.context_bookmark_ids = bookmarkIds;
+          }
+        }
+
+        if (filters.selected_workspaces) {
+          const workspaceIds = toNumList(filters.selected_workspaces);
+          if (workspaceIds.length > 0) {
+            payload.selected_workspaces = workspaceIds;
+          }
+        }
+
+        if (filters.selected_users) {
+          const userIds = toNumList(filters.selected_users);
+          if (userIds.length > 0) {
+            payload.selected_users = userIds;
+          }
+        }
+
+        if (filters.selected_transcripts || filters.context_transcript_ids) {
+          const transcriptIds = toNumList(filters.selected_transcripts || filters.context_transcript_ids);
+          if (transcriptIds.length > 0) {
+            payload.selected_transcripts = transcriptIds;
+            payload.context_transcript_ids = transcriptIds;
+          }
+        }
+
+        if (filters.context_entry_ids) {
+          const entryIds = toNumList(filters.context_entry_ids);
+          if (entryIds.length > 0) {
+            payload.context_entry_ids = entryIds;
+          }
+        }
+
+        if (filters.conversation_session_id) {
+          payload.conversation_session_id = toNum(filters.conversation_session_id);
+        }
+
+        if (filters.active_workspace_id || filters.workspace_id) {
+          payload.active_workspace_id = toNum(filters.active_workspace_id || filters.workspace_id);
+        }
+
+        if (filters.chat_history_id != null && filters.chat_history_id !== -1) {
+          payload.chat_history_id = toNum(filters.chat_history_id);
+        }
+      }
+
+      // Use longer timeout for starting chat job (60s) to handle slow network conditions
+      // The endpoint should return quickly, but network issues can cause delays
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SMART_START, payload, {
+        timeout: 60000 // 60 seconds timeout
+      });
+      console.log('✅ [POLLING] Chat job started:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ [POLLING] Failed to start chat job:', error);
+      
+      // Handle network errors (connection refused, DNS failure, etc.)
+      if (error.message === 'Network Error' || error.code === 'ERR_NETWORK' || error.code === 'ECONNREFUSED') {
+        const errorMsg = 'Cannot connect to server. Please check:\n' +
+          '1. Backend server is running\n' +
+          '2. Network connection is active\n' +
+          '3. Server URL is correct';
+        throw new Error(errorMsg);
+      }
+      
+      // Handle timeout errors
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        throw new Error('Request timed out. Please check your connection and try again.');
+      }
+      
+      // Handle other errors
+      throw new Error(error.response?.data?.message || error.message || 'Failed to start chat job');
+    }
+  }
+
+  async pollChatChunk(
+    jobId: string,
+    cursor: number = 0
+  ): Promise<ApiResponse> {
+    try {
+      // Polling endpoint must NEVER block - it should return immediately with current state
+      // Backend should return instantly even if no new content exists
+      // Use a reasonable timeout (10s) to detect network issues, but backend should return much faster
+      const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_SMART_CHUNK, {
+        params: { job_id: jobId, cursor },
+        timeout: 10000 // 10 second timeout to detect network issues
+      });
+      return response.data;
+    } catch (error: any) {
+      // Preserve original error for classification (don't wrap it)
+      // The caller will classify it as permanent or transient
+      throw error;
+    }
+  }
+
+  async cancelChatJob(jobId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SMART_CANCEL, {
+        job_id: jobId
+      });
+      console.log('✅ [POLLING] Chat job cancelled:', jobId);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ [POLLING] Failed to cancel chat job:', error);
+      throw new Error(error.response?.data?.message || 'Failed to cancel chat job');
+    }
+  }
+
+  /**
+   * Send chat message using chunked polling (resilient alternative to streaming)
+   * Polls every 500ms to get chunks, making it feel like streaming
+   */
+  async sendChatMessagePolling(
+    message: string,
+    filters?: any,
+    signal?: AbortSignal,
+    onChunk?: (type: string, data: any) => void
+  ): Promise<void> {
+    
+    try {
+      console.log('💬 [POLLING] Starting chat message via polling');
+      
+      // Step 1: Start job
+      // CRITICAL: If this fails, we must NOT continue with polling
+      let startResponse;
+      try {
+        startResponse = await this.startChatJob(message, filters);
+      } catch (startError: any) {
+        // Network errors or other start failures - don't continue
+        console.error('❌ [POLLING] Failed to start chat job, aborting:', startError);
+        if (onChunk) {
+          onChunk('error', {
+            type: 'error',
+            message: startError.message || 'Failed to start chat job. Please check your connection and try again.',
+            error: 'StartJobFailed'
+          });
+        }
+        throw startError; // Re-throw to stop execution
+      }
+      
+      if (!startResponse || !startResponse.success || !startResponse.job_id) {
+        const errorMsg = startResponse?.message || 'Failed to start chat job - no job ID received';
+        console.error('❌ [POLLING] Invalid start response:', startResponse);
+        if (onChunk) {
+          onChunk('error', {
+            type: 'error',
+            message: errorMsg,
+            error: 'InvalidStartResponse'
+          });
+        }
+        throw new Error(errorMsg);
+      }
+
+      const jobId: string = startResponse.job_id;
+      let cursor = 0;
+      let isDone = false;
+      let accumulatedContent = ''; // Track accumulated content for streaming-like display
+      let previousPhase: boolean | null = null; // Track previous phase to detect transitions (null = not set yet)
+      let previewContentLength = 0; // Track where preview ends
+      let refinementContentReceived = false; // Track if we've received any refinement content
+      let previewContentReceived = false; // Track if we've actually received any preview content
+      const pollInterval = 200; // Poll every 200ms for faster preview capture
+      const initialPollInterval = 100; // Poll every 100ms for first few polls to catch preview quickly
+      const maxPollTime = 300000; // Max 5 minutes
+      const startTime = Date.now();
+      let pollCount = 0; // Track number of polls
+      
+      // Store jobId in outer scope for error handling
+      const currentJobId = jobId;
+      
+      // Network resilience: Track failures and implement exponential backoff
+      let consecutiveFailures = 0; // Track consecutive failures
+      let currentDelay = pollInterval; // Current delay between polls (starts at 200ms)
+      const maxDelay = 5000; // Maximum delay (5 seconds)
+      const maxFailures = 10; // Maximum consecutive failures before giving up
+      
+      // Helper function to classify errors
+      const isPermanentError = (error: any): boolean => {
+        const status = error?.response?.status;
+        if (!status) return false;
+        // Permanent errors: 401 (unauthorized), 403 (forbidden), 404 (not found), 410 (gone/expired)
+        return [401, 403, 404, 410].includes(status);
+      };
+      
+      // Helper function to calculate exponential backoff with jitter
+      const calculateBackoff = (failures: number): number => {
+        const baseDelay = 200;
+        const exponentialDelay = Math.min(baseDelay * Math.pow(2, failures), maxDelay);
+        // Add jitter: 0.7 to 1.3 multiplier (70% to 130% of calculated delay)
+        const jitter = 0.7 + Math.random() * 0.6;
+        return Math.floor(exponentialDelay * jitter);
+      };
+
+      // Step 2: Poll for chunks
+      const pollChunks = async (): Promise<void> => {
+        // Check abort signal
+        if (signal?.aborted) {
+          console.log('🛑 [POLLING] Abort signal received, cancelling job');
+          try {
+            await this.cancelChatJob(jobId);
+          } catch (cancelError) {
+            console.error('❌ [POLLING] Failed to cancel job:', cancelError);
+          }
+          return;
+        }
+
+        // Check timeout
+        if (Date.now() - startTime > maxPollTime) {
+          console.warn('⚠️ [POLLING] Polling timeout reached');
+          if (onChunk) {
+            onChunk('error', {
+              type: 'error',
+              message: 'Request timeout. Please try again.',
+              error: 'Timeout'
+            });
+          }
+          return;
+        }
+
+        try {
+          const chunkResponse = await this.pollChatChunk(jobId, cursor);
+          
+          // Success - reset failure counter and delay
+          const hadFailures = consecutiveFailures > 0;
+          consecutiveFailures = 0;
+          currentDelay = pollInterval;
+          
+          // Show reconnection success if we had failures
+          if (hadFailures) {
+            // Connection restored - silently continue
+            console.log('✅ [POLLING] Connection restored, resuming polling');
+          }
+          
+          if (!chunkResponse.success) {
+            if (chunkResponse.status === 'not_found') {
+              console.error('❌ [POLLING] Job not found');
+              if (onChunk) {
+                onChunk('error', {
+                  type: 'error',
+                  message: 'Chat job not found',
+                  error: 'Job not found'
+                });
+              }
+              return;
+            }
+            throw new Error(chunkResponse.message || 'Failed to poll chunk');
+          }
+
+          const { content, cursor: newCursor, done, status, preview_started, is_preview_phase } = chunkResponse;
+
+          // Handle status changes
+          if (status === 'cancelled') {
+            console.log('🛑 [POLLING] Job was cancelled');
+            return;
+          }
+
+          if (status === 'error') {
+            const errorMsg = chunkResponse.error || 'Chat generation failed';
+            console.error('❌ [POLLING] Job error:', errorMsg);
+            if (onChunk) {
+              onChunk('error', {
+                type: 'error',
+                message: errorMsg,
+                error: errorMsg
+              });
+            }
+            return;
+          }
+
+          // CRITICAL: Process content FIRST, then check for phase transition
+          // This ensures preview chunks are sent even if refinement is ready
+          const currentPhase = is_preview_phase !== undefined ? is_preview_phase : true;
+          
+          // Send new content chunk if available (slice from cursor)
+          // Process content based on CURRENT phase, not previous phase
+          if (content && content.length > 0) {
+            // Content is the slice from cursor to end of buffer
+            // CRITICAL: Always accumulate content for the complete event
+            // When done=true, backend returns buffer[cursor:] which is ALL remaining content from cursor
+            // We still need to accumulate it (or replace if cursor was reset to 0 in refinement phase)
+            if (done && is_preview_phase === false && cursor === 0) {
+              // Special case: done=true, refinement phase, cursor=0
+              // This means backend buffer was replaced with complete refinement, content is the full refinement
+              console.log('📦 [POLLING] Done=true in refinement phase with cursor=0 - complete refinement received:', content.length, 'chars');
+              accumulatedContent = content; // Replace with complete refinement (buffer was replaced)
+            } else {
+              // Normal accumulation: add content to accumulated (works for both done and not done)
+              accumulatedContent += content;
+            }
+            // Update cursor only if newCursor is provided (may be undefined in some responses)
+            if (newCursor !== undefined) {
+              cursor = newCursor;
+            }
+            
+            // CRITICAL: Send chunk to frontend IMMEDIATELY (before checking done)
+            // This provides real-time streaming UX - user sees content as it arrives
+            if (onChunk) {
+              // Determine event type based on is_preview_phase flag
+              // CRITICAL: Always use is_preview_phase to determine chunk type, not preview_started
+              // preview_started might be false even when preview content exists
+              const eventType = is_preview_phase !== undefined && is_preview_phase !== null
+                ? (is_preview_phase ? 'preview_chunk' : 'refinement_chunk')
+                : (preview_started 
+                    ? 'preview_chunk' 
+                    : 'chunk'); // Fallback to generic 'chunk' if flags not available
+              
+              // Send chunk immediately to frontend for real-time display
+              // Frontend will append this to buffer and start streaming
+              
+              // CRITICAL: Detect phase transition AFTER processing content
+              // Only detect transition if we actually received preview content first
+              // This prevents false transitions when backend skips preview phase
+              const phaseChanged = previousPhase !== null && previousPhase === true && currentPhase === false && previewContentReceived;
+              
+              onChunk(eventType, {
+                type: eventType,
+                content: content, // New content since last cursor - send immediately
+                chunk_index: Math.floor(cursor / 50), // Approximate chunk index
+                total_chunks: -1, // Unknown until done
+                progress: done ? 100 : 50,
+                phase: is_preview_phase ? 'preview' : 'refinement',
+                preview_started: preview_started || false,
+                is_preview_phase: is_preview_phase !== undefined ? is_preview_phase : true,
+                // Add flag to indicate this is the first refinement chunk (for frontend reset)
+                is_first_refinement: phaseChanged && eventType === 'refinement_chunk'
+              });
+              
+              // Log preview chunks being sent
+              if (eventType === 'preview_chunk') {
+                previewContentReceived = true; // Mark that we've received preview content
+                console.log('📤 [POLLING] Sent preview chunk to frontend immediately:', content.length, 'chars (accumulated:', accumulatedContent.length, 'chars)');
+              }
+              
+              // Mark that we've received refinement content
+              if (eventType === 'refinement_chunk') {
+                refinementContentReceived = true;
+                console.log('📤 [POLLING] Sent refinement chunk to frontend immediately:', content.length, 'chars (accumulated:', accumulatedContent.length, 'chars)');
+              }
+              
+              // Handle phase transition AFTER sending current chunk
+              if (phaseChanged) {
+                console.log('🔄 [POLLING] Phase transition detected: preview -> refinement');
+                previewContentLength = accumulatedContent.length; // Capture preview length BEFORE reset
+                console.log('🔄 [POLLING] Preview content length:', previewContentLength);
+                
+                // CRITICAL: When backend replaces preview buffer with refinement, cursor should reset
+                // The backend buffer is replaced, so we need to reset our cursor tracking
+                // BUT: Don't reset accumulatedContent yet if we're still in the same poll response
+                // We'll reset it after processing this chunk, but keep it for now in case this is the last preview chunk
+                // Reset accumulatedContent to start fresh with refinement (but only after we've sent all preview chunks)
+                const previewContentToSave = accumulatedContent; // Save preview content length
+                accumulatedContent = ''; // Clear accumulated content - refinement is separate
+                cursor = 0; // Reset cursor since backend buffer was replaced
+                refinementContentReceived = false; // Reset flag - haven't received refinement yet
+                
+                console.log('🔄 [POLLING] Reset cursor and accumulated content for refinement phase');
+                
+                // Send preview_complete signal to frontend
+                if (onChunk) {
+                  onChunk('preview_complete', {
+                    type: 'preview_complete',
+                    preview_length: previewContentLength
+                  });
+                }
+              }
+              
+              // Update previous phase AFTER processing
+              previousPhase = currentPhase;
+            }
+          } else if (!content || content.length === 0) {
+            // No content in this poll - check for phase transition
+            // Only detect transition if we actually received preview content first
+            const phaseChanged = previousPhase !== null && previousPhase === true && currentPhase === false && previewContentReceived;
+            
+            if (phaseChanged) {
+              console.log('🔄 [POLLING] Phase transition detected (no content): preview -> refinement');
+              console.log('🔄 [POLLING] Preview content length:', accumulatedContent.length);
+              previewContentLength = accumulatedContent.length;
+              
+              // Reset for refinement phase
+              accumulatedContent = '';
+              cursor = 0;
+              refinementContentReceived = false;
+              
+              console.log('🔄 [POLLING] Reset cursor and accumulated content for refinement phase');
+              
+              // Send preview_complete signal
+              if (onChunk) {
+                onChunk('preview_complete', {
+                  type: 'preview_complete',
+                  preview_length: previewContentLength
+                });
+              }
+              
+              // Poll again immediately with cursor=0 to get refinement content
+              if (!isDone && Date.now() - startTime < maxPollTime) {
+                console.log('🔄 [POLLING] Polling immediately for refinement content');
+                setTimeout(() => pollChunks(), 50);
+                return; // Exit early - don't process done status yet
+              }
+            }
+            
+            // Update previous phase even when no content
+            if (previousPhase === null || currentPhase !== previousPhase) {
+              previousPhase = currentPhase;
+            }
+          }
+
+          // Check if done - but handle phase transition case
+          if (done) {
+            // Check for phase transition one more time
+            const phaseChanged = previousPhase !== null && previousPhase === true && currentPhase === false;
+            
+            // CRITICAL: If we just detected a phase change but haven't received refinement content yet,
+            // we need to poll one more time with cursor=0 to get the refinement buffer
+            if (phaseChanged && !refinementContentReceived) {
+              console.log('🔄 [POLLING] Job done but phase just changed - polling once more with cursor=0 for refinement');
+              cursor = 0; // Ensure cursor is 0
+              // Poll one more time immediately to get refinement content
+              if (!isDone && Date.now() - startTime < maxPollTime) {
+                setTimeout(() => pollChunks(), 50);
+                return; // Exit - don't mark as done yet
+              }
+            }
+            
+            isDone = true;
+            console.log('✅ [POLLING] Chat job completed');
+            console.log('✅ [POLLING] Final accumulated content length:', accumulatedContent.length);
+            console.log('✅ [POLLING] Final cursor position:', cursor);
+            console.log('✅ [POLLING] Content in this response:', content?.length || 0);
+            console.log('✅ [POLLING] Is refinement phase:', is_preview_phase === false);
+            
+            // CRITICAL: When done=true, backend returns buffer[cursor:] which is ALL remaining content
+            // For refinement phase, we need to ensure we have the complete refinement
+            // If cursor > 0, we might have missed the beginning - poll once more with cursor=0
+            if (is_preview_phase === false && cursor > 0 && !isDone && Date.now() - startTime < maxPollTime) {
+              console.log('🔄 [POLLING] Refinement phase with cursor > 0 - polling once more with cursor=0 to get complete refinement');
+              cursor = 0; // Reset to get complete refinement buffer
+              setTimeout(() => pollChunks(), 50);
+              return; // Exit - poll again to get complete refinement
+            }
+            
+            // Use the longer of accumulated or current content to ensure we get the full response
+            let finalContent = accumulatedContent || content || '';
+            
+            // If we're in refinement phase and content was received with done=true,
+            // it should be the complete refinement from cursor position
+            if (is_preview_phase === false && content && content.length > 0) {
+              // In refinement phase with done=true, content is the complete refinement from cursor
+              // If cursor was 0, this is the full refinement. If cursor > 0, this is the remaining part
+              // CRITICAL: If accumulatedContent is empty (was reset during phase transition),
+              // use content from done response, but ensure it's complete
+              if (accumulatedContent.length === 0) {
+                // accumulatedContent was reset - use content from done response
+                // This should be the complete refinement buffer from the backend
+                console.log('📦 [POLLING] Using refinement content from done response (accumulated was reset):', content.length, 'chars');
+                finalContent = content;
+              } else if (content.length >= accumulatedContent.length) {
+                // Content is longer or equal - use it (it's the complete response from cursor)
+                console.log('📦 [POLLING] Using complete refinement content from done response:', content.length, 'chars');
+                finalContent = content;
+              } else {
+                // Accumulated is longer - might have parts from multiple polls
+                console.log('📦 [POLLING] Using accumulated content (includes multiple chunks):', accumulatedContent.length, 'chars');
+                finalContent = accumulatedContent;
+              }
+            } else if (content && content.length > accumulatedContent.length) {
+              // Content is longer than accumulated - use it directly
+              console.log('⚠️ [POLLING] Content in response is longer than accumulated - using content directly');
+              finalContent = content;
+            }
+            
+            console.log('✅ [POLLING] Sending complete event with content length:', finalContent.length);
+            
+            // Send completion event with all metadata
+            if (onChunk) {
+              onChunk('complete', {
+                type: 'complete',
+                response: finalContent,
+                content: finalContent, // Some handlers expect 'content'
+                citations: chunkResponse.citations || [],
+                chat_history_id: chunkResponse.chat_history_id,
+                metadata: chunkResponse.metadata || {},
+                is_preview_phase: is_preview_phase !== undefined ? is_preview_phase : false // Include phase in complete event
+              });
+            }
+            return;
+          }
+
+          // Continue polling if not done
+          if (!isDone && Date.now() - startTime < maxPollTime) {
+            pollCount++;
+            // Use faster polling for first 10 polls (first 1-2 seconds) to catch preview quickly
+            // Then switch to normal interval
+            const currentInterval = pollCount <= 10 ? initialPollInterval : pollInterval;
+            setTimeout(pollChunks, currentInterval);
+          }
+
+        } catch (error: any) {
+          console.error('❌ [POLLING] Polling error:', error);
+          
+          // Continue polling on error (network resilience)
+          if (Date.now() - startTime < maxPollTime && !signal?.aborted) {
+            pollCount++;
+            const currentInterval = pollCount <= 10 ? initialPollInterval : pollInterval;
+            setTimeout(pollChunks, currentInterval);
+          } else {
+            if (onChunk) {
+              onChunk('error', {
+                type: 'error',
+                message: error.message || 'Network error. Please check your connection.',
+                error: error.message
+              });
+            }
+          }
+        }
+      };
+
+      // Start polling immediately (first poll)
+      pollChunks();
+
+    } catch (error: any) {
+      console.error('❌ [POLLING] Chat polling failed:', error);
+      
+      // If we have a jobId, try to cancel it (best effort, don't fail if cancel fails)
+      if (currentJobId) {
+        try {
+          await this.cancelChatJob(currentJobId);
+          console.log('✅ [POLLING] Cancelled job after error:', currentJobId);
+        } catch (cancelError) {
+          console.warn('⚠️ [POLLING] Failed to cancel job after error:', cancelError);
+        }
+      }
+      
+      if (onChunk) {
+        onChunk('error', {
+          type: 'error',
+          message: error.message || 'Failed to start chat',
+          error: error.message || 'UnknownError'
+        });
+      }
+      
+      throw error;
     }
   }
 
@@ -1511,6 +2618,35 @@ class ApiService {
         (typeof error.response?.data === 'string' ? error.response.data : null);
       const suffix = status != null ? ` (${status})` : '';
       throw new Error(msg ? `${msg}${suffix}` : `Failed to fetch chat history${suffix}`);
+    }
+  }
+
+  async deleteChatHistory(id: number): Promise<ApiResponse> {
+    try {
+      // Use mobile endpoint for deleting chat history: /api/v1/mobile/chat/history/{id}
+      // Falls back to compatibility route: /api/chat/history/{id} if mobile endpoint is not available
+      try {
+        const response = await this.client.delete(`/api/v1/mobile/chat/history/${id}`);
+        return response.data;
+      } catch (mobileError: any) {
+        // If mobile endpoint returns 404, try compatibility route
+        if (mobileError.response?.status === 404) {
+          console.log('Mobile endpoint not found, trying compatibility route');
+          const response = await this.client.delete(`/api/chat/history/${id}`);
+          return response.data;
+        }
+        // Re-throw other errors
+        throw mobileError;
+      }
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        (typeof error.response?.data === 'string' ? error.response.data : null);
+      const suffix = status != null ? ` (${status})` : '';
+      throw new Error(msg ? `${msg}${suffix}` : `Failed to delete chat history${suffix}`);
     }
   }
 
@@ -1875,7 +3011,10 @@ class ApiService {
       
       const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
       console.log('📁 API: Requesting files from mobile endpoint:', url);
-      const response = await this.client.get(url);
+      // Use shorter timeout (10s) to fail faster and prevent blocking UI
+      const response = await this.client.get(url, {
+        timeout: 10000
+      });
       console.log('📁 API: Files response success:', response.data?.success, 'Files count:', response.data?.files?.length || response.data?.data?.length || 0);
       
       // Transform response format to match expected format
@@ -1899,8 +3038,13 @@ class ApiService {
       
       return response.data;
     } catch (error: any) {
+      // Log timeout but still throw - backend should be fixed to return data faster
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        console.error('❌ Documents request timed out after 10s - backend needs optimization');
+        throw new Error('Request timed out. The backend endpoint is taking too long. Please check backend performance.');
+      }
       console.warn('📁 API: Mobile files endpoint failed, falling back to getFiles:', error.message);
-      // For backward compatibility, fall back to getFiles
+      // For backward compatibility, fall back to getFiles (only for non-timeout errors)
       return this.getFiles(page, perPage, search, category, workspaceId);
     }
   }
@@ -1984,6 +3128,30 @@ class ApiService {
       }
       
       throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * Delete a user chat - Uses unified endpoint like web version
+   * Uses /api/v1/mobile/chat/unified-history/user_<id> so any participant can remove themselves
+   */
+  async deleteUserChat(chatId: number): Promise<ApiResponse> {
+    try {
+      // Use unified endpoint format: /api/v1/mobile/chat/unified-history/user_<id>
+      const response = await this.client.delete(`/api/v1/mobile/chat/unified-history/user_${chatId}`);
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        (typeof error.response?.data === 'string' ? error.response.data : null);
+      const suffix = status != null ? ` (${status})` : '';
+      // Preserve the original error's response status for proper error handling
+      const newError: any = new Error(msg ? `${msg}${suffix}` : `Failed to delete user chat${suffix}`);
+      newError.response = error.response; // Preserve response for status checking
+      throw newError;
     }
   }
 
@@ -2163,19 +3331,31 @@ class ApiService {
     try {
       console.log('🔄 Loading workspaces from:', MOBILE_ENDPOINTS.WORKSPACES);
       // Use proper mobile endpoint with pagination
+      // Increased timeout to 15s for better reliability with slow backends
       const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACES, {
-        params: { limit, offset }
+        params: { limit, offset },
+        timeout: 15000
       });
       return response.data;
     } catch (error: any) {
-      console.error('❌ Get mobile workspaces error:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        url: error.config?.url
-      });
-      const errorMessage = error.response?.data?.message || error.message || 'Failed to fetch workspaces';
-      throw new Error(errorMessage);
+      // Suppress timeout error logs - they're expected and handled gracefully by callers
+      const isTimeout = error.message?.includes('timeout') || error.message?.includes('exceeded');
+      
+      if (isTimeout) {
+        // Timeout errors are handled gracefully, no need to log
+        const errorMessage = error.response?.data?.message || error.message || 'Failed to fetch workspaces';
+        throw new Error(errorMessage);
+      } else {
+        // Only log unexpected errors
+        console.error('❌ Get mobile workspaces error:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          url: error.config?.url
+        });
+        const errorMessage = error.response?.data?.message || error.message || 'Failed to fetch workspaces';
+        throw new Error(errorMessage);
+      }
     }
   }
 
@@ -2231,9 +3411,12 @@ class ApiService {
     }
   }
 
-  async getWorkspaceMembers(id: number): Promise<ApiResponse> {
+  async getWorkspaceMembers(id: number, limit: number = 100, offset: number = 0): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_MEMBERS(id));
+      // Add pagination support to prevent timeouts on large workspaces
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_MEMBERS(id), {
+        params: { limit, offset }
+      });
       return response.data;
     } catch (error: any) {
       console.error('Get workspace members error:', error);
@@ -2308,10 +3491,18 @@ class ApiService {
 
   async getWorkspaceUsers(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_USERS);
+      // Use shorter timeout (10s) to fail faster and prevent blocking UI
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_USERS, {
+        timeout: 10000
+      });
       return response.data;
     } catch (error: any) {
       console.error('Get workspace users error:', error);
+      // Log timeout but still throw - backend should be fixed to return data faster
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        console.error('❌ Workspace users request timed out after 10s - backend needs optimization');
+        throw new Error('Request timed out. The backend endpoint is taking too long. Please check backend performance.');
+      }
       throw new Error(error.response?.data?.message || 'Failed to fetch workspace users');
     }
   }
@@ -2509,12 +3700,28 @@ class ApiService {
 
   async getMeetings(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {
+      console.log(`📱 Fetching meetings with limit=${limit}, offset=${offset}`);
       const response = await this.client.get('/api/v1/mobile/meetings', {
-        params: { limit, offset }
+        params: { limit, offset },
+        timeout: 20000 // 20 second timeout (reduced from default 30s to fail faster)
       });
+      console.log(`✅ Successfully fetched meetings:`, response.data?.meetings?.length || 0);
       return response.data;
     } catch (error: any) {
       console.error('Get meetings failed:', error);
+      
+      // Handle timeout gracefully - return empty result instead of throwing
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        console.warn('⚠️ Meetings request timed out after 20s - returning empty result');
+        // Return empty result instead of throwing so UI can still render
+        return {
+          success: false,
+          data: { meetings: [] },
+          message: 'Request timed out. Please check your connection and try again.'
+        };
+      }
+      
+      // For other errors, still throw but with better message
       throw new Error(error.response?.data?.message || 'Failed to fetch meetings');
     }
   }
@@ -2605,7 +3812,7 @@ class ApiService {
     }
   }
 
-  async sendMeetingInvite(meetingId: string, data: { email: string; message?: string }): Promise<ApiResponse> {
+  async sendMeetingInvite(meetingId: string, data: { emails: string[]; message?: string }): Promise<ApiResponse> {
     try {
       const response = await this.client.post(`/api/v1/mobile/meetings/${meetingId}/invite`, data);
       return response.data;

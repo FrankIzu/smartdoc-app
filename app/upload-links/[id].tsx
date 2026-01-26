@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Clipboard,
@@ -16,11 +16,11 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useThemeColors } from '../../hooks/useThemeColors';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FRONTEND_URL } from '../../constants/Config';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
-import { FRONTEND_URL } from '../../constants/Config';
 
 interface UploadLink {
   id: number;
@@ -89,10 +89,18 @@ export default function UploadLinkDetailsScreen() {
     }
   };
 
+  // Add debounce to prevent excessive reloads
+  const lastLoadTimeRef = useRef<number>(0);
+  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  
   useFocusEffect(
     useCallback(() => {
       if (user) {
-        loadUploadLink();
+        const now = Date.now();
+        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
+          lastLoadTimeRef.current = now;
+          loadUploadLink();
+        }
       }
     }, [user, id])
   );
@@ -621,7 +629,7 @@ export default function UploadLinkDetailsScreen() {
             />
           </View>
           <View style={dynamicStyles.fileInfo}>
-            <Text style={dynamicStyles.fileName}>{item.filename}</Text>
+            <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.filename}</Text>
             <View style={dynamicStyles.fileMetadata}>
               <Text style={dynamicStyles.fileSize}>{formatFileSize(item.file_size)}</Text>
               <Text style={dynamicStyles.fileSeparator}>•</Text>
@@ -705,7 +713,7 @@ export default function UploadLinkDetailsScreen() {
             {/* Link Info */}
             <View style={dynamicStyles.linkCard}>
               <View style={dynamicStyles.linkHeader}>
-                <Text style={dynamicStyles.linkName}>{uploadLink.name}</Text>
+                <Text style={dynamicStyles.linkName} numberOfLines={1} ellipsizeMode="tail">{uploadLink.name}</Text>
                 {(!uploadLink.is_active || expired || limitReached) && (
                   <View style={dynamicStyles.statusBadge}>
                     <Text style={dynamicStyles.statusText}>
@@ -794,7 +802,7 @@ export default function UploadLinkDetailsScreen() {
       <Modal
         visible={shareModalVisible}
         animationType="slide"
-        presentationStyle="pageSheet"
+        presentationStyle="fullScreen"
         onRequestClose={() => setShareModalVisible(false)}
       >
         <SafeAreaView style={dynamicStyles.modalContainer}>

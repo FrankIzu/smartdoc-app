@@ -1,14 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    FlatList,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../hooks/useThemeColors';
@@ -234,7 +234,7 @@ export default function QuickFormViewer({
   if (loading) {
     return (
       <Modal visible={true} animationType="slide" presentationStyle="fullScreen">
-        <SafeAreaView style={dynamicStyles.container}>
+        <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom', 'left', 'right']}>
           <View style={dynamicStyles.header}>
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
               <Ionicons name="close" size={24} color={colors.primary} />
@@ -254,7 +254,7 @@ export default function QuickFormViewer({
   if (error || !formData) {
     return (
       <Modal visible={true} animationType="slide" presentationStyle="fullScreen">
-        <SafeAreaView style={dynamicStyles.container}>
+        <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom', 'left', 'right']}>
           <View style={styles.header}>
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
               <Ionicons name="close" size={24} color={colors.primary} />
@@ -276,7 +276,7 @@ export default function QuickFormViewer({
 
   return (
     <Modal visible={true} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
         <View style={styles.header}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <Ionicons name="close" size={24} color="#007AFF" />

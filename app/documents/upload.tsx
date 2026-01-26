@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { apiService } from '../../services/api';
 
 export default function UploadScreen() {
   const router = useRouter();
@@ -39,6 +40,7 @@ export default function UploadScreen() {
       });
 
       if (result.canceled) {
+        fileStore.setDocumentPickerOpen(false);
         return;
       }
 
@@ -55,6 +57,9 @@ export default function UploadScreen() {
       }
 
       setUploading(true);
+
+      let successCount = 0;
+      let failCount = 0;
 
       // Process each selected file
       for (const file of result.assets) {
@@ -80,37 +85,58 @@ export default function UploadScreen() {
             console.warn('HEIC conversion failed, continuing with original:', conversionError);
           }
           
-          // Create FormData for file upload
-          const formData = new FormData();
-          
-          // Add file to form data
-          formData.append('file', {
-            uri: fileToUpload.uri,
-            type: fileToUpload.type,
-            name: fileToUpload.name,
-          } as any);
+          // Upload file using hybrid method (chunked for large files >= 5MB, retry for small)
+          // Automatically handles network resilience, resume, and retry
+          const uploadResult = await apiService.uploadFileHybrid(
+            {
+              uri: fileToUpload.uri,
+              name: fileToUpload.name,
+              type: fileToUpload.type,
+              size: fileToUpload.size
+            },
+            undefined, // workspaceId
+            undefined, // signal (can add abort controller here)
+            (progress, message, phase) => {
+              // Scale server progress to 10-100% (conversion was 0-10%)
+              setProgress(10 + (progress * 0.9));
+              console.log(`📊 Upload progress: ${progress}% - ${message} (${phase})`);
+            },
+            () => {
+              // onPause callback
+              console.log('⏸️ Upload paused');
+            },
+            () => {
+              // onResume callback
+              console.log('▶️ Upload resumed');
+            }
+          );
 
-          // Import API client
-          const { apiClient } = await import('../../services/api');
-          
-          // Upload file using API client with progress polling
-          const uploadResult = await apiClient.uploadFileWithProgressPolling(formData, (progress, message, phase) => {
-            // Scale server progress to 10-100% (conversion was 0-10%)
-            setProgress(10 + (progress * 0.9));
-            console.log(`📊 Upload progress: ${progress}% - ${message} (${phase})`);
-          });
-
-          console.log('Upload successful:', uploadResult);
+          if (uploadResult.success) {
+            successCount++;
+            console.log('Upload successful:', uploadResult);
+          } else {
+            failCount++;
+            console.error('Upload failed for:', file.name, uploadResult);
+          }
 
         } catch (error) {
+          failCount++;
           console.error('Error uploading file:', file.name, error);
-          Alert.alert('Upload Error', `Failed to upload ${file.name}. Please try again.`);
         }
       }
 
-      Alert.alert('Success', 'Documents uploaded successfully!', [
-        { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
-      ]);
+      // Show appropriate message based on results
+      if (successCount > 0 && failCount === 0) {
+        Alert.alert('Success', `All ${successCount} document${successCount !== 1 ? 's' : ''} uploaded successfully!`, [
+          { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
+        ]);
+      } else if (successCount > 0 && failCount > 0) {
+        Alert.alert('Partial Success', `${successCount} file${successCount !== 1 ? 's' : ''} uploaded, ${failCount} failed.`, [
+          { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
+        ]);
+      } else {
+        Alert.alert('Upload Failed', 'Failed to upload documents. Please try again.');
+      }
     } catch (error) {
       console.error('Error picking document:', error);
       Alert.alert('Error', 'Failed to upload documents. Please try again.');

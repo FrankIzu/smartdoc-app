@@ -1064,7 +1064,7 @@ export default function FormBuilderScreen() {
       <Modal
         visible={showFieldTypeSelector}
         animationType="slide"
-        presentationStyle="pageSheet"
+        presentationStyle="fullScreen"
       >
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -1139,8 +1139,8 @@ function FieldEditorModal({ field, visible, onSave, onCancel }: FieldEditorModal
   const hasOptions = ['select', 'radio', 'checkbox'].includes(editingField.type);
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <SafeAreaView style={styles.modalContainer}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+      <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
         <KeyboardAvoidingView 
           style={styles.modalContainer}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}

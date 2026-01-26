@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     FlatList,
@@ -66,10 +66,18 @@ export default function WorkspacesScreen() {
     }
   };
 
+  // Add debounce to prevent excessive reloads
+  const lastLoadTimeRef = useRef<number>(0);
+  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  
   useFocusEffect(
     useCallback(() => {
       if (user) {
-        loadWorkspaces();
+        const now = Date.now();
+        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
+          lastLoadTimeRef.current = now;
+          loadWorkspaces();
+        }
       }
     }, [user])
   );
@@ -297,7 +305,7 @@ export default function WorkspacesScreen() {
     >
       <View style={dynamicStyles.workspaceHeader}>
         <View style={dynamicStyles.workspaceInfo}>
-          <Text style={dynamicStyles.workspaceName}>{workspace.name}</Text>
+          <Text style={dynamicStyles.workspaceName} numberOfLines={1} ellipsizeMode="tail">{workspace.name}</Text>
           {workspace.description && (
             <Text style={dynamicStyles.workspaceDescription}>{workspace.description}</Text>
           )}
