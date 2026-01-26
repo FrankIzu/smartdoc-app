@@ -1,14 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { Link, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/Colors';
+import { STORAGE_KEYS } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
-import { googleAuthService } from '../../services/googleAuth';
 import { appleAuthService } from '../../services/appleAuth';
-import * as AppleAuthentication from 'expo-apple-authentication';
-import { Platform } from 'react-native';
+import { googleAuthService } from '../../services/googleAuth';
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -154,7 +154,7 @@ export default function SignUpScreen() {
         }
         
         await secureStorage.setItem('user', JSON.stringify(userData));
-        await secureStorage.setItem('auth_token', 'session_token');
+        await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
         
         Alert.alert('Success', 'Account created with Apple successfully!');
         

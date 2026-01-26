@@ -42,17 +42,33 @@ export default function CreateMeetingScreen() {
     }
 
     // Prepare meeting data for immediate creation
-    // Use mobile endpoint which properly handles room_name
+    // Use mobile endpoint which properly handles title/roomName conversion to room_name
     const meetingPayload = {
+      // Room information - include all variations for backend compatibility
+      roomName: meetingData.title,
       room_name: meetingData.title,
+      name: meetingData.title,
+      title: meetingData.title,
+      
       description: meetingData.description,
+      
+      // Meeting settings
       isPrivate: meetingData.isPrivate,
       passcode: meetingData.isPrivate ? meetingData.passcode : undefined,
       passcode_required: meetingData.isPrivate,
       enableRecording: meetingData.enableRecording,
+      enableTranscription: meetingData.enableTranscription,
       enable_transcription: meetingData.enableTranscription,
+      
+      // Participants
       participants: meetingData.participants,
-      invited_participants: meetingData.participants
+      invited_participants: meetingData.participants,
+      participant_count: meetingData.participants.length,
+      
+      // Meeting metadata
+      meeting_type: 'general',
+      meeting_status: 'active',
+      status: 'active'
     };
 
     console.log('📱 Sending create meeting payload:', meetingPayload);
@@ -63,36 +79,49 @@ export default function CreateMeetingScreen() {
       // Use mobile endpoint which properly handles title/roomName conversion to room_name
       const response = await apiClient.client.post('/api/v1/mobile/meetings/create', meetingPayload);
       
-      console.log('📱 Create meeting response:', response.data);
+      console.log('📱 Create meeting response:', JSON.stringify(response.data, null, 2));
       
       if (response.data.success) {
-        const meetingData = response.data.data || response.data;
-        // Prioritize roomCode (HMS room_id) over meetingId (database ID)
-        const meetingId = meetingData.roomCode || meetingData.hmsRoomId || meetingData.meetingId || meetingData.id || meetingData.room_code;
-        const meetingTitle = meetingData.title || meetingData.name || meetingData.roomName || meetingData.title;
+        // Verify meeting was actually created by checking for meeting ID or room code
+        const meetingData = response.data.data || response.data.room || response.data;
+        const meetingId = meetingData?.meetingId || meetingData?.meeting_id || meetingData?.id;
+        const roomCode = meetingData?.roomCode || meetingData?.room_code;
+        const hmsRoomId = meetingData?.hmsRoomId || meetingData?.hms_room_id;
         
-        if (meetingId) {
-          // Navigate directly to HMS prebuilt interface
-          router.push({
-            pathname: '/quick-reach/hms-meeting-interface',
-            params: {
-              meetingId: meetingId,
-              title: meetingTitle || meetingData.title || 'Meeting',
-              userName: 'Mobile User'
-            }
-          });
-        } else {
-          Alert.alert('Success', 'Meeting created successfully!', [
-            {
-              text: 'OK',
-              onPress: () => {
-                router.back();
-              }
-            }
-          ]);
+        // Validate that we have at least one identifier
+        if (!meetingId && !roomCode && !hmsRoomId) {
+          console.error('❌ Meeting creation response missing identifiers:', response.data);
+          Alert.alert(
+            'Warning', 
+            'Meeting creation response did not include meeting ID. The meeting may not have been created. Please check your meetings list or try again.',
+            [{ text: 'OK' }]
+          );
+          return;
         }
+        
+        const meetingTitle = meetingData?.title || meetingData?.name || meetingData?.roomName || meetingData?.room_name || 'Meeting';
+        
+        console.log('✅ Meeting created successfully:', {
+          meetingId,
+          roomCode,
+          hmsRoomId,
+          title: meetingTitle
+        });
+        
+        // Show success message and go back to meeting list
+        // User can now join the meeting from the list or send it to others
+        Alert.alert('Success', `Meeting "${meetingTitle}" created successfully! You can join it from the meeting list or send it to others.`, [
+          {
+            text: 'OK',
+            onPress: () => {
+              router.back();
+            }
+          }
+        ]);
       } else {
-        Alert.alert('Error', response.data.message || 'Failed to create meeting');
+        const errorMessage = response.data.message || 'Failed to create meeting';
+        console.error('❌ Meeting creation failed:', errorMessage);
+        Alert.alert('Error', errorMessage);
       }
     } catch (error: any) {
       console.error('Create meeting failed:', error);
@@ -118,34 +147,48 @@ export default function CreateMeetingScreen() {
                   // Then create the new meeting
                   const response = await apiClient.client.post('/api/v1/mobile/meetings/create', meetingPayload);
                   
+                  console.log('📱 Create meeting response (after ending existing):', JSON.stringify(response.data, null, 2));
+                  
                   if (response.data.success) {
-                    const meetingData = response.data.data || response.data;
-                    // Prioritize roomCode (HMS room_id) over meetingId (database ID)
-                    const meetingId = meetingData.roomCode || meetingData.hmsRoomId || meetingData.meetingId || meetingData.id || meetingData.room_code;
-                    const meetingTitle = meetingData.title || meetingData.name || meetingData.roomName || meetingData.title;
+                    // Verify meeting was actually created
+                    const meetingData = response.data.data || response.data.room || response.data;
+                    const meetingId = meetingData?.meetingId || meetingData?.meeting_id || meetingData?.id;
+                    const roomCode = meetingData?.roomCode || meetingData?.room_code;
+                    const hmsRoomId = meetingData?.hmsRoomId || meetingData?.hms_room_id;
                     
-                    if (meetingId) {
-                      // Navigate directly to HMS prebuilt interface
-                      router.push({
-                        pathname: '/quick-reach/hms-meeting-interface',
-                        params: {
-                          meetingId: meetingId,
-                          title: meetingTitle || 'Meeting',
-                          userName: 'Mobile User'
-                        }
-                      });
-                    } else {
-                      Alert.alert('Success', 'Meeting created successfully!', [
-                        {
-                          text: 'OK',
-                          onPress: () => {
-                            router.back();
-                          }
-                        }
-                      ]);
+                    // Validate that we have at least one identifier
+                    if (!meetingId && !roomCode && !hmsRoomId) {
+                      console.error('❌ Meeting creation response missing identifiers:', response.data);
+                      Alert.alert(
+                        'Warning', 
+                        'Meeting creation response did not include meeting ID. The meeting may not have been created. Please check your meetings list or try again.',
+                        [{ text: 'OK' }]
+                      );
+                      return;
                     }
+                    
+                    const meetingTitle = meetingData?.title || meetingData?.name || meetingData?.roomName || meetingData?.room_name || 'Meeting';
+                    
+                    console.log('✅ Meeting created successfully:', {
+                      meetingId,
+                      roomCode,
+                      hmsRoomId,
+                      title: meetingTitle
+                    });
+                    
+                    // Show success message and go back to meeting list
+                    Alert.alert('Success', `Meeting "${meetingTitle}" created successfully! You can join it from the meeting list or send it to others.`, [
+                      {
+                        text: 'OK',
+                        onPress: () => {
+                          router.back();
+                        }
+                      }
+                    ]);
                   } else {
-                    Alert.alert('Error', response.data.message || 'Failed to create meeting');
+                    const errorMessage = response.data.message || 'Failed to create meeting';
+                    console.error('❌ Meeting creation failed:', errorMessage);
+                    Alert.alert('Error', errorMessage);
                   }
                 } catch (endError) {
                   console.error('Failed to end existing meeting:', endError);
@@ -235,60 +278,7 @@ export default function CreateMeetingScreen() {
             </View>
           </View>
 
-          {/* Features */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Features</Text>
-            
-            <TouchableOpacity 
-              style={styles.featureRow}
-              onPress={() => toggleFeature('enableRecording')}
-            >
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Enable Recording</Text>
-              </View>
-              <View style={[styles.checkbox, meetingData.enableRecording && styles.checkboxChecked]}>
-                {meetingData.enableRecording && <Ionicons name="checkmark" size={16} color="#fff" />}
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.featureRow}
-              onPress={() => toggleFeature('enableTranscription')}
-            >
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Enable Transcription</Text>
-              </View>
-              <View style={[styles.checkbox, meetingData.enableTranscription && styles.checkboxChecked]}>
-                {meetingData.enableTranscription && <Ionicons name="checkmark" size={16} color="#fff" />}
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.featureRow}
-              onPress={() => toggleFeature('isPrivate')}
-            >
-              <View style={styles.featureInfo}>
-                <Text style={styles.featureTitle}>Private Meeting (Requires Passcode)</Text>
-              </View>
-              <View style={[styles.checkbox, meetingData.isPrivate && styles.checkboxChecked]}>
-                {meetingData.isPrivate && <Ionicons name="checkmark" size={16} color="#fff" />}
-              </View>
-            </TouchableOpacity>
-
-            {meetingData.isPrivate && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Passcode *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Enter passcode"
-                  value={meetingData.passcode}
-                  onChangeText={(text) => setMeetingData(prev => ({ ...prev, passcode: text }))}
-                  secureTextEntry
-                  maxLength={20}
-                />
-              </View>
-            )}
-          </View>
+          {/* Features section hidden */}
 
           {/* Participants */}
           <View style={styles.section}>

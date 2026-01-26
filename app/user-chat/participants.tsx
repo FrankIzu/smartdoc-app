@@ -181,22 +181,18 @@ export default function ChatParticipantsScreen() {
       
       if (response.data.success) {
         const meetingData = response.data.data || response.data;
-        const meetingId = meetingData.roomCode || meetingData.hmsRoomId || meetingData.meetingId || meetingData.id || meetingData.room_code;
         const title = meetingData.title || meetingData.name || meetingData.roomName || meetingTitle;
         
-        if (meetingId) {
-          // Navigate to meeting interface
-          router.push({
-            pathname: '/quick-reach/hms-meeting-interface',
-            params: {
-              meetingId: meetingId.toString(),
-              title: title,
-              userName: currentUser?.username || currentUser?.email?.split('@')[0] || 'Mobile User'
+        // Show success message - meeting will appear in the list
+        // User can now join the meeting from the meeting list or send it to others
+        Alert.alert('Success', `Meeting "${title}" created successfully! You can join it from the meeting list or send it to others.`, [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Stay on current screen - meeting will appear in the meeting list
             }
-          });
-        } else {
-          Alert.alert('Error', 'Meeting created but meeting ID not found');
-        }
+          }
+        ]);
       } else {
         Alert.alert('Error', response.data.message || 'Failed to create meeting');
       }

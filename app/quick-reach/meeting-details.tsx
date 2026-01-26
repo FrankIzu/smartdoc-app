@@ -2,13 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { Audio, ResizeMode, Video } from 'expo-av';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Linking,
   Modal,
+  PanResponder,
   RefreshControl,
   StyleSheet,
   Text,
@@ -16,11 +17,13 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
-import { API_BASE_URL } from '../../constants/Config';
+import TextAssetViewer from '../../components/TextAssetViewer';
+import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { secureStorage } from '../../utils/storage';
 
 interface MeetingAsset {
   id: string;
@@ -75,6 +78,7 @@ interface SessionGroup {
 export default function MeetingDetailsScreen() {
   const router = useRouter();
   const themeColors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const { meetingId, meetingTitle, roomCode } = useLocalSearchParams<{
     meetingId: string;
     meetingTitle: string;
@@ -92,8 +96,31 @@ export default function MeetingDetailsScreen() {
   const [selectedFileForViewing, setSelectedFileForViewing] = useState<{fileId: string; fileName: string; fileType: string; fileCategory?: string} | null>(null);
   const [showVideoPlayer, setShowVideoPlayer] = useState(false);
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+  const [originalVideoUrl, setOriginalVideoUrl] = useState<string | null>(null);
+  const [videoAssetId, setVideoAssetId] = useState<string | undefined>(undefined);
+  const [videoDirectUrl, setVideoDirectUrl] = useState<string | null>(null);
+  const [hasTriedVideoFallback, setHasTriedVideoFallback] = useState(false);
+  const [isVideoFallbackInProgress, setIsVideoFallbackInProgress] = useState(false);
   const [videoRef, setVideoRef] = useState<Video | null>(null);
+  const [videoLoading, setVideoLoading] = useState(false);
+  const [videoKey, setVideoKey] = useState(0); // Key counter to force remounts
+  const [videoTitle, setVideoTitle] = useState<string>('');
   const [menuAsset, setMenuAsset] = useState<MeetingAsset | null>(null);
+  const [showTextViewer, setShowTextViewer] = useState(false);
+  const [textViewerContent, setTextViewerContent] = useState<string>('');
+  const [textViewerTitle, setTextViewerTitle] = useState<string>('');
+  const [textViewerLoading, setTextViewerLoading] = useState(false);
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  const [audioSound, setAudioSound] = useState<Audio.Sound | null>(null);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioTitle, setAudioTitle] = useState<string>('');
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [audioPosition, setAudioPosition] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekPosition, setSeekPosition] = useState(0);
+  const [progressBarWidth, setProgressBarWidth] = useState(300);
+  const progressBarRef = useRef<View>(null);
 
   useEffect(() => {
     if (meetingId) {
@@ -108,11 +135,51 @@ export default function MeetingDetailsScreen() {
   useEffect(() => {
     // Cleanup video when component unmounts
     return () => {
-      if (videoRef) {
-        videoRef.unloadAsync().catch(console.error);
+      if (videoRef && !isVideoFallbackInProgress) {
+        // Only cleanup if not in the middle of a fallback transition
+        videoRef.getStatusAsync()
+          .then(status => {
+            if (status.isLoaded) {
+              return videoRef.unloadAsync();
+            }
+          })
+          .catch((err) => {
+            // Silently ignore errors during cleanup
+            if (!err?.message?.includes('has not yet loaded')) {
+              console.error('Video cleanup error:', err);
+            }
+          });
+      }
+      if (audioSound) {
+        audioSound.unloadAsync().catch(console.error);
       }
     };
-  }, [videoRef]);
+  }, [videoRef, audioSound]);
+
+  // Audio position update interval
+  useEffect(() => {
+    if (!audioSound || !audioPlaying) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const status = await audioSound.getStatusAsync();
+        if (status.isLoaded) {
+          setAudioPosition(status.positionMillis);
+          if (status.durationMillis) {
+            setAudioDuration(status.durationMillis);
+          }
+          if (status.didJustFinish) {
+            setAudioPlaying(false);
+            setAudioPosition(0);
+          }
+        }
+      } catch (error) {
+        console.error('Error getting audio status:', error);
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [audioSound, audioPlaying]);
 
   const loadMeetingAssets = async () => {
     try {
@@ -400,10 +467,76 @@ export default function MeetingDetailsScreen() {
 
   const playRecording = async (asset: MeetingAsset) => {
     try {
-      // Check if this is audio-only or video
-      const isAudioOnly = asset.quality === 'audio_only';
+      // Helper function to check if URL/filename is audio
+      const isAudioFile = (url: string): boolean => {
+        const audioExtensions = ['.m4a', '.mp3', '.wav', '.aac', '.ogg', '.flac', '.m4p'];
+        const lowerUrl = url.toLowerCase();
+        return audioExtensions.some(ext => lowerUrl.includes(ext)) || 
+               lowerUrl.includes('/audio/');
+      };
       
-      // Try to get the URL from various sources
+      // Helper function to check if URL/filename is video
+      const isVideoFile = (url: string): boolean => {
+        const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.3gp'];
+        const lowerUrl = url.toLowerCase();
+        return videoExtensions.some(ext => lowerUrl.includes(ext)) || 
+               lowerUrl.includes('/video/') ||
+               lowerUrl.includes('/recordings/');
+      };
+      
+      // Check if explicitly marked as audio-only
+      const isExplicitlyAudioOnly = asset.quality === 'audio_only';
+      
+      // Check file extensions first (most reliable)
+      const hasAudioExtension = (asset.url && isAudioFile(asset.url)) ||
+                                 (asset.downloadUrl && isAudioFile(asset.downloadUrl)) ||
+                                 (asset.original_filename && isAudioFile(asset.original_filename));
+      
+      const hasVideoExtension = (asset.url && isVideoFile(asset.url)) ||
+                                (asset.downloadUrl && isVideoFile(asset.downloadUrl)) ||
+                                (asset.original_filename && isVideoFile(asset.original_filename));
+      
+      // Determine if it's audio based on explicit quality, file extension, or asset properties
+      // Priority: explicit audio-only > video extension > audio extension > quality check
+      const isAudio = isExplicitlyAudioOnly || 
+                     (hasAudioExtension && !hasVideoExtension) ||
+                     (!hasVideoExtension && !hasAudioExtension && asset.type === 'recording' && asset.quality !== 'hd' && asset.quality !== 'sd');
+      
+      console.log(isAudio ? '🎵 Audio asset detected' : '🎬 Video asset detected', { 
+        hasFileId: !!asset.file_id, 
+        fileId: asset.file_id,
+        hasUrl: !!asset.url,
+        url: asset.url?.substring(0, 50),
+        quality: asset.quality,
+        type: asset.type,
+        isAudio,
+        hasAudioExtension,
+        hasVideoExtension
+      });
+      
+      // If we have file_id, always use the backend download endpoint (handles auth properly)
+      // Append auth token as query param since expo-av can't send headers
+      if (asset.file_id) {
+        const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+        let downloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${asset.file_id}/download`;
+        // Append token as query parameter if available (backend should accept this)
+        if (token) {
+          downloadUrl += `?token=${encodeURIComponent(token)}`;
+        }
+        
+        if (isAudio) {
+          // For audio files, download, cache, and play with audio player
+          await playAudioWithCache(downloadUrl, asset.title || asset.original_filename || 'Audio', asset.id);
+          return;
+        } else {
+          // For video files, download, cache, and play with video player
+          console.log('🎬 Playing video from download endpoint:', downloadUrl);
+          await playVideoWithCache(downloadUrl, asset.title || asset.original_filename || 'Video', asset.id, asset.url || asset.downloadUrl);
+        }
+          return;
+      }
+      
+      // Fallback: Use direct URLs if available (only if no file_id)
       let mediaUrl = asset.url || asset.downloadUrl || asset.local_recording_path;
       
       if (!mediaUrl) {
@@ -411,78 +544,86 @@ export default function MeetingDetailsScreen() {
         return;
       }
 
-      // If it's a file with file_id, use the backend view endpoint
-      if (asset.file_id) {
-        const viewUrl = `${API_BASE_URL}/api/v1/mobile/file/${asset.file_id}/view`;
-        
-        if (isAudioOnly) {
-          // For audio files, use Audio component
-          try {
-            const { sound } = await Audio.Sound.createAsync(
-              { uri: viewUrl },
-              { shouldPlay: true }
-            );
-            // Store sound reference for cleanup
-            Alert.alert(
-              'Audio Playing',
-              'Audio is now playing. The player will close when finished.',
-              [
-                {
-                  text: 'Stop',
-                  onPress: async () => {
-                    await sound.unloadAsync();
-                  }
-                },
-                { text: 'OK', style: 'cancel' }
-              ]
-            );
-          } catch (audioError) {
-            console.error('Audio playback error:', audioError);
-            // Fallback to external player
-            const canOpen = await Linking.canOpenURL(viewUrl);
-            if (canOpen) {
-              await Linking.openURL(viewUrl);
-            } else {
-              Alert.alert('Error', 'Cannot play audio. Please try opening in an external player.');
+      // If we have a direct URL (http/https), try to use it
+      // If it fails (likely due to auth), try to get file_id from backend or use download endpoint
+      if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
+        // First, try using CallRecording endpoint if we have recording ID (more reliable)
+        // This works for both audio and video recordings
+        if (asset.id && typeof asset.id === 'string') {
+          const idMatch = asset.id.match(/call_recording[_-](\d+)$/);
+          if (idMatch) {
+            const recordingId = parseInt(idMatch[1], 10);
+            let playbackSucceeded = false;
+            
+            try {
+              // Use the video recording stream endpoint (handles auth server-side)
+              const streamUrl = `${API_BASE_URL}/api/v1/video/recording/${recordingId}/stream`;
+              
+              if (isAudio) {
+                console.log('🎵 Using CallRecording endpoint for audio recording ID:', recordingId);
+                await playAudioWithCache(streamUrl, asset.title || asset.original_filename || 'Audio', asset.id);
+              } else {
+                console.log('🎬 Using CallRecording endpoint for video recording ID:', recordingId);
+                await playVideoWithCache(streamUrl, asset.title || asset.original_filename || 'Video', asset.id, mediaUrl);
+              }
+              playbackSucceeded = true;
+            } catch (recordingError) {
+              console.error('Recording endpoint failed, trying direct URL:', recordingError);
+            }
+            
+            if (playbackSucceeded) {
+              return;
             }
           }
+        }
+        
+        // If recording endpoint didn't work or no recording ID, try direct URL
+        if (isAudio) {
+          try {
+            console.log('🎵 Playing audio from direct URL:', mediaUrl);
+            await playAudioWithCache(mediaUrl, asset.title || asset.original_filename || 'Audio', asset.id);
+          } catch (audioError) {
+            console.error('Audio playback error (direct URL failed):', audioError);
+            Alert.alert('Error', 'Failed to play audio. The file may not be available or accessible.');
+          }
         } else {
-          // For video files, use the video player
-          setSelectedVideoUrl(viewUrl);
-          setShowVideoPlayer(true);
+          // For video files, download, cache, and play with video player
+          console.log('🎬 Playing video from URL:', mediaUrl);
+          await playVideoWithCache(mediaUrl, asset.title || asset.original_filename || 'Video', asset.id, mediaUrl);
+        }
+        return;
+      }
+      
+      // If we have file_id but no direct URL, use the download endpoint
+      if (asset.file_id && !mediaUrl.startsWith('http')) {
+        const downloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${asset.file_id}/download`;
+        // Reuse the same detection logic
+        const fileIsAudio = isExplicitlyAudioOnly || 
+                            (asset.original_filename && isAudioFile(asset.original_filename) && !isVideoFile(asset.original_filename));
+        
+        if (fileIsAudio) {
+          // For audio files, download, cache, and play with audio player
+          await playAudioWithCache(downloadUrl, asset.title || asset.original_filename || 'Audio', asset.id);
+        } else {
+          // For video files, download, cache, and play with video player
+          console.log('🎬 Playing video from download endpoint:', downloadUrl);
+          await playVideoWithCache(downloadUrl, asset.title || asset.original_filename || 'Video', asset.id, mediaUrl);
         }
         return;
       }
 
-      // For cloud URLs or direct URLs
+      // For cloud URLs or direct URLs (duplicate check - should not reach here, but keeping for safety)
       if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
-        if (isAudioOnly) {
-          // Try to play audio
-          try {
-            const { sound } = await Audio.Sound.createAsync(
-              { uri: mediaUrl },
-              { shouldPlay: true }
-            );
-            Alert.alert(
-              'Audio Playing',
-              'Audio is now playing.',
-              [
-                {
-                  text: 'Stop',
-                  onPress: async () => {
-                    await sound.unloadAsync();
-                  }
-                },
-                { text: 'OK', style: 'cancel' }
-              ]
-            );
-          } catch (audioError) {
-            console.error('Audio playback error:', audioError);
-            Alert.alert('Error', 'Failed to play audio. Please try opening in an external player.');
-          }
+        const urlIsAudio = isExplicitlyAudioOnly || 
+                          (isAudioFile(mediaUrl) && !isVideoFile(mediaUrl)) ||
+                          (asset.original_filename && isAudioFile(asset.original_filename) && !isVideoFile(asset.original_filename));
+        
+        if (urlIsAudio) {
+          // For audio files, download, cache, and play with audio player
+          await playAudioWithCache(mediaUrl, asset.title || asset.original_filename || 'Audio', asset.id);
         } else {
-          setSelectedVideoUrl(mediaUrl);
-          setShowVideoPlayer(true);
+          // For video files, download, cache, and play with video player
+          await playVideoWithCache(mediaUrl, asset.title || asset.original_filename || 'Video', asset.id, mediaUrl);
         }
       } else {
         // Try to open in external player for local paths
@@ -496,6 +637,224 @@ export default function MeetingDetailsScreen() {
     } catch (error) {
       console.error('Play recording error:', error);
       Alert.alert('Error', 'Failed to play recording');
+    }
+  };
+
+  // Simple hash function for creating unique cache keys
+  const simpleHash = (str: string): string => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(36);
+  };
+
+  const playVideoWithCache = async (videoUrl: string, title: string, assetId?: string, directUrl?: string) => {
+    // Get auth token to append to URL if needed (outside try block so it's available in catch)
+    let token: string | null = null;
+    try {
+      token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+    } catch (tokenError) {
+      console.warn('Failed to retrieve auth token:', tokenError);
+    }
+    
+    try {
+      let finalUrl = videoUrl;
+      
+      // If URL doesn't already have auth, append token as query parameter
+      // This allows expo-av to authenticate while using progressive streaming
+      if (token && !videoUrl.includes('token=')) {
+        const separator = videoUrl.includes('?') ? '&' : '?';
+        finalUrl = `${videoUrl}${separator}token=${encodeURIComponent(token)}`;
+      }
+      
+      console.log('🎬 Starting progressive video playback:', finalUrl);
+      
+      // Store original URL and assetId for fallback
+      setOriginalVideoUrl(videoUrl);
+      setVideoAssetId(assetId);
+      setHasTriedVideoFallback(false); // Reset fallback flag
+      
+      // Set video URL - expo-av will handle:
+      // - Progressive streaming with HTTP Range requests
+      // - Automatic buffering and caching
+      // - Network interruption handling
+      // - Resume from cache on replay
+      setVideoTitle(title);
+      setSelectedVideoUrl(finalUrl);
+      setShowVideoPlayer(true);
+      setVideoLoading(true);
+      
+      // Brief loading indicator - video will start playing as soon as buffer is ready
+      // expo-av handles all the progressive streaming automatically
+      
+    } catch (error) {
+      console.error('Failed to prepare video playback:', error);
+      setVideoLoading(false);
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      Alert.alert(
+        'Failed to Play Video',
+        `Unable to load video file. ${errorMessage.includes('authentication') ? 'The file requires authentication.' : 'Please try again later.'}`
+      );
+      setShowVideoPlayer(false);
+    }
+  };
+
+  const playAudioWithCache = async (audioUrl: string, title: string, assetId?: string) => {
+    // Get auth token to append to URL if needed (outside try block so it's available in catch)
+    let token: string | null = null;
+    try {
+      token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+    } catch (tokenError) {
+      console.warn('Failed to retrieve auth token:', tokenError);
+    }
+    
+    try {
+      let finalUrl = audioUrl;
+      
+      // If URL doesn't already have auth, append token as query parameter
+      // This allows expo-av to authenticate while using progressive streaming
+      if (token && !audioUrl.includes('token=')) {
+        const separator = audioUrl.includes('?') ? '&' : '?';
+        finalUrl = `${audioUrl}${separator}token=${encodeURIComponent(token)}`;
+      }
+      
+      console.log('🎵 Starting progressive audio playback:', finalUrl);
+      
+      setAudioTitle(title);
+      setShowAudioPlayer(true);
+      setAudioLoading(true);
+      
+      // expo-av Audio.Sound will handle:
+      // - Progressive streaming with HTTP Range requests
+      // - Automatic buffering and caching
+      // - Network interruption handling
+      // - Resume from cache on replay
+      
+      // Create audio source - expo-av handles progressive streaming automatically
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: finalUrl },
+        { 
+          shouldPlay: false,
+          isMuted: false,
+          volume: 1.0
+        }
+      );
+      
+      // Wait a moment for sound to load, then get status
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Get duration and verify sound loaded properly
+      const status = await sound.getStatusAsync();
+      if (!status.isLoaded) {
+        throw new Error('Audio failed to load - file may be corrupted or unsupported format');
+      }
+      
+      if (status.durationMillis) {
+        setAudioDuration(status.durationMillis);
+        console.log('🎵 Audio duration:', status.durationMillis, 'ms');
+      }
+      
+      setAudioSound(sound);
+      
+      // Play audio - will start immediately and buffer progressively
+      await sound.playAsync();
+      setAudioPlaying(true);
+      setAudioLoading(false); // Only hide spinner after playback actually starts
+      console.log('🎵 Audio playback started (progressive streaming)');
+      
+    } catch (error) {
+      setAudioLoading(false);
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // If streaming fails with format error, try download endpoint as fallback
+      // This handles cases where stream endpoint doesn't set proper Content-Type
+      if (errorMessage.includes('format is not supported') || errorMessage.includes('-11828')) {
+        console.log('🎵 Stream endpoint failed (format error), trying download endpoint as fallback...');
+        
+        // Try to extract recording ID and use download endpoint
+        if (audioUrl.includes('/recording/') && audioUrl.includes('/stream')) {
+          const recordingIdMatch = audioUrl.match(/\/recording\/(\d+)\//);
+          if (recordingIdMatch) {
+            const recordingId = recordingIdMatch[1];
+            const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${recordingId}/download`;
+            const fallbackUrl = token ? `${downloadUrl}?token=${encodeURIComponent(token)}` : downloadUrl;
+            
+            try {
+              console.log('🎵 Trying download endpoint:', fallbackUrl);
+              const { sound: fallbackSound } = await Audio.Sound.createAsync(
+                { uri: fallbackUrl },
+                { 
+                  shouldPlay: false,
+                  isMuted: false,
+                  volume: 1.0
+                }
+              );
+              
+              // Wait a bit longer for audio to load properly
+              await new Promise(resolve => setTimeout(resolve, 200));
+              const fallbackStatus = await fallbackSound.getStatusAsync();
+              
+              if (fallbackStatus.isLoaded) {
+                if (fallbackStatus.durationMillis) {
+                  setAudioDuration(fallbackStatus.durationMillis);
+                }
+                setAudioSound(fallbackSound);
+                // Play audio first, then hide spinner
+                await fallbackSound.playAsync();
+                setAudioPlaying(true);
+                setAudioLoading(false); // Only hide spinner after playback actually starts
+                console.log('🎵 ✅ Audio playback started via download endpoint (fallback succeeded)');
+                return; // Success! Don't show error alert
+              } else {
+                console.warn('🎵 Download endpoint loaded but status shows not loaded:', fallbackStatus);
+                // Try playing anyway - sometimes status check is delayed
+                try {
+                  setAudioSound(fallbackSound);
+                  await fallbackSound.playAsync();
+                  setAudioPlaying(true);
+                  setAudioLoading(false); // Only hide spinner after playback actually starts
+                  console.log('🎵 ✅ Audio playback started via download endpoint (played despite status)');
+                  return; // Success! Don't show error alert
+                } catch (playError) {
+                  console.error('Failed to play fallback audio:', playError);
+                }
+              }
+            } catch (fallbackError) {
+              const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+              console.error('Download endpoint also failed:', fallbackErrorMessage);
+              
+              // If download endpoint also fails with format error, log detailed info
+              if (fallbackErrorMessage.includes('format is not supported') || 
+                  fallbackErrorMessage.includes('-11828') ||
+                  fallbackErrorMessage.includes('-1100')) {
+                console.error('🎵 Both stream and download endpoints failed. Error details:', {
+                  streamError: errorMessage,
+                  downloadError: fallbackErrorMessage,
+                  audioUrl: audioUrl,
+                  downloadUrl: fallbackUrl
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      // Only show error alert if all fallbacks failed
+      // Log final error with context (only if we didn't successfully fallback)
+      console.error('🎵 Audio playback failed after all fallbacks:', {
+        originalError: errorMessage,
+        audioUrl: audioUrl,
+        hasToken: !!token
+      });
+      
+      // Only show alert if we didn't successfully use a fallback
+      Alert.alert('Error', `Failed to play audio: ${errorMessage}`);
+      setShowAudioPlayer(false);
     }
   };
 
@@ -621,155 +980,165 @@ export default function MeetingDetailsScreen() {
   };
 
   const viewAsset = async (asset: MeetingAsset) => {
-    // Check if this asset has a file_id - if so, use DocumentViewer
-    if (asset.file_id) {
-      try {
-        // Determine file type from asset type and filename
+    try {
+      // Define text-based asset types that should open in DocumentViewer
+      const textTypes = [
+        'transcript',
+        'call_transcript',
+        'meeting_summary',
+        'summary',
+        'report',
+        'meeting_report',
+        'chat_log',
+        'chat',
+        'meeting_chat',
+        'notes'
+      ];
+      
+      // Define audio/video asset types that should play in a player
+      const mediaTypes = ['recording', 'video'];
+      
+      // Check if it's a text type - open in TextAssetViewer (same viewer for all text assets)
+      if (textTypes.includes(asset.type)) {
+        // For all text types with file_id, use TextAssetViewer (same as transcripts)
+        if (asset.file_id) {
+          // Fetch content from file_id endpoint and display in TextAssetViewer
+          setTextViewerLoading(true);
+          setShowTextViewer(true);
+          
+          const defaultTitle = asset.type === 'transcript' || asset.type === 'call_transcript' ? 'Transcript' :
+                              asset.type === 'meeting_summary' || asset.type === 'summary' ? 'Summary' :
+                              asset.type === 'meeting_report' || asset.type === 'report' ? 'Report' :
+                              asset.type === 'chat_log' || asset.type === 'chat' || asset.type === 'meeting_chat' ? 'Chat' :
+                              asset.type === 'notes' ? 'Notes' : 'Document';
+          
+          const fullTitle = asset.title || asset.original_filename || defaultTitle;
+          setTextViewerTitle(fullTitle);
+          
+          try {
+            const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+            const viewUrl = `${API_BASE_URL}/api/v1/mobile/file/${asset.file_id}/view`;
+            const headers: HeadersInit = {};
+            if (token) {
+              headers['Authorization'] = `Bearer ${token}`;
+              headers['X-Platform'] = 'android';
+            }
+            
+            const response = await fetch(viewUrl, { headers });
+            if (response.ok) {
+              const content = await response.text();
+              setTextViewerContent(content);
+              setTextViewerLoading(false);
+              return;
+            } else {
+              // Try download endpoint as fallback
+              const downloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${asset.file_id}/download`;
+              const downloadResponse = await fetch(downloadUrl, { headers });
+              if (downloadResponse.ok) {
+                const content = await downloadResponse.text();
+                setTextViewerContent(content);
+                setTextViewerLoading(false);
+                return;
+              } else {
+                throw new Error(`Failed to fetch: ${downloadResponse.status}`);
+              }
+            }
+          } catch (error) {
+            console.error('Failed to fetch text asset content from file_id:', error);
+            setTextViewerLoading(false);
+            Alert.alert('Error', 'Failed to load content. The file may not be available.');
+            setShowTextViewer(false);
+            return;
+          }
+        } else if (asset.url) {
+          // Only use URL if no file_id exists
+          setTextViewerLoading(true);
+          setShowTextViewer(true);
+          
+          const defaultTitle = asset.type === 'transcript' || asset.type === 'call_transcript' ? 'Transcript' :
+                              asset.type === 'meeting_summary' || asset.type === 'summary' ? 'Summary' :
+                              asset.type === 'meeting_report' || asset.type === 'report' ? 'Report' :
+                              asset.type === 'chat_log' || asset.type === 'chat' || asset.type === 'meeting_chat' ? 'Chat' :
+                              asset.type === 'notes' ? 'Notes' : 'Document';
+          
+          const fullTitle = asset.title || asset.original_filename || defaultTitle;
+          setTextViewerTitle(fullTitle);
+          
+          try {
+            // Try to get auth token for authenticated requests
+            const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+            const headers: HeadersInit = {};
+            if (token) {
+              headers['Authorization'] = `Bearer ${token}`;
+              headers['X-Platform'] = 'android';
+            }
+            
+            const response = await fetch(asset.url, { headers });
+            if (response.ok) {
+              const content = await response.text();
+              setTextViewerContent(content);
+              setTextViewerLoading(false);
+              return;
+            } else {
+              throw new Error(`Failed to fetch: ${response.status}`);
+            }
+          } catch (error) {
+            console.error('Failed to fetch content from URL:', error);
+            setTextViewerLoading(false);
+            Alert.alert('Error', 'Failed to load content. The file may not be available.');
+            setShowTextViewer(false);
+            return;
+          }
+        } else {
+          // Fallback: try to open file if no file_id and no URL
+          if (asset.local_transcript_path || asset.local_file_path || asset.local_chat_path || asset.local_report_path) {
+            await openFile(asset);
+            return;
+          } else {
+            Alert.alert('Error', 'No file available for this asset');
+            return;
+          }
+        }
+      }
+      
+      // Check if it's audio or video - play in player
+      if (mediaTypes.includes(asset.type)) {
+        await playRecording(asset);
+        return;
+      }
+      
+      // For other types (shared_files, files, whiteboard, etc.), try to open file or show modal
+      if (asset.file_id) {
+        // If it has a file_id, try DocumentViewer first
         const fileType = asset.original_filename 
           ? getFileTypeFromFilename(asset.original_filename)
-          : (asset.type === 'transcript' ? 'text/plain' : 'document');
+          : 'document';
         
         setSelectedFileForViewing({
           fileId: String(asset.file_id),
-          fileName: asset.title || asset.original_filename || 'Unknown file',
+          fileName: asset.title || asset.original_filename || 'File',
           fileType: fileType,
           fileCategory: asset.type
         });
         setShowDocumentViewer(true);
         return;
-      } catch (error) {
-        console.error('Failed to open file with DocumentViewer:', error);
-        Alert.alert('Error', 'Failed to open file');
-      }
-    }
-
-    setSelectedAsset(asset);
-    setShowAssetModal(true);
-    
-    try {
-      let details: AssetDetail[] = [];
-      
-      switch (asset.type) {
-        case 'recording':
-        case 'video':
-          // For recordings, play video/audio
-          await playRecording(asset);
-          return; // Don't show modal for recordings
-        
-        case 'transcript':
-        case 'call_transcript':
-          // Open in DocumentViewer if file_id exists
-          if (asset.file_id) {
-            const fileType = asset.original_filename 
-              ? getFileTypeFromFilename(asset.original_filename)
-              : 'text/plain';
-            
-            setSelectedFileForViewing({
-              fileId: String(asset.file_id),
-              fileName: asset.title || asset.original_filename || 'Transcript',
-              fileType: fileType,
-              fileCategory: asset.type
-            });
-            setShowDocumentViewer(true);
-            return;
-          }
-          
-          // Fallback: fetch transcript content or try to open file
-          if (asset.local_transcript_path || asset.local_file_path || asset.url) {
-            await openFile(asset);
-            return;
-          } else {
-            const transcriptResponse = await apiClient.getMeetingTranscript(asset.meetingId || asset.id);
-            if (transcriptResponse.success && transcriptResponse.data) {
-              details = transcriptResponse.data.transcript || [];
-            }
-          }
-          break;
-        
-        case 'meeting_summary':
-        case 'summary':
-        case 'report':
-        case 'meeting_report':
-          // Open in DocumentViewer if file_id exists
-          if (asset.file_id) {
-            const fileType = asset.original_filename 
-              ? getFileTypeFromFilename(asset.original_filename)
-              : 'text/plain';
-            
-            setSelectedFileForViewing({
-              fileId: String(asset.file_id),
-              fileName: asset.title || asset.original_filename || 'Summary',
-              fileType: fileType,
-              fileCategory: asset.type
-            });
-            setShowDocumentViewer(true);
-            return;
-          }
-          
-          // Fallback: show summary content in modal or try to open file
-          if (asset.type === 'meeting_summary') {
-            details = [{
-              id: '1',
-              content: `Summary: ${asset.title}\n\nThis is a meeting summary generated by AI. The content is stored on the server and can be viewed through the web interface.\n\nFile: ${asset.original_filename || 'Unknown'}\nDate: ${formatDate(asset.date)}`,
-              timestamp: asset.date,
-              speaker: 'AI Summary'
-            }];
-          } else {
-            if (asset.local_file_path || asset.local_report_path || asset.url) {
-              await openFile(asset);
-              return;
-            }
-          }
-          break;
-        
-        case 'chat_log':
-        case 'chat':
-        case 'meeting_chat':
-          // Open in DocumentViewer if file_id exists
-          if (asset.file_id) {
-            const fileType = asset.original_filename 
-              ? getFileTypeFromFilename(asset.original_filename)
-              : 'text/plain';
-            
-            setSelectedFileForViewing({
-              fileId: String(asset.file_id),
-              fileName: asset.title || asset.original_filename || 'Chat',
-              fileType: fileType,
-              fileCategory: asset.type
-            });
-            setShowDocumentViewer(true);
-            return;
-          }
-          
-          // Fallback: fetch chat content
-          const chatResponse = await apiClient.getMeetingChat(asset.meetingId || asset.id);
-          if (chatResponse.success && chatResponse.data) {
-            details = chatResponse.data.messages || [];
-          }
-          break;
-        case 'shared_files':
-        case 'files':
-        case 'whiteboard':
-        case 'notes':
-          // For other file types, try to open them directly
-          if (asset.local_file_path || asset.local_report_path || asset.url) {
-            await openFile(asset);
-            return; // Don't show modal for file viewing
-          }
-          break;
-        default:
-          details = [{
-            id: '1',
-            content: `Asset: ${asset.title}\nType: ${asset.type}\nDate: ${asset.date}`,
-            timestamp: asset.date,
-            speaker: 'System'
-          }];
+      } else if (asset.local_file_path || asset.local_report_path || asset.url) {
+        await openFile(asset);
+        return;
       }
       
-      setAssetDetails(details);
+      // Fallback: show modal for other cases
+      setSelectedAsset(asset);
+      setShowAssetModal(true);
+      setAssetDetails([{
+        id: '1',
+        content: `Asset: ${asset.title}\nType: ${asset.type}\nDate: ${asset.date}`,
+        timestamp: asset.date,
+        speaker: 'System'
+      }]);
     } catch (error) {
-      console.error('Failed to load asset details:', error);
-      setAssetDetails([]);
+      console.error('Failed to view asset:', error);
+      Alert.alert('Error', 'Failed to open asset');
     }
   };
 
@@ -1171,6 +1540,120 @@ export default function MeetingDetailsScreen() {
     }
   };
 
+  const getAssetTypeDisplay = (asset: MeetingAsset): string => {
+    // For recordings, determine if it's audio or video
+    if (asset.type === 'recording' || asset.type === 'video') {
+      // Helper function to check if URL/filename is audio
+      const isAudioFile = (url: string): boolean => {
+        const audioExtensions = ['.m4a', '.mp3', '.wav', '.aac', '.ogg', '.flac', '.m4p'];
+        const lowerUrl = url.toLowerCase();
+        return audioExtensions.some(ext => lowerUrl.includes(ext)) || 
+               lowerUrl.includes('/audio/');
+      };
+      
+      // Helper function to check if URL/filename is video
+      const isVideoFile = (url: string): boolean => {
+        const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv', '.wmv', '.3gp'];
+        const lowerUrl = url.toLowerCase();
+        return videoExtensions.some(ext => lowerUrl.includes(ext)) || 
+               lowerUrl.includes('/video/') ||
+               lowerUrl.includes('/recordings/');
+      };
+      
+      // Check if explicitly marked as audio-only
+      const isExplicitlyAudioOnly = asset.quality === 'audio_only';
+      
+      // Check file extensions first (most reliable)
+      const hasAudioExtension = (asset.url && isAudioFile(asset.url)) ||
+                                 (asset.downloadUrl && isAudioFile(asset.downloadUrl)) ||
+                                 (asset.original_filename && isAudioFile(asset.original_filename));
+      
+      const hasVideoExtension = (asset.url && isVideoFile(asset.url)) ||
+                                (asset.downloadUrl && isVideoFile(asset.downloadUrl)) ||
+                                (asset.original_filename && isVideoFile(asset.original_filename));
+      
+      // Determine if it's audio or video
+      if (isExplicitlyAudioOnly || (hasAudioExtension && !hasVideoExtension)) {
+        return 'Audio';
+      } else if (hasVideoExtension || asset.quality === 'hd' || asset.quality === 'sd') {
+        return 'Video';
+      } else {
+        // Default to video if uncertain (most recordings are video)
+        return 'Video';
+      }
+    }
+    
+    // Special cases for specific types
+    if (asset.type === 'meeting_summary' || asset.type === 'summary') {
+      return 'Summary';
+    }
+    
+    // For other types, capitalize the first letter
+    return asset.type.charAt(0).toUpperCase() + asset.type.slice(1).replace(/_/g, ' ');
+  };
+
+  const formatAudioTime = (milliseconds: number): string => {
+    if (!milliseconds || milliseconds < 0) return '0:00';
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const formatDuration = (duration: number | string | undefined): string => {
+    // Handle undefined, null, or invalid values
+    if (!duration || duration === 'unknown' || duration === 'Unknown') return '';
+    
+    // If it's already a formatted string like "5:00" or "1:05:23", return as-is
+    if (typeof duration === 'string' && duration.includes(':')) {
+      // Validate the format (MM:SS or HH:MM:SS)
+      const parts = duration.split(':');
+      if (parts.length === 2 || parts.length === 3) {
+        // Check if all parts are valid numbers
+        const allValid = parts.every(part => !isNaN(parseInt(part)));
+        if (allValid) {
+          return duration; // Return the formatted string as-is
+        }
+      }
+    }
+    
+    // Convert to number if it's a string (not in MM:SS format)
+    let value: number;
+    if (typeof duration === 'string') {
+      value = parseFloat(duration);
+      if (isNaN(value)) return '';
+    } else {
+      value = duration;
+    }
+    
+    // Ensure it's a valid positive number
+    if (!value || value < 0 || isNaN(value)) return '';
+    
+    // Backend sends duration_minutes, so if value is small (< 1000), it's likely in minutes
+    // If value is large (> 1000), it might be in seconds or milliseconds
+    let totalSeconds: number;
+    if (value < 1000) {
+      // Likely in minutes (e.g., 5.5 minutes = 5:30, 0.07 minutes = 4 seconds)
+      totalSeconds = Math.floor(value * 60);
+    } else if (value > 3600000) {
+      // Likely milliseconds, convert to seconds
+      totalSeconds = Math.floor(value / 1000);
+    } else {
+      // Likely seconds
+      totalSeconds = Math.floor(value);
+    }
+    
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const secs = Math.floor(totalSeconds % 60);
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    } else {
+      return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    }
+  };
+
   const formatDate = (dateString: string) => {
     try {
       const date = new Date(dateString);
@@ -1416,7 +1899,7 @@ export default function MeetingDetailsScreen() {
     assetType: {
       fontSize: 14,
       color: themeColors.textSecondary,
-      marginBottom: 4,
+      marginRight: 4,
     },
     assetDetails: {
       flexDirection: 'row',
@@ -1473,7 +1956,7 @@ export default function MeetingDetailsScreen() {
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingBottom: 12,
       backgroundColor: themeColors.headerBackground || themeColors.card,
       borderBottomWidth: 1,
       borderBottomColor: themeColors.border,
@@ -1560,11 +2043,10 @@ export default function MeetingDetailsScreen() {
           <Ionicons name={getAssetIcon(item.type) as any} size={20} color={getAssetColor(item.type)} />
         </View>
         <View style={dynamicStyles.assetContent}>
-          <Text style={dynamicStyles.assetTitle} numberOfLines={2}>{getAssetDisplayTitle(item)}</Text>
-          <Text style={dynamicStyles.assetType}>{item.type.charAt(0).toUpperCase() + item.type.slice(1)}</Text>
+          <Text style={dynamicStyles.assetTitle} numberOfLines={1} ellipsizeMode="tail">{getAssetDisplayTitle(item)}</Text>
           <View style={dynamicStyles.assetDetails}>
-            <Text style={dynamicStyles.assetDate}>{formatDate(item.date)}</Text>
-            {item.size && <Text style={dynamicStyles.assetSize}>• {item.size}</Text>}
+            <Text style={dynamicStyles.assetType}>{getAssetTypeDisplay(item)}</Text>
+            <Text style={dynamicStyles.assetDate}>• {formatDate(item.date)}</Text>
           </View>
         </View>
       </TouchableOpacity>
@@ -1588,7 +2070,7 @@ export default function MeetingDetailsScreen() {
           onPress={() => toggleSessionGroup(item.sessionId)}
         >
           <View style={dynamicStyles.dateGroupInfo}>
-            <Text style={dynamicStyles.dateGroupTitle}>
+            <Text style={dynamicStyles.dateGroupTitle} numberOfLines={1} ellipsizeMode="tail">
               {meetingTitle}
             </Text>
             <Text style={dynamicStyles.dateGroupCount}>
@@ -1695,11 +2177,11 @@ export default function MeetingDetailsScreen() {
       <Modal
         visible={showAssetModal}
         animationType="slide"
-        presentationStyle="pageSheet"
+        presentationStyle="fullScreen"
         onRequestClose={() => setShowAssetModal(false)}
       >
-        <SafeAreaView style={dynamicStyles.modalContainer}>
-          <View style={dynamicStyles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: Math.max(insets.top, 12) }]}>
             <TouchableOpacity onPress={() => setShowAssetModal(false)}>
               <Text style={dynamicStyles.modalCloseButton}>Close</Text>
             </TouchableOpacity>
@@ -1721,7 +2203,7 @@ export default function MeetingDetailsScreen() {
                   <Ionicons name={getAssetIcon(selectedAsset.type) as any} size={32} color={getAssetColor(selectedAsset.type)} />
                 </View>
                 <View style={dynamicStyles.assetInfo}>
-                  <Text style={dynamicStyles.assetTitleLarge}>{getAssetDisplayTitle(selectedAsset)}</Text>
+                  <Text style={dynamicStyles.assetTitleLarge} numberOfLines={1} ellipsizeMode="tail">{getAssetDisplayTitle(selectedAsset)}</Text>
                   <Text style={dynamicStyles.assetTypeLarge}>{selectedAsset.type.charAt(0).toUpperCase() + selectedAsset.type.slice(1)}</Text>
                   <View style={dynamicStyles.assetMeta}>
                     <Text style={dynamicStyles.assetDateLarge}>{formatDate(selectedAsset.date)}</Text>
@@ -1767,47 +2249,441 @@ export default function MeetingDetailsScreen() {
         visible={showVideoPlayer}
         animationType="slide"
         presentationStyle="fullScreen"
-        onRequestClose={() => {
+        onRequestClose={async () => {
           setShowVideoPlayer(false);
           if (videoRef) {
-            videoRef.unloadAsync().catch(console.error);
+            try {
+              const status = await videoRef.getStatusAsync();
+              if (status.isLoaded) {
+                await videoRef.unloadAsync();
+              }
+            } catch (error) {
+              // Ignore errors when closing
+            }
           }
-          setSelectedVideoUrl(null);
-        }}
-      >
+                  setSelectedVideoUrl(null);
+                  setOriginalVideoUrl(null);
+                  setVideoDirectUrl(null);
+                  setHasTriedVideoFallback(false);
+                  setIsVideoFallbackInProgress(false);
+                  setVideoLoading(false);
+                  setVideoKey(0); // Reset key for next time
+                }}
+              >
         <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {selectedVideoUrl && (
-              <>
-                <TouchableOpacity
-                  style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10 }}
-                  onPress={() => {
-                    setShowVideoPlayer(false);
-                    if (videoRef) {
-                      videoRef.unloadAsync().catch(console.error);
+            {/* Header */}
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, paddingTop: Math.max(insets.top, 12), paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <TouchableOpacity
+                onPress={async () => {
+                  setShowVideoPlayer(false);
+                  if (videoRef) {
+                    try {
+                      const status = await videoRef.getStatusAsync();
+                      if (status.isLoaded) {
+                        await videoRef.unloadAsync();
+                      }
+                    } catch (error) {
+                      // Ignore errors when closing
                     }
-                    setSelectedVideoUrl(null);
-                  }}
-                >
-                  <Ionicons name="close" size={32} color="#fff" />
-                </TouchableOpacity>
+                  }
+                  setSelectedVideoUrl(null);
+                  setOriginalVideoUrl(null);
+                  setVideoDirectUrl(null);
+                  setHasTriedVideoFallback(false);
+                  setIsVideoFallbackInProgress(false);
+                  setVideoDirectUrl(null);
+                  setHasTriedVideoFallback(false);
+                  setVideoLoading(false);
+                }}
+              >
+                <Ionicons name="close" size={28} color="#fff" />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 18, fontWeight: '600', color: '#fff', flex: 1, textAlign: 'center', marginHorizontal: 16 }} numberOfLines={1} ellipsizeMode="tail">
+                {videoTitle}
+              </Text>
+              <View style={{ width: 28 }} />
+            </View>
+
+            {videoLoading && !selectedVideoUrl ? (
+              <View style={{ alignItems: 'center', width: '100%', paddingHorizontal: 40 }}>
+                <View style={{ 
+                  width: 120, 
+                  height: 120, 
+                  borderRadius: 60, 
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  marginBottom: 40
+                }}>
+                  <ActivityIndicator size="large" color="#fff" />
+                </View>
+                
+                <Text style={{ marginBottom: 24, fontSize: 18, fontWeight: '600', color: '#fff', textAlign: 'center' }}>
+                  Loading video...
+                </Text>
+              </View>
+            ) : selectedVideoUrl ? (
                 <Video
-                  ref={(ref) => setVideoRef(ref)}
+                  key={`${selectedVideoUrl}-${videoKey}`} // Force remount when URL or key changes
+                  ref={(ref) => {
+                    setVideoRef(ref);
+                    // Don't set loading to false here - wait for onLoad callback
+                  }}
                   source={{ uri: selectedVideoUrl }}
                   style={{ width: '100%', height: '100%' }}
                   useNativeControls
                   resizeMode={ResizeMode.CONTAIN}
                   shouldPlay
-                  onError={(error) => {
-                    console.error('Video playback error:', error);
+                  onLoad={() => {
+                    // Video loaded and ready to play
+                    setVideoLoading(false);
+                    setIsVideoFallbackInProgress(false); // Clear fallback flag on successful load
+                    console.log('🎬 ✅ Video loaded successfully, progressive streaming active');
+                  }}
+                  onError={async (error: any) => {
+                    let errorMessage: string;
+                    if (typeof error === 'string') {
+                      errorMessage = error;
+                    } else if (error && typeof error === 'object') {
+                      errorMessage = (error as any)?.error?.message || (error as any)?.message || String(error);
+                    } else {
+                      errorMessage = String(error);
+                    }
+                    console.error('Video playback error:', errorMessage);
+                    
+                    // Don't process errors if we're already in the middle of a fallback attempt
+                    if (isVideoFallbackInProgress) {
+                      console.log('🎬 Fallback in progress, ignoring error');
+                      return;
+                    }
+                    
+                    // Check if we're already on the download endpoint or have tried fallback
+                    const isDownloadEndpoint = selectedVideoUrl?.includes('/download');
+                    const isStreamEndpoint = selectedVideoUrl?.includes('/stream');
+                    
+                    // If streaming fails with format error, try download endpoint as fallback
+                    if ((errorMessage.includes('format is not supported') || errorMessage.includes('-11828')) && 
+                        !hasTriedVideoFallback && 
+                        isStreamEndpoint) {
+                      console.log('🎬 Stream endpoint failed, trying download endpoint as fallback...');
+                      
+                      // Try to extract recording ID and use download endpoint
+                      if (originalVideoUrl && originalVideoUrl.includes('/recording/') && originalVideoUrl.includes('/stream')) {
+                        const recordingIdMatch = originalVideoUrl.match(/\/recording\/(\d+)\//);
+                        if (recordingIdMatch) {
+                          const recordingId = recordingIdMatch[1];
+                          
+                          // Get token for fallback URL
+                          let fallbackToken: string | null = null;
+                          try {
+                            fallbackToken = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+                          } catch (tokenError) {
+                            console.warn('Failed to retrieve auth token for fallback:', tokenError);
+                          }
+                          
+                          const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${recordingId}/download`;
+                          const fallbackUrl = fallbackToken ? `${downloadUrl}?token=${encodeURIComponent(fallbackToken)}` : downloadUrl;
+                          
+                          console.log('🎬 Trying download endpoint:', fallbackUrl);
+                          setIsVideoFallbackInProgress(true); // Mark that fallback is in progress
+                          setHasTriedVideoFallback(true); // Mark that we've tried fallback
+                          // Increment key to force Video component remount with new URL
+                          setVideoKey(prev => prev + 1);
+                          setSelectedVideoUrl(fallbackUrl);
+                          setVideoLoading(true);
+                          return; // Don't show error alert yet
+                        }
+                      }
+                    }
+                    
+                    // If download endpoint also failed, try direct URL if available
+                    if (isDownloadEndpoint && videoDirectUrl && hasTriedVideoFallback) {
+                      console.log('🎬 Download endpoint failed, trying direct URL as fallback...');
+                      
+                      let directUrl = videoDirectUrl;
+                      let fallbackToken: string | null = null;
+                      try {
+                        fallbackToken = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+                      } catch (tokenError) {
+                        console.warn('Failed to retrieve auth token for direct URL:', tokenError);
+                      }
+                      
+                      if (fallbackToken && !directUrl.includes('token=')) {
+                        const separator = directUrl.includes('?') ? '&' : '?';
+                        directUrl = `${directUrl}${separator}token=${encodeURIComponent(fallbackToken)}`;
+                      }
+                      
+                      console.log('🎬 Trying direct URL:', directUrl);
+                      setIsVideoFallbackInProgress(true); // Mark that fallback is in progress
+                      // Increment key to force Video component remount with new URL
+                      setVideoKey(prev => prev + 1);
+                      setSelectedVideoUrl(directUrl);
+                      setVideoLoading(true);
+                      return; // Don't show error alert yet
+                    }
+                    
+                    // Only show error if all fallbacks have been exhausted
+                    setIsVideoFallbackInProgress(false);
+                    setVideoLoading(false);
                     Alert.alert('Error', 'Failed to play video');
                   }}
                 />
-              </>
+            ) : (
+              <Text style={{ color: '#fff' }}>No video loaded</Text>
             )}
           </View>
         </SafeAreaView>
       </Modal>
+
+      {/* Audio Player Modal */}
+      <Modal
+        visible={showAudioPlayer}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={async () => {
+          if (audioSound) {
+            await audioSound.unloadAsync();
+            setAudioSound(null);
+          }
+          setShowAudioPlayer(false);
+          setAudioPlaying(false);
+                  setAudioPosition(0);
+                  setAudioDuration(0);
+        }}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: themeColors.background }}>
+          <View style={{ flex: 1, padding: 20 }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30, paddingTop: Math.max(insets.top - 20, 8) }}>
+              <TouchableOpacity
+                onPress={async () => {
+                  if (audioSound) {
+                    await audioSound.unloadAsync();
+                    setAudioSound(null);
+                  }
+                  setShowAudioPlayer(false);
+                  setAudioPlaying(false);
+                  setAudioPosition(0);
+                  setAudioDuration(0);
+                }}
+              >
+                <Ionicons name="close" size={28} color={themeColors.text} />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 18, fontWeight: '600', color: themeColors.text, flex: 1, textAlign: 'center', marginHorizontal: 16 }} numberOfLines={1} ellipsizeMode="tail">
+                {audioTitle}
+              </Text>
+              <View style={{ width: 28 }} />
+            </View>
+
+            {/* Audio Player Content */}
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              {audioLoading || !audioSound ? (
+                <View style={{ alignItems: 'center', width: '100%', paddingHorizontal: 40 }}>
+                  <View style={{ 
+                    width: 120, 
+                    height: 120, 
+                    borderRadius: 60, 
+                    backgroundColor: `${themeColors.tint || '#007AFF'}20`,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginBottom: 40
+                  }}>
+                    <ActivityIndicator size="large" color={themeColors.tint || '#007AFF'} />
+                  </View>
+                  
+                  <Text style={{ marginBottom: 24, fontSize: 18, fontWeight: '600', color: themeColors.text, textAlign: 'center' }}>
+                    Loading audio...
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ width: '100%', alignItems: 'center' }}>
+                  {/* Audio Icon */}
+                  <View style={{ 
+                    width: 120, 
+                    height: 120, 
+                    borderRadius: 60, 
+                    backgroundColor: `${themeColors.tint || '#007AFF'}20`,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginBottom: 40
+                  }}>
+                    <Ionicons name="musical-notes" size={60} color={themeColors.tint || '#007AFF'} />
+                  </View>
+
+                  {/* Progress Bar with Seek Functionality */}
+                  <View style={{ width: '100%', marginBottom: 20 }}>
+                    <View 
+                      ref={progressBarRef}
+                      style={{ 
+                        height: 40, 
+                        justifyContent: 'center',
+                        marginBottom: 8,
+                        paddingVertical: 18
+                      }}
+                      onLayout={(event) => {
+                        const { width } = event.nativeEvent.layout;
+                        setProgressBarWidth(width);
+                      }}
+                      {...PanResponder.create({
+                        onStartShouldSetPanResponder: () => true,
+                        onMoveShouldSetPanResponder: () => true,
+                        onPanResponderGrant: (evt) => {
+                          if (audioDuration > 0 && audioSound) {
+                            setIsSeeking(true);
+                            const x = evt.nativeEvent.locationX;
+                            const percentage = Math.max(0, Math.min(100, (x / progressBarWidth) * 100));
+                            const newPosition = (percentage / 100) * audioDuration;
+                            setSeekPosition(newPosition);
+                          }
+                        },
+                        onPanResponderMove: (evt) => {
+                          if (audioDuration > 0 && isSeeking) {
+                            const x = evt.nativeEvent.locationX;
+                            const percentage = Math.max(0, Math.min(100, (x / progressBarWidth) * 100));
+                            const newPosition = (percentage / 100) * audioDuration;
+                            setSeekPosition(newPosition);
+                          }
+                        },
+                        onPanResponderRelease: async () => {
+                          if (audioSound && isSeeking) {
+                            setIsSeeking(false);
+                            const status = await audioSound.getStatusAsync();
+                            if (status.isLoaded) {
+                              await audioSound.setPositionAsync(seekPosition);
+                              setAudioPosition(seekPosition);
+                            }
+                          }
+                        },
+                        onPanResponderTerminate: () => {
+                          setIsSeeking(false);
+                        }
+                      }).panHandlers}
+                    >
+                      <View style={{ 
+                        height: 4, 
+                        backgroundColor: themeColors.borderLight || themeColors.border, 
+                        borderRadius: 2,
+                        position: 'relative'
+                      }}>
+                        <View style={{ 
+                          height: '100%', 
+                          backgroundColor: themeColors.tint || '#007AFF',
+                          width: audioDuration > 0 
+                            ? `${((isSeeking ? seekPosition : audioPosition) / audioDuration) * 100}%` 
+                            : '0%',
+                          borderRadius: 2
+                        }} />
+                        {audioDuration > 0 && (
+                          <View style={{
+                            position: 'absolute',
+                            left: audioDuration > 0 
+                              ? `${((isSeeking ? seekPosition : audioPosition) / audioDuration) * 100}%` 
+                              : '0%',
+                            top: -6,
+                            width: 16,
+                            height: 16,
+                            borderRadius: 8,
+                            backgroundColor: themeColors.tint || '#007AFF',
+                            borderWidth: 2,
+                            borderColor: themeColors.background || '#fff',
+                            marginLeft: -8
+                          }} />
+                        )}
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 12, color: themeColors.textSecondary }}>
+                        {formatAudioTime(isSeeking ? seekPosition : audioPosition)}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: themeColors.textSecondary }}>
+                        {formatAudioTime(audioDuration)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Controls */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 30 }}>
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (audioSound) {
+                          const status = await audioSound.getStatusAsync();
+                          if (status.isLoaded) {
+                            const newPosition = Math.max(0, audioPosition - 10000); // Skip back 10 seconds
+                            await audioSound.setPositionAsync(newPosition);
+                            setAudioPosition(newPosition);
+                          }
+                        }
+                      }}
+                      style={{ padding: 10 }}
+                    >
+                      <Ionicons name="play-back" size={32} color={themeColors.text} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (audioSound) {
+                          if (audioPlaying) {
+                            await audioSound.pauseAsync();
+                            setAudioPlaying(false);
+                          } else {
+                            await audioSound.playAsync();
+                            setAudioPlaying(true);
+                          }
+                        }
+                      }}
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 32,
+                        backgroundColor: themeColors.tint || '#007AFF',
+                        justifyContent: 'center',
+                        alignItems: 'center'
+                      }}
+                    >
+                      <Ionicons 
+                        name={audioPlaying ? "pause" : "play"} 
+                        size={32} 
+                        color="#fff" 
+                      />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (audioSound) {
+                          const status = await audioSound.getStatusAsync();
+                          if (status.isLoaded && status.durationMillis) {
+                            const newPosition = Math.min(status.durationMillis, audioPosition + 10000); // Skip forward 10 seconds
+                            await audioSound.setPositionAsync(newPosition);
+                            setAudioPosition(newPosition);
+                          }
+                        }
+                      }}
+                      style={{ padding: 10 }}
+                    >
+                      <Ionicons name="play-forward" size={32} color={themeColors.text} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Text Asset Viewer - Reusable component for all text assets */}
+      <TextAssetViewer
+        visible={showTextViewer}
+        title={textViewerTitle}
+        content={textViewerContent}
+        loading={textViewerLoading}
+        onClose={() => {
+          setShowTextViewer(false);
+          setTextViewerContent('');
+          setTextViewerTitle('');
+          setTextViewerLoading(false);
+        }}
+      />
     </SafeAreaView>
   );
 }

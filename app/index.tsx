@@ -10,7 +10,9 @@ export default function Page() {
   }
 
   // Redirect based on authentication status
-  if (user) {
+  // Only redirect to tabs if user exists AND has a valid ID
+  // This prevents redirecting when login fails but user state might be stale
+  if (user && user.id) {
     return <Redirect href="/(tabs)" />;
   } else {
     return <Redirect href="/(auth)" />;

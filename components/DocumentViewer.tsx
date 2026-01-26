@@ -1,15 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Dimensions,
-  Image,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Dimensions,
+    Image,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -818,7 +818,7 @@ export default function DocumentViewer({
       animationType="slide"
       presentationStyle="fullScreen"
     >
-      <SafeAreaView style={dynamicStyles.container}>
+      <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom', 'left', 'right']}>
         <View style={dynamicStyles.header}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <Ionicons name="close" size={24} color={colors.primary} />

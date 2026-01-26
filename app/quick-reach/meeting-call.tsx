@@ -1,12 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,7 +16,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useAuth } from '../context/auth';
@@ -39,6 +41,7 @@ export default function MeetingCallScreen() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const isAuthenticated = !!user;
   
   console.log('🔄 MeetingCallScreen rendered, isAuthenticated:', isAuthenticated);
@@ -57,24 +60,13 @@ export default function MeetingCallScreen() {
   const [infoMeeting, setInfoMeeting] = useState<Meeting | null>(null);
   const [meetingInfoData, setMeetingInfoData] = useState<any>(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteEmails, setInviteEmails] = useState<string[]>([]);
+  const [newInviteEmail, setNewInviteEmail] = useState('');
   const [inviteMessage, setInviteMessage] = useState('');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [featuresExpanded, setFeaturesExpanded] = useState(false);
 
-  useEffect(() => {
-    if (isAuthenticated && !hasLoadedOnce) {
-      console.log('📱 Initial load triggered by authentication');
-      setHasLoadedOnce(true);
-      loadMeetings();
-    } else if (!isAuthenticated) {
-      setLoading(false);
-    } else if (hasLoadedOnce) {
-      console.log('📱 Skipping duplicate load - already loaded once');
-    }
-  }, [isAuthenticated, hasLoadedOnce]);
-
-  const loadMeetings = async () => {
+  const loadMeetings = useCallback(async () => {
     if (!isAuthenticated) {
       console.log('📱 User not authenticated, skipping meetings load');
       setLoading(false);
@@ -85,93 +77,96 @@ export default function MeetingCallScreen() {
     try {
       setLoading(true);
       
-      // Load meetings first (critical)
-      // Assets are loaded separately and are non-critical - don't block meeting list
+      // Load meetings and assets in parallel for better performance
+      // Assets are non-critical and won't block meeting list display
       // Limit to 10 most recent meetings (backend default)
-      const meetingsResult = await Promise.allSettled([
-        apiClient.getMeetings(10, 0)
-      ]).then(results => results[0]);
+      const startTime = Date.now();
       
-      // Load assets separately (non-blocking, non-critical)
-      // This can be slow if there are many assets, so don't block the UI
-      const assetsResultPromise = apiClient.getMeetingAssets().catch(error => {
-        console.warn('Failed to load meeting assets (non-critical):', error?.message || error);
+      // Start both requests in parallel
+      const meetingsPromise = apiClient.getMeetings(10, 0);
+      const assetsPromise = apiClient.getMeetingAssets().catch(error => {
+        // Assets are non-critical - fail silently
+        console.warn('⚠️ Meeting assets request failed (non-critical):', error?.message || error);
         return null;
       });
       
-      // Extract results (handle both success and failure)
-      const meetingsResponse = meetingsResult.status === 'fulfilled' ? meetingsResult.value : null;
+      // Wait for meetings (critical) - don't wait for assets
+      const meetingsResponse = await meetingsPromise;
+      const loadTime = Date.now() - startTime;
+      console.log(`📱 Meetings loaded in ${loadTime}ms`);
       
-      // Log any failures (but don't block)
-      if (meetingsResult.status === 'rejected') {
-        console.error('Failed to load meetings:', meetingsResult.reason);
-      }
-      
-      // Load assets asynchronously (don't block meeting list display)
-      // Track which meetings have assets (for potential future use like badges/indicators)
-      // Use title as primary identifier since IDs might not match (HMS ID vs DB ID)
-      let meetingsWithAssetsTitles = new Set<string>();
-      let meetingsWithAssetsIds = new Set<string>();
-      
-      // Process assets in background (non-blocking)
-      assetsResultPromise.then(assetsResponse => {
+      // Process assets in background (non-blocking) - don't wait for it
+      assetsPromise.then(assetsResponse => {
+        const assetsTime = Date.now() - startTime;
+        console.log(`📱 Assets loaded in ${assetsTime}ms`);
         if (assetsResponse?.success && assetsResponse?.data) {
-          // Check top-level assets array (this is the main source of assets)
-          if (assetsResponse.data.assets && Array.isArray(assetsResponse.data.assets)) {
-            console.log(`📱 Processing ${assetsResponse.data.assets.length} assets from top-level assets array`);
-            assetsResponse.data.assets.forEach((asset: any, index: number) => {
-              // Extract meeting title from asset (try multiple property names)
-              const title = (asset.meeting_title || asset.title || asset.meetingTitle || '').toLowerCase().trim();
-              if (title) {
-                meetingsWithAssetsTitles.add(title);
-                if (index < 3) { // Log first 3 for debugging
-                  console.log(`📱 Asset ${index} title: "${title}"`);
-                }
-              }
-              // Extract meeting ID from asset (try multiple property names)
-              const meetingId = asset.meeting_id || asset.meetingId || asset.meeting_id;
-              if (meetingId) {
-                meetingsWithAssetsIds.add(String(meetingId));
-                if (index < 3) { // Log first 3 for debugging
-                  console.log(`📱 Asset ${index} meetingId: "${meetingId}"`);
-                }
-              }
-            });
+          // Assets are processed but not used to block UI rendering
+          // This is just for logging/debugging purposes
+          const assetCount = assetsResponse.data.assets?.length || 0;
+          if (assetCount > 0) {
+            console.log(`📱 Processed ${assetCount} assets in background`);
           }
-          
-          // Also check meetings array for nested assets (if they exist)
-          if (assetsResponse.data.meetings && Array.isArray(assetsResponse.data.meetings)) {
-            assetsResponse.data.meetings.forEach((meeting: any) => {
-              const hasAssets = meeting.assets && Array.isArray(meeting.assets) && meeting.assets.length > 0;
-              if (hasAssets) {
-                // Add title for matching (normalize to lowercase for comparison)
-                const title = (meeting.title || meeting.meeting_title || '').toLowerCase().trim();
-                if (title) {
-                  meetingsWithAssetsTitles.add(title);
-                }
-                // Also add IDs for potential matching
-                const meetingId = meeting.id || meeting.meeting_id || meeting.meetingId;
-                if (meetingId) {
-                  meetingsWithAssetsIds.add(String(meetingId));
-                }
-              }
-            });
-          }
-          
-          console.log('📱 Meeting titles with assets:', Array.from(meetingsWithAssetsTitles));
-          console.log('📱 Meeting IDs with assets:', Array.from(meetingsWithAssetsIds));
         }
-      }).catch(error => {
-        console.warn('Assets processing error (non-critical):', error);
+      }).catch(() => {
+        // Already handled - fail silently
       });
       
-      if (meetingsResponse?.success && meetingsResponse?.data) {
-        const allMeetings = meetingsResponse.data.meetings || [];
+      // Handle meetings response (critical path)
+      // Support multiple response formats:
+      // 1. { success: true, data: { meetings: [] } }
+      // 2. { success: true, data: [] } (data is array)
+      // 3. { success: true, meetings: [] }
+      // 4. { meetings: [] }
+      // 5. Array directly
+      let allMeetings: any[] = [];
+      if (Array.isArray(meetingsResponse)) {
+        allMeetings = meetingsResponse;
+      } else if (meetingsResponse?.data) {
+        if (Array.isArray(meetingsResponse.data)) {
+          allMeetings = meetingsResponse.data;
+        } else {
+          allMeetings = meetingsResponse.data.meetings || [];
+        }
+      } else if ((meetingsResponse as any)?.meetings) {
+        allMeetings = Array.isArray((meetingsResponse as any).meetings) ? (meetingsResponse as any).meetings : [];
+      } else {
+        allMeetings = [];
+      }
+      
+      // Process meetings if we have any or if there's a response
+      if (allMeetings.length > 0 || meetingsResponse) {
         
         console.log(`📱 Processing ${allMeetings.length} meetings from backend`);
+        console.log('📱 Raw meetings response structure:', {
+          hasData: !!meetingsResponse?.data,
+          hasMeetingsInData: !!meetingsResponse?.data?.meetings,
+          hasMeetingsAtRoot: !!(meetingsResponse as any)?.meetings,
+          meetingsCount: allMeetings.length,
+          firstMeetingSample: allMeetings[0] ? Object.keys(allMeetings[0]) : []
+        });
+        
+        // Normalize meeting data to handle different backend field names
+        const normalizedMeetings = allMeetings.map((m: any) => {
+          // Map different field names to our Meeting interface
+          return {
+            id: m.id || m.meeting_id || m.meetingId || '',
+            title: m.title || m.name || m.roomName || m.room_name || 'Untitled Meeting',
+            meetingId: m.meetingId || m.meeting_id || m.id || '',
+            host: m.host || m.host_name || m.hostName || 'Unknown',
+            participants: m.participants || m.participant_count || 0,
+            startTime: m.startTime || m.start_time || m.start_at || m.scheduled_time || m.scheduled_at || '',
+            endTime: m.endTime || m.end_time || m.end_at || '',
+            status: m.status || m.meeting_status || 'created',
+            passcode: m.passcode || undefined,
+            roomUrl: m.roomUrl || m.room_url || m.url || undefined,
+            description: m.description || undefined,
+            duration: m.duration || m.meeting_duration_minutes || undefined,
+            createdAt: m.createdAt || m.created_at || m.created || undefined
+          } as Meeting;
+        });
         
         // Sort meetings by date (most recent first) BEFORE deduplication
-        const sortedMeetings = allMeetings.sort((a: Meeting, b: Meeting) => {
+        const sortedMeetings = normalizedMeetings.sort((a: Meeting, b: Meeting) => {
           const dateA = new Date(a.startTime || a.createdAt || 0).getTime();
           const dateB = new Date(b.startTime || b.createdAt || 0).getTime();
           return dateB - dateA;
@@ -184,8 +179,8 @@ export default function MeetingCallScreen() {
         sortedMeetings.forEach((meeting: Meeting, index: number) => {
           const normalizedTitle = (meeting.title || '').toLowerCase().trim();
           
-          if (!normalizedTitle) {
-            console.warn(`📱 Meeting at index ${index} has no title, skipping`);
+          if (!normalizedTitle || normalizedTitle === 'untitled meeting') {
+            console.warn(`📱 Meeting at index ${index} has no valid title, skipping`);
             return;
           }
           
@@ -209,10 +204,60 @@ export default function MeetingCallScreen() {
         
         setMeetings(uniqueMeetings);
         
-        // Filter meetings by status
-        const upcoming = uniqueMeetings.filter((m: Meeting) => 
-          m.status === 'scheduled' || m.status === 'created'
-        );
+        // Filter meetings by status and time
+        // Upcoming: Scheduled meetings with a future startTime OR newly created meetings (status="created" or without start_at/end_at)
+        // Recent: Ended meetings OR created/scheduled meetings without startTime (immediate meetings)
+        const now = new Date();
+        const upcoming = uniqueMeetings.filter((m: Meeting) => {
+          // Check if meeting has no start_at/end_at (no startTime or empty startTime)
+          const hasNoStartTime = !m.startTime || 
+                                 (typeof m.startTime === 'string' && m.startTime.trim() === '') ||
+                                 m.startTime === null ||
+                                 m.startTime === undefined;
+          
+          // Rule 1: Include meetings with status="created" - these are newly created meetings
+          // Even if they have a startTime (which might be the creation timestamp), they should be in upcoming
+          // This is the primary requirement: "if a meeting is newly created and has not start_at or end_at date, then show it in upcoming meeting"
+          if (m.status === 'created') {
+            console.log(`✅ Meeting "${m.title}" included in upcoming: newly created meeting (status="created")`);
+            return true;
+          }
+          
+          // Rule 2: Include newly created meetings without start_at/end_at (regardless of status, except ended)
+          if (hasNoStartTime && m.status !== 'ended') {
+            console.log(`✅ Meeting "${m.title}" included in upcoming: newly created without start_at/end_at (status="${m.status}")`);
+            return true;
+          }
+          
+          // Rule 3: Include scheduled meetings with a startTime in the future
+          if (m.status === 'scheduled' && !hasNoStartTime) {
+            try {
+              const startTime = new Date(m.startTime);
+              if (isNaN(startTime.getTime())) {
+                // Invalid date, treat as no startTime
+                console.log(`✅ Meeting "${m.title}" included in upcoming: scheduled but invalid startTime, treating as newly created`);
+                return true;
+              }
+              const isFuture = startTime > now;
+              if (isFuture) {
+                console.log(`✅ Meeting "${m.title}" included in upcoming: scheduled with future startTime (${m.startTime})`);
+                return true;
+              } else {
+                console.log(`❌ Meeting "${m.title}" excluded from upcoming: scheduled but startTime in past (${m.startTime})`);
+                return false;
+              }
+            } catch (e) {
+              console.warn(`⚠️ Meeting "${m.title}" has invalid startTime format: ${m.startTime}, treating as newly created`);
+              // If startTime is invalid, treat as no startTime (newly created)
+              return true;
+            }
+          }
+          
+          // Exclude all other meetings from upcoming
+          console.log(`❌ Meeting "${m.title}" excluded from upcoming: status="${m.status}", hasNoStartTime=${hasNoStartTime}, startTime="${m.startTime}"`);
+          return false;
+        });
+        
         const ongoing = uniqueMeetings.filter((m: Meeting) => 
           m.status === 'active'
         );
@@ -220,53 +265,45 @@ export default function MeetingCallScreen() {
         setUpcomingMeetings(upcoming);
         setOngoingMeetings(ongoing);
         
-        console.log(`📱 Loaded ${uniqueMeetings.length} unique meetings:`, {
+        // Calculate recent meetings count (for logging)
+        const recentCount = uniqueMeetings.filter(m => {
+          if (m.status === 'ended') return true;
+          if ((m.status === 'created' || m.status === 'scheduled') && !m.startTime) return true;
+          return false;
+        }).length;
+        
+        console.log(`📱 Loaded ${uniqueMeetings.length} unique meetings in ${loadTime}ms:`, {
           total: uniqueMeetings.length,
           upcoming: upcoming.length,
           ongoing: ongoing.length,
-          meetingsWithAssets: meetingsWithAssetsTitles.size,
+          recent: recentCount,
           duplicatesRemoved: allMeetings.length - uniqueMeetings.length
         });
         
-        // Debug: Log the actual status values from backend
-        console.log('📱 Meeting statuses from backend:', uniqueMeetings.map((m: Meeting) => ({
-          title: m.title,
-          status: m.status,
-          startTime: m.startTime,
-          displayStatus: m.status.toUpperCase()
-        })));
+        // Debug: Log the actual status values from backend and upcoming filter results
+        console.log('📱 Meeting statuses from backend:', uniqueMeetings.map((m: Meeting) => {
+          const hasNoStartTime = !m.startTime || 
+                                 (typeof m.startTime === 'string' && m.startTime.trim() === '') ||
+                                 m.startTime === null ||
+                                 m.startTime === undefined;
+          const isInUpcoming = upcoming.includes(m);
+          return {
+            title: m.title,
+            status: m.status,
+            startTime: m.startTime,
+            hasStartTime: !!m.startTime && !hasNoStartTime,
+            hasNoStartTime: hasNoStartTime,
+            isInUpcoming: isInUpcoming,
+            category: m.status === 'ended' ? 'recent' : 
+                      (m.status === 'scheduled' && !hasNoStartTime ? 'upcoming' : 
+                       (m.status === 'active' ? 'ongoing' : 
+                        (hasNoStartTime ? 'upcoming (newly created)' : 'other')))
+          };
+        }));
       } else {
         // No meetings found or failed to load - show empty state
-        if (meetingsResult.status === 'rejected') {
-          const error = meetingsResult.reason;
-          console.error('Failed to load meetings from database:', error);
-          
-          // Check if it's a timeout error
-          if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
-            console.warn('📱 Meeting request timed out - showing empty state');
-            // Don't show alert for timeouts, just show empty state
-          } else if (error.response?.status === 401 || error.message?.includes('Not authenticated')) {
-            console.log('📱 Authentication required for meetings');
-            Alert.alert(
-              'Authentication Required',
-              'Please log in to view your meetings.',
-              [
-                { text: 'OK', onPress: () => router.push('/(auth)/sign-in') }
-              ]
-            );
-          } else if (error.response?.status === 500) {
-            console.log('📱 Server error (500) - backend issue');
-            Alert.alert(
-              'Server Error',
-              'There was a server error loading meetings. Please try again later.',
-              [
-                { text: 'OK' }
-              ]
-            );
-          }
-        } else {
-          console.log('📱 No meetings found in database');
-        }
+        // (Timeout is already logged above if it occurred)
+        console.log('📱 No meetings found or failed to load');
         
         // Show empty state for any failure or no meetings
         setMeetings([]);
@@ -284,13 +321,43 @@ export default function MeetingCallScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated && !hasLoadedOnce) {
+      console.log('📱 Initial load triggered by authentication');
+      setHasLoadedOnce(true);
+      loadMeetings();
+    } else if (!isAuthenticated) {
+      setLoading(false);
+    } else if (hasLoadedOnce) {
+      console.log('📱 Skipping duplicate load - already loaded once');
+    }
+  }, [isAuthenticated, hasLoadedOnce, loadMeetings]);
+
+  // Reload meetings when screen comes into focus (e.g., after creating a meeting)
+  // Use a ref to track last load time to prevent excessive reloads
+  const lastLoadTimeRef = useRef<number>(0);
+  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  
+  useFocusEffect(
+    useCallback(() => {
+      // Only reload if user is authenticated and we've already loaded once
+      // Add debounce to prevent excessive reloads when quickly switching screens
+      const now = Date.now();
+      if (isAuthenticated && hasLoadedOnce && (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS)) {
+        console.log('📱 Screen focused - reloading meetings to show new meetings');
+        lastLoadTimeRef.current = now;
+        loadMeetings();
+      }
+    }, [isAuthenticated, hasLoadedOnce, loadMeetings])
+  );
 
   const handleRefresh = useCallback(() => {
     console.log('📱 Manual refresh triggered');
     setRefreshing(true);
     loadMeetings();
-  }, []);
+  }, [loadMeetings]);
 
   const createMeeting = () => {
     router.push('./create-meeting' as any);
@@ -401,6 +468,8 @@ export default function MeetingCallScreen() {
       });
 
       if (response.success && response.data) {
+        // Save meetingId before clearing state
+        const savedMeetingId = meetingId.trim();
         setShowJoinModal(false);
         setMeetingId('');
         setMeetingPassword('');
@@ -408,7 +477,7 @@ export default function MeetingCallScreen() {
         router.push({
           pathname: './hms-meeting-interface',
           params: {
-            meetingId: response.data.meetingId || meetingId.trim(),
+            meetingId: response.data.meetingId || savedMeetingId,
             title: response.data.title || 'Meeting',
             userName: 'Mobile User'
           }
@@ -508,22 +577,41 @@ export default function MeetingCallScreen() {
     );
   };
 
+  const addInviteEmail = () => {
+    if (newInviteEmail.trim() && !inviteEmails.includes(newInviteEmail.trim().toLowerCase())) {
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (emailRegex.test(newInviteEmail.trim())) {
+        setInviteEmails(prev => [...prev, newInviteEmail.trim().toLowerCase()]);
+        setNewInviteEmail('');
+      } else {
+        Alert.alert('Error', 'Please enter a valid email address');
+      }
+    }
+  };
+
+  const removeInviteEmail = (email: string) => {
+    setInviteEmails(prev => prev.filter(e => e !== email));
+  };
+
   const inviteToMeeting = async () => {
-    if (!selectedMeeting || !inviteEmail.trim()) {
-      Alert.alert('Error', 'Please enter an email address');
+    if (!selectedMeeting || inviteEmails.length === 0) {
+      Alert.alert('Error', 'Please add at least one email address');
       return;
     }
 
     try {
       const response = await apiClient.sendMeetingInvite(selectedMeeting.meetingId, {
-        email: inviteEmail.trim(),
+        emails: inviteEmails,
         message: inviteMessage.trim()
       });
 
       if (response.success) {
-        Alert.alert('Success', 'Invitation sent successfully');
+        const count = inviteEmails.length;
+        Alert.alert('Success', `Invitation${count > 1 ? 's' : ''} sent successfully to ${count} recipient${count > 1 ? 's' : ''}`);
         setShowInviteModal(false);
-        setInviteEmail('');
+        setInviteEmails([]);
+        setNewInviteEmail('');
         setInviteMessage('');
         setSelectedMeeting(null);
       } else {
@@ -844,6 +932,7 @@ export default function MeetingCallScreen() {
       backgroundColor: 'rgba(0, 0, 0, 0.5)',
       justifyContent: 'center',
       alignItems: 'center',
+      paddingTop: 60, // Move modal up from center
     },
     joinModalContainer: {
       backgroundColor: colors.card,
@@ -962,12 +1051,14 @@ export default function MeetingCallScreen() {
       marginTop: 8,
     },
     participantItem: {
-      width: '48%',
-      marginRight: '2%',
-      marginBottom: 8,
-      padding: 8,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 12,
       backgroundColor: colors.surface,
       borderRadius: 8,
+      marginBottom: 8,
       borderWidth: 1,
       borderColor: colors.border,
     },
@@ -978,8 +1069,25 @@ export default function MeetingCallScreen() {
       marginBottom: 2,
     },
     participantEmail: {
-      fontSize: 11,
-      color: colors.textSecondary,
+      fontSize: 14,
+      color: colors.text,
+      flex: 1,
+    },
+    participantInput: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    participantTextInput: {
+      flex: 1,
+      marginRight: 12,
+    },
+    addButton: {
+      padding: 8,
+    },
+    participantsList: {
+      marginTop: 8,
+      marginBottom: 8,
     },
     participantHostBadge: {
       marginTop: 4,
@@ -1281,17 +1389,36 @@ export default function MeetingCallScreen() {
             )}
 
             {/* Recent Meetings */}
-            {meetings.filter(m => m.status === 'ended').length > 0 ? (
-              <View style={dynamicStyles.section}>
-                <Text style={dynamicStyles.sectionTitle}>Recent Meetings</Text>
-                <FlatList
-                  data={meetings.filter(m => m.status === 'ended')}
-                  renderItem={renderMeetingCard}
-                  keyExtractor={(item) => item.id}
-                  scrollEnabled={false}
-                />
-              </View>
-            ) : null}
+            {(() => {
+              const recentMeetings = meetings.filter(m => {
+                // Include ended meetings
+                if (m.status === 'ended') return true;
+                
+                // Include created/scheduled meetings without startTime (immediate meetings created via "Create")
+                if ((m.status === 'created' || m.status === 'scheduled') && !m.startTime) {
+                  return true;
+                }
+                
+                return false;
+              }).sort((a, b) => {
+                // Sort by date: most recent first
+                const dateA = new Date(a.createdAt || a.startTime || 0).getTime();
+                const dateB = new Date(b.createdAt || b.startTime || 0).getTime();
+                return dateB - dateA;
+              });
+              
+              return recentMeetings.length > 0 ? (
+                <View style={dynamicStyles.section}>
+                  <Text style={dynamicStyles.sectionTitle}>Recent Meetings ({recentMeetings.length})</Text>
+                  <FlatList
+                    data={recentMeetings}
+                    renderItem={renderMeetingCard}
+                    keyExtractor={(item) => item.id}
+                    scrollEnabled={false}
+                  />
+                </View>
+              ) : null;
+            })()}
           </View>
         )}
       />
@@ -1303,74 +1430,88 @@ export default function MeetingCallScreen() {
         transparent={true}
         onRequestClose={() => setShowJoinModal(false)}
       >
-        <View style={dynamicStyles.modalOverlay}>
-          <View style={dynamicStyles.joinModalContainer}>
-            <View style={dynamicStyles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowJoinModal(false)}>
-                <Text style={dynamicStyles.cancelButton}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={dynamicStyles.modalTitle}>Join Meeting</Text>
-              <TouchableOpacity 
-                onPress={joinMeetingById}
-                disabled={!meetingId.trim()}
-              >
-                <Text style={[
-                  dynamicStyles.joinButton,
-                  !meetingId.trim() && dynamicStyles.joinButtonDisabled
-                ]}>
-                  Join
-                </Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={dynamicStyles.modalContent}>
-              <Text style={dynamicStyles.inputLabel}>Meeting ID</Text>
-              <TextInput
-                style={dynamicStyles.input}
-                placeholder="Enter meeting ID"
-                placeholderTextColor={colors.textLight}
-                value={meetingId}
-                onChangeText={setMeetingId}
-                autoFocus
-                keyboardType="numeric"
-                autoCapitalize="none"
-              />
-              
-              <Text style={dynamicStyles.inputLabel}>Passcode (Optional)</Text>
-              <TextInput
-                style={dynamicStyles.input}
-                placeholder="Enter meeting passcode"
-                placeholderTextColor={colors.textLight}
-                value={meetingPassword}
-                onChangeText={setMeetingPassword}
-                secureTextEntry
-                autoCapitalize="none"
-              />
-            </View>
-          </View>
-        </View>
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowJoinModal(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={dynamicStyles.joinModalContainer}>
+                <View style={dynamicStyles.modalHeader}>
+                  <TouchableOpacity onPress={() => setShowJoinModal(false)}>
+                    <Text style={dynamicStyles.cancelButton}>Cancel</Text>
+                  </TouchableOpacity>
+                  <Text style={dynamicStyles.modalTitle}>Join Meeting</Text>
+                  <TouchableOpacity 
+                    onPress={joinMeetingById}
+                    disabled={!meetingId.trim()}
+                  >
+                    <Text style={[
+                      dynamicStyles.joinButton,
+                      !meetingId.trim() && dynamicStyles.joinButtonDisabled
+                    ]}>
+                      Join
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                
+                <View style={dynamicStyles.modalContent}>
+                  <Text style={dynamicStyles.inputLabel}>Meeting ID</Text>
+                  <TextInput
+                    style={dynamicStyles.input}
+                    placeholder="Enter meeting ID"
+                    placeholderTextColor={colors.textLight}
+                    value={meetingId}
+                    onChangeText={setMeetingId}
+                    autoFocus
+                    keyboardType="numeric"
+                    autoCapitalize="none"
+                  />
+                  
+                  <Text style={dynamicStyles.inputLabel}>Passcode (Optional)</Text>
+                  <TextInput
+                    style={dynamicStyles.input}
+                    placeholder="Enter meeting passcode"
+                    placeholderTextColor={colors.textLight}
+                    value={meetingPassword}
+                    onChangeText={setMeetingPassword}
+                    secureTextEntry
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
+        </TouchableOpacity>
       </Modal>
 
       {/* Invite Modal */}
       <Modal
         visible={showInviteModal}
         animationType="slide"
-        presentationStyle="pageSheet"
+        presentationStyle="fullScreen"
         onRequestClose={() => setShowInviteModal(false)}
       >
-        <SafeAreaView style={dynamicStyles.modalContainer}>
-          <View style={dynamicStyles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: Math.max(insets.top - 20, 8) }]}>
             <TouchableOpacity onPress={() => setShowInviteModal(false)}>
               <Text style={dynamicStyles.cancelButton}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Invite to Meeting</Text>
             <TouchableOpacity 
               onPress={inviteToMeeting}
-              disabled={!inviteEmail.trim()}
+              disabled={inviteEmails.length === 0}
             >
               <Text style={[
                 dynamicStyles.joinButton,
-                !inviteEmail.trim() && dynamicStyles.joinButtonDisabled
+                inviteEmails.length === 0 && dynamicStyles.joinButtonDisabled
               ]}>
                 Send
               </Text>
@@ -1378,17 +1519,36 @@ export default function MeetingCallScreen() {
           </View>
           
           <View style={dynamicStyles.modalContent}>
-            <Text style={dynamicStyles.inputLabel}>Email Address</Text>
-            <TextInput
-              style={dynamicStyles.input}
-              placeholder="Enter email address"
-              placeholderTextColor={colors.textLight}
-              value={inviteEmail}
-              onChangeText={setInviteEmail}
-              autoFocus
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
+            <Text style={dynamicStyles.inputLabel}>Email Addresses</Text>
+            <View style={dynamicStyles.participantInput}>
+              <TextInput
+                style={[dynamicStyles.input, dynamicStyles.participantTextInput]}
+                placeholder="Enter email address"
+                placeholderTextColor={colors.textLight}
+                value={newInviteEmail}
+                onChangeText={setNewInviteEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                onSubmitEditing={addInviteEmail}
+                returnKeyType="done"
+              />
+              <TouchableOpacity style={dynamicStyles.addButton} onPress={addInviteEmail}>
+                <Ionicons name="add" size={20} color="#007AFF" />
+              </TouchableOpacity>
+            </View>
+
+            {inviteEmails.length > 0 && (
+              <View style={dynamicStyles.participantsList}>
+                {inviteEmails.map((email, index) => (
+                  <View key={index} style={dynamicStyles.participantItem}>
+                    <Text style={dynamicStyles.participantEmail} numberOfLines={1}>{email}</Text>
+                    <TouchableOpacity onPress={() => removeInviteEmail(email)}>
+                      <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
             
             <Text style={dynamicStyles.inputLabel}>Message (Optional)</Text>
             <TextInput
@@ -1408,10 +1568,10 @@ export default function MeetingCallScreen() {
       <Modal
         visible={showInfoModal}
         animationType="slide"
-        presentationStyle="pageSheet"
+        presentationStyle="fullScreen"
         onRequestClose={() => setShowInfoModal(false)}
       >
-        <SafeAreaView style={dynamicStyles.modalContainer}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
           <View style={dynamicStyles.modalHeader}>
             <TouchableOpacity onPress={() => setShowInfoModal(false)}>
               <Text style={dynamicStyles.cancelButton}>Close</Text>

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -55,13 +55,21 @@ export default function CreateFormScreen() {
     }
   }, [activeTab]);
 
+  // Add debounce to prevent excessive reloads
+  const lastLoadTimeRef = useRef<number>(0);
+  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  
   // Refresh forms list when screen comes into focus (e.g., when returning from form builder)
   useFocusEffect(
     useCallback(() => {
       // Only refresh if we're on the "My Forms" tab
       if (activeTab === 'recent') {
-        console.log('🔄 Screen focused, refreshing user forms...');
-        loadUserForms();
+        const now = Date.now();
+        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
+          lastLoadTimeRef.current = now;
+          console.log('🔄 Screen focused, refreshing user forms...');
+          loadUserForms();
+        }
       }
     }, [activeTab])
   );

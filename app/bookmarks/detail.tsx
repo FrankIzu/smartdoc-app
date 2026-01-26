@@ -2,21 +2,22 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Modal,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Modal,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { formatTimestampToLocal } from '../../utils/timeFormatting';
 import { useAuth } from '../context/auth';
 
 interface Bookmark {
@@ -465,6 +466,11 @@ export default function BookmarkDetailScreen() {
       fontSize: 14,
       color: themeColors.textSecondary,
     },
+    fileTimestamp: {
+      fontSize: 12,
+      color: themeColors.textSecondary,
+      marginTop: 2,
+    },
     removeButton: {
       padding: 4,
     },
@@ -581,10 +587,15 @@ export default function BookmarkDetailScreen() {
           color="#007AFF" 
         />
         <View style={dynamicStyles.fileDetails}>
-          <Text style={dynamicStyles.fileName} numberOfLines={1}>{item.name}</Text>
+          <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
           <Text style={dynamicStyles.fileMeta}>
             {item.category || item.type} • {item.size || 'No size info'}
           </Text>
+          {item.created_at && (
+            <Text style={dynamicStyles.fileTimestamp}>
+              {formatTimestampToLocal(item.created_at)}
+            </Text>
+          )}
         </View>
       </View>
       <TouchableOpacity
@@ -614,10 +625,15 @@ export default function BookmarkDetailScreen() {
           color="#007AFF" 
         />
         <View style={dynamicStyles.fileDetails}>
-          <Text style={dynamicStyles.fileName} numberOfLines={1}>{item.name}</Text>
+          <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
           <Text style={dynamicStyles.fileMeta}>
             {item.category || item.type} • {item.size || 'No size info'}
           </Text>
+          {item.created_at && (
+            <Text style={dynamicStyles.fileTimestamp}>
+              {formatTimestampToLocal(item.created_at)}
+            </Text>
+          )}
         </View>
       </View>
       {selectedFiles.has(item.id) && (
@@ -700,8 +716,8 @@ export default function BookmarkDetailScreen() {
       />
 
       {/* Edit Bookmark Modal */}
-      <Modal visible={showEditModal} animationType="slide" presentationStyle="pageSheet">
-        <SafeAreaView style={dynamicStyles.modalContainer}>
+      <Modal visible={showEditModal} animationType="slide" presentationStyle="fullScreen">
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
           <View style={dynamicStyles.modalHeader}>
             <TouchableOpacity onPress={() => setShowEditModal(false)}>
               <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
@@ -760,8 +776,8 @@ export default function BookmarkDetailScreen() {
       </Modal>
 
       {/* Add Files Modal */}
-      <Modal visible={showAddFilesModal} animationType="slide" presentationStyle="pageSheet">
-        <SafeAreaView style={dynamicStyles.modalContainer}>
+      <Modal visible={showAddFilesModal} animationType="slide" presentationStyle="fullScreen">
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
           <View style={dynamicStyles.modalHeader}>
             <TouchableOpacity onPress={() => {
               setShowAddFilesModal(false);

@@ -1,5 +1,5 @@
-import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { Ionicons } from '@expo/vector-icons';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import Constants from 'expo-constants';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Link, useRouter } from 'expo-router';
@@ -17,15 +17,15 @@ import {
     View
 } from 'react-native';
 import { API_BASE_URL } from '../../constants/Config';
-import { googleAuthService } from '../../services/googleAuth';
+import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
+import { googleAuthService } from '../../services/googleAuth';
 import { useAuth } from '../context/auth';
-import * as AppleAuthentication from 'expo-apple-authentication';
 
 export default function SignInScreen() {
   const router = useRouter();
-  const [username, setUsername] = useState('francis'); // Default username for testing
-  const [password, setPassword] = useState('password123'); // Default password for testing
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [rememberDevice, setRememberDevice] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -109,19 +109,41 @@ export default function SignInScreen() {
       try {
         await signIn(username, password, rememberDevice);
         // If successful without OTP, navigation handled by auth context
+        // Only navigate if login was actually successful (user is set)
         return;
       } catch (loginError: any) {
+        // IMPORTANT: On login failure, stay on login screen and show error
+        // Do NOT navigate away - user should see the error message
+        
         // Check if error is due to 2FA requirement
         if (loginError.requires2FA) {
           console.log('🔐 2FA required - navigating to OTP verification');
+          console.log('📦 User data from login:', loginError.user);
+          
+          // Store user data for OTP verification
+          const userData = loginError.user;
+          const preferredMethod = loginError.preferredAuthMethod || 'email';
+          
+          // Get email or phone based on preferred method
+          const email = userData?.email || '';
+          const phoneNumber = userData?.phone_number || userData?.phoneNumber || '';
+          
           // Navigate to OTP verification screen with user info
+          // Note: We pass password temporarily so we can complete login after OTP verification
+          // This is stored in memory only and cleared after use
           router.push({
             pathname: '/(auth)/otp-verification',
             params: {
-              username: username,
-              method: loginError.preferredAuthMethod || 'phone',
-              identifier: loginError.identifier || username,
+              username: username, // Keep for backward compatibility
+              method: preferredMethod === 'phone' ? 'sms' : 'email',
+              identifier: loginError.identifier || (preferredMethod === 'phone' ? phoneNumber : email),
               expiresIn: '600', // 10 minutes
+              // Pass user data as JSON string (router params are strings)
+              userEmail: email,
+              userPhone: phoneNumber,
+              preferredAuthMethod: preferredMethod,
+              tempPassword: password, // Temporary: needed to complete login after OTP
+              rememberDevice: rememberDevice ? 'true' : 'false', // Pass remember device preference
             }
           });
           return;
@@ -134,17 +156,25 @@ export default function SignInScreen() {
         const shouldUseOtp = await checkUserForOtpVerification(username);
         
         if (shouldUseOtp) {
-          // Request OTP
+          // Request OTP - this will navigate to OTP screen on success
           await requestOtpForUser(username);
         } else {
-          // If no OTP needed, show the login error
-          setError(loginError.message || 'Invalid username or password');
+          // If no OTP needed, show the login error and STAY on login screen
+          const errorMessage = loginError.message || 'Invalid username or password';
+          console.log('❌ Login failed - showing error on login screen:', errorMessage);
+          setError(errorMessage);
+          // Explicitly ensure we stay on login screen - no navigation
+          return;
         }
       }
 
     } catch (error: any) {
       console.error('Enhanced login error:', error);
-      setError(error.message || 'Login failed');
+      // On any error, show error message and stay on login screen
+      const errorMessage = error.message || 'Login failed. Please try again.';
+      setError(errorMessage);
+      // Explicitly prevent navigation - stay on login screen
+      return;
     }
   };
 

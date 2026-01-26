@@ -76,13 +76,21 @@ export default function QuickFilesScreen() {
   
   // Re-read params and reload when screen comes into focus (important for tab navigation)
   // This ensures workspaceId is properly read when navigating from workspace details
+  // Add debounce to prevent excessive reloads
+  const lastLoadTimeRef = useRef<number>(0);
+  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  
   useFocusEffect(
     useCallback(() => {
       const currentWorkspaceId = params.workspaceId ? Number(params.workspaceId) : undefined;
       console.log('📁 Documents screen focused - workspaceId from params:', params.workspaceId, 'parsed:', currentWorkspaceId);
       // Force reload documents when screen comes into focus to ensure correct workspace filtering
       if (user) {
-        loadDocuments(true);
+        const now = Date.now();
+        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
+          lastLoadTimeRef.current = now;
+          loadDocuments(true);
+        }
       }
     }, [params.workspaceId, user, loadDocuments])
   );

@@ -1,16 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -208,10 +208,18 @@ export default function WorkspaceDetailsScreen() {
     }
   };
 
+  // Add debounce to prevent excessive reloads
+  const lastLoadTimeRef = useRef<number>(0);
+  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  
   useFocusEffect(
     useCallback(() => {
       if (user && id) {
-        loadWorkspaceDetails();
+        const now = Date.now();
+        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
+          lastLoadTimeRef.current = now;
+          loadWorkspaceDetails();
+        }
       }
     }, [user, id])
   );
@@ -570,7 +578,7 @@ export default function WorkspaceDetailsScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle}>{workspace.name}</Text>
+        <Text style={dynamicStyles.headerTitle} numberOfLines={1} ellipsizeMode="tail">{workspace.name}</Text>
         {workspace.user_role !== 'owner' && workspace.user_role !== 'admin' && (
           <TouchableOpacity onPress={handleExitWorkspace}>
             <Ionicons name="exit-outline" size={24} color="#FF3B30" />
@@ -589,7 +597,7 @@ export default function WorkspaceDetailsScreen() {
               <Ionicons name="business" size={24} color="#007AFF" />
             </View>
             <View style={dynamicStyles.workspaceInfo}>
-              <Text style={dynamicStyles.workspaceName}>{workspace.name}</Text>
+              <Text style={dynamicStyles.workspaceName} numberOfLines={1} ellipsizeMode="tail">{workspace.name}</Text>
               <Text style={dynamicStyles.workspaceDescription}>{workspace.description || 'No description'}</Text>
               <View style={dynamicStyles.workspaceMetaRow}>
                 <Text style={dynamicStyles.workspaceMeta}>
@@ -650,20 +658,6 @@ export default function WorkspaceDetailsScreen() {
                     const dataMeeting = response.data.data;
                     const directData = response.data;
                     
-                    // Try multiple possible paths for meetingId
-                    // Prioritize roomCode (HMS room_id) over meetingId (database ID)
-                    const meetingId = 
-                      dataMeeting?.roomCode ||  // HMS room_id (preferred - actual HMS room identifier)
-                      roomData?.roomCode ||     // Alternative format
-                      directData?.roomCode ||   // Direct in response
-                      dataMeeting?.hmsRoomId || // Explicit HMS room ID field
-                      roomData?.meeting_id ||   // Persistent meeting (room.meeting_id)
-                      roomData?.meetingId ||    // Alternative format
-                      dataMeeting?.meetingId || // New meeting (data.meetingId) - database ID fallback
-                      directData?.meetingId ||  // Direct in response
-                      roomData?.id?.toString() || // Fallback to room.id
-                      dataMeeting?.id?.toString(); // Fallback to data.id
-                    
                     // Get meeting title from various possible locations
                     const meetingTitle = 
                       roomData?.name || 
@@ -675,21 +669,17 @@ export default function WorkspaceDetailsScreen() {
                       directData?.name ||
                       `${workspace.name} Meeting`;
                     
-                    if (meetingId) {
-                      console.log(`✅ Found meetingId: ${meetingId}, title: ${meetingTitle}`);
-                      // Navigate directly to HMS prebuilt interface
-                      router.push({
-                        pathname: '/quick-reach/hms-meeting-interface',
-                        params: {
-                          meetingId: meetingId.toString(),
-                          title: meetingTitle,
-                          userName: user?.name || user?.email?.split('@')[0] || 'Mobile User'
+                    // Show success message - meeting will appear in the list
+                    // User can now join the meeting from the meeting list or send it to others
+                    Alert.alert('Success', `Meeting "${meetingTitle}" created successfully! You can join it from the meeting list or send it to others.`, [
+                      {
+                        text: 'OK',
+                        onPress: () => {
+                          // Optionally navigate to meeting list, or just stay on workspace
+                          // The meeting will appear in the meeting list when user navigates there
                         }
-                      });
-                    } else {
-                      console.error('❌ No meetingId found in response:', response.data);
-                      Alert.alert('Error', 'Meeting created but meeting ID not found. Please try joining from the meeting list.');
-                    }
+                      }
+                    ]);
                   } else {
                     Alert.alert('Error', response.data.message || 'Failed to create meeting');
                   }
@@ -1079,7 +1069,7 @@ export default function WorkspaceDetailsScreen() {
       <Modal
         visible={inviteModalVisible}
         animationType="slide"
-        presentationStyle="pageSheet"
+        presentationStyle="fullScreen"
         onRequestClose={() => setInviteModalVisible(false)}
       >
         <SafeAreaView style={dynamicStyles.modalContainer}>

@@ -2,6 +2,7 @@
 import 'react-native-url-polyfill/auto';
 
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -9,6 +10,7 @@ import {
     Alert,
     FlatList,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     RefreshControl,
     StyleSheet,
@@ -18,6 +20,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useThemeColors } from '../hooks/useThemeColors';
@@ -47,6 +50,9 @@ interface Chat {
   unread_count?: number;
   workspace?: Workspace;
 }
+
+// Storage key for persisting favorite chats
+const FAVORITE_CHATS_KEY = '@grabdocs_user_chat_favorites';
 
 interface ChatMessage {
   id: number;
@@ -81,6 +87,12 @@ export default function UserChatScreen() {
   const [selectedRecipient, setSelectedRecipient] = useState<{ type: 'user' | 'workspace'; data: any } | null>(null);
   const messageInputRef = useRef<TextInput>(null);
   const [textInputHeight, setTextInputHeight] = useState(40);
+
+  // Swipe and menu state
+  const [favoriteChatIds, setFavoriteChatIds] = useState<Set<number>>(new Set());
+  const [menuChatId, setMenuChatId] = useState<number | null>(null);
+  const swipingChatId = useRef<number | null>(null);
+  const chatSwipeableRefs = useRef<Map<number, Swipeable>>(new Map());
 
   // Socket connection
   const socketRef = useRef<Socket | null>(null);
@@ -452,7 +464,36 @@ export default function UserChatScreen() {
     loadUserProfile();
     loadChats();
     loadWorkspaces();
+    loadFavorites();
   }, []);
+
+  // Load favorites from storage
+  const loadFavorites = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(FAVORITE_CHATS_KEY);
+      if (stored) {
+        const favoriteIds = JSON.parse(stored);
+        setFavoriteChatIds(new Set(favoriteIds));
+      }
+    } catch (error) {
+      console.error('Failed to load favorites:', error);
+    }
+  };
+
+  // Sort chats to show favorites first
+  const sortedChats = useMemo(() => {
+    const favoriteChats = chats.filter(chat => favoriteChatIds.has(chat.id));
+    const otherChats = chats.filter(chat => !favoriteChatIds.has(chat.id));
+    
+    // Sort each group by updated_at (most recent first)
+    const sortByDate = (a: Chat, b: Chat) => {
+      const dateA = new Date(a.updated_at).getTime();
+      const dateB = new Date(b.updated_at).getTime();
+      return dateB - dateA;
+    };
+    
+    return [...favoriteChats.sort(sortByDate), ...otherChats.sort(sortByDate)];
+  }, [chats, favoriteChatIds]);
 
   // Handle route params to open specific chat (e.g., from workspace screen)
   useEffect(() => {
@@ -1018,13 +1059,205 @@ export default function UserChatScreen() {
   };
 
   const filteredChats = useMemo(() => {
-    if (!searchQuery.trim()) return chats;
+    const chatsToFilter = sortedChats;
+    if (!searchQuery.trim()) return chatsToFilter;
     const query = searchQuery.toLowerCase();
-    return chats.filter(chat => 
+    return chatsToFilter.filter(chat => 
       chat.title.toLowerCase().includes(query) || 
       chat.last_message.toLowerCase().includes(query)
     );
-  }, [chats, searchQuery]);
+  }, [sortedChats, searchQuery]);
+
+  // Handle add/remove favorite
+  const handleToggleFavorite = async (chatId: number) => {
+    try {
+      const isFavorite = favoriteChatIds.has(chatId);
+      const newFavorites = new Set(favoriteChatIds);
+      
+      if (isFavorite) {
+        newFavorites.delete(chatId);
+        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+        setFavoriteChatIds(newFavorites);
+      } else {
+        newFavorites.add(chatId);
+        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+        setFavoriteChatIds(newFavorites);
+      }
+      
+      setMenuChatId(null);
+      // Close swipeable
+      const swipeableRef = chatSwipeableRefs.current.get(chatId);
+      if (swipeableRef) {
+        swipeableRef.close();
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update favorite');
+    }
+  };
+
+  // Delete chat handler
+  const handleDeleteChat = async (chatId: number) => {
+    Alert.alert(
+      'Delete Chat',
+      'Are you sure you want to delete this chat?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Try to delete via backend API
+              try {
+                const success = await api.deleteUserChat(chatId);
+                
+                if (success.success !== false) {
+                  // Leave WebSocket room for the deleted chat
+                  if (socketRef.current && selectedChat?.id === chatId) {
+                    socketRef.current.emit('leave_chat_room', { chat_id: chatId });
+                  }
+                  
+                  // Remove from local chats list
+                  setChats(prev => prev.filter(chat => chat.id !== chatId));
+                  
+                  // Remove from favorites if it was favorited
+                  if (favoriteChatIds.has(chatId)) {
+                    const newFavorites = new Set(favoriteChatIds);
+                    newFavorites.delete(chatId);
+                    await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+                    setFavoriteChatIds(newFavorites);
+                  }
+                  
+                  // If this was the selected chat, clear selection and messages
+                  if (selectedChat?.id === chatId) {
+                    setSelectedChat(null);
+                    setMessages([]);
+                  }
+                  
+                  // Close any open swipeables
+                  chatSwipeableRefs.current.forEach(ref => {
+                    if (ref) {
+                      ref.close();
+                    }
+                  });
+                } else {
+                  Alert.alert('Error', 'Failed to delete chat');
+                }
+              } catch (error: any) {
+                // If backend doesn't support deletion (405 Method Not Allowed), 
+                // just remove from local list temporarily
+                if (error.message?.includes('405') || error.response?.status === 405) {
+                  // Remove from local chats list (will reappear on refresh)
+                  setChats(prev => prev.filter(chat => chat.id !== chatId));
+                  
+                  // Remove from favorites if it was favorited
+                  if (favoriteChatIds.has(chatId)) {
+                    const newFavorites = new Set(favoriteChatIds);
+                    newFavorites.delete(chatId);
+                    await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+                    setFavoriteChatIds(newFavorites);
+                  }
+                  
+                  // If this was the selected chat, clear selection
+                  if (selectedChat?.id === chatId) {
+                    setSelectedChat(null);
+                    setMessages([]);
+                  }
+                  
+                  // Close any open swipeables
+                  chatSwipeableRefs.current.forEach(ref => {
+                    if (ref) {
+                      ref.close();
+                    }
+                  });
+                } else {
+                  // Other errors - show error message
+                  Alert.alert('Error', error.message || 'Failed to delete chat');
+                }
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete chat');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Render menu action for chat swipeable
+  const renderChatMenuAction = (chatId: number) => {
+    return (
+      <View style={dynamicStyles.menuActionContainer}>
+        <RectButton
+          style={dynamicStyles.menuActionButton}
+          onPress={() => {
+            setMenuChatId(chatId);
+          }}
+        >
+          <Ionicons name="ellipsis-vertical" size={24} color="#fff" />
+          <Text style={dynamicStyles.menuActionText}>More</Text>
+        </RectButton>
+      </View>
+    );
+  };
+
+  // Render chat menu modal
+  const renderChatMenuModal = () => {
+    if (!menuChatId) return null;
+    
+    return (
+      <Modal
+        visible={menuChatId !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMenuChatId(null)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.chatMenuModal}
+          activeOpacity={1}
+          onPress={() => setMenuChatId(null)}
+        >
+          <View style={dynamicStyles.chatMenuContent} onStartShouldSetResponder={() => true}>
+            <TouchableOpacity
+              style={dynamicStyles.chatMenuItem}
+              onPress={() => {
+                handleToggleFavorite(menuChatId);
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons 
+                name={favoriteChatIds.has(menuChatId) ? "star" : "star-outline"} 
+                size={20} 
+                color={favoriteChatIds.has(menuChatId) ? "#FFD700" : "#007AFF"} 
+              />
+              <Text style={dynamicStyles.chatMenuItemText}>
+                {favoriteChatIds.has(menuChatId) ? "Remove from Favorite" : "Add to Favorite"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={dynamicStyles.chatMenuItem}
+              onPress={() => {
+                setMenuChatId(null);
+                // Close swipeable first
+                const swipeableRef = chatSwipeableRefs.current.get(menuChatId);
+                if (swipeableRef) {
+                  swipeableRef.close();
+                }
+                // Then show delete confirmation
+                setTimeout(() => {
+                  handleDeleteChat(menuChatId);
+                }, 300);
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+              <Text style={[dynamicStyles.chatMenuItemText, dynamicStyles.chatMenuItemDanger]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: {
@@ -1321,6 +1554,59 @@ export default function UserChatScreen() {
       fontSize: 12,
       color: colors.textSecondary,
     },
+    menuActionContainer: {
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: 80,
+      height: '100%',
+    },
+    menuActionButton: {
+      backgroundColor: '#666',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: 80,
+      height: '100%',
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      gap: 4,
+    },
+    menuActionText: {
+      color: '#fff',
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    chatMenuModal: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    },
+    chatMenuContent: {
+      backgroundColor: colors.card || '#fff',
+      borderRadius: 12,
+      padding: 8,
+      minWidth: 200,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 5,
+    },
+    chatMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 8,
+    },
+    chatMenuItemText: {
+      fontSize: 16,
+      color: colors.text || '#000',
+      marginLeft: 12,
+    },
+    chatMenuItemDanger: {
+      color: '#FF3B30',
+    },
   }), [colors, insets]);
 
   if (isNewChat || selectedChat) {
@@ -1584,30 +1870,79 @@ export default function UserChatScreen() {
         <FlatList
           data={filteredChats}
           renderItem={({ item }) => (
-            <TouchableOpacity style={dynamicStyles.chatItem} onPress={() => handleChatPress(item)}>
-              <View style={dynamicStyles.chatAvatar}>
-                <Ionicons 
-                  name={item.type === 'workspace' ? 'people' : 'person'} 
-                  size={24} 
-                  color="#007AFF" 
-                />
+            <Swipeable
+              ref={(ref) => {
+                if (ref) {
+                  chatSwipeableRefs.current.set(item.id, ref);
+                } else {
+                  chatSwipeableRefs.current.delete(item.id);
+                }
+              }}
+              renderRightActions={() => renderChatMenuAction(item.id)}
+              onSwipeableWillOpen={() => {
+                swipingChatId.current = item.id;
+                // Close other swipeables when one opens
+                chatSwipeableRefs.current.forEach((ref, id) => {
+                  if (id !== item.id && ref) {
+                    ref.close();
+                  }
+                });
+              }}
+              onSwipeableClose={() => {
+                // Reset swipe flag immediately when closing
+                if (swipingChatId.current === item.id) {
+                  swipingChatId.current = null;
+                }
+              }}
+              overshootRight={false}
+              rightThreshold={40}
+              friction={2}
+              overshootFriction={8}
+              containerStyle={{ backgroundColor: 'transparent' }}
+            >
+              <View style={{ backgroundColor: colors.card || '#fff', width: '100%' }}>
+                <TouchableOpacity 
+                  style={dynamicStyles.chatItem} 
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    // Don't open chat if we just swiped this specific chat
+                    if (swipingChatId.current !== item.id) {
+                      handleChatPress(item);
+                    }
+                  }}
+                >
+                  <View style={dynamicStyles.chatAvatar}>
+                    <Ionicons 
+                      name={item.type === 'workspace' ? 'people' : 'person'} 
+                      size={24} 
+                      color="#007AFF" 
+                    />
+                  </View>
+                  <View style={dynamicStyles.chatContent}>
+                    <View style={dynamicStyles.chatItemHeader}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <Text style={dynamicStyles.chatTitle} numberOfLines={1}>{item.title}</Text>
+                        {favoriteChatIds.has(item.id) && (
+                          <Ionicons name="star" size={16} color="#FFD700" style={{ marginLeft: 6 }} />
+                        )}
+                      </View>
+                      <Text style={dynamicStyles.chatTime}>{formatChatTime(item.updated_at)}</Text>
+                    </View>
+                    <View style={dynamicStyles.chatFooter}>
+                      <Text style={dynamicStyles.lastMessage} numberOfLines={2}>{item.last_message}</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
               </View>
-              <View style={dynamicStyles.chatContent}>
-                <View style={dynamicStyles.chatItemHeader}>
-                  <Text style={dynamicStyles.chatTitle} numberOfLines={1}>{item.title}</Text>
-                  <Text style={dynamicStyles.chatTime}>{formatChatTime(item.updated_at)}</Text>
-                </View>
-                <View style={dynamicStyles.chatFooter}>
-                  <Text style={dynamicStyles.lastMessage} numberOfLines={2}>{item.last_message}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
+            </Swipeable>
           )}
           keyExtractor={(item) => item.id.toString()}
           style={dynamicStyles.chatsList}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadChats} />}
         />
       )}
+
+      {renderChatMenuModal()}
 
     </SafeAreaView>
   );
