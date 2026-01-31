@@ -1,5 +1,4 @@
 import * as AuthSession from 'expo-auth-session';
-import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 import { API_BASE_URL, GOOGLE_CLIENT_ID } from '../constants/Config';
@@ -51,22 +50,31 @@ class GoogleAuthService {
     // grabdocs://login-success so the app receives the token via deep link.
     // Add this exact URI in Google Cloud Console → Credentials → Authorized redirect URIs:
     // https://api.grabdocs.com/api/v1/web/auth/callback
+    const backendCallbackUrl = `${API_BASE_URL}/api/v1/web/auth/callback`;
     let redirectUri: string;
 
-    // Allow explicit override from env (e.g. for debugging or custom deployments)
+    // Allow explicit override from env only if it is https (never use custom scheme for Google)
     const envRedirectUri = process.env.EXPO_PUBLIC_GOOGLE_REDIRECT_URI?.trim();
-    if (envRedirectUri) {
+    if (envRedirectUri && envRedirectUri.startsWith('https://')) {
       redirectUri = envRedirectUri;
     } else if (Platform.OS === 'web') {
-      // Web: use current origin or configured redirect (web OAuth flow)
+      // Web: use current origin so Google accepts it (must be https or http with valid domain)
       redirectUri = AuthSession.makeRedirectUri({
-        scheme: 'grabdocs',
         path: 'auth/callback',
       });
+      // If makeRedirectUri returned a custom scheme (e.g. in Expo webview), use backend instead
+      if (!redirectUri || redirectUri.startsWith('grabdocs://')) {
+        redirectUri = backendCallbackUrl;
+      }
     } else {
       // Native (Android/iOS): always use backend HTTPS callback — never grabdocs:// (Google rejects it).
-      // Works in both development and production; backend exchanges code and redirects to grabdocs://login-success.
-      redirectUri = `${API_BASE_URL}/api/v1/web/auth/callback`;
+      redirectUri = backendCallbackUrl;
+    }
+
+    // Final safeguard: Google rejects custom schemes; never send grabdocs://
+    if (redirectUri.startsWith('grabdocs://')) {
+      console.warn('Google Auth: redirect_uri was custom scheme, overriding to backend HTTPS');
+      redirectUri = backendCallbackUrl;
     }
 
     // Initialize configuration
@@ -445,6 +453,6 @@ export default googleAuthService;
 
 // Export types
 export type {
-    GoogleAuthConfig, GoogleAuthResult, GoogleUserInfo, MobileGoogleLoginResponse
+  GoogleAuthConfig, GoogleAuthResult, GoogleUserInfo, MobileGoogleLoginResponse
 };
 
