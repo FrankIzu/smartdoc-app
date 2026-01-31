@@ -88,21 +88,17 @@ const GOOGLE_CLIENT_ID_WEB = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB || '';
 const GOOGLE_CLIENT_ID_ANDROID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID || '';
 const GOOGLE_CLIENT_ID_IOS = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS || '';
 
-// Select the appropriate client ID based on platform and environment
+// Select the appropriate client ID based on platform and environment.
+// EAS Build sets EXPO_OS; fallback to Platform.OS for correctness.
 export const GOOGLE_CLIENT_ID = (() => {
-  // For Expo Go development, always use web client ID
+  const isAndroid = process.env.EXPO_OS === 'android' || Platform.OS === 'android';
+  const isIos = process.env.EXPO_OS === 'ios' || Platform.OS === 'ios';
+  // For Expo Go / development, use web client ID
   if (__DEV__) {
     return GOOGLE_CLIENT_ID_WEB;
   }
-  
-  // For production builds, use platform-specific client IDs
-  if (process.env.EXPO_OS === 'android') {
-    return GOOGLE_CLIENT_ID_ANDROID;
-  } else if (process.env.EXPO_OS === 'ios') {
-    return GOOGLE_CLIENT_ID_IOS;
-  }
-  
-  // Fallback to web client ID
+  if (isAndroid && GOOGLE_CLIENT_ID_ANDROID) return GOOGLE_CLIENT_ID_ANDROID;
+  if (isIos && GOOGLE_CLIENT_ID_IOS) return GOOGLE_CLIENT_ID_IOS;
   return GOOGLE_CLIENT_ID_WEB;
 })();
 

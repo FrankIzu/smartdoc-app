@@ -76,9 +76,12 @@ class GoogleAuthService {
       scopes: ['openid', 'profile', 'email'],
     };
 
-    console.log('Google Auth initialized with redirect URI:', this.config.redirectUri);
-    console.log('Google Auth Client ID:', this.config.clientId ? 'Configured' : 'Missing');
-    console.log('Environment:', __DEV__ ? 'Development' : 'Production');
+    // Log so you can verify in Google Console: same client ID must have this redirect URI
+    const cid = this.config.clientId || '';
+    const clientIdSuffix = cid ? `${cid.slice(0, 20)}...${cid.slice(-15)}` : 'MISSING';
+    console.log('Google Auth redirect URI:', this.config.redirectUri);
+    console.log('Google Auth client ID (suffix):', clientIdSuffix);
+    console.log('Google Auth environment:', __DEV__ ? 'Development' : 'Production');
     
     // Only initialize on client-side (avoid SSR issues)
     if (Platform.OS !== 'web' || typeof window !== 'undefined') {
