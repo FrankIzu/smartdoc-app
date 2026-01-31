@@ -3,8 +3,8 @@
 #
 # Usage:
 #   Interactive mode: .\scripts\deploy.ps1
-#   Direct parameters: .\scripts\deploy.ps1 -Platform android -Environment development -BuildNumber 6
-#                      .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 6 -Version 1.0.1
+#   Direct parameters (Android): .\scripts\deploy.ps1 -Platform android -Environment prod -BuildNumber 11 -Version 1.0.3
+#   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod
 
 param(
     [string]$Platform,
@@ -213,23 +213,22 @@ try {
         "production" { "production" }
     }
 
-    # Handle version and build number for production
-    if ($normalizedEnv -eq "production") {
-        # Get current version and build number to display
+    # Handle version name and version code for Android production only (iOS uses its own version/build in app store)
+    if ($normalizedEnv -eq "production" -and $Platform -eq "android") {
         $currentVersion = Get-CurrentVersion
         $currentBuildNumber = Get-CurrentBuildNumber -Platform $Platform
 
-        # Prompt for version update
+        # Prompt for version name
         if (-not $Version) {
             if ($currentVersion) {
-                Write-Host "📦 Current version: $currentVersion" -ForegroundColor Cyan
-                $Version = Read-Host "Enter new version for production (current: $currentVersion, or press Enter to keep current)"
+                Write-Host "📦 Current version name: $currentVersion" -ForegroundColor Cyan
+                $Version = Read-Host "Enter new version name for production (current: $currentVersion, or press Enter to keep current)"
                 if ([string]::IsNullOrWhiteSpace($Version)) {
                     $Version = $currentVersion
-                    Write-Host "ℹ️  Keeping current version: $Version" -ForegroundColor Yellow
+                    Write-Host "ℹ️  Keeping current version name: $Version" -ForegroundColor Yellow
                 }
             } else {
-                $Version = Read-Host "Enter version for production (e.g., 1.0.1)"
+                $Version = Read-Host "Enter version name for production (e.g., 1.0.1)"
             }
         }
 
@@ -238,40 +237,27 @@ try {
             if ($Version -ne $currentVersion) {
                 Update-Version -Version $Version
             } else {
-                Write-Host "ℹ️  Version unchanged: $Version" -ForegroundColor Yellow
+                Write-Host "ℹ️  Version name unchanged: $Version" -ForegroundColor Yellow
             }
         } else {
             Write-Host "❌ Invalid version format. Must be in format x.y.z (e.g., 1.0.1)" -ForegroundColor Red
             exit 1
         }
 
-        # Prompt for build number/version code update (platform-specific)
+        # Prompt for version code
         if (-not $BuildNumber) {
             if ($currentBuildNumber) {
-                if ($Platform -eq "android") {
-                    Write-Host "📦 Current Android version code: $currentBuildNumber" -ForegroundColor Cyan
-                    $BuildNumber = Read-Host "Enter new Android version code for production (current: $currentBuildNumber)"
-                } else {
-                    Write-Host "📦 Current iOS build number: $currentBuildNumber" -ForegroundColor Cyan
-                    $BuildNumber = Read-Host "Enter new iOS build number for production (current: $currentBuildNumber)"
-                }
+                Write-Host "📦 Current Android version code: $currentBuildNumber" -ForegroundColor Cyan
+                $BuildNumber = Read-Host "Enter new Android version code for production (current: $currentBuildNumber)"
             } else {
-                if ($Platform -eq "android") {
-                    $BuildNumber = Read-Host "Enter Android version code for production"
-                } else {
-                    $BuildNumber = Read-Host "Enter iOS build number for production"
-                }
+                $BuildNumber = Read-Host "Enter Android version code for production"
             }
         }
 
         if ($BuildNumber -match '^\d+$') {
             Update-BuildNumber -Platform $Platform -BuildNumber $BuildNumber
         } else {
-            if ($Platform -eq "android") {
-                Write-Host "❌ Invalid version code. Must be a number." -ForegroundColor Red
-            } else {
-                Write-Host "❌ Invalid build number. Must be a number." -ForegroundColor Red
-            }
+            Write-Host "❌ Invalid version code. Must be a number." -ForegroundColor Red
             exit 1
         }
     }
@@ -281,9 +267,9 @@ try {
     Write-Host "   Platform: $Platform" -ForegroundColor White
     Write-Host "   Environment: $normalizedEnv" -ForegroundColor White
     Write-Host "   Profile: $profile" -ForegroundColor White
-    if ($normalizedEnv -eq "production") {
-        Write-Host "   Version: $Version" -ForegroundColor White
-        Write-Host "   Build Number: $BuildNumber" -ForegroundColor White
+    if ($normalizedEnv -eq "production" -and $Platform -eq "android") {
+        Write-Host "   Version name: $Version" -ForegroundColor White
+        Write-Host "   Version code: $BuildNumber" -ForegroundColor White
     }
 
     $confirm = Prompt-WithValidation "`nProceed with deployment? (y/n)" @("y", "n")

@@ -223,7 +223,7 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
     return (
       <View style={styles.errorContainer}>
         <Ionicons name="alert-circle" size={64} color="#FF3B30" />
-        <Text style={dynamicStyles.errorText}>{error}</Text>
+        <Text style={[styles.errorText, { color: colors.textSecondary }]}>{error}</Text>
       </View>
     );
   }
@@ -302,6 +302,7 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
 
 // Text Document Viewer Component
 const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string; authToken: string; fileName: string }) => {
+  const colors = useThemeColors();
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -367,18 +368,18 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
     return (
       <View style={styles.errorContainer}>
         <Ionicons name="alert-circle" size={64} color="#FF3B30" />
-        <Text style={dynamicStyles.errorText}>{error}</Text>
+        <Text style={[styles.errorText, { color: colors.textSecondary }]}>{error}</Text>
       </View>
     );
   }
 
   return (
     <ScrollView 
-      style={dynamicStyles.textContainer} 
+      style={[styles.textContainer, { backgroundColor: colors.background }]} 
       contentContainerStyle={styles.textContent}
       showsVerticalScrollIndicator={true}
     >
-      <Text style={dynamicStyles.textDocument} selectable={true}>{content || '(Empty file)'}</Text>
+      <Text style={[styles.textDocument, { color: colors.text }]} selectable={true}>{content || '(Empty file)'}</Text>
     </ScrollView>
   );
 };
