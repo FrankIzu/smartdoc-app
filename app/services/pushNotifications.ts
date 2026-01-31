@@ -1,7 +1,17 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+
+// Lazy-load expo-notifications so we never import it in Expo Go (SDK 53+ removed push from Expo Go).
+// Importing it at top level triggers "expo-notifications was removed from Expo Go" error.
+let NotificationsModule: typeof import('expo-notifications') | null = null;
+async function getNotifications(): Promise<typeof import('expo-notifications') | null> {
+  if (Constants.appOwnership === 'expo') return null; // Expo Go: push not supported
+  if (!NotificationsModule) {
+    NotificationsModule = await import('expo-notifications');
+  }
+  return NotificationsModule;
+}
 
 export interface PushNotificationData {
   title: string;
@@ -25,9 +35,10 @@ class PushNotificationService {
   private initialized = false;
 
   // Configure notification behavior
-  configure() {
+  async configure() {
     if (this.initialized) return;
-
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
         shouldShowAlert: true,
@@ -35,12 +46,13 @@ class PushNotificationService {
         shouldSetBadge: false,
       }),
     });
-
     this.initialized = true;
   }
 
   // Register for push notifications
   async registerForPushNotifications(): Promise<string | null> {
+    const Notifications = await getNotifications();
+    if (!Notifications) return null;
     if (!Device.isDevice) {
       console.log('Must use physical device for Push Notifications');
       return null;
@@ -80,6 +92,8 @@ class PushNotificationService {
 
   // Create notification channels for Android
   private async createNotificationChannels() {
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
     const channels: NotificationChannel[] = [
       {
         id: 'default',
@@ -132,6 +146,8 @@ class PushNotificationService {
 
   // Schedule a local notification
   async scheduleLocalNotification(notification: PushNotificationData, delay: number = 0) {
+    const Notifications = await getNotifications();
+    if (!Notifications) return null;
     try {
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
@@ -139,7 +155,7 @@ class PushNotificationService {
           body: notification.body,
           data: notification.data || {},
           categoryIdentifier: notification.categoryId,
-          priority: this.getPriorityValue(notification.priority),
+          priority: await this.getPriorityValue(notification.priority),
         },
         trigger: delay > 0 ? { seconds: delay } : null,
       });
@@ -189,19 +205,25 @@ class PushNotificationService {
   }
 
   // Handle notification received while app is in foreground
-  addNotificationReceivedListener(handler: (notification: Notifications.Notification) => void) {
+  async addNotificationReceivedListener(handler: (notification: import('expo-notifications').Notification) => void) {
+    const Notifications = await getNotifications();
+    if (!Notifications) return { remove: () => {} };
     return Notifications.addNotificationReceivedListener(handler);
   }
 
   // Handle notification tapped by user
-  addNotificationResponseReceivedListener(
-    handler: (response: Notifications.NotificationResponse) => void
+  async addNotificationResponseReceivedListener(
+    handler: (response: import('expo-notifications').NotificationResponse) => void
   ) {
+    const Notifications = await getNotifications();
+    if (!Notifications) return { remove: () => {} };
     return Notifications.addNotificationResponseReceivedListener(handler);
   }
 
   // Get badge count
   async getBadgeCount(): Promise<number> {
+    const Notifications = await getNotifications();
+    if (!Notifications) return 0;
     try {
       return await Notifications.getBadgeCountAsync();
     } catch (error) {
@@ -212,6 +234,8 @@ class PushNotificationService {
 
   // Set badge count
   async setBadgeCount(count: number) {
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
     try {
       await Notifications.setBadgeCountAsync(count);
     } catch (error) {
@@ -221,6 +245,8 @@ class PushNotificationService {
 
   // Clear all notifications
   async clearAllNotifications() {
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
     try {
       await Notifications.dismissAllNotificationsAsync();
     } catch (error) {
@@ -230,6 +256,8 @@ class PushNotificationService {
 
   // Cancel scheduled notification
   async cancelNotification(notificationId: string) {
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
     try {
       await Notifications.cancelScheduledNotificationAsync(notificationId);
     } catch (error) {
@@ -239,6 +267,8 @@ class PushNotificationService {
 
   // Get permission status
   async getPermissionStatus() {
+    const Notifications = await getNotifications();
+    if (!Notifications) return 'undetermined';
     try {
       const { status } = await Notifications.getPermissionsAsync();
       return status;
@@ -249,7 +279,9 @@ class PushNotificationService {
   }
 
   // Helper methods
-  private getPriorityValue(priority?: string): Notifications.AndroidNotificationPriority {
+  private async getPriorityValue(priority?: string): Promise<import('expo-notifications').AndroidNotificationPriority> {
+    const Notifications = await getNotifications();
+    if (!Notifications) return 0 as import('expo-notifications').AndroidNotificationPriority;
     switch (priority) {
       case 'low':
         return Notifications.AndroidNotificationPriority.LOW;
@@ -341,7 +373,7 @@ export const pushNotificationService = new PushNotificationService();
 
 // Helper function to initialize push notifications
 export async function initializePushNotifications(): Promise<string | null> {
-  pushNotificationService.configure();
+  await pushNotificationService.configure();
   return await pushNotificationService.registerForPushNotifications();
 }
 
