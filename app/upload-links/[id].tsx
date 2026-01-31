@@ -653,7 +653,7 @@ export default function UploadLinkDetailsScreen() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={dynamicStyles.title}>Upload Link</Text>
+          <Text style={dynamicStyles.title}>File Request</Text>
           <View style={dynamicStyles.placeholder} />
         </View>
         <View style={dynamicStyles.centerContainer}>
@@ -670,7 +670,7 @@ export default function UploadLinkDetailsScreen() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={dynamicStyles.title}>Upload Link</Text>
+          <Text style={dynamicStyles.title}>File Request</Text>
           <View style={dynamicStyles.placeholder} />
         </View>
         <View style={dynamicStyles.centerContainer}>
@@ -689,7 +689,7 @@ export default function UploadLinkDetailsScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={dynamicStyles.title}>Upload Link</Text>
+        <Text style={dynamicStyles.title}>File Request</Text>
         <TouchableOpacity onPress={handleDeleteLink}>
           <Ionicons name="trash" size={24} color="#FF3B30" />
         </TouchableOpacity>

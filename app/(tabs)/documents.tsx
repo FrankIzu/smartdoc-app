@@ -193,7 +193,7 @@ export default function QuickFilesScreen() {
     }
   };
 
-  const getFileIcon = (type: string, status: string, category?: string) => {
+  const getFileIcon = (type: string, status: string, fileKind?: string) => {
     // Show spinning icon for pending or processing status
     if (status === 'pending' || status === 'processing') return 'time-outline';
     if (status === 'error') return 'alert-circle-outline';
@@ -201,9 +201,10 @@ export default function QuickFilesScreen() {
     // Handle form type specifically
     if (type === 'form') return 'clipboard-outline';
     
-    // Use category-specific icons when available
-    if (category) {
-      switch (category.toLowerCase()) {
+    // Use file_kind to determine icon (file_kind is the file type: receipt, invoice, document, spreadsheet, picture, etc.)
+    if (fileKind) {
+      const kind = fileKind.toLowerCase().trim();
+      switch (kind) {
         case 'receipt':
         case 'receipts':
           return 'receipt-outline'; // Receipt-specific icon
@@ -236,6 +237,9 @@ export default function QuickFilesScreen() {
           return 'image-outline'; // Image icon for pictures
         case 'unknown':
           return 'help-circle-outline';
+        default:
+          // If file_kind doesn't match, fall through to file type check
+          break;
       }
     }
     
@@ -257,13 +261,14 @@ export default function QuickFilesScreen() {
     }
   };
 
-  const getTypeColor = (type: string, category?: string) => {
+  const getTypeColor = (type: string, fileKind?: string) => {
     // Handle form type specifically
     if (type === 'form') return '#3b82f6'; // Blue for forms
     
-    // Use category-specific colors when available
-    if (category) {
-      switch (category.toLowerCase()) {
+    // Use file_kind to determine color (file_kind is the file type: receipt, invoice, document, spreadsheet, picture, etc.)
+    if (fileKind) {
+      const kind = fileKind.toLowerCase().trim();
+      switch (kind) {
         case 'receipt':
         case 'receipts':
           return '#10b981'; // Emerald green for receipts
@@ -296,6 +301,9 @@ export default function QuickFilesScreen() {
           return '#ec4899'; // Pink for pictures/images
         case 'unknown':
           return '#64748b'; // Gray for unknown
+        default:
+          // If file_kind doesn't match, fall through to file type check
+          break;
       }
     }
     
@@ -1185,9 +1193,9 @@ export default function QuickFilesScreen() {
     return (
       <Animated.View style={[dynamicStyles.documentIcon, isPending && { transform: [{ rotate: spin }] }]}>
         <Ionicons 
-          name={getFileIcon(item.type, item.status, item.category) as any} 
+          name={getFileIcon(item.type, item.status, item.file_kind) as any} 
           size={24} 
-          color={getTypeColor(item.type, item.category)} 
+          color={getTypeColor(item.type, item.file_kind)} 
         />
       </Animated.View>
     );

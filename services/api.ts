@@ -451,6 +451,20 @@ class ApiService {
     }
   }
 
+  /**
+   * Exchange a temporary Google OAuth token (from backend redirect flow) for a session.
+   * Used when the app is opened via grabdocs://login-success?token=...
+   */
+  async exchangeGoogleOAuthToken(loginToken: string): Promise<{ success: boolean; user?: { id: number; username: string; email: string; firstName?: string; lastName?: string } }> {
+    const response = await this.client.post('/api/v1/web/oauth/exchange-token', {
+      login_token: loginToken,
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      withCredentials: true,
+    });
+    return response.data;
+  }
+
   async testConnectivity(): Promise<ApiResponse> {
     try {
       const response = await this.client.get('/api/v1/mobile/health');
@@ -2137,12 +2151,11 @@ class ApiService {
     cursor: number = 0
   ): Promise<ApiResponse> {
     try {
-      // Polling endpoint must NEVER block - it should return immediately with current state
-      // Backend should return instantly even if no new content exists
-      // Use a reasonable timeout (10s) to detect network issues, but backend should return much faster
+      // Backend long-polls: holds the GET until data is ready. First chunk can take 10–60+ seconds.
+      // Use a long timeout so we don't stop fake streaming with a timeout before preview arrives.
       const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_SMART_CHUNK, {
         params: { job_id: jobId, cursor },
-        timeout: 10000 // 10 second timeout to detect network issues
+        timeout: 90000 // 90 seconds – backend holds connection until first chunk is ready
       });
       return response.data;
     } catch (error: any) {
@@ -2556,9 +2569,13 @@ class ApiService {
           }
 
         } catch (error: any) {
-          console.error('❌ [POLLING] Polling error:', error);
-          
-          // Continue polling on error (network resilience)
+          const isTimeout = error?.code === 'ECONNABORTED' || error?.message?.includes('timeout') || error?.message?.includes('exceeded');
+          if (isTimeout) {
+            console.warn('⚠️ [POLLING] Chunk request timed out (backend may be slow), retrying…');
+          } else {
+            console.error('❌ [POLLING] Polling error:', error);
+          }
+          // Continue polling on error (network resilience); timeout is expected when backend is slow
           if (Date.now() - startTime < maxPollTime && !signal?.aborted) {
             pollCount++;
             const currentInterval = pollCount <= 10 ? initialPollInterval : pollInterval;

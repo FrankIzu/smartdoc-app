@@ -1,9 +1,9 @@
 import * as AuthSession from 'expo-auth-session';
+import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 import { API_BASE_URL, GOOGLE_CLIENT_ID } from '../constants/Config';
 import { deviceSecurityService } from './deviceSecurity';
-import Constants from 'expo-constants';
 
 // Google OAuth configuration
 interface GoogleAuthConfig {
@@ -45,39 +45,28 @@ class GoogleAuthService {
   private discovery: AuthSession.DiscoveryDocument | null = null;
 
   constructor() {
-    // Determine redirect URI based on environment
+    // Determine redirect URI based on environment.
+    // CRITICAL: Google Web OAuth clients do NOT accept custom schemes (grabdocs://). We always
+    // use the backend HTTPS callback for native (Android/iOS); the backend redirects to
+    // grabdocs://login-success so the app receives the token via deep link.
+    // Add this exact URI in Google Cloud Console → Credentials → Authorized redirect URIs:
+    // https://api.grabdocs.com/api/v1/web/auth/callback
     let redirectUri: string;
-    
-    if (__DEV__) {
-      // Development: Use Expo's auth proxy (HTTPS, works with Google)
+
+    // Allow explicit override from env (e.g. for debugging or custom deployments)
+    const envRedirectUri = process.env.EXPO_PUBLIC_GOOGLE_REDIRECT_URI?.trim();
+    if (envRedirectUri) {
+      redirectUri = envRedirectUri;
+    } else if (Platform.OS === 'web') {
+      // Web: use current origin or configured redirect (web OAuth flow)
       redirectUri = AuthSession.makeRedirectUri({
-        useProxy: true, // Use Expo proxy for HTTPS in development
         scheme: 'grabdocs',
         path: 'auth/callback',
       });
     } else {
-      // Production: For native mobile apps, Google accepts custom URL schemes
-      // Custom schemes like 'grabdocs://' are valid for native apps (HTTPS not required)
-      // For web apps, HTTPS is required, but this is a mobile app
-      const isExpoGo = Constants.appOwnership === 'expo';
-      if (isExpoGo || Platform.OS === 'web') {
-        // Fallback for Expo Go or web - use HTTPS
-        redirectUri = AuthSession.makeRedirectUri({
-          useProxy: false,
-          scheme: 'grabdocs',
-          path: 'auth/callback',
-        });
-      } else {
-        // Production standalone app: Use custom scheme (valid for native mobile apps)
-        // Google accepts custom URL schemes for native mobile apps
-        // If you prefer HTTPS, you can use: 'https://api.grabdocs.com/auth/callback'
-        // but then the backend must handle the callback and redirect to the app
-        redirectUri = AuthSession.makeRedirectUri({
-          useProxy: false, // No proxy in production
-          scheme: 'grabdocs', // Custom scheme from app.json
-          path: 'auth/callback',
-        });
-      }
+      // Native (Android/iOS): always use backend HTTPS callback — never grabdocs:// (Google rejects it).
+      // Works in both development and production; backend exchanges code and redirects to grabdocs://login-success.
+      redirectUri = `${API_BASE_URL}/api/v1/web/auth/callback`;
     }
 
     // Initialize configuration

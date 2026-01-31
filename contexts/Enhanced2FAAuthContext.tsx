@@ -162,11 +162,16 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       // Don't log as error if it's just an unauthenticated state
       const errorMessage = error.response?.data?.message || error.message || 'Auth check failed';
       const statusCode = error.response?.status;
-      
-      if (statusCode === 401 || statusCode === 403 || 
-          errorMessage.toLowerCase().includes('unauthorized') || 
-          errorMessage.toLowerCase().includes('token') ||
-          errorMessage.toLowerCase().includes('authentication')) {
+      const isExpectedAuthFailure =
+        statusCode === 401 ||
+        statusCode === 403 ||
+        statusCode === undefined || // e.g. apiClient re-threw plain Error with no response
+        errorMessage.toLowerCase().includes('unauthorized') ||
+        errorMessage.toLowerCase().includes('token') ||
+        errorMessage.toLowerCase().includes('authentication') ||
+        errorMessage === 'Auth check failed'; // common when not logged in
+
+      if (isExpectedAuthFailure) {
         console.log('🔐 User not authenticated (expected if not logged in)');
       } else {
         console.error('Auth check failed:', errorMessage, 'Status:', statusCode);

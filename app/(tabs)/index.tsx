@@ -1262,7 +1262,7 @@ function DashboardScreen() {
             />
             <QuickActionCard
               key="action-upload-links"
-              title="Links"
+              title="File Request"
               subtitle="Create links to receive files"
               icon="link"
               color="#8E44AD"

@@ -113,7 +113,7 @@ export default function UploadLinksScreen() {
         await Share.share({
           message,
           url: fullUrl,
-          title: `Upload Link: ${link.name}`,
+          title: `File Request: ${link.name}`,
         });
       }
     } catch (error) {
@@ -143,7 +143,7 @@ export default function UploadLinksScreen() {
 
   const handleDeleteLink = (link: UploadLink) => {
     Alert.alert(
-      'Delete Upload Link',
+      'Delete File Request',
       `Are you sure you want to delete "${link.name}"? This action cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
@@ -437,11 +437,11 @@ export default function UploadLinksScreen() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={dynamicStyles.title}>Upload Links</Text>
+          <Text style={dynamicStyles.title}>File Request</Text>
           <View style={dynamicStyles.placeholder} />
         </View>
         <View style={dynamicStyles.centerContainer}>
-          <Text style={dynamicStyles.loadingText}>Loading upload links...</Text>
+          <Text style={dynamicStyles.loadingText}>Loading file requests...</Text>
         </View>
       </SafeAreaView>
     );
@@ -453,7 +453,7 @@ export default function UploadLinksScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={dynamicStyles.title}>Upload Links</Text>
+        <Text style={dynamicStyles.title}>File Request</Text>
         <TouchableOpacity onPress={handleCreateLink}>
           <Ionicons name="add" size={24} color="#007AFF" />
         </TouchableOpacity>
@@ -462,12 +462,12 @@ export default function UploadLinksScreen() {
       {uploadLinks.length === 0 ? (
         <View style={dynamicStyles.emptyContainer}>
           <Ionicons name="link" size={64} color={colors.textLight} />
-          <Text style={dynamicStyles.emptyTitle}>No Upload Links</Text>
+          <Text style={dynamicStyles.emptyTitle}>No File Requests</Text>
           <Text style={dynamicStyles.emptyDescription}>
-            Create upload links to receive files from others
+            Create file requests to receive files from others
           </Text>
           <TouchableOpacity style={dynamicStyles.createButton} onPress={handleCreateLink}>
-            <Text style={dynamicStyles.createButtonText}>Create Your First Link</Text>
+            <Text style={dynamicStyles.createButtonText}>Create Your First File Request</Text>
           </TouchableOpacity>
         </View>
       ) : (

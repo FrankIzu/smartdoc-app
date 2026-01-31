@@ -6,21 +6,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Animated,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -60,6 +60,8 @@ interface ChatMessage {
   sender: ChatParticipant | null;
   is_own_message: boolean;
   created_at: string;
+  /** When true, message is preview/streaming placeholder - show in grey to indicate not final */
+  is_preview?: boolean;
   document_context?: {
     id: number;
     name: string;
@@ -3183,20 +3185,6 @@ export default function ChatsScreen() {
     isStreamingRef.current = true;
     
     streamingIntervalRef.current = setInterval(() => {
-      // CRITICAL: Stop fake streaming only when enough preview/refinement content has displayed
-      // Wait until at least 30 characters are visible (or all content if buffer is shorter)
-      // This ensures smooth transition without gaps - fake streaming continues until preview is clearly visible
-      const MIN_CHARS_BEFORE_STOPPING_FAKE_STREAMING = 30;
-      if (isFakeStreamingRef.current && contentBufferRef.current.length > 0) {
-        const hasEnoughChars = displayedCharsRef.current >= MIN_CHARS_BEFORE_STOPPING_FAKE_STREAMING;
-        const allContentDisplayed = displayedCharsRef.current >= contentBufferRef.current.length;
-        // Stop fake streaming when we have enough chars visible OR all content is displayed (whichever comes first)
-        if (hasEnoughChars || allContentDisplayed) {
-          console.log('🔄 Disabling fake streaming - real content is now displaying (', displayedCharsRef.current, '/', contentBufferRef.current.length, 'chars visible)');
-          isFakeStreamingRef.current = false;
-        }
-      }
-      
       // Check if we have more content to display
       if (displayedCharsRef.current >= contentBufferRef.current.length) {
         // All current content is displayed
@@ -3214,6 +3202,13 @@ export default function ChatsScreen() {
       const charsToAdd = Math.min(3, contentBufferRef.current.length - displayedCharsRef.current);
       displayedCharsRef.current = displayedCharsRef.current + charsToAdd;
       
+      // CRITICAL: Stop fake streaming AFTER we've incremented displayedCharsRef and are about to update the message
+      // This ensures we're actively displaying content before stopping fake streaming (no blank gap)
+      if (isFakeStreamingRef.current && contentBufferRef.current.length > 0) {
+        console.log('🔄 Disabling fake streaming - real content is now displaying (', displayedCharsRef.current, '/', contentBufferRef.current.length, 'chars visible)');
+        isFakeStreamingRef.current = false;
+      }
+      
       // MATCH WEB: Extract display text using substring (upload.tsx line 4408)
       const displayText = contentBufferRef.current.substring(0, displayedCharsRef.current);
       
@@ -3225,7 +3220,8 @@ export default function ChatsScreen() {
         if (newMessages[assistantMsgIndex]) {
           newMessages[assistantMsgIndex] = {
             ...newMessages[assistantMsgIndex],
-            content: displayText
+            content: displayText,
+            is_preview: isPreviewPhaseRef.current,
           };
           console.log(`🔄 Updated message ${assistantMsgIndex} with content: "${displayText.substring(0, 50)}..."`);
         } else {
@@ -3235,7 +3231,8 @@ export default function ChatsScreen() {
             content: displayText,
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            is_preview: isPreviewPhaseRef.current,
           };
           newMessages.push(assistantMessage);
           console.log(`🔄 Created new assistant message with content: "${displayText.substring(0, 50)}..."`);
@@ -3283,7 +3280,8 @@ export default function ChatsScreen() {
         if (newMessages[assistantMsgIndex]) {
           newMessages[assistantMsgIndex] = {
             ...newMessages[assistantMsgIndex],
-            content: keepContent
+            content: keepContent,
+            is_preview: false, // Final text - show in normal color
           };
           console.log(`✅ Updated message ${assistantMsgIndex} with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
         } else {
@@ -3292,7 +3290,8 @@ export default function ChatsScreen() {
             content: keepContent,
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            is_preview: false,
           };
           newMessages.push(assistantMessage);
           console.log(`✅ Created new assistant message with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
@@ -3569,94 +3568,24 @@ export default function ChatsScreen() {
               case 'search_results':
               case 'refining':
               case 'synthesizing':
-                // Status events - don't update content, let fake streaming from file handle it
-                // Just ensure message exists (fake streaming will populate content)
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  if (!newMessages[assistantMessageIndex]) {
-                    // Only create message if it doesn't exist - don't update content
-                    const assistantMessage: ChatMessage = {
-                      id: generateUniqueMessageId(),
-                      content: '', // Fake streaming from file will populate this
-                      sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
-                      is_own_message: false,
-                      created_at: new Date().toISOString()
-                    };
-                    newMessages.push(assistantMessage);
-                  }
-                  // Don't update content - let fake streaming from file continue
-                  return newMessages;
-                });
+                // Status events: do NOT update message.content. Placeholder already exists.
+                // Only preview_chunk / chunk / instant_preview drive first non-empty content.
                 break;
 
-              case 'instant_preview':
-                // Instant preview received - replace fake streaming with real content
-                // Handle both 'content' and 'response' fields (backend may use either)
+              case 'instant_preview': {
+                // Web flow: do NOT set message.content here. Buffer chunk, start display timer.
+                // Fake streaming stops when the interval first writes 2–3 chars to message.content.
                 const instantContent = data.content || data.response || '';
-                console.log('⚡ INSTANT preview received:', {
-                  contentLength: instantContent.length,
-                  preview: instantContent.substring(0, 50),
-                  hasContent: !!data.content,
-                  hasResponse: !!data.response,
-                  fullData: Object.keys(data),
-                  assistantMessageIndex
-                });
-                
-                // Validate content exists
                 if (!instantContent || instantContent.length === 0) {
                   console.warn('⚠️ instant_preview received but content is empty');
                   break;
                 }
-                
-                // Replace fake content with real content
                 contentBufferRef.current = instantContent;
+                displayedCharsRef.current = 0;
                 isPreviewPhaseRef.current = true;
-                // CRITICAL: DON'T stop fake streaming here - let it continue until content actually starts displaying
-                // Even though we set displayedCharsRef below, let the streaming interval check handle stopping fake streaming
-                // This ensures no gap and consistent behavior with other cases
-                // Note: Keep streamingMessageIndex set so real streaming can continue
-                
-                // Display first chunk immediately (match web behavior - show more for better UX)
-                const initialCharsToShow = Math.min(50, instantContent.length); // Increased from 20 to 50 for better visibility
-                const initialContent = instantContent.slice(0, initialCharsToShow);
-                displayedCharsRef.current = initialCharsToShow;
-                
-                console.log('⚡ Displaying instant preview:', {
-                  initialCharsToShow,
-                  initialContent: initialContent.substring(0, 50),
-                  totalLength: instantContent.length
-                });
-                
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  // Ensure message exists at correct index
-                  if (newMessages[assistantMessageIndex]) {
-                    // Update existing message with instant preview content
-                    newMessages[assistantMessageIndex] = {
-                      ...newMessages[assistantMessageIndex],
-                      content: initialContent, // Show initial preview immediately
-                      is_own_message: false, // Explicitly set to false for assistant messages
-                      sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }
-                    };
-                    console.log('⚡ Updated existing message at index', assistantMessageIndex, 'with instant preview');
-                  } else {
-                    // Create new assistant message if it doesn't exist
-                    const assistantMessage: ChatMessage = {
-                      id: generateUniqueMessageId(),
-                      content: initialContent, // Show initial preview immediately
-                      sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
-                      is_own_message: false,
-                      created_at: new Date().toISOString()
-                    };
-                    newMessages.push(assistantMessage);
-                    console.log('⚡ Created new assistant message with instant preview at index', newMessages.length - 1);
-                  }
-                  return newMessages;
-                });
-                
-                // Continue streaming with real content (will stream remaining chars)
                 startOrContinueStreaming(assistantMessageIndex);
                 break;
+              }
 
               case 'fallback_response':
                 // Handle non-streaming response - replace fake streaming with real content
@@ -3690,6 +3619,8 @@ export default function ChatsScreen() {
                   }
                   return newMessages;
                 });
+                setSendingMessage(false);
+                stopBounceAnimation();
                 break;
 
               case 'chunk':
@@ -3744,47 +3675,20 @@ export default function ChatsScreen() {
                   
                   // Reset buffer and display (like web: contentBuffer = previewChunkContent; displayedContent = '')
                   contentBufferRef.current = previewChunkContent;
-                  displayedCharsRef.current = 0; // Reset to start streaming preview from beginning
+                  displayedCharsRef.current = 0; // Start from 0 - let interval handle all display from the start
                   isPreviewPhaseRef.current = isPreviewPhase;
                   
-                  // CRITICAL: Display first characters IMMEDIATELY to prevent gap
-                  // Don't wait for interval - show content right away for seamless transition
-                  const initialCharsToShow = Math.min(30, previewChunkContent.length);
-                  displayedCharsRef.current = initialCharsToShow;
-                  const initialDisplayText = previewChunkContent.substring(0, initialCharsToShow);
-                  
-                  // CRITICAL: Stop fake streaming IMMEDIATELY when preview content arrives
-                  // We have content ready to display, so fake streaming should stop right away
-                  // This ensures ProcessingMessageDisplay disappears as soon as preview content is set
-                  if (isFakeStreamingRef.current) {
-                    console.log('🔄 Stopping fake streaming immediately - preview content ready');
-                    isFakeStreamingRef.current = false;
-                  }
+                  // CRITICAL: DON'T stop fake streaming here - let it continue until preview actually starts displaying
+                  // Fake streaming will be stopped automatically in the streaming interval AFTER we've incremented displayedCharsRef
+                  // This ensures no idle gap - fake streaming continues until content is actively streaming
                   
                   // Mark as recently streamed to protect from loadMessages
                   lastStreamedMessageIndexRef.current = assistantMessageIndex;
                   lastStreamCompleteTimeRef.current = Date.now();
                   
-                  // Ensure message exists and update with initial content IMMEDIATELY
-                  setMessages(prev => {
-                    const newMessages = [...prev];
-                    if (!newMessages[assistantMessageIndex]) {
-                      newMessages.push({
-                        id: generateUniqueMessageId(),
-                        content: initialDisplayText,
-                        sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
-                        is_own_message: false,
-                        created_at: new Date().toISOString()
-                      });
-                    } else {
-                      // Update existing message with initial content immediately
-                      newMessages[assistantMessageIndex] = {
-                        ...newMessages[assistantMessageIndex],
-                        content: initialDisplayText
-                      };
-                    }
-                    return newMessages;
-                  });
+                  // Start streaming interval immediately - it will display content from 0 and stop fake streaming once content is visible
+                  console.log('📦 Starting preview streaming - buffer length:', contentBufferRef.current.length);
+                  startOrContinueStreaming(assistantMessageIndex);
                 } else {
                   // Subsequent chunks - append (like web: contentBuffer += previewChunkContent)
                   contentBufferRef.current += previewChunkContent;
@@ -3793,12 +3697,11 @@ export default function ChatsScreen() {
                   // Mark as recently streamed to protect from loadMessages
                   lastStreamedMessageIndexRef.current = assistantMessageIndex;
                   lastStreamCompleteTimeRef.current = Date.now();
+                  
+                  // Display with smooth typing effect (like web: displayContentImmediately)
+                  console.log('📦 Starting preview streaming - buffer length:', contentBufferRef.current.length);
+                  startOrContinueStreaming(assistantMessageIndex);
                 }
-                
-                // Display with smooth typing effect (like web: displayContentImmediately)
-                // Fake streaming will be stopped when preview actually starts displaying
-                console.log('📦 Starting preview streaming - buffer length:', contentBufferRef.current.length);
-                startOrContinueStreaming(assistantMessageIndex);
                 break;
               }
 
@@ -4117,9 +4020,10 @@ export default function ChatsScreen() {
                   // No response in complete - buffer already has content from chunks
                   console.log('✅ Complete without response - buffer has', contentBufferRef.current.length, 'chars');
                   isPreviewPhaseRef.current = false;
-                  // Streaming should already be active, just ensure phase is correct
-                  // If all content is already displayed, stop immediately
-                  if (displayedCharsRef.current >= contentBufferRef.current.length) {
+                  // Don't stop streaming if buffer is empty (complete arrived before any chunks - keep fake streaming)
+                  if (contentBufferRef.current.length === 0) {
+                    console.log('⏳ Complete with empty buffer - keeping fake streaming until chunks arrive');
+                  } else if (displayedCharsRef.current >= contentBufferRef.current.length) {
                     console.log('✅ All content already displayed - stopping streaming immediately');
                     stopStreaming(assistantMessageIndex, true);
                   }
@@ -4127,6 +4031,9 @@ export default function ChatsScreen() {
                 
                 // Let streaming finish naturally (like web)
                 // The streaming interval will stop automatically when displayedChars >= buffer.length AND isStreamCompleteRef is true
+                // CRITICAL: Clear sending state only when stream actually completes (not in finally – polling returns immediately)
+                setSendingMessage(false);
+                stopBounceAnimation();
                 break;
 
               default:
@@ -4484,12 +4391,12 @@ export default function ChatsScreen() {
     } catch (error: any) {
       if (error.name === 'AbortError') {
         console.log('📤 [CHATS-WEB] Request was aborted');
-        // Stop fake streaming if it was active
         if (isFakeStreamingRef.current) {
           stopStreaming(assistantMessageIndex, false);
           isFakeStreamingRef.current = false;
         }
-        // Don't show error for aborted requests
+        setSendingMessage(false);
+        stopBounceAnimation();
         return;
       }
       console.error('❌ [CHATS-WEB] Failed to send message:', error);
@@ -4556,18 +4463,18 @@ export default function ChatsScreen() {
       // Continue streaming with error message
       startOrContinueStreaming(assistantMessageIndex);
       
-      // Stop streaming after content is fully displayed
+      // Stop streaming after content is fully displayed; then clear sending state
       setTimeout(() => {
         stopStreaming(assistantMessageIndex, true);
+        setSendingMessage(false);
+        stopBounceAnimation();
       }, fallbackResponse.length * 50 + 1000); // 50ms per character + 1 second buffer
       
     } finally {
       console.log('📤 [CHATS-WEB] Send operation completed (success or error)');
-      setSendingMessage(false);
-      stopBounceAnimation();
       abortControllerRef.current = null;
-      // Keep selected mention active for the entire chat session
-      // It will only be cleared when user explicitly removes it or switches chats
+      // Do NOT set setSendingMessage(false) here: with polling, the promise resolves immediately after the first poll is sent,
+      // so that would hide fake streaming before any chunk arrives. It is cleared in 'complete' / 'error' handlers or in catch above.
     }
   };
 
@@ -5996,7 +5903,7 @@ export default function ChatsScreen() {
   };
 
   // Helper function to render message content with proper list formatting
-  const renderMessageContent = (content: string, isOwnMessage: boolean) => {
+  const renderMessageContent = (content: string, isOwnMessage: boolean, isPreview?: boolean) => {
     // Simple rendering - just display text as-is without complex parsing
     if (!content || content.trim().length === 0) {
       return null;
@@ -6006,7 +5913,8 @@ export default function ChatsScreen() {
       <Text 
         style={[
           dynamicStyles.messageText,
-          isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText
+          isOwnMessage ? dynamicStyles.ownMessageText : dynamicStyles.otherMessageText,
+          isPreview && dynamicStyles.previewMessageText
         ]}
       >
         {content}
@@ -6127,7 +6035,7 @@ export default function ChatsScreen() {
             dynamicStyles.messageBubble,
             dynamicStyles.ownBubble
           ]}>
-            {renderMessageContent(item.content, item.is_own_message)}
+            {renderMessageContent(item.content, item.is_own_message, item.is_preview)}
             <Text style={[
               dynamicStyles.messageTime,
               dynamicStyles.ownMessageTime
@@ -6159,16 +6067,18 @@ export default function ChatsScreen() {
             dynamicStyles.messageContainerNoBubble,
             dynamicStyles.otherMessageNoBubble
           ]}>
-            {hasContent
-              ? renderMessageContent(item.content, item.is_own_message)
-              : (
+            {(isFakeStreamingActive && !hasContent)
+              ? (
                   <ProcessingMessageDisplay
-                    isProcessing={isFakeStreamingActive}
-                    hasRealData={false}
+                    isProcessing={true}
+                    hasRealData={!!item.content}
                     processingType="general"
                     onComplete={() => {}}
                   />
-                )}
+                )
+              : hasContent
+                ? renderMessageContent(item.content, item.is_own_message, item.is_preview)
+                : null}
           </View>
         );
       } else {
@@ -6184,7 +6094,7 @@ export default function ChatsScreen() {
               dynamicStyles.messageBubble,
               dynamicStyles.otherBubble
             ]}>
-              {renderMessageContent(item.content, item.is_own_message)}
+              {renderMessageContent(item.content, item.is_own_message, item.is_preview)}
             </View>
           </View>
         );
@@ -7010,6 +6920,9 @@ export default function ChatsScreen() {
     otherMessageText: {
       color: colors.text,
     },
+    previewMessageText: {
+      color: '#9ca3af', // Lighter grey to indicate preview / not final response
+    },
     messageTime: {
       fontSize: 11,
       marginTop: 1,
@@ -7616,6 +7529,9 @@ const styles = StyleSheet.create({
   },
   otherMessageText: {
     color: '#000',
+  },
+  previewMessageText: {
+    color: '#9ca3af', // Lighter grey to indicate preview / not final response
   },
   messageTime: {
     fontSize: 11,

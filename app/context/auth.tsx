@@ -1,7 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Linking } from 'react-native';
 import { apiService } from '../../services/api';
 import { secureStorage } from '../../utils/storage';
+import { STORAGE_KEYS } from '../../constants/Config';
 
 interface User {
   id: string;
@@ -32,6 +34,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Check for existing session
     checkSession();
   }, []); // Empty dependency array ensures this only runs once
+
+  // Handle Google OAuth backend redirect: grabdocs://login-success?token=... or grabdocs://login-error?...
+  const handleOAuthDeepLink = async (url: string) => {
+    if (!url || !url.startsWith('grabdocs://')) return;
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === 'login-success' && parsed.searchParams.get('token')) {
+        const token = parsed.searchParams.get('token')!;
+        const result = await apiService.exchangeGoogleOAuthToken(token);
+        if (result.success && result.user) {
+          const u = result.user;
+          const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
+          const userData = { id: String(u.id), email: u.email || '', name };
+          await secureStorage.setItem('user', JSON.stringify(userData));
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          setUser(userData);
+          console.log('✅ Google OAuth deep link: session established');
+        }
+      } else if (parsed.hostname === 'login-error') {
+        const error = parsed.searchParams.get('error') || 'Unknown error';
+        const description = parsed.searchParams.get('description') || '';
+        console.warn('Google OAuth deep link error:', error, description);
+      }
+    } catch (e) {
+      console.warn('Error handling OAuth deep link:', e);
+    }
+  };
+
+  useEffect(() => {
+    const sub = Linking.addEventListener('url', ({ url }) => handleOAuthDeepLink(url));
+    Linking.getInitialURL().then((url) => {
+      if (url) handleOAuthDeepLink(url);
+    });
+    return () => sub.remove();
+  }, []);
 
   const checkSession = async () => {
     try {

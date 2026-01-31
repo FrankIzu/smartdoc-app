@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -45,6 +46,7 @@ export default function OtpVerificationScreen() {
   );
   
   const inputRefs = useRef<TextInput[]>([]);
+  const autofillInputRef = useRef<TextInput>(null);
 
   // Countdown timer
   useEffect(() => {
@@ -56,6 +58,111 @@ export default function OtpVerificationScreen() {
     
     return () => clearInterval(timer);
   }, [timeLeft]);
+
+  // Monitor clipboard for OTP codes (for email codes)
+  // Note: This is a fallback for email codes. SMS codes are handled by autofill input.
+  useEffect(() => {
+    if (params.method === 'email') {
+      let lastClipboardText = '';
+      
+      const checkClipboard = async () => {
+        try {
+          const clipboardText = await Clipboard.getStringAsync();
+          
+          // Only process if clipboard content changed
+          if (clipboardText === lastClipboardText) {
+            return;
+          }
+          lastClipboardText = clipboardText;
+          
+          // Look for 6-digit code patterns (more specific patterns)
+          // Match codes that might appear in email notifications
+          const codePatterns = [
+            /\b(\d{6})\b/, // Simple 6-digit code
+            /code[:\s]+(\d{6})/i, // "code: 123456" or "code 123456"
+            /verification[:\s]+code[:\s]+(\d{6})/i, // "verification code: 123456"
+            /(\d{6})[^\d]/, // 6 digits followed by non-digit
+          ];
+          
+          for (const pattern of codePatterns) {
+            const codeMatch = clipboardText.match(pattern);
+            if (codeMatch) {
+              const code = codeMatch[1];
+              // Check if it's a valid OTP (all digits, exactly 6)
+              if (/^\d{6}$/.test(code)) {
+                // Only use if OTP inputs are empty or partially filled
+                const currentCode = otpCode.join('');
+                if (currentCode.length < 6) {
+                  console.log('📋 Detected OTP code from clipboard:', code);
+                  // Distribute code to inputs
+                  const codeArray = code.split('').slice(0, 6);
+                  setOtpCode(codeArray);
+                  // Auto-verify if all digits are filled
+                  if (codeArray.length === 6 && codeArray.every(d => d !== '')) {
+                    setTimeout(() => {
+                      // Call handleVerifyOtp directly - it's stable enough for this use case
+                      const finalCode = code;
+                      if (finalCode.length === 6) {
+                        // Trigger verification by setting state and calling the handler
+                        handleVerifyOtp(finalCode);
+                      }
+                    }, 300);
+                  }
+                  break; // Found a valid code, stop checking
+                }
+              }
+            }
+          }
+        } catch (error) {
+          // Silently ignore clipboard errors
+        }
+      };
+
+      // Check clipboard periodically (every 2 seconds) when screen is active
+      const clipboardInterval = setInterval(checkClipboard, 2000);
+      
+      // Also check immediately when component mounts
+      checkClipboard();
+      
+      return () => clearInterval(clipboardInterval);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.method]);
+
+  // Handle autofill input change (for SMS autofill)
+  const handleAutofillChange = (text: string) => {
+    // Extract only digits
+    const digits = text.replace(/\D/g, '').slice(0, 6);
+    
+    if (digits.length === 6) {
+      console.log('📱 Detected OTP code from autofill:', digits);
+      // Distribute code to individual inputs
+      const codeArray = digits.split('');
+      setOtpCode(codeArray);
+      
+      // Focus the last input to show completion
+      inputRefs.current[5]?.focus();
+      
+      // Auto-verify after a brief delay
+      setTimeout(() => {
+        handleVerifyOtp(digits);
+      }, 300);
+    } else if (digits.length > 0 && digits.length < 6) {
+      // Partial code entered - distribute what we have
+      const codeArray = digits.split('');
+      const newOtp = [...otpCode];
+      codeArray.forEach((digit, idx) => {
+        if (idx < 6) {
+          newOtp[idx] = digit;
+        }
+      });
+      setOtpCode(newOtp);
+      
+      // Focus the next empty input
+      const nextIndex = Math.min(digits.length, 5);
+      inputRefs.current[nextIndex]?.focus();
+    }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -481,6 +588,22 @@ export default function OtpVerificationScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
+        {/* Hidden autofill input for SMS/email code detection */}
+        {/* This input captures the full OTP code from SMS autofill or keyboard suggestions */}
+        <TextInput
+          ref={autofillInputRef}
+          style={styles.hiddenAutofillInput}
+          value=""
+          onChangeText={handleAutofillChange}
+          keyboardType="number-pad"
+          textContentType={Platform.OS === 'ios' ? 'oneTimeCode' : undefined}
+          autoComplete={Platform.OS === 'android' ? 'sms-otp' : undefined}
+          autoFocus={false}
+          editable={!isLoading}
+          maxLength={6}
+          placeholder=""
+        />
+
         <View style={styles.otpContainer}>
           {otpCode.map((digit, index) => (
             <TextInput
@@ -498,6 +621,9 @@ export default function OtpVerificationScreen() {
               maxLength={1}
               selectTextOnFocus
               editable={!isLoading}
+              // Also add autofill props to individual inputs as fallback
+              textContentType={Platform.OS === 'ios' && index === 0 ? 'oneTimeCode' : undefined}
+              autoComplete={Platform.OS === 'android' && index === 0 ? 'sms-otp' : undefined}
             />
           ))}
         </View>
@@ -623,6 +749,17 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
     fontSize: 14,
+  },
+  hiddenAutofillInput: {
+    position: 'absolute',
+    opacity: 0,
+    width: 1,
+    height: 1,
+    left: -10000,
+    top: -10000,
+    // Make it accessible to autofill but invisible
+    fontSize: 1,
+    color: 'transparent',
   },
   otpContainer: {
     flexDirection: 'row',

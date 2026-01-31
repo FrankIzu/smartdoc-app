@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
   },
   message: {
     fontSize: 14,
-    color: '#666',
+    color: '#9ca3af', // Lighter grey to indicate this is not the final response
   },
 });
 
