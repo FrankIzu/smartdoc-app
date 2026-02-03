@@ -1,10 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Linking from 'expo-linking';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Dimensions,
     Image,
     Modal,
+    Platform,
     ScrollView,
     StyleSheet,
     Text,
@@ -17,6 +22,33 @@ import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiClient } from '../services/api';
 import { secureStorage } from '../utils/storage';
+
+// Conditionally import react-native-pdf (only works in development builds, not Expo Go)
+let Pdf: any = null;
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// Log environment detection for debugging
+console.log('📱 PDF Viewer Environment:', {
+  platform: Platform.OS,
+  appOwnership: Constants.appOwnership,
+  isExpoGo,
+  executionEnvironment: Constants.executionEnvironment,
+});
+
+if (!isExpoGo && Platform.OS !== 'web') {
+  try {
+    Pdf = require('react-native-pdf').default;
+    console.log('✅ Native PDF viewer (react-native-pdf) loaded successfully');
+  } catch (error: any) {
+    // Native module not available - will fall back to external opening or WebView
+    console.warn('⚠️ react-native-pdf not available:', error?.message || error);
+    console.warn('📱 Will use fallback for PDF viewing (WebView or external opening)');
+  }
+} else if (isExpoGo) {
+  console.log('ℹ️ Running in Expo Go - native PDF viewer not available (requires dev/prod build)');
+} else if (Platform.OS === 'web') {
+  console.log('ℹ️ Running on web - native PDF viewer not available');
+}
 
 interface DocumentViewerProps {
   fileId: string;
@@ -139,8 +171,10 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
         setLoading(true);
         setError(null);
 
-        // For PDFs, use direct WebView with authenticated URL
-        if (fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf')) {
+        // For PDFs, use direct WebView with authenticated URL (iOS handles PDFs well)
+        // Android PDFs are handled at higher level with native viewer
+        const isPdf = fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf');
+        if (isPdf) {
           console.log('Loading PDF document:', fileName);
           setLoading(false);
           // Don't set htmlContent, we'll handle PDFs differently
@@ -240,13 +274,19 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
       finalUrl = fileUrl.replace('/download', '/download?pdf=true');
     }
     
+    const isPdf = fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf');
+    
+    // Note: Android PDFs are handled at renderDocumentPreview level with native viewer
+    // This WebView is only used for iOS PDFs and Office documents
+    
+    // iOS: Use direct URL (iOS WebView can handle PDFs)
     return (
       <WebView
         source={{ 
           uri: finalUrl,
           headers: {
             'Authorization': `Bearer ${authToken}`,
-            'X-Platform': 'android'
+            'X-Platform': Platform.OS
           }
         }}
         style={styles.webView}
@@ -393,6 +433,7 @@ export default function DocumentViewer({
 }: DocumentViewerProps) {
   const colors = useThemeColors();
   const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [pdfLocalUri, setPdfLocalUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
@@ -478,6 +519,55 @@ export default function DocumentViewer({
     getToken();
   }, []);
 
+  // Download PDF to local cache for native viewer (only if native module is available)
+  useEffect(() => {
+    const downloadPdfForNativeViewer = async () => {
+      // Only download if native PDF viewer is available (not in Expo Go)
+      if (!Pdf || isExpoGo || !fileUrl || !authToken || !isPdfFile(fileType)) {
+        return;
+      }
+
+      try {
+        setLoading(true);
+        
+        const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+        if (!cacheDir) {
+          console.warn('Cache directory not available for PDF download');
+          return;
+        }
+
+        // Ensure filename has .pdf extension for proper MIME type detection
+        let sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+        if (!sanitizedFileName.toLowerCase().endsWith('.pdf')) {
+          // Add .pdf extension if missing
+          sanitizedFileName = `${sanitizedFileName}.pdf`;
+        }
+        const localUri = `${cacheDir}${sanitizedFileName}`;
+
+        console.log('📥 Downloading PDF for native viewer:', fileUrl);
+        console.log('📁 Saving to:', localUri);
+
+        // Download with authentication headers
+        const downloadResult = await FileSystem.downloadAsync(fileUrl, localUri, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'X-Platform': Platform.OS
+          }
+        });
+
+        console.log('✅ PDF downloaded successfully for native viewer:', downloadResult.uri);
+        setPdfLocalUri(downloadResult.uri);
+        setLoading(false);
+      } catch (error: any) {
+        console.error('Failed to download PDF for native viewer:', error);
+        setError('Failed to load PDF. Please try again.');
+        setLoading(false);
+      }
+    };
+
+    downloadPdfForNativeViewer();
+  }, [fileUrl, authToken, fileType, fileName]);
+
   const loadFileUrl = async () => {
     try {
       setLoading(true);
@@ -506,21 +596,28 @@ export default function DocumentViewer({
         setError('Failed to load file information');
       }
     } catch (error: any) {
+      const message = error?.message ?? '';
+      const is404 = error?.response?.status === 404 || /not found|404/i.test(message);
+
+      if (is404) {
+        console.warn('File not found:', fileId, message);
+        setError('File not found. It may have been deleted or moved.');
+        return;
+      }
       console.error('Failed to load file URL:', error);
-      
-      // If view endpoint returns 404, try download endpoint as fallback
+
+      // If view endpoint returns 404, try download endpoint as fallback (axios error with response)
       if (error.response?.status === 404) {
         console.log('⚠️ View endpoint not available, falling back to download endpoint');
         try {
           const downloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/download`;
           console.log('🔐 Using download endpoint - backend will decrypt file');
           setFileUrl(downloadUrl);
-          
-          // For images, get dimensions with authentication
+
           if (isImageFile(fileType)) {
             await getImageDimensionsWithAuth(downloadUrl);
           }
-          return; // Successfully loaded via download endpoint
+          return;
         } catch (fallbackError: any) {
           console.error('Fallback to download endpoint also failed:', fallbackError);
           setError('File not found. It may have been deleted or moved.');
@@ -529,10 +626,10 @@ export default function DocumentViewer({
         setError('Authentication required. Please log in again.');
       } else if (error.response?.status === 403) {
         setError('You do not have permission to access this file.');
-      } else if (error.message?.includes('Network Error')) {
+      } else if (message.includes('Network Error')) {
         setError('Network error. Please check your connection and try again.');
       } else {
-        setError(`Failed to load file: ${error.message || 'Unknown error'}`);
+        setError(`Failed to load file: ${message || 'Unknown error'}`);
       }
     } finally {
       setLoading(false);
@@ -718,7 +815,210 @@ export default function DocumentViewer({
       );
     }
 
-    // Use the AuthenticatedWebView for PDFs and Office documents
+    // For PDFs, use native PDF viewer if available (development builds only)
+    // In Expo Go, fall back to WebView or external opening
+    if (isPdfFile(fileType)) {
+      // Check if native PDF viewer is available
+      if (Pdf && pdfLocalUri) {
+        // Native PDF viewer available - use it
+        console.log('📄 Using native PDF viewer (react-native-pdf)');
+        return (
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
+            <Pdf
+              source={{ uri: pdfLocalUri, cache: true }}
+              onLoadComplete={(numberOfPages) => {
+                console.log(`✅ PDF loaded successfully: ${numberOfPages} pages`);
+                setLoading(false);
+              }}
+              onPageChanged={(page, numberOfPages) => {
+                console.log(`PDF page ${page} of ${numberOfPages}`);
+              }}
+              onError={(error) => {
+                console.error('PDF render error:', error);
+                setError('Failed to render PDF. The file may be corrupted.');
+              }}
+              style={{
+                flex: 1,
+                width: screenWidth,
+                height: screenHeight,
+                backgroundColor: colors.background,
+              }}
+              enablePaging={true}
+              horizontal={false}
+              spacing={10}
+              enableRTL={false}
+              enableAnnotationRendering={true}
+              fitPolicy={0} // 0 = width, 1 = height, 2 = both
+              singlePage={false}
+              page={1}
+              scale={1.0}
+              minScale={0.5}
+              maxScale={3.0}
+              activityIndicator={
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#007AFF" />
+                  <Text style={dynamicStyles.loadingText}>Loading PDF...</Text>
+                </View>
+              }
+            />
+          </View>
+        );
+      }
+
+      // Native PDF viewer not available (Expo Go) - use WebView or show option to open externally
+      if (isExpoGo || !Pdf) {
+        // In Expo Go, show option to open externally or use WebView
+        return (
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
+            <View style={styles.errorContainer}>
+              <Ionicons name="document-text-outline" size={64} color="#007AFF" />
+              <Text style={[dynamicStyles.errorText, { color: colors.textSecondary, marginTop: 16 }]}>
+                PDF Viewer requires a development build
+              </Text>
+              <Text style={[dynamicStyles.errorText, { color: colors.textSecondary, fontSize: 14, marginTop: 8 }]}>
+                Native PDF viewing is not available in Expo Go. You can view the PDF in your browser or create a development build.
+              </Text>
+              <TouchableOpacity
+                style={{
+                  marginTop: 24,
+                  backgroundColor: '#007AFF',
+                  paddingHorizontal: 24,
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                }}
+                onPress={async () => {
+                  try {
+                    // Open PDF in external browser/app
+                    await Linking.openURL(fileUrl);
+                  } catch (err: any) {
+                    Alert.alert('Error', 'Failed to open PDF. Please try again.');
+                  }
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  Open in Browser
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  marginTop: 12,
+                  backgroundColor: 'transparent',
+                  paddingHorizontal: 24,
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: '#007AFF',
+                }}
+                onPress={() => {
+                  // Fall back to WebView (may not work well on Android)
+                  setError(null);
+                }}
+              >
+                <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>
+                  Try WebView
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {/* Show WebView as fallback if user clicks "Try WebView" */}
+            {!error && (
+              <WebView
+                source={{ 
+                  uri: fileUrl,
+                  headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'X-Platform': Platform.OS
+                  }
+                }}
+                style={styles.webView}
+                javaScriptEnabled={true}
+                domStorageEnabled={true}
+                startInLoadingState={true}
+                onError={(syntheticEvent) => {
+                  const { nativeEvent } = syntheticEvent;
+                  console.error('PDF WebView error:', nativeEvent);
+                  Alert.alert(
+                    'PDF Viewing Not Available',
+                    'PDF viewing requires a development build. Please open the PDF in your browser or create a development build.',
+                    [
+                      { text: 'Open in Browser', onPress: async () => {
+                        try {
+                          await Linking.openURL(fileUrl);
+                        } catch (err) {
+                          Alert.alert('Error', 'Failed to open PDF.');
+                        }
+                      }},
+                      { text: 'OK', style: 'cancel' }
+                    ]
+                  );
+                }}
+              />
+            )}
+          </View>
+        );
+      }
+
+      // Native module available but PDF still downloading
+      if (loading || !pdfLocalUri) {
+        return (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={dynamicStyles.loadingText}>Loading PDF...</Text>
+          </View>
+        );
+      }
+
+      // Error downloading PDF for native viewer
+      if (error) {
+        return (
+          <View style={styles.errorContainer}>
+            <Ionicons name="alert-circle" size={64} color="#FF3B30" />
+            <Text style={[dynamicStyles.errorText, { color: colors.textSecondary }]}>{error}</Text>
+            <TouchableOpacity
+              style={{
+                marginTop: 16,
+                backgroundColor: '#007AFF',
+                paddingHorizontal: 24,
+                paddingVertical: 12,
+                borderRadius: 8,
+              }}
+              onPress={() => {
+                setError(null);
+                setPdfLocalUri(null);
+                // Retry download
+                const downloadPdf = async () => {
+                  if (!fileUrl || !authToken) return;
+                  try {
+                    setLoading(true);
+                    const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+                    if (!cacheDir) return;
+                    const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+                    const localUri = `${cacheDir}${sanitizedFileName}`;
+                    const downloadResult = await FileSystem.downloadAsync(fileUrl, localUri, {
+                      headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'X-Platform': Platform.OS
+                      }
+                    });
+                    setPdfLocalUri(downloadResult.uri);
+                    setLoading(false);
+                  } catch (err: any) {
+                    setError('Failed to load PDF. Please try again.');
+                    setLoading(false);
+                  }
+                };
+                downloadPdf();
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                Retry
+              </Text>
+            </TouchableOpacity>
+          </View>
+        );
+      }
+    }
+
+    // Use the AuthenticatedWebView for Office documents (PDFs use native viewer above)
     return (
       <AuthenticatedWebView 
         fileUrl={fileUrl} 

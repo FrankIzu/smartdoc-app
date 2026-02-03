@@ -98,9 +98,16 @@ export default function ProcessScanScreen() {
 
       console.log('Scanned document upload successful:', uploadResult);
       
-      Alert.alert('Success', 'Document saved successfully!', [
-        { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
-      ]);
+      // Mark upload time so Files screen knows to refresh immediately
+      const { useFileStore } = await import('../../stores/fileStore');
+      useFileStore.getState().setLastUploadTime(Date.now());
+      
+      // Small delay to ensure backend has created the file record
+      setTimeout(() => {
+        Alert.alert('Success', 'Document saved successfully!', [
+          { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
+        ]);
+      }, 300);
     } catch (error) {
       console.error('Error saving document:', error);
       Alert.alert('Error', 'Failed to save document. Please try again.');

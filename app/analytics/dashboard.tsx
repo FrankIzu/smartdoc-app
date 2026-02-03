@@ -1,22 +1,28 @@
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  Modal,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Keyboard,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import DocumentViewer from '../../components/DocumentViewer';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
@@ -125,6 +131,15 @@ interface ComprehensiveAnalytics {
 
 const { width } = Dimensions.get('window');
 
+/** Get numeric total amount from a receipt or invoice item (file or analytics shape). Returns 0 if missing/invalid. */
+function getAmount(item: any): number {
+  const data = item?.json_data ?? item;
+  const amount = data?.total_amount ?? data?.amount ?? data?.invoice_amount ?? data?.total ?? item?.amount ?? item?.total_amount ?? 0;
+  if (typeof amount === 'number') return amount;
+  if (typeof amount === 'string') return parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0;
+  return 0;
+}
+
 export default function AnalyticsDashboard() {
   const router = useRouter();
   const { isAuthenticated, user, isLoading: authLoading } = useEnhanced2FAAuth();
@@ -139,6 +154,131 @@ export default function AnalyticsDashboard() {
   const [recentReceipts, setRecentReceipts] = useState<any[]>([]);
   const [recentInvoices, setRecentInvoices] = useState<any[]>([]);
   
+  // Advanced filter states
+  const [showAdvancedFilterModal, setShowAdvancedFilterModal] = useState(false);
+  const [customDateFrom, setCustomDateFrom] = useState<string>('');
+  const [customDateTo, setCustomDateTo] = useState<string>('');
+  const [showDateFromPicker, setShowDateFromPicker] = useState(false);
+  const [showDateToPicker, setShowDateToPicker] = useState(false);
+  const [dateFromPickerValue, setDateFromPickerValue] = useState<Date>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d;
+  });
+  const [dateToPickerValue, setDateToPickerValue] = useState<Date>(() => new Date());
+  const [amountMin, setAmountMin] = useState<string>('');
+  const [amountMax, setAmountMax] = useState<string>('');
+  const [storeVendorName, setStoreVendorName] = useState<string>('');
+  const [useCustomFilters, setUseCustomFilters] = useState(false);
+  /** iOS: reopen Advanced Filter modal after date picker closes (avoids two modals = freeze) */
+  const [reopenAdvancedFilterAfterDatePicker, setReopenAdvancedFilterAfterDatePicker] = useState(false);
+
+  /** Format a Date as YYYY-MM-DD in local time (user's calendar date). Use when saving so the selected date is stored correctly. */
+  const formatDateLocal = (date: Date): string => {
+    if (Number.isNaN(date.getTime())) return '';
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  };
+
+  /** Parse YYYY-MM-DD to a Date at local midnight. Use when loading so the picker shows the correct calendar date. */
+  const parseLocalDateString = (str: string): Date | null => {
+    if (!str || typeof str !== 'string') return null;
+    const parts = str.trim().split('-');
+    if (parts.length !== 3) return null;
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(day)) return null;
+    const d = new Date(y, m, day);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+  };
+
+  /** Safely convert a value from backend to YYYY-MM-DD in local time for display. Handles ISO (UTC) and date-only strings. */
+  const safeToDateString = (raw: unknown): string => {
+    if (raw == null) return '';
+    if (typeof raw === 'string') {
+      if (raw.includes('T')) {
+        const d = new Date(raw);
+        if (!Number.isNaN(d.getTime())) return formatDateLocal(d);
+        return '';
+      }
+      return raw.slice(0, 10); // date-only: treat as calendar date, keep as-is
+    }
+    const d = new Date(raw as string | number);
+    if (!Number.isNaN(d.getTime())) return formatDateLocal(d);
+    return '';
+  };
+
+  /** Format date from picker for saving: use local calendar date (YYYY-MM-DD) so no off-by-one. */
+  const formatDateForInput = (date: Date) => (Number.isNaN(date.getTime()) ? '' : formatDateLocal(date));
+
+  /** Convert local YYYY-MM-DD to UTC ISO (start of that day in user TZ). Use when sending date/due_date to API. */
+  const localDateStringToUTCISO = (str: string): string => {
+    const d = parseLocalDateString(str);
+    return d && !Number.isNaN(d.getTime()) ? d.toISOString() : str;
+  };
+
+  /** Convert local YYYY-MM-DD to UTC ISO (end of that day in user TZ). Use for filter date_to so range is inclusive. */
+  const localDateStringToEndOfDayUTCISO = (str: string): string => {
+    const d = parseLocalDateString(str);
+    if (!d || Number.isNaN(d.getTime())) return str;
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    return end.toISOString();
+  };
+
+  /** Return a valid Date for DateTimePicker; never pass Invalid Date (causes calendar not to display). */
+  const getValidDate = (d: Date | undefined): Date => {
+    if (d != null && !Number.isNaN(d.getTime())) return d;
+    return new Date();
+  };
+
+  /** Wide min/max for filter date pickers so the spinner shows all months (not just Jan–Feb). */
+  const filterDateMin = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 20);
+    return d;
+  })();
+  const filterDateMax = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    return d;
+  })();
+
+  const handleDateFromChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDateFromPicker(false);
+      if (event?.type === 'set' && selectedDate) {
+        setDateFromPickerValue(selectedDate);
+        setCustomDateFrom(formatDateForInput(selectedDate));
+      }
+    } else {
+      // iOS spinner: update state as user scrolls; modal closes via Done/Cancel
+      if (selectedDate) {
+        setDateFromPickerValue(selectedDate);
+        setCustomDateFrom(formatDateForInput(selectedDate));
+      }
+    }
+  };
+
+  const handleDateToChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDateToPicker(false);
+      if (event?.type === 'set' && selectedDate) {
+        setDateToPickerValue(selectedDate);
+        setCustomDateTo(formatDateForInput(selectedDate));
+      }
+    } else {
+      // iOS spinner: update state as user scrolls; modal closes via Done/Cancel
+      if (selectedDate) {
+        setDateToPickerValue(selectedDate);
+        setCustomDateTo(formatDateForInput(selectedDate));
+      }
+    }
+  };
+  
   // Category selection modal states
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [selectedReceipt, setSelectedReceipt] = useState<any>(null);
@@ -148,6 +288,66 @@ export default function AnalyticsDashboard() {
   const [showPaymentStatusModal, setShowPaymentStatusModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [updatingPaymentStatus, setUpdatingPaymentStatus] = useState(false);
+
+  // Edit receipt/invoice modal (store name, date, amount, category) - same endpoint as web
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editItem, setEditItem] = useState<any>(null);
+  const [editType, setEditType] = useState<'receipt' | 'invoice'>('receipt');
+  const [editForm, setEditForm] = useState<{ store_name: string; total_amount: string; date: string; category: string }>({
+    store_name: '',
+    total_amount: '',
+    date: '',
+    category: 'Uncategorized',
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [showEditDatePicker, setShowEditDatePicker] = useState(false);
+  const [editDatePickerValue, setEditDatePickerValue] = useState<Date>(() => new Date());
+
+  // Document viewer (same as files page - open receipt/invoice file on row tap)
+  const [showDocumentViewer, setShowDocumentViewer] = useState(false);
+  const [selectedFileForView, setSelectedFileForView] = useState<{
+    fileId: string;
+    fileName: string;
+    fileType: string;
+    fileCategory?: string;
+  } | null>(null);
+
+  /** Derive file type for DocumentViewer from filename extension. */
+  const getFileTypeFromFilename = (filename: string | undefined) => {
+    const name = (filename || '').toLowerCase();
+    const ext = name.split('.').pop() || '';
+    if (['pdf'].includes(ext)) return 'pdf';
+    if (['doc', 'docx'].includes(ext)) return ext;
+    if (['xls', 'xlsx'].includes(ext)) return ext;
+    if (['ppt', 'pptx'].includes(ext)) return ext;
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'].includes(ext)) return 'image';
+    if (['txt', 'csv', 'json'].includes(ext)) return 'text';
+    return ext || 'document';
+  };
+
+  /** Get file ID for API calls (analytics items may have id or file_id). */
+  const getFileId = (item: any): number | null => {
+    if (item?.id != null) {
+      const n = Number(item.id);
+      return Number.isNaN(n) ? null : n;
+    }
+    if (item?.file_id != null) {
+      const n = Number(item.file_id);
+      return Number.isNaN(n) ? null : n;
+    }
+    return null;
+  };
+
+  const openFileInViewer = (item: any) => {
+    const fid = getFileId(item);
+    const fileId = fid != null ? String(fid) : '';
+    const fileName = item?.original_filename || item?.filename || item?.name || 'Document';
+    const fileType = getFileTypeFromFilename(fileName);
+    const fileCategory = item?.category || item?.file_kind || undefined;
+    if (!fileId) return;
+    setSelectedFileForView({ fileId, fileName, fileType, fileCategory });
+    setShowDocumentViewer(true);
+  };
 
   console.log('📊 AnalyticsDashboard component loaded', { isAuthenticated, user: user?.username, authLoading });
 
@@ -163,7 +363,14 @@ export default function AnalyticsDashboard() {
         recentReceiptsCount: recentReceipts.length
       });
       
-      // Check authentication first
+      // Wait for auth to finish loading before checking authentication
+      if (authLoading) {
+        console.log('📊 Auth still loading, waiting...');
+        // Don't set loading to false here - wait for auth to finish
+        return;
+      }
+      
+      // Check authentication after auth has finished loading
       if (!isAuthenticated) {
         console.warn('📊 User not authenticated, cannot load analytics');
         const noAuthData = {
@@ -218,7 +425,12 @@ export default function AnalyticsDashboard() {
       let receiptAnalytics: any = null;
       try {
         const category = selectedCategory !== 'All' ? selectedCategory : undefined;
-        const receiptResponse = await apiClient.getReceiptAnalytics(parseInt(days), category);
+        // Use custom date range if set, otherwise use days parameter
+        const daysParam = (useCustomFilters && (customDateFrom || customDateTo)) ? undefined : parseInt(days);
+        const dateFrom = (useCustomFilters && customDateFrom) ? localDateStringToUTCISO(customDateFrom) : undefined;
+        const dateTo = (useCustomFilters && customDateTo) ? localDateStringToEndOfDayUTCISO(customDateTo) : undefined;
+        const search = (useCustomFilters && storeVendorName) ? storeVendorName : undefined;
+        const receiptResponse = await apiClient.getReceiptAnalytics(daysParam, category, dateFrom, dateTo, search);
         console.log('📊 Receipt analytics response:', {
           success: receiptResponse?.success,
           hasData: !!receiptResponse?.data,
@@ -269,7 +481,12 @@ export default function AnalyticsDashboard() {
       let invoiceAnalytics = null;
       try {
         const category = selectedInvoiceCategory !== 'All' ? selectedInvoiceCategory : undefined;
-        const invoiceResponse = await apiClient.getInvoiceAnalytics(parseInt(days), category);
+        // Use custom date range if set, otherwise use days parameter
+        const daysParam = (useCustomFilters && (customDateFrom || customDateTo)) ? undefined : parseInt(days);
+        const dateFrom = (useCustomFilters && customDateFrom) ? localDateStringToUTCISO(customDateFrom) : undefined;
+        const dateTo = (useCustomFilters && customDateTo) ? localDateStringToEndOfDayUTCISO(customDateTo) : undefined;
+        const search = (useCustomFilters && storeVendorName) ? storeVendorName : undefined;
+        const invoiceResponse = await apiClient.getInvoiceAnalytics(daysParam, category, dateFrom, dateTo, search);
         if (invoiceResponse && invoiceResponse.success && invoiceResponse.data) {
           invoiceAnalytics = invoiceResponse.data;
           console.log('✅ Invoice analytics loaded from web endpoint');
@@ -333,107 +550,71 @@ export default function AnalyticsDashboard() {
         recentActivity: [],
       };
       
-      // Fetch all receipts from web files endpoint
-      // This ensures we show all receipts, not just a limited set
+      // Use receipts from web analytics endpoint (same as web analytics page)
+      // The web endpoint already returns all receipts with proper filtering (user_id, company_id, case-insensitive file_kind)
+      // and includes full receipt data (total_amount, business_name, category, etc.)
       try {
-        console.log('📊 Fetching receipts from files endpoint...');
-        // Use web endpoint to get all receipts (category filter)
-        const filesResponse = await apiClient.getDocuments(1, 10000, undefined, 'receipts');
-        console.log('📊 Files response:', {
-          success: filesResponse?.success,
-          hasFiles: !!filesResponse?.files,
-          filesCount: filesResponse?.files?.length || 0,
-          hasDataFiles: !!filesResponse?.data?.files,
-          dataFilesCount: filesResponse?.data?.files?.length || 0
-        });
-        
-        if (filesResponse && filesResponse.success) {
-          const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
-          console.log(`📊 Total files received: ${allFiles.length}`);
-          
-          // Log first 3 files to see their structure
-          if (allFiles.length > 0) {
-            console.log('📊 Sample file structure:', {
-              firstFile: {
-                id: allFiles[0].id,
-                filename: allFiles[0].filename,
-                file_kind: allFiles[0].file_kind,
-                file_category: allFiles[0].file_category,
-                category: allFiles[0].category,
-                keys: Object.keys(allFiles[0])
-              }
-            });
-          }
-          
-          // When category=receipts is passed, the backend should already filter
-          // So we should use ALL returned files, not filter again
-          // But let's be defensive and still check if file_kind exists and matches
-          const receiptFiles = allFiles.filter((file: any) => {
-            // If file_kind is set, it should be 'receipt' or 'receipts'
-            // If file_kind is not set, include it (backend already filtered by category)
-            const fileKind = (file.file_kind || '').toLowerCase();
-            const hasNoFileKind = !file.file_kind || fileKind === '';
-            const isReceiptFileKind = fileKind === 'receipt' || fileKind === 'receipts';
-            return hasNoFileKind || isReceiptFileKind;
-          });
-          console.log(`📊 Filtered receipt files: ${receiptFiles.length} (from ${allFiles.length} total)`);
-          
-          // Sort by date (most recent first)
-          const sortedReceipts = [...receiptFiles].sort((a: any, b: any) => {
+        if (receiptAnalytics?.recent_receipts && receiptAnalytics.recent_receipts.length > 0) {
+          console.log(`📊 Using ${receiptAnalytics.recent_receipts.length} receipts from web analytics endpoint`);
+          // Sort by date (most recent first) - receipts from web endpoint are already sorted, but ensure consistency
+          let sortedReceipts = [...receiptAnalytics.recent_receipts].sort((a: any, b: any) => {
             const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
             const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
             return dateB - dateA;
           });
-          console.log(`✅ Loaded ${sortedReceipts.length} receipts for display`);
+          
+          // Apply amount range filter if set
+          if (useCustomFilters && (amountMin || amountMax)) {
+            sortedReceipts = sortedReceipts.filter((receipt: any) => {
+              const amount = receipt.json_data?.total_amount || 
+                            receipt.json_data?.amount || 
+                            receipt.json_data?.total ||
+                            receipt.amount || 
+                            receipt.total_amount || 0;
+              const numericAmount = typeof amount === 'number' ? amount : 
+                                 (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+              
+              if (amountMin && numericAmount < parseFloat(amountMin)) return false;
+              if (amountMax && numericAmount > parseFloat(amountMax)) return false;
+              return true;
+            });
+          }
+          
           setRecentReceipts(sortedReceipts);
-          console.log('📊 Set recentReceipts to', sortedReceipts.length, 'receipts');
+          console.log('✅ Loaded receipts from web analytics endpoint:', sortedReceipts.length);
         } else {
-          console.warn('❌ Files endpoint returned unsuccessful response');
-          // Fallback to analytics recent_receipts if available
-          if (receiptAnalytics?.recent_receipts && receiptAnalytics.recent_receipts.length > 0) {
-            console.log(`📊 Using ${receiptAnalytics.recent_receipts.length} receipts from analytics`);
-            setRecentReceipts(receiptAnalytics.recent_receipts);
-          } else if (receiptAnalytics?.top_businesses && receiptAnalytics.top_businesses.length > 0) {
-            // Convert top_businesses to receipt-like format for display
-            console.log(`📊 Using ${receiptAnalytics.top_businesses.length} businesses as receipts from analytics`);
-            const businessReceipts = receiptAnalytics.top_businesses.map((business: any, idx: number) => ({
-              id: `business-${idx}`,
-              business: business.business,
-              json_data: {
-                store_name: business.business,
-                total_amount: business.total_amount
-              },
-              created_at: new Date().toISOString() // Use current date as fallback
-            }));
-            setRecentReceipts(businessReceipts);
-          } else {
-            console.warn('⚠️ No receipt data available from either source');
+          console.warn('⚠️ No receipts in analytics response, trying fallback...');
+          // Fallback: try mobile files endpoint if analytics didn't return receipts
+          try {
+            console.log('📊 Fallback: Fetching receipts from mobile files endpoint...');
+            const filesResponse = await apiClient.getDocuments(1, 10000, undefined, 'receipts');
+            if (filesResponse && filesResponse.success) {
+              const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
+              const receiptFiles = allFiles
+                .filter((file: any) => {
+                  const fileKind = (file.file_kind || '').toLowerCase();
+                  return !file.file_kind || fileKind === 'receipt' || fileKind === 'receipts';
+                })
+                .filter((file: any) => getAmount(file) > 0); // Exclude $0 receipts
+              const sortedReceipts = [...receiptFiles].sort((a: any, b: any) => {
+                const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+                const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                return dateB - dateA;
+              });
+              setRecentReceipts(sortedReceipts);
+              console.log(`✅ Fallback: Loaded ${sortedReceipts.length} receipts from mobile files endpoint`);
+            } else {
+              console.warn('⚠️ Fallback also failed, no receipts available');
+              setRecentReceipts([]);
+            }
+          } catch (fallbackError) {
+            console.error('❌ Fallback failed:', fallbackError);
             setRecentReceipts([]);
           }
         }
       } catch (error) {
-        console.error('❌ Failed to fetch all receipts:', error);
-        // Fallback to analytics recent_receipts if available
-        if (receiptAnalytics?.recent_receipts && receiptAnalytics.recent_receipts.length > 0) {
-          console.log(`📊 Using ${receiptAnalytics.recent_receipts.length} receipts from analytics fallback`);
-          setRecentReceipts(receiptAnalytics.recent_receipts);
-        } else if (receiptAnalytics?.top_businesses && receiptAnalytics.top_businesses.length > 0) {
-          // Convert top_businesses to receipt-like format for display
-          console.log(`📊 Using ${receiptAnalytics.top_businesses.length} businesses as receipts from analytics fallback`);
-          const businessReceipts = receiptAnalytics.top_businesses.map((business: any, idx: number) => ({
-            id: `business-${idx}`,
-            business: business.business,
-            json_data: {
-              store_name: business.business,
-              total_amount: business.total_amount
-            },
-            created_at: new Date().toISOString()
-          }));
-          setRecentReceipts(businessReceipts);
-        } else {
-          console.warn('⚠️ No receipt data available from any source');
-          setRecentReceipts([]);
-        }
+        console.error('❌ Failed to load receipts:', error);
+        setRecentReceipts([]);
       }
       
       if (invoiceAnalytics?.recent_invoices) {
@@ -450,7 +631,27 @@ export default function AnalyticsDashboard() {
         
         if (hasInvoiceIds) {
           // Invoices have IDs, use them directly
-        setRecentInvoices(invoiceAnalytics.recent_invoices);
+          let filteredInvoices = invoiceAnalytics.recent_invoices;
+          
+          // Apply amount range filter if set
+          if (useCustomFilters && (amountMin || amountMax)) {
+            filteredInvoices = filteredInvoices.filter((invoice: any) => {
+              const amount = invoice.json_data?.total_amount || 
+                            invoice.json_data?.amount || 
+                            invoice.json_data?.invoice_amount ||
+                            invoice.json_data?.total ||
+                            invoice.amount || 
+                            invoice.total_amount || 0;
+              const numericAmount = typeof amount === 'number' ? amount : 
+                                 (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+              
+              if (amountMin && numericAmount < parseFloat(amountMin)) return false;
+              if (amountMax && numericAmount > parseFloat(amountMax)) return false;
+              return true;
+            });
+          }
+          
+          setRecentInvoices(filteredInvoices);
         } else {
           // Need to fetch invoice records to get invoice IDs
           try {
@@ -465,22 +666,82 @@ export default function AnalyticsDashboard() {
               const allInvoiceFiles = invoicesResponse.files || invoicesResponse.data?.files || invoicesResponse.data || [];
               console.log(`📊 Total invoice files received: ${allInvoiceFiles.length}`);
               
-              // Use files with invoice file_kind
-              const invoiceFiles = allInvoiceFiles.filter((file: any) => {
-                const fileKind = (file.file_kind || '').toLowerCase();
-                return fileKind === 'invoice' || fileKind === 'invoices';
-              });
+              // Use files with invoice file_kind and exclude $0 invoices
+              let invoiceFiles = allInvoiceFiles
+                .filter((file: any) => {
+                  const fileKind = (file.file_kind || '').toLowerCase();
+                  return fileKind === 'invoice' || fileKind === 'invoices';
+                })
+                .filter((inv: any) => getAmount(inv) > 0);
+              
+              // Apply amount range filter if set
+              if (useCustomFilters && (amountMin || amountMax)) {
+                invoiceFiles = invoiceFiles.filter((invoice: any) => {
+                  const amount = invoice.json_data?.total_amount || 
+                                invoice.json_data?.amount || 
+                                invoice.json_data?.invoice_amount ||
+                                invoice.json_data?.total ||
+                                invoice.amount || 
+                                invoice.total_amount || 0;
+                  const numericAmount = typeof amount === 'number' ? amount : 
+                                     (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+                  
+                  if (amountMin && numericAmount < parseFloat(amountMin)) return false;
+                  if (amountMax && numericAmount > parseFloat(amountMax)) return false;
+                  return true;
+                });
+              }
               
               console.log(`📊 Filtered invoice files: ${invoiceFiles.length}`);
               setRecentInvoices(invoiceFiles.slice(0, 50)); // Limit to 50 most recent
             } else {
               console.warn('⚠️ Failed to fetch invoice files, using analytics data');
-              setRecentInvoices(invoiceAnalytics.recent_invoices);
+              let filteredInvoices = invoiceAnalytics.recent_invoices;
+              
+              // Apply amount range filter if set
+              if (useCustomFilters && (amountMin || amountMax)) {
+                filteredInvoices = filteredInvoices.filter((invoice: any) => {
+                  const amount = invoice.json_data?.total_amount || 
+                                invoice.json_data?.amount || 
+                                invoice.json_data?.invoice_amount ||
+                                invoice.json_data?.total ||
+                                invoice.amount || 
+                                invoice.total_amount || 0;
+                  const numericAmount = typeof amount === 'number' ? amount : 
+                                     (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+                  
+                  if (amountMin && numericAmount < parseFloat(amountMin)) return false;
+                  if (amountMax && numericAmount > parseFloat(amountMax)) return false;
+                  return true;
+                });
+              }
+              
+              setRecentInvoices(filteredInvoices);
             }
           } catch (error) {
             console.error('❌ Failed to fetch invoices:', error);
             // Fallback to analytics data
-            setRecentInvoices(invoiceAnalytics.recent_invoices);
+            let filteredInvoices = invoiceAnalytics.recent_invoices;
+            
+            // Apply amount range filter if set
+            if (useCustomFilters && (amountMin || amountMax)) {
+              filteredInvoices = filteredInvoices.filter((invoice: any) => {
+                const amount = invoice.json_data?.total_amount || 
+                              invoice.json_data?.amount || 
+                              invoice.json_data?.invoice_amount ||
+                              invoice.json_data?.total ||
+                              invoice.amount || 
+                              invoice.total_amount || 0;
+                const numericAmount = typeof amount === 'number' ? amount : 
+                                   (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+                
+                if (amountMin && numericAmount < parseFloat(amountMin)) return false;
+                if (amountMax && numericAmount > parseFloat(amountMax)) return false;
+                return true;
+              });
+            }
+            
+            setRecentInvoices(filteredInvoices);
           }
         }
       } else {
@@ -583,18 +844,140 @@ export default function AnalyticsDashboard() {
     setSelectedReceipt(receipt);
     setShowCategoryModal(true);
   };
+
+  /** Treat epoch or placeholder dates as "no date" so we show "Select date" and default picker to today. */
+  const isEpochOrEmptyDate = (s: string): boolean =>
+    !s || s === '1969-12-31' || s === '1970-01-01';
+
+  /** Get raw date string YYYY-MM-DD for receipt (document date) or invoice (due date). Uses safe parsing; falls back to upload date (created_at) when transaction date is missing or invalid. Epoch/empty treated as no date. */
+  const getEditDateString = (item: any, type: 'receipt' | 'invoice'): string => {
+    let s = '';
+    if (type === 'invoice') {
+      const tx = item?.json_data?.due_date ?? item?.json_data?.invoice_date ?? item?.json_data?.date;
+      s = safeToDateString(tx);
+      if (!s) s = safeToDateString(item?.created_at);
+    } else {
+      const tx = item?.json_data?.date ?? item?.json_data?.receipt_data?.date;
+      s = safeToDateString(tx);
+      if (!s) s = safeToDateString(item?.created_at);
+    }
+    return isEpochOrEmptyDate(s) ? '' : s;
+  };
+
+  const handleOpenEdit = (item: any, type: 'receipt' | 'invoice') => {
+    const amount = item?.json_data?.total_amount ?? item?.json_data?.amount ?? item?.json_data?.total ?? item?.amount ?? item?.total_amount ?? 0;
+    const numericAmount = typeof amount === 'number' ? amount : (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
+    const amountStr = numericAmount > 0 ? String(numericAmount) : (typeof amount === 'string' ? amount : '');
+    const storeName = type === 'invoice'
+      ? (item?.vendor_name ?? item?.json_data?.vendor_name ?? item?.json_data?.business_name ?? item?.json_data?.store_name ?? '')
+      : (item?.json_data?.store_name ?? item?.json_data?.business_name ?? item?.json_data?.merchant_name ?? item?.json_data?.receipt_data?.store_name ?? '');
+    const category = item?.category ?? item?.json_data?.category ?? item?.receipt_category ?? item?.invoice_category ?? 'Uncategorized';
+    setEditItem(item);
+    setEditType(type);
+    const dateStr = getEditDateString(item, type);
+    setEditForm({
+      store_name: storeName || '',
+      total_amount: amountStr || '',
+      date: dateStr,
+      category: category || 'Uncategorized',
+    });
+    const parsed = dateStr ? parseLocalDateString(dateStr) : null;
+    setEditDatePickerValue(parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date());
+    setShowEditModal(true);
+  };
+
+  const handleCloseEdit = () => {
+    setShowEditModal(false);
+    setShowEditDatePicker(false);
+    setEditItem(null);
+    setEditForm({ store_name: '', total_amount: '', date: '', category: 'Uncategorized' });
+  };
+
+  const handleEditDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowEditDatePicker(false);
+      if (event?.type === 'set' && selectedDate) {
+        setEditDatePickerValue(selectedDate);
+        setEditForm((f) => ({ ...f, date: formatDateForInput(selectedDate) }));
+      }
+      setTimeout(() => setShowEditModal(true), 0);
+    } else {
+      // iOS spinner: update state as user scrolls; modal closes via Done/Cancel
+      if (selectedDate) {
+        setEditDatePickerValue(selectedDate);
+        setEditForm((f) => ({ ...f, date: formatDateForInput(selectedDate) }));
+      }
+    }
+  };
+
+  const handleEditDatePickerDone = () => {
+    setShowEditDatePicker(false);
+    setTimeout(() => setShowEditModal(true), 0);
+  };
+
+  const handleConfirmSave = () => {
+    Alert.alert(
+      'Save changes?',
+      'Are you sure you want to save these changes?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Save', onPress: handleSaveEdit },
+      ]
+    );
+  };
+
+  const handleSaveEdit = async () => {
+    const fileId = getFileId(editItem);
+    if (fileId == null) {
+      Alert.alert('Error', 'Cannot save: file ID not found.');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const correctionData: Record<string, unknown> = {
+        file_kind: editType,
+        category: editForm.category || 'Uncategorized',
+      };
+      if (editType === 'receipt') {
+        correctionData.store_name = editForm.store_name || undefined;
+        correctionData.total_amount = editForm.total_amount || undefined;
+        correctionData.date = editForm.date ? localDateStringToUTCISO(editForm.date) : undefined;
+      } else {
+        correctionData.vendor_name = editForm.store_name || undefined;
+        correctionData.total_amount = editForm.total_amount || undefined;
+        correctionData.due_date = editForm.date ? localDateStringToUTCISO(editForm.date) : undefined;
+      }
+      const response = await apiClient.correctFileData(fileId, correctionData);
+      if (response.success) {
+        Alert.alert('Success', 'Saved successfully');
+        handleCloseEdit();
+        await loadAnalytics();
+      } else {
+        Alert.alert('Error', response.message || 'Failed to save');
+      }
+    } catch (error) {
+      console.error('Error saving correction:', error);
+      Alert.alert('Error', 'Failed to save');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
   
   const handleSelectCategory = async (category: string) => {
     if (!selectedReceipt) return;
-    
+    const fileId = getFileId(selectedReceipt);
+    if (fileId == null) {
+      Alert.alert('Error', 'Cannot categorize: file ID not found.');
+      return;
+    }
     setCategorizingReceipt(true);
     try {
-      const response = await apiClient.categorizeReceipt(selectedReceipt.id, category);
+      const response = await apiClient.categorizeReceipt(fileId, category);
       if (response.success) {
         Alert.alert('Success', `Receipt categorized as "${category}"`);
         // Update the receipt in the local state
         setRecentReceipts(prev => prev.map(r => 
-          r.id === selectedReceipt.id ? { ...r, category } : r
+          getFileId(r) === fileId ? { ...r, category } : r
         ));
         setShowCategoryModal(false);
         setSelectedReceipt(null);
@@ -628,7 +1011,7 @@ export default function AnalyticsDashboard() {
     try {
       // The invoice object from recent_invoices has a file ID
       // The new endpoint /api/v1/web/files/{file_id}/payment-status accepts file ID
-      const fileId = selectedInvoice.id;
+      const fileId = getFileId(selectedInvoice);
       
       console.log('💳 Updating payment status:', {
         fileId,
@@ -636,7 +1019,7 @@ export default function AnalyticsDashboard() {
         invoiceObject: selectedInvoice,
       });
       
-      if (!fileId) {
+      if (fileId == null) {
         Alert.alert('Error', 'File ID not found. Cannot update payment status.');
         setUpdatingPaymentStatus(false);
         return;
@@ -647,7 +1030,7 @@ export default function AnalyticsDashboard() {
         Alert.alert('Success', `Invoice payment status updated to "${paymentStatus}"`);
         // Update the invoice in the local state
         setRecentInvoices(prev => prev.map(inv => {
-          if (inv.id === fileId) {
+          if (getFileId(inv) === fileId) {
             const updated = { ...inv };
             updated.payment_status = paymentStatus;
             if (updated.json_data) {
@@ -950,13 +1333,20 @@ export default function AnalyticsDashboard() {
     }
   };
 
-  useEffect(() => {
-    console.log('📊 AnalyticsDashboard useEffect triggered', { isAuthenticated, authLoading });
-    // Wait for authentication to be ready before loading analytics
-    if (!authLoading) {
+  // Use useFocusEffect instead of useEffect to ensure data reloads when screen comes into focus
+  // This is critical for Android where useEffect may not re-run when navigating to the screen
+  useFocusEffect(
+    useCallback(() => {
+      console.log('📊 AnalyticsDashboard useFocusEffect triggered', { isAuthenticated, authLoading, user: user?.username, platform: Platform.OS });
+      // Wait for authentication to finish loading before attempting to load analytics
+      if (authLoading) {
+        console.log('📊 Auth still loading, waiting...');
+        return;
+      }
+      // Once auth has finished loading, load analytics (whether authenticated or not)
       loadAnalytics();
-    }
-  }, [isAuthenticated, authLoading]);
+    }, [isAuthenticated, authLoading, user?.id, user?.username])
+  );
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -973,32 +1363,84 @@ export default function AnalyticsDashboard() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const getActiveFiltersText = () => {
+    const filters: string[] = [];
+    
+    if (useCustomFilters) {
+      if (customDateFrom && customDateTo) {
+        filters.push(`${customDateFrom} to ${customDateTo}`);
+      } else if (timePeriod === '365') {
+        filters.push('1 Year');
+      } else if (timePeriod) {
+        filters.push(`${timePeriod === '7' ? '7 Days' : timePeriod === '30' ? '30 Days' : '90 Days'}`);
+      }
+    } else if (timePeriod) {
+      filters.push(`${timePeriod === '7' ? '7 Days' : timePeriod === '30' ? '30 Days' : timePeriod === '90' ? '90 Days' : '1 Year'}`);
+    }
+    
+    if (amountMin || amountMax) {
+      const amountRange = [];
+      if (amountMin) amountRange.push(`$${amountMin}`);
+      if (amountMax) amountRange.push(`$${amountMax}`);
+      filters.push(`Amount: ${amountRange.join(' - ')}`);
+    }
+    
+    if (storeVendorName) {
+      filters.push(`${activeTab === 'receipts' ? 'Store' : 'Vendor'}: ${storeVendorName}`);
+    }
+    
+    return filters.length > 0 ? filters.join(' • ') : '';
+  };
+
   const TimePeriodSelector = () => (
     <View style={styles.timePeriodContainer}>
-      <Text style={styles.sectionTitle}>Time Period</Text>
+      <View style={styles.timePeriodHeader}>
+        <Text style={styles.sectionTitle}>Time Period</Text>
+        {getActiveFiltersText() && (
+          <Text style={styles.activeFiltersText}>{getActiveFiltersText()}</Text>
+        )}
+      </View>
       <View style={styles.timePeriodButtons}>
-        {['7', '30', '90', '365'].map((days) => (
+        {['7', '30', '90'].map((days) => (
           <TouchableOpacity
             key={days}
             style={[
               styles.timePeriodButton,
-              timePeriod === days && styles.timePeriodButtonActive,
+              timePeriod === days && !useCustomFilters && styles.timePeriodButtonActive,
             ]}
             onPress={() => {
               setTimePeriod(days);
+              setUseCustomFilters(false);
               loadAnalytics(days);
             }}
           >
             <Text
               style={[
                 styles.timePeriodButtonText,
-                timePeriod === days && styles.timePeriodButtonTextActive,
+                timePeriod === days && !useCustomFilters && styles.timePeriodButtonTextActive,
               ]}
             >
-              {days === '7' ? '7 Days' : days === '30' ? '30 Days' : days === '90' ? '90 Days' : '1 Year'}
+              {days === '7' ? '7 Days' : days === '30' ? '30 Days' : '90 Days'}
             </Text>
           </TouchableOpacity>
         ))}
+        <TouchableOpacity
+          style={[
+            styles.timePeriodButton,
+            styles.moreButton,
+            useCustomFilters && styles.timePeriodButtonActive,
+          ]}
+          onPress={() => setShowAdvancedFilterModal(true)}
+        >
+          <Text
+            style={[
+              styles.timePeriodButtonText,
+              useCustomFilters && styles.timePeriodButtonTextActive,
+            ]}
+          >
+            More
+          </Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -1076,7 +1518,7 @@ export default function AnalyticsDashboard() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Analytics</Text>
+          <Text style={styles.headerTitle}>Financials</Text>
           <View style={styles.placeholder} />
         </View>
         <View style={styles.loadingContainer}>
@@ -1096,7 +1538,7 @@ export default function AnalyticsDashboard() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Analytics</Text>
+          <Text style={styles.headerTitle}>Financials</Text>
           <TouchableOpacity onPress={() => loadAnalytics()}>
             <Ionicons name="refresh" size={24} color="#007AFF" />
           </TouchableOpacity>
@@ -1185,7 +1627,7 @@ export default function AnalyticsDashboard() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Analytics</Text>
+        <Text style={styles.headerTitle}>Financials</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={handleShareReport} style={styles.shareButton}>
             <Ionicons name="share-outline" size={24} color="#10B981" />
@@ -1600,14 +2042,28 @@ export default function AnalyticsDashboard() {
                           });
                         }
                         
-                        // Format date
-                        const date = receipt.created_at ? new Date(receipt.created_at).toLocaleDateString() : 
-                                    receipt.json_data?.date ? new Date(receipt.json_data.date).toLocaleDateString() :
-                                    receipt.json_data?.receipt_data?.date ? new Date(receipt.json_data.receipt_data.date).toLocaleDateString() :
-                                    'Unknown date';
+                        // Format date: use transaction date from json; if not available or invalid, show upload date (created_at)
+                        const txDate = receipt.json_data?.date ?? receipt.json_data?.receipt_data?.date;
+                        const uploadDate = receipt.created_at;
+                        const date = (() => {
+                          if (txDate) {
+                            const d = new Date(txDate);
+                            if (!Number.isNaN(d.getTime())) return d.toLocaleDateString();
+                          }
+                          if (uploadDate) {
+                            const d = new Date(uploadDate);
+                            if (!Number.isNaN(d.getTime())) return d.toLocaleDateString();
+                          }
+                          return 'Unknown date';
+                        })();
                         
                         return (
-                          <View key={`receipt-${index}-${receipt.id || index}`} style={styles.receiptItemContainer}>
+                          <TouchableOpacity
+                            key={`receipt-${index}-${getFileId(receipt) ?? index}`}
+                            style={styles.receiptItemContainer}
+                            activeOpacity={0.7}
+                            onPress={() => openFileInViewer(receipt)}
+                          >
                             <View style={styles.compactListItem}>
                             <View style={styles.compactListInfo}>
                               <Text style={styles.compactListName}>{businessName}</Text>
@@ -1617,15 +2073,15 @@ export default function AnalyticsDashboard() {
                             </View>
                               <View style={styles.receiptActions}>
                             <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                   style={styles.categorizeButton}
-                                  onPress={() => handleCategorizeReceipt(receipt)}
+                                  onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(receipt, 'receipt'); }}
                                 >
-                                  <Ionicons name="pricetag-outline" size={18} color="#007AFF" />
+                                  <Ionicons name="pencil-outline" size={18} color="#007AFF" />
                                 </TouchableOpacity>
                               </View>
                             </View>
-                          </View>
+                          </TouchableOpacity>
                         );
                       })}
                     </View>
@@ -1763,10 +2219,20 @@ export default function AnalyticsDashboard() {
                       // Only use filename as last resort if no business name is found
                       // Remove filename from the fallback chain
                       
-                      const date = invoice.created_at ? new Date(invoice.created_at).toLocaleDateString() : 
-                                  invoice.json_data?.date ? new Date(invoice.json_data.date).toLocaleDateString() :
-                                  invoice.json_data?.invoice_date ? new Date(invoice.json_data.invoice_date).toLocaleDateString() :
-                                  'Unknown date';
+                      // Prefer document date; if not available or invalid, show upload date (created_at)
+                      const invTxDate = invoice.json_data?.date ?? invoice.json_data?.invoice_date;
+                      const invUploadDate = invoice.created_at;
+                      const date = (() => {
+                        if (invTxDate) {
+                          const d = new Date(invTxDate);
+                          if (!Number.isNaN(d.getTime())) return d.toLocaleDateString();
+                        }
+                        if (invUploadDate) {
+                          const d = new Date(invUploadDate);
+                          if (!Number.isNaN(d.getTime())) return d.toLocaleDateString();
+                        }
+                        return 'Unknown date';
+                      })();
                       const status = (invoice.payment_status || 
                                     invoice.json_data?.payment_status || 
                                     invoice.json_data?.status || 
@@ -1774,7 +2240,12 @@ export default function AnalyticsDashboard() {
                       const statusColor = status === 'paid' ? '#10B981' : status === 'partial' ? '#F59E0B' : '#EF4444';
                       
                       return (
-                        <View key={`invoice-${index}-${invoice.id || index}`} style={styles.receiptItemContainer}>
+                        <TouchableOpacity
+                          key={`invoice-${index}-${getFileId(invoice) ?? index}`}
+                          style={styles.receiptItemContainer}
+                          activeOpacity={0.7}
+                          onPress={() => openFileInViewer(invoice)}
+                        >
                           <View style={styles.compactListItem}>
                           <View style={styles.compactListInfo}>
                               <Text style={styles.compactListName}>{businessName}</Text>
@@ -1784,15 +2255,21 @@ export default function AnalyticsDashboard() {
                           </View>
                             <View style={styles.receiptActions}>
                           <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
-                              <TouchableOpacity 
+                              <TouchableOpacity
                                 style={styles.categorizeButton}
-                                onPress={() => handleUpdatePaymentStatus(invoice)}
+                                onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(invoice, 'invoice'); }}
+                              >
+                                <Ionicons name="pencil-outline" size={18} color="#007AFF" />
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.categorizeButton}
+                                onPress={(e) => { e?.stopPropagation?.(); handleUpdatePaymentStatus(invoice); }}
                               >
                                 <Ionicons name="card-outline" size={18} color="#007AFF" />
                               </TouchableOpacity>
                             </View>
                           </View>
-                        </View>
+                        </TouchableOpacity>
                       );
                     })}
                   </View>
@@ -1812,6 +2289,20 @@ export default function AnalyticsDashboard() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Document Viewer - same as files page when tapping a receipt/invoice row */}
+      {showDocumentViewer && selectedFileForView && (
+        <DocumentViewer
+          fileId={selectedFileForView.fileId}
+          fileName={selectedFileForView.fileName}
+          fileType={selectedFileForView.fileType}
+          fileCategory={selectedFileForView.fileCategory}
+          onClose={() => {
+            setShowDocumentViewer(false);
+            setSelectedFileForView(null);
+          }}
+        />
+      )}
       
       {/* Category Selection Modal */}
       <Modal
@@ -1851,6 +2342,181 @@ export default function AnalyticsDashboard() {
           </View>
         </View>
       </Modal>
+
+      {/* Edit Receipt/Invoice Modal - store name, date, amount, category (same endpoint as web) */}
+      <Modal
+        visible={showEditModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={handleCloseEdit}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.editModalContent]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{editType === 'invoice' ? 'Edit Invoice' : 'Correct Data'}</Text>
+              <TouchableOpacity onPress={handleCloseEdit} disabled={savingEdit}>
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.editFormScroll}
+              contentContainerStyle={styles.editFormScrollContent}
+              keyboardShouldPersistTaps="handled"
+              bounces={true}
+              overScrollMode="always"
+            >
+              <View style={styles.editFormRow}>
+                <Text style={styles.editFormLabel}>{editType === 'invoice' ? 'Vendor name' : 'Store name'}</Text>
+                <TextInput
+                  style={styles.editFormInput}
+                  value={editForm.store_name}
+                  onChangeText={(t) => setEditForm((f) => ({ ...f, store_name: t }))}
+                  placeholder={editType === 'invoice' ? 'Vendor name' : 'Store name'}
+                  placeholderTextColor="#999"
+                />
+              </View>
+              <View style={styles.editFormRowDateAmount}>
+                <View style={[styles.editFormRow, { flex: 1 }]}>
+                  <Text style={styles.editFormLabel}>Date</Text>
+                  <View style={styles.editFormDateWrapper}>
+                    <TouchableOpacity
+                      style={[styles.editFormInput, styles.editFormDateTouchable]}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        const useToday = isEpochOrEmptyDate(editForm.date);
+                        const d = !useToday && editForm.date ? parseLocalDateString(editForm.date) : null;
+                        if (useToday || !d || isNaN(d.getTime())) {
+                          setEditDatePickerValue(new Date());
+                        } else {
+                          setEditDatePickerValue(d);
+                        }
+                        // Close edit modal first so only one Modal is visible at a time (iOS doesn't show a second Modal on top)
+                        setShowEditModal(false);
+                        setTimeout(() => setShowEditDatePicker(true), Platform.OS === 'ios' ? 350 : 0);
+                      }}
+                    >
+                      <View style={styles.editFormDateTextWrap}>
+                        <Text style={[styles.editFormDateText, !editForm.date && styles.editFormDatePlaceholder]} numberOfLines={1}>
+                          {editForm.date || 'Select date'}
+                        </Text>
+                      </View>
+                      <Ionicons name="calendar-outline" size={20} color="#666" style={styles.editFormDateIcon} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={[styles.editFormRow, { flex: 1 }]}>
+                  <Text style={styles.editFormLabel}>Total</Text>
+                  <TextInput
+                    style={styles.editFormInput}
+                    value={editForm.total_amount}
+                    onChangeText={(t) => setEditForm((f) => ({ ...f, total_amount: t }))}
+                    placeholder="0.00"
+                    placeholderTextColor="#999"
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+              <View style={styles.editFormRow}>
+                <Text style={styles.editFormLabel}>Category</Text>
+                <View style={styles.editCategoryList}>
+                  {receiptCategories.map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[
+                        styles.editCategoryChip,
+                        editForm.category === cat && styles.editCategoryChipSelected,
+                      ]}
+                      onPress={() => setEditForm((f) => ({ ...f, category: cat }))}
+                    >
+                      <Text style={[
+                        styles.editCategoryChipText,
+                        editForm.category === cat && styles.editCategoryChipTextSelected,
+                      ]}>{cat}</Text>
+                      {editForm.category === cat && <Ionicons name="checkmark" size={18} color="#fff" />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </ScrollView>
+            <View style={styles.editFormActions}>
+              <TouchableOpacity
+                style={[styles.editFormButton, styles.editFormButtonCancel]}
+                onPress={handleCloseEdit}
+                disabled={savingEdit}
+              >
+                <Text style={styles.editFormButtonTextCancel}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.editFormButton, styles.editFormButtonSave]}
+                onPress={handleConfirmSave}
+                disabled={savingEdit}
+              >
+                {savingEdit ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.editFormButtonText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit form date - iOS: Spinner modal (same as Schedule Meeting) */}
+      {showEditDatePicker && Platform.OS === 'ios' && (
+        <Modal
+          visible={showEditDatePicker}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={handleEditDatePickerDone}
+        >
+          <TouchableOpacity
+            style={styles.pickerModalOverlay}
+            activeOpacity={1}
+            onPress={handleEditDatePickerDone}
+          >
+            <TouchableOpacity
+              style={styles.pickerModalContainer}
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.pickerModalHeader}>
+                <TouchableOpacity onPress={handleEditDatePickerDone}>
+                  <Text style={styles.pickerModalCancelButton}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={styles.pickerModalTitle}>Select date</Text>
+                <TouchableOpacity onPress={() => { setShowEditDatePicker(false); setTimeout(() => setShowEditModal(true), 0); }}>
+                  <Text style={styles.doneButton}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.pickerModalContent}>
+                <DateTimePicker
+                  value={getValidDate(editDatePickerValue)}
+                  mode="date"
+                  display="spinner"
+                  minimumDate={filterDateMin}
+                  maximumDate={filterDateMax}
+                  onChange={handleEditDateChange}
+                  style={styles.pickerModalDatePicker}
+                  textColor="#000000"
+                  accentColor="#007AFF"
+                />
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
+      {/* Edit form date - Android: Native calendar */}
+      {showEditDatePicker && Platform.OS !== 'ios' && (
+        <DateTimePicker
+          value={getValidDate(editDatePickerValue)}
+          mode="date"
+          display="default"
+          minimumDate={filterDateMin}
+          maximumDate={filterDateMax}
+          onChange={handleEditDateChange}
+        />
+      )}
       
       {/* Payment Status Selection Modal */}
       <Modal
@@ -1893,6 +2559,379 @@ export default function AnalyticsDashboard() {
           </View>
         </View>
       </Modal>
+      
+      {/* Advanced Filter Modal - KeyboardAvoidingView so content is not covered by keyboard */}
+      <Modal
+        visible={showAdvancedFilterModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setShowAdvancedFilterModal(false);
+        }}
+        statusBarTranslucent
+      >
+        {showAdvancedFilterModal && (
+        <View style={styles.filterModalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => {
+              Keyboard.dismiss();
+              setShowAdvancedFilterModal(false);
+            }}
+          />
+          <KeyboardAvoidingView
+            style={styles.filterModalKeyboardAvoid}
+            behavior="padding"
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+          >
+            <View style={styles.filterModalContentBox}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Advanced Filters</Text>
+                <TouchableOpacity onPress={() => {
+                  // Dismiss keyboard before closing
+                  Keyboard.dismiss();
+                  setTimeout(() => setShowAdvancedFilterModal(false), 100);
+                }}>
+                  <Ionicons name="close" size={24} color="#333" />
+                </TouchableOpacity>
+              </View>
+              
+              <ScrollView
+                style={styles.filterModalScroll}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.filterModalScrollContent}
+                showsVerticalScrollIndicator={false}
+              >
+              {/* Date Range Section - same date picker trigger style as Schedule Meeting */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterSectionTitle}>Date Range</Text>
+                <TouchableOpacity
+                  style={styles.filterOptionButton}
+                  onPress={() => {
+                    setCustomDateFrom('');
+                    setCustomDateTo('');
+                    setAmountMin('');
+                    setAmountMax('');
+                    setStoreVendorName('');
+                    setUseCustomFilters(false);
+                    setTimePeriod('365');
+                    Keyboard.dismiss();
+                    setTimeout(() => {
+                      setShowAdvancedFilterModal(false);
+                      loadAnalytics('365');
+                    }, 100);
+                  }}
+                >
+                  <Text style={styles.filterOptionText}>1 Year</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                </TouchableOpacity>
+
+                <View style={styles.filterInputGroup}>
+                  <Text style={styles.filterInputLabel}>From Date</Text>
+                  <TouchableOpacity
+                    style={styles.filterDatePickerContainer}
+                    onPress={() => {
+                      if (customDateFrom) {
+                        const [y, m, d] = customDateFrom.split('-').map(Number);
+                        setDateFromPickerValue(new Date(y, m - 1, d));
+                      }
+                      if (Platform.OS === 'ios') {
+                        setReopenAdvancedFilterAfterDatePicker(true);
+                        setShowAdvancedFilterModal(false);
+                        setTimeout(() => setShowDateFromPicker(true), 350);
+                      } else {
+                        setShowDateFromPicker(true);
+                      }
+                    }}
+                  >
+                    <Text style={customDateFrom ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
+                      {customDateFrom
+                        ? (() => {
+                            const d = parseLocalDateString(customDateFrom);
+                            return !d || Number.isNaN(d.getTime())
+                              ? customDateFrom
+                              : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+                          })()
+                        : 'Select date'}
+                    </Text>
+                    <Ionicons name="calendar-outline" size={20} color="#007AFF" />
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.filterInputGroup}>
+                  <Text style={styles.filterInputLabel}>To Date</Text>
+                  <TouchableOpacity
+                    style={styles.filterDatePickerContainer}
+                    onPress={() => {
+                      if (customDateTo) {
+                        const [y, m, d] = customDateTo.split('-').map(Number);
+                        setDateToPickerValue(new Date(y, m - 1, d));
+                      }
+                      if (Platform.OS === 'ios') {
+                        setReopenAdvancedFilterAfterDatePicker(true);
+                        setShowAdvancedFilterModal(false);
+                        setTimeout(() => setShowDateToPicker(true), 350);
+                      } else {
+                        setShowDateToPicker(true);
+                      }
+                    }}
+                  >
+                        <Text style={customDateTo ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
+                          {customDateTo
+                            ? (() => {
+                                const d = parseLocalDateString(customDateTo);
+                                return !d || Number.isNaN(d.getTime())
+                                  ? customDateTo
+                                  : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+                              })()
+                            : 'Select date'}
+                    </Text>
+                    <Ionicons name="calendar-outline" size={20} color="#007AFF" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
+              {/* Amount Range Section */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterSectionTitle}>Amount Range</Text>
+                <View style={styles.amountRangeContainer}>
+                  <View style={styles.amountInputContainer}>
+                    <Text style={styles.filterLabel}>Min Amount</Text>
+                    <TextInput
+                      style={styles.amountInput}
+                      placeholder="0.00"
+                      value={amountMin}
+                      onChangeText={setAmountMin}
+                      keyboardType="decimal-pad"
+                      placeholderTextColor="#999"
+                    />
+                  </View>
+                  <View style={styles.amountInputContainer}>
+                    <Text style={styles.filterLabel}>Max Amount</Text>
+                    <TextInput
+                      style={styles.amountInput}
+                      placeholder="0.00"
+                      value={amountMax}
+                      onChangeText={setAmountMax}
+                      keyboardType="decimal-pad"
+                      placeholderTextColor="#999"
+                    />
+                  </View>
+                </View>
+              </View>
+              
+              {/* Store/Vendor Name Section */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterSectionTitle}>
+                  {activeTab === 'receipts' ? 'Store Name' : 'Vendor Name'}
+                </Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder={`Enter ${activeTab === 'receipts' ? 'store' : 'vendor'} name`}
+                  value={storeVendorName}
+                  onChangeText={setStoreVendorName}
+                  placeholderTextColor="#999"
+                />
+              </View>
+              
+              {/* Action Buttons */}
+              <View style={styles.filterActions}>
+                <TouchableOpacity
+                  style={[styles.filterButton, styles.filterButtonSecondary]}
+                  onPress={() => {
+                    setCustomDateFrom('');
+                    setCustomDateTo('');
+                    setAmountMin('');
+                    setAmountMax('');
+                    setStoreVendorName('');
+                    setUseCustomFilters(false);
+                    Keyboard.dismiss();
+                    setTimeout(() => setShowAdvancedFilterModal(false), 100);
+                  }}
+                >
+                  <Text style={styles.filterButtonTextSecondary}>Clear All</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterButton, styles.filterButtonPrimary]}
+                  onPress={() => {
+                    setUseCustomFilters(true);
+                    Keyboard.dismiss();
+                    setTimeout(() => {
+                      setShowAdvancedFilterModal(false);
+                      loadAnalytics();
+                    }, 100);
+                  }}
+                >
+                  <Text style={styles.filterButtonTextPrimary}>Apply Filters</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+          </KeyboardAvoidingView>
+        </View>
+        )}
+      </Modal>
+
+      {/* From Date - iOS: Spinner modal (same as Schedule Meeting); only one modal at a time to avoid freeze */}
+      {showDateFromPicker && Platform.OS === 'ios' && (
+        <Modal
+          visible={showDateFromPicker}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => {
+            setShowDateFromPicker(false);
+            if (reopenAdvancedFilterAfterDatePicker) {
+              setReopenAdvancedFilterAfterDatePicker(false);
+              setTimeout(() => setShowAdvancedFilterModal(true), 100);
+            }
+          }}
+        >
+          <TouchableOpacity
+            style={styles.pickerModalOverlay}
+            activeOpacity={1}
+            onPress={() => {
+              setShowDateFromPicker(false);
+              if (reopenAdvancedFilterAfterDatePicker) {
+                setReopenAdvancedFilterAfterDatePicker(false);
+                setTimeout(() => setShowAdvancedFilterModal(true), 100);
+              }
+            }}
+          >
+            <TouchableOpacity
+              style={styles.pickerModalContainer}
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.pickerModalHeader}>
+                <TouchableOpacity onPress={() => {
+                  setShowDateFromPicker(false);
+                  if (reopenAdvancedFilterAfterDatePicker) {
+                    setReopenAdvancedFilterAfterDatePicker(false);
+                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
+                  }
+                }}>
+                  <Text style={styles.pickerModalCancelButton}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={styles.pickerModalTitle}>Select date</Text>
+                <TouchableOpacity onPress={() => {
+                  setShowDateFromPicker(false);
+                  if (reopenAdvancedFilterAfterDatePicker) {
+                    setReopenAdvancedFilterAfterDatePicker(false);
+                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
+                  }
+                }}>
+                  <Text style={styles.doneButton}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.pickerModalContent}>
+                <DateTimePicker
+                  value={getValidDate(dateFromPickerValue)}
+                  mode="date"
+                  display="spinner"
+                  onChange={handleDateFromChange}
+                  minimumDate={filterDateMin}
+                  maximumDate={filterDateMax}
+                  style={styles.pickerModalDatePicker}
+                  textColor="#000000"
+                  accentColor="#007AFF"
+                />
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
+      {/* From Date - Android: Native calendar */}
+      {showDateFromPicker && Platform.OS !== 'ios' && (
+        <DateTimePicker
+          value={getValidDate(dateFromPickerValue)}
+          mode="date"
+          display="default"
+          onChange={handleDateFromChange}
+          minimumDate={filterDateMin}
+          maximumDate={filterDateMax}
+        />
+      )}
+
+      {/* To Date - iOS: Spinner modal (same as Schedule Meeting); only one modal at a time to avoid freeze */}
+      {showDateToPicker && Platform.OS === 'ios' && (
+        <Modal
+          visible={showDateToPicker}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => {
+            setShowDateToPicker(false);
+            if (reopenAdvancedFilterAfterDatePicker) {
+              setReopenAdvancedFilterAfterDatePicker(false);
+              setTimeout(() => setShowAdvancedFilterModal(true), 100);
+            }
+          }}
+        >
+          <TouchableOpacity
+            style={styles.pickerModalOverlay}
+            activeOpacity={1}
+            onPress={() => {
+              setShowDateToPicker(false);
+              if (reopenAdvancedFilterAfterDatePicker) {
+                setReopenAdvancedFilterAfterDatePicker(false);
+                setTimeout(() => setShowAdvancedFilterModal(true), 100);
+              }
+            }}
+          >
+            <TouchableOpacity
+              style={styles.pickerModalContainer}
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.pickerModalHeader}>
+                <TouchableOpacity onPress={() => {
+                  setShowDateToPicker(false);
+                  if (reopenAdvancedFilterAfterDatePicker) {
+                    setReopenAdvancedFilterAfterDatePicker(false);
+                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
+                  }
+                }}>
+                  <Text style={styles.pickerModalCancelButton}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={styles.pickerModalTitle}>Select date</Text>
+                <TouchableOpacity onPress={() => {
+                  setShowDateToPicker(false);
+                  if (reopenAdvancedFilterAfterDatePicker) {
+                    setReopenAdvancedFilterAfterDatePicker(false);
+                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
+                  }
+                }}>
+                  <Text style={styles.doneButton}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.pickerModalContent}>
+                <DateTimePicker
+                  value={getValidDate(dateToPickerValue)}
+                  mode="date"
+                  display="spinner"
+                  onChange={handleDateToChange}
+                  minimumDate={getValidDate(dateFromPickerValue)}
+                  maximumDate={filterDateMax}
+                  style={styles.pickerModalDatePicker}
+                  textColor="#000000"
+                  accentColor="#007AFF"
+                />
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
+      {/* To Date - Android: Native calendar */}
+      {showDateToPicker && Platform.OS !== 'ios' && (
+        <DateTimePicker
+          value={getValidDate(dateToPickerValue)}
+          mode="date"
+          display="default"
+          onChange={handleDateToChange}
+          minimumDate={getValidDate(dateFromPickerValue)}
+          maximumDate={filterDateMax}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -1997,19 +3036,34 @@ const styles = StyleSheet.create({
   },
   timePeriodContainer: {
     backgroundColor: '#fff',
-    marginHorizontal: 16,
+    marginHorizontal: Platform.OS === 'android' ? 12 : 16,
     marginVertical: 8,
     borderRadius: 12,
-    padding: 16,
+    padding: Platform.OS === 'android' ? 10 : 16,
+  },
+  timePeriodHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Platform.OS === 'android' ? 8 : 12,
+  },
+  activeFiltersText: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '500',
+    fontStyle: 'italic',
+    flex: 1,
+    textAlign: 'right',
+    marginLeft: 12,
   },
   timePeriodButtons: {
     flexDirection: 'row',
-    gap: 8,
+    gap: Platform.OS === 'android' ? 4 : 8,
   },
   timePeriodButton: {
     flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'android' ? 6 : 8,
+    paddingHorizontal: Platform.OS === 'android' ? 4 : 12,
     borderRadius: 8,
     backgroundColor: '#f0f0f0',
     alignItems: 'center',
@@ -2018,7 +3072,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
   },
   timePeriodButtonText: {
-    fontSize: 14,
+    fontSize: Platform.OS === 'android' ? 12 : 14,
     fontWeight: '500',
     color: '#666',
   },
@@ -2668,6 +3722,35 @@ const styles = StyleSheet.create({
     maxHeight: '70%',
     paddingBottom: 20,
   },
+  editModalContent: {
+    maxHeight: '85%',
+    height: '85%',
+    paddingBottom: 0,
+  },
+  editFormScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  editFormScrollContent: {
+    paddingBottom: 24,
+  },
+  editFormActions: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    paddingBottom: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  editFormButtonCancel: {
+    flex: 1,
+    backgroundColor: '#e5e7eb',
+  },
+  editFormButtonSave: {
+    flex: 1,
+    backgroundColor: '#007AFF',
+  },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2706,5 +3789,351 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  editFormRow: {
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  editFormRowDateAmount: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  editFormLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 6,
+  },
+  editFormInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: '#333',
+  },
+  editFormDateTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  editFormDateText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  editFormDatePlaceholder: {
+    color: '#999',
+  },
+  editFormDateIcon: {
+    marginLeft: 8,
+    flexShrink: 0,
+  },
+  editFormDateWrapper: {
+    position: 'relative',
+  },
+  editFormDateTouchable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  editCategoryList: {
+    marginTop: 4,
+  },
+  editCategoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    marginBottom: 8,
+  },
+  editCategoryChipSelected: {
+    backgroundColor: '#007AFF',
+  },
+  editCategoryChipText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  editCategoryChipTextSelected: {
+    color: '#fff',
+  },
+  editFormButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editFormButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  editFormButtonTextCancel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  moreButton: {
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  filterModalKeyboardAvoid: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'flex-end',
+    maxHeight: '90%',
+  },
+  filterModalOverlayTouchable: {
+    maxHeight: '90%',
+  },
+  filterModalContentBox: {
+    backgroundColor: '#fff',
+    minHeight: 320,
+    borderRadius: 16,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+    overflow: 'hidden',
+    maxHeight: '90%',
+    zIndex: 1,
+  },
+  filterModalScroll: {
+    maxHeight: 500,
+  },
+  filterModalScrollContent: {
+    padding: 20,
+    paddingBottom: 20,
+  },
+  filterSection: {
+    marginBottom: 24,
+  },
+  filterSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  filterOptionButton: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  filterOptionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  dateRangeContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  dateInputContainer: {
+    flex: 1,
+  },
+  filterLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+    marginBottom: 8,
+  },
+  /* Filter date inputs - same look as Schedule Meeting date picker trigger */
+  filterInputGroup: {
+    marginBottom: 16,
+  },
+  filterInputLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#495057',
+    marginBottom: 8,
+  },
+  filterDatePickerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+  },
+  filterDatePickerLabel: {
+    fontSize: 16,
+    color: '#212529',
+  },
+  filterDatePickerPlaceholder: {
+    fontSize: 16,
+    color: '#6c757d',
+  },
+  dateInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  dateInputText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  dateInputPlaceholder: {
+    fontSize: 14,
+    color: '#999',
+  },
+  datePickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  datePickerModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 24,
+    width: '100%',
+    minHeight: 400,
+  },
+  /* Compact date picker spinner modal */
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pickerModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginHorizontal: 24,
+    width: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  pickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+    backgroundColor: '#fff',
+    zIndex: 1,
+    elevation: 2,
+  },
+  pickerModalTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#212529',
+  },
+  pickerModalCancelButton: {
+    fontSize: 15,
+    color: '#6c757d',
+  },
+  pickerModalContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  pickerModalDatePicker: {
+    width: '100%',
+    height: 160,
+  },
+  calendarPickerWrapper: {
+    width: '100%',
+    minHeight: 360,
+    paddingHorizontal: 16,
+  },
+  calendarPicker: {
+    width: '100%',
+    height: 360,
+    alignSelf: 'stretch',
+  },
+  doneButton: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  amountRangeContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  amountInputContainer: {
+    flex: 1,
+  },
+  amountInput: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  textInput: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  filterActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+    marginBottom: 0,
+  },
+  filterButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterButtonPrimary: {
+    backgroundColor: '#007AFF',
+  },
+  filterButtonSecondary: {
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  filterButtonTextPrimary: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  filterButtonTextSecondary: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '500',
   },
 }); 

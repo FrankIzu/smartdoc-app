@@ -39,6 +39,12 @@ export default function ScheduleMeetingScreen() {
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [featuresExpanded, setFeaturesExpanded] = useState(false);
 
+  /** Return a valid Date for DateTimePicker; never pass Invalid Date (causes picker not to display). */
+  const getValidDate = (d: Date | undefined): Date => {
+    if (d != null && !Number.isNaN(d.getTime())) return d;
+    return new Date();
+  };
+
   const createMeeting = async () => {
     if (!meetingData.title.trim()) {
       Alert.alert('Error', 'Please enter a meeting name');
@@ -141,7 +147,7 @@ export default function ScheduleMeetingScreen() {
           title: meetingData?.title || meetingData?.name || meetingData?.roomName || meetingData?.room_name
         });
         
-        Alert.alert('Success', 'Meeting scheduled successfully! Email invitations have been sent to all participants.', [
+        Alert.alert('Success', 'Meeting scheduled successfully!', [
           {
             text: 'OK',
             onPress: () => {
@@ -527,14 +533,14 @@ export default function ScheduleMeetingScreen() {
             
             <View style={styles.modalContent}>
             <DateTimePicker
-              value={startDateTime}
+              value={getValidDate(startDateTime)}
               mode="datetime"
               display="spinner"
               onChange={onStartDateChange}
               style={styles.modalDatePicker}
               textColor="#000000"
               accentColor="#007AFF"
-              minimumDate={new Date()}
+              minimumDate={getValidDate(new Date())}
             />
             </View>
           </TouchableOpacity>
@@ -570,14 +576,14 @@ export default function ScheduleMeetingScreen() {
             
             <View style={styles.modalContent}>
             <DateTimePicker
-              value={endDateTime}
+              value={getValidDate(endDateTime)}
               mode="datetime"
               display="spinner"
               onChange={onEndDateChange}
               style={styles.modalDatePicker}
               textColor="#000000"
               accentColor="#007AFF"
-              minimumDate={startDateTime}
+              minimumDate={getValidDate(startDateTime)}
             />
             </View>
           </TouchableOpacity>

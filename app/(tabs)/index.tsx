@@ -1214,7 +1214,7 @@ function DashboardScreen() {
           <View style={dynamicStyles.statsRow}>
             <StatCard
               key="stat-analytics"
-              title="Analytics"
+              title="Financials"
               value={stats.recentAnalytics || 0}
               icon="analytics"
               color="#FF9500"
@@ -1237,8 +1237,8 @@ function DashboardScreen() {
           <View style={dynamicStyles.quickActionsContainer}>
             <QuickActionCard
               key="action-upload"
-              title="Upload Document"
-              subtitle="Add documents to your library"
+              title="Upload"
+              subtitle="Add any document or receipts to your library"
               icon="cloud-upload"
               color="#34C759"
               onPress={() => handleQuickAction('upload')}
@@ -1419,7 +1419,7 @@ function DashboardScreen() {
             onPress={(e) => e.stopPropagation()}
           >
             <View style={dynamicStyles.uploadOptionsHeader}>
-              <Text style={dynamicStyles.uploadOptionsTitle}>Upload Document</Text>
+              <Text style={dynamicStyles.uploadOptionsTitle}>Upload</Text>
               <TouchableOpacity onPress={() => setShowUploadOptions(false)}>
                 <Ionicons name="close" size={24} color="#666" />
               </TouchableOpacity>

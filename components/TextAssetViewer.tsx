@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Modal,
@@ -242,6 +242,7 @@ interface TextAssetViewerProps {
   title: string;
   content: string;
   loading?: boolean;
+  assetType?: string;
   onClose: () => void;
 }
 
@@ -250,13 +251,21 @@ export default function TextAssetViewer({
   title,
   content,
   loading = false,
-  onClose
+  onClose,
+  assetType
 }: TextAssetViewerProps) {
   const themeColors = useThemeColors();
   const insets = useSafeAreaInsets();
   const [truncatedTitle, setTruncatedTitle] = useState('');
   const [parsedContent, setParsedContent] = useState<any>(null);
   const [isJson, setIsJson] = useState(false);
+  const [isCsv, setIsCsv] = useState(false);
+  const [csvData, setCsvData] = useState<string[][]>([]);
+  const fixedColumnScrollRef = useRef<ScrollView>(null);
+  const scrollableColumnsScrollRef = useRef<ScrollView>(null);
+  const horizontalScrollRef = useRef<ScrollView>(null);
+  const isScrollingRef = useRef(false);
+  const isHorizontalScrollingRef = useRef(false);
 
   useEffect(() => {
     // Truncate title to 40 characters
@@ -265,8 +274,99 @@ export default function TextAssetViewer({
   }, [title]);
 
   useEffect(() => {
-    // Parse content - if it's JSON, parse it for structured display
+    // Parse content - check if it's CSV first, then JSON, then plain text
     if (content) {
+      // For transcripts, always render as plain text (no CSV/JSON parsing)
+      if (assetType === 'transcript' || assetType === 'call_transcript') {
+        setParsedContent(null);
+        setIsJson(false);
+        setIsCsv(false);
+        return;
+      }
+
+      // Check if content looks like CSV (has commas and newlines, or tab-separated)
+      const lines = content.trim().split('\n');
+      const hasCommas = content.includes(',');
+      const hasTabs = content.includes('\t');
+      const hasMultipleLines = lines.length > 1;
+      const firstLineHasCommas = lines[0]?.includes(',') || lines[0]?.includes('\t');
+      
+      // Only parse as CSV if it's a report type or if it's clearly structured data
+      // For reports, allow CSV parsing; for other types, be more strict
+      const isReportType = assetType === 'report' || assetType === 'meeting_report';
+      
+      // If it looks like CSV (multiple lines with delimiters), parse as CSV
+      // But only for reports, or if it's clearly structured (consistent column count)
+      if (hasMultipleLines && (hasCommas || hasTabs) && firstLineHasCommas) {
+        const delimiter = hasTabs ? '\t' : ',';
+        
+        // For non-reports, check if it's actually structured (consistent column count)
+        if (!isReportType) {
+          const delimiterRegex = delimiter === '\t' ? /\t/g : /,/g;
+          const firstLineCols = (lines[0].match(delimiterRegex) || []).length + 1;
+          const consistentColumns = lines.slice(1, Math.min(5, lines.length)).every(line => {
+            const cols = (line.match(delimiterRegex) || []).length + 1;
+            return cols === firstLineCols;
+          });
+          if (!consistentColumns) {
+            // Not structured CSV, treat as plain text
+            setParsedContent(null);
+            setIsJson(false);
+            setIsCsv(false);
+            return;
+          }
+        }
+        try {
+          const parsedCsv: string[][] = [];
+          
+          lines.forEach((line, index) => {
+            if (line.trim()) {
+              // Simple CSV parsing - handle quoted fields
+              const fields: string[] = [];
+              let currentField = '';
+              let inQuotes = false;
+              
+              for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const nextChar = line[i + 1];
+                
+                if (char === '"') {
+                  if (inQuotes && nextChar === '"') {
+                    // Escaped quote
+                    currentField += '"';
+                    i++; // Skip next quote
+                  } else {
+                    // Toggle quote state
+                    inQuotes = !inQuotes;
+                  }
+                } else if (char === delimiter && !inQuotes) {
+                  // End of field
+                  fields.push(currentField.trim());
+                  currentField = '';
+                } else {
+                  currentField += char;
+                }
+              }
+              // Add last field
+              fields.push(currentField.trim());
+              
+              parsedCsv.push(fields);
+            }
+          });
+          
+          if (parsedCsv.length > 0 && parsedCsv[0].length > 1) {
+            setIsCsv(true);
+            setCsvData(parsedCsv);
+            setIsJson(false);
+            setParsedContent(null);
+            return;
+          }
+        } catch (e) {
+          // Not valid CSV, continue to JSON check
+        }
+      }
+      
+      // Not CSV, try JSON
       try {
         // Try to parse as JSON
         const parsed = JSON.parse(content);
@@ -317,16 +417,19 @@ export default function TextAssetViewer({
         console.log('📄 Parsed summary structure:', Array.isArray(contentToRender) ? `Array[${contentToRender.length}]` : Object.keys(contentToRender));
         setParsedContent(contentToRender);
         setIsJson(true);
+        setIsCsv(false);
       } catch (e) {
         // Not JSON, use content as-is
         setParsedContent(null);
         setIsJson(false);
+        setIsCsv(false);
       }
     } else {
       setParsedContent(null);
       setIsJson(false);
+      setIsCsv(false);
     }
-  }, [content]);
+  }, [content, assetType]);
 
   const dynamicStyles = StyleSheet.create({
     modalContainer: {
@@ -338,6 +441,7 @@ export default function TextAssetViewer({
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingHorizontal: 16,
+      paddingTop: 8,
       paddingBottom: 12,
       backgroundColor: themeColors.headerBackground || themeColors.card,
       borderBottomWidth: 1,
@@ -382,8 +486,8 @@ export default function TextAssetViewer({
       presentationStyle="fullScreen"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
-        <View style={[dynamicStyles.modalHeader, { paddingTop: Math.max(insets.top - 38, 8) }]}>
+      <SafeAreaView style={dynamicStyles.modalContainer} edges={['bottom', 'left', 'right']}>
+        <View style={[dynamicStyles.modalHeader, { paddingTop: Math.max(insets.top, 8) }]}>
           <TouchableOpacity onPress={onClose}>
             <Text style={dynamicStyles.modalCloseButton}>Close</Text>
           </TouchableOpacity>
@@ -399,23 +503,193 @@ export default function TextAssetViewer({
             <Text style={dynamicStyles.loadingText}>Loading content...</Text>
           </View>
         ) : (
-          <ScrollView 
-            style={dynamicStyles.contentContainer}
-            contentContainerStyle={{ paddingBottom: 20 }}
-          >
-            {isJson && parsedContent ? (
-              <View>
-                {renderStructuredContent(parsedContent, themeColors)}
+          isCsv && csvData.length > 0 ? (
+            // CSV Table with sticky first column and fixed header
+            <View style={{ flex: 1, flexDirection: 'row' }}>
+              {/* Sticky First Column */}
+              <View style={{ width: 150, borderRightWidth: 2, borderRightColor: themeColors.border }}>
+                {/* Fixed Header for first column */}
+                <View style={{ 
+                  paddingVertical: 8,
+                  paddingHorizontal: 8, 
+                  backgroundColor: themeColors.card || themeColors.background,
+                  borderBottomWidth: 2,
+                  borderBottomColor: themeColors.border,
+                  height: 50,
+                  justifyContent: 'center',
+                  alignItems: 'flex-start',
+                }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 14, color: themeColors.text }} numberOfLines={2}>
+                    {csvData[0]?.[0] || ''}
+                  </Text>
+                </View>
+                {/* Scrollable rows for first column */}
+                <ScrollView 
+                  ref={fixedColumnScrollRef}
+                  style={{ flex: 1 }}
+                  scrollEventThrottle={16}
+                  onScroll={(event) => {
+                    if (!isScrollingRef.current) {
+                      isScrollingRef.current = true;
+                      const offsetY = event.nativeEvent.contentOffset.y;
+                      scrollableColumnsScrollRef.current?.scrollTo({ y: offsetY, animated: false });
+                      setTimeout(() => { isScrollingRef.current = false; }, 50);
+                    }
+                  }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {/* Rows for first column */}
+                  {csvData.slice(1).map((row, rowIndex) => (
+                    <View 
+                      key={rowIndex} 
+                      style={{ 
+                        paddingVertical: 8,
+                        paddingHorizontal: 8, 
+                        borderBottomWidth: 1, 
+                        borderBottomColor: themeColors.border,
+                        backgroundColor: rowIndex % 2 === 0 ? themeColors.background : (themeColors.card || themeColors.background),
+                        height: 50,
+                        justifyContent: 'center',
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <Text style={{ fontSize: 14, color: themeColors.text }} selectable numberOfLines={2}>
+                        {row[0] || ''}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
               </View>
-            ) : (
-              <Text 
-                style={dynamicStyles.textContent}
-                selectable={true}
-              >
-                {content || 'No content available'}
-              </Text>
-            )}
-          </ScrollView>
+              
+              {/* Scrollable Columns */}
+              <View style={{ flex: 1 }}>
+                {/* Fixed Header row - scrolls horizontally but stays fixed vertically */}
+                <View style={{ 
+                  borderBottomWidth: 2, 
+                  borderBottomColor: themeColors.border,
+                  backgroundColor: themeColors.card || themeColors.background,
+                  height: 50,
+                }}>
+                  <ScrollView 
+                    ref={horizontalScrollRef}
+                    horizontal={true}
+                    showsHorizontalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                    onScroll={(event) => {
+                      // Sync horizontal scroll with data rows if needed
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row' }}>
+                      {csvData[0]?.slice(1).map((header, colIndex) => (
+                        <View 
+                          key={colIndex} 
+                          style={{ 
+                            width: 120, 
+                            paddingVertical: 8,
+                            paddingHorizontal: 8, 
+                            borderRightWidth: colIndex < csvData[0].length - 2 ? 1 : 0,
+                            borderRightColor: themeColors.border,
+                            height: 50,
+                            justifyContent: 'center',
+                            alignItems: 'flex-start',
+                          }}
+                        >
+                          <Text style={{ fontWeight: 'bold', fontSize: 14, color: themeColors.text }} numberOfLines={2}>
+                            {header}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </ScrollView>
+                </View>
+                {/* Scrollable data rows */}
+                <ScrollView 
+                  ref={scrollableColumnsScrollRef}
+                  style={{ flex: 1 }}
+                  scrollEventThrottle={16}
+                  onScroll={(event) => {
+                    if (!isScrollingRef.current) {
+                      isScrollingRef.current = true;
+                      const offsetY = event.nativeEvent.contentOffset.y;
+                      fixedColumnScrollRef.current?.scrollTo({ y: offsetY, animated: false });
+                      setTimeout(() => { isScrollingRef.current = false; }, 50);
+                    }
+                  }}
+                  showsVerticalScrollIndicator={true}
+                >
+                  {/* Horizontal scroll container for data rows */}
+                  <ScrollView 
+                    horizontal={true}
+                    showsHorizontalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                    scrollEventThrottle={16}
+                    onScroll={(event) => {
+                      if (!isHorizontalScrollingRef.current) {
+                        isHorizontalScrollingRef.current = true;
+                        const offsetX = event.nativeEvent.contentOffset.x;
+                        horizontalScrollRef.current?.scrollTo({ x: offsetX, animated: false });
+                        setTimeout(() => { isHorizontalScrollingRef.current = false; }, 50);
+                      }
+                    }}
+                  >
+                    <View>
+                      {/* Data rows - aligned with header */}
+                      {csvData.slice(1).map((row, rowIndex) => (
+                        <View 
+                          key={rowIndex} 
+                          style={{ 
+                            flexDirection: 'row', 
+                            borderBottomWidth: 1, 
+                            borderBottomColor: themeColors.border,
+                            backgroundColor: rowIndex % 2 === 0 ? themeColors.background : (themeColors.card || themeColors.background),
+                            height: 50,
+                          }}
+                        >
+                          {row.slice(1).map((cell, colIndex) => (
+                            <View 
+                              key={colIndex} 
+                              style={{ 
+                                width: 120, 
+                                paddingVertical: 8,
+                                paddingHorizontal: 8, 
+                                borderRightWidth: colIndex < row.length - 2 ? 1 : 0,
+                                borderRightColor: themeColors.border,
+                                height: 50,
+                                justifyContent: 'center',
+                                alignItems: 'flex-start',
+                              }}
+                            >
+                              <Text style={{ fontSize: 14, color: themeColors.text }} selectable numberOfLines={2}>
+                                {cell}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      ))}
+                    </View>
+                  </ScrollView>
+                </ScrollView>
+              </View>
+            </View>
+          ) : (
+            <ScrollView 
+              style={dynamicStyles.contentContainer}
+              contentContainerStyle={{ paddingBottom: 20 }}
+            >
+              {isJson && parsedContent ? (
+                <View>
+                  {renderStructuredContent(parsedContent, themeColors)}
+                </View>
+              ) : (
+                <Text 
+                  style={dynamicStyles.textContent}
+                  selectable={true}
+                >
+                  {content || 'No content available'}
+                </Text>
+              )}
+            </ScrollView>
+          )
         )}
       </SafeAreaView>
     </Modal>

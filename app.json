@@ -2,7 +2,7 @@
   "expo": {
     "name": "GrabDocs",
     "slug": "grabdocs",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light.png",
     "userInterfaceStyle": "automatic",
@@ -70,6 +70,7 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT"
       ],
@@ -134,6 +135,14 @@
       ],
       [
         "expo-apple-authentication"
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "GrabDocs needs access to your photos, videos, and audio files to let you upload documents and media.",
+          "savePhotosPermission": "GrabDocs needs access to save scanned documents to your photo library.",
+          "isAccessMediaLocationEnabled": false
+        }
       ],
       "expo-secure-store"
     ],

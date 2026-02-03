@@ -3,18 +3,18 @@ import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -77,40 +77,13 @@ export default function MeetingCallScreen() {
     try {
       setLoading(true);
       
-      // Load meetings and assets in parallel for better performance
-      // Assets are non-critical and won't block meeting list display
-      // Limit to 10 most recent meetings (backend default)
+      // Load meetings only. Assets are fetched on meeting-details when user opens a meeting
+      // to avoid duplicate heavy fetches (N+1: list was fetching all assets then details did again).
       const startTime = Date.now();
-      
-      // Start both requests in parallel
-      const meetingsPromise = apiClient.getMeetings(10, 0);
-      const assetsPromise = apiClient.getMeetingAssets().catch(error => {
-        // Assets are non-critical - fail silently
-        console.warn('⚠️ Meeting assets request failed (non-critical):', error?.message || error);
-        return null;
-      });
-      
-      // Wait for meetings (critical) - don't wait for assets
-      const meetingsResponse = await meetingsPromise;
+      const meetingsResponse = await apiClient.getMeetings(10, 0);
       const loadTime = Date.now() - startTime;
       console.log(`📱 Meetings loaded in ${loadTime}ms`);
-      
-      // Process assets in background (non-blocking) - don't wait for it
-      assetsPromise.then(assetsResponse => {
-        const assetsTime = Date.now() - startTime;
-        console.log(`📱 Assets loaded in ${assetsTime}ms`);
-        if (assetsResponse?.success && assetsResponse?.data) {
-          // Assets are processed but not used to block UI rendering
-          // This is just for logging/debugging purposes
-          const assetCount = assetsResponse.data.assets?.length || 0;
-          if (assetCount > 0) {
-            console.log(`📱 Processed ${assetCount} assets in background`);
-          }
-        }
-      }).catch(() => {
-        // Already handled - fail silently
-      });
-      
+
       // Handle meetings response (critical path)
       // Support multiple response formats:
       // 1. { success: true, data: { meetings: [] } }
