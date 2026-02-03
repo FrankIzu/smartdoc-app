@@ -4,20 +4,20 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    Modal,
-    Platform,
-    RefreshControl,
-    ScrollView,
-    Share,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
@@ -43,6 +43,7 @@ interface Document {
   file_kind?: string; // Store the raw file_kind from backend
   formData?: any; // Store original form data for form-specific actions
   responseCount?: number; // Number of responses for forms
+  totalAmount?: number; // For receipt/invoice: from json_data
 }
 
 interface ApiDocument {
@@ -56,6 +57,8 @@ interface ApiDocument {
   file_path?: string;
   mime_type?: string;
   file_kind?: string;
+  json_data?: Record<string, unknown> | null;
+  processing_status?: 'pending' | 'processing' | 'processed' | 'error';
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
@@ -66,7 +69,7 @@ export default function QuickFilesScreen() {
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
-  const { uploadFromGallery } = useFileStore();
+  const { uploadFromGallery, lastUploadTime } = useFileStore();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadTime, setLastLoadTime] = useState<number>(0);
@@ -76,24 +79,10 @@ export default function QuickFilesScreen() {
   
   // Re-read params and reload when screen comes into focus (important for tab navigation)
   // This ensures workspaceId is properly read when navigating from workspace details
-  // Add debounce to prevent excessive reloads
+  // Add debounce to prevent excessive reloads, but allow immediate refresh after upload
   const lastLoadTimeRef = useRef<number>(0);
   const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
-  
-  useFocusEffect(
-    useCallback(() => {
-      const currentWorkspaceId = params.workspaceId ? Number(params.workspaceId) : undefined;
-      console.log('📁 Documents screen focused - workspaceId from params:', params.workspaceId, 'parsed:', currentWorkspaceId);
-      // Force reload documents when screen comes into focus to ensure correct workspace filtering
-      if (user) {
-        const now = Date.now();
-        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
-          lastLoadTimeRef.current = now;
-          loadDocuments(true);
-        }
-      }
-    }, [params.workspaceId, user, loadDocuments])
-  );
+  const lastUploadTimeRef = useRef<number>(0); // Track when upload happened locally
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('date');
@@ -175,8 +164,28 @@ export default function QuickFilesScreen() {
       if (success) {
         // Immediately reload files to show them with pending status
         console.log('📁 Upload complete, immediately reloading files to show pending status...');
-        loadDocuments(true); // Force refresh immediately
-        // Don't show alert immediately - files will appear with pending status
+        
+        // Mark upload time for focus effect to bypass debounce
+        lastUploadTimeRef.current = Date.now();
+        
+        // Bypass debounce and cache - force immediate refresh
+        lastLoadTimeRef.current = 0; // Reset debounce timer
+        setApiCache(null); // Clear cache to force fresh load
+        
+        // Refresh immediately, then retry after short delay in case backend needs time
+        loadDocuments(true);
+        
+        // Retry after 500ms in case backend hasn't created file record yet
+        setTimeout(() => {
+          console.log('📁 Retrying file load after gallery upload...');
+          loadDocuments(true);
+        }, 500);
+        
+        // Final retry after 2 seconds to catch any delayed file creation
+        setTimeout(() => {
+          console.log('📁 Final retry file load after gallery upload...');
+          loadDocuments(true);
+        }, 2000);
       } else {
         // Get the error from the file store
         const fileStore = useFileStore.getState();
@@ -597,6 +606,30 @@ export default function QuickFilesScreen() {
         if (Array.isArray(docsArray)) {
           const mappedDocs = docsArray.map((doc: ApiDocument) => {
             const originalName = doc.original_filename || doc.filename || 'Untitled';
+            const fallbackName = removeFileExtension(originalName);
+            // For receipt: show store name; for invoice: show vendor name
+            let displayName = fallbackName;
+            const kind = doc.file_kind?.toLowerCase();
+            const data = doc.json_data && typeof doc.json_data === 'object' ? doc.json_data as Record<string, unknown> : null;
+            if (kind === 'receipt' && data) {
+              const storeName = (data.store_name || data.business_name || data.merchant_name ||
+                (data.receipt_data && typeof data.receipt_data === 'object' && (data.receipt_data as Record<string, unknown>).store_name)) as string | undefined;
+              if (storeName && String(storeName).trim()) displayName = String(storeName).trim();
+            } else if (kind === 'invoice' && data) {
+              const vendorName = (data.vendor_name || data.business_name || data.store_name ||
+                (data.invoice_data && typeof data.invoice_data === 'object' && (data.invoice_data as Record<string, unknown>).vendor_name)) as string | undefined;
+              if (vendorName && String(vendorName).trim()) displayName = String(vendorName).trim();
+            }
+            // Total amount for receipt/invoice (from json_data)
+            let totalAmount: number | undefined;
+            if ((kind === 'receipt' || kind === 'invoice') && data) {
+              const amt = data.total_amount ?? data.amount ?? data.total ?? (data as Record<string, unknown>).invoice_amount;
+              if (typeof amt === 'number' && !Number.isNaN(amt)) totalAmount = amt;
+              else if (typeof amt === 'string') {
+                const parsed = parseFloat(amt.replace(/[^0-9.-]/g, ''));
+                if (!Number.isNaN(parsed)) totalAmount = parsed;
+              }
+            }
             // Determine status: pending if file_kind is 'pending' or processing_status is 'pending'/'processing'
             const isPending = doc.file_kind?.toLowerCase() === 'pending' || 
                              doc.processing_status === 'pending' || 
@@ -607,7 +640,7 @@ export default function QuickFilesScreen() {
             
             return {
               id: String(doc.id),
-              name: removeFileExtension(originalName),
+              name: displayName,
               type: getFileTypeFromExtension(doc.original_filename || doc.filename),
               size: formatFileSize(doc.file_size),
               uploadDate: new Date(doc.created_at),
@@ -615,6 +648,7 @@ export default function QuickFilesScreen() {
               tags: [],
               category: doc.receipt_category || undefined, // Use receipt_category for the actual category (Supplies, Rent, etc.)
               file_kind: doc.file_kind, // Store raw file_kind to check for receipts
+              totalAmount,
             };
           });
           
@@ -646,6 +680,29 @@ export default function QuickFilesScreen() {
       setLoading(false);
     }
   }, [searchQuery, filterBy, workspaceId]); // Add dependencies including workspaceId
+
+  // Re-read params and reload when screen comes into focus (must be after loadDocuments is defined)
+  useFocusEffect(
+    useCallback(() => {
+      const currentWorkspaceId = params.workspaceId ? Number(params.workspaceId) : undefined;
+      console.log('📁 Documents screen focused - workspaceId from params:', params.workspaceId, 'parsed:', currentWorkspaceId);
+      if (user) {
+        const now = Date.now();
+        const fileStore = useFileStore.getState();
+        const globalUploadTime = fileStore.lastUploadTime || 0;
+        const timeSinceUpload = Math.min(
+          now - lastUploadTimeRef.current,
+          globalUploadTime > 0 ? now - globalUploadTime : Infinity
+        );
+        const timeSinceLastLoad = now - lastLoadTimeRef.current;
+        if (timeSinceUpload < 5000 || timeSinceLastLoad > RELOAD_DEBOUNCE_MS) {
+          lastLoadTimeRef.current = now;
+          setApiCache(null);
+          loadDocuments(true);
+        }
+      }
+    }, [params.workspaceId, user, loadDocuments, lastUploadTime])
+  );
 
   const getFileTypeFromExtension = (filename: string | null | undefined): string => {
     if (!filename || typeof filename !== 'string') {
@@ -1154,8 +1211,28 @@ export default function QuickFilesScreen() {
       if (success) {
         // Immediately reload files to show them with pending status
         console.log('📁 Upload complete, immediately reloading files to show pending status...');
-        loadDocuments(true); // Refresh documents list immediately
-        // Don't show alert immediately - files will appear with pending status
+        
+        // Mark upload time for focus effect to bypass debounce
+        lastUploadTimeRef.current = Date.now();
+        
+        // Bypass debounce and cache - force immediate refresh
+        lastLoadTimeRef.current = 0; // Reset debounce timer
+        setApiCache(null); // Clear cache to force fresh load
+        
+        // Refresh immediately, then retry after short delay in case backend needs time
+        loadDocuments(true);
+        
+        // Retry after 500ms in case backend hasn't created file record yet
+        setTimeout(() => {
+          console.log('📁 Retrying file load after upload...');
+          loadDocuments(true);
+        }, 500);
+        
+        // Final retry after 2 seconds to catch any delayed file creation
+        setTimeout(() => {
+          console.log('📁 Final retry file load after upload...');
+          loadDocuments(true);
+        }, 2000);
       }
     } catch (error) {
       console.error('Document upload error:', error);
@@ -1213,10 +1290,17 @@ export default function QuickFilesScreen() {
         <Text style={dynamicStyles.documentName} numberOfLines={1} ellipsizeMode="tail">
             {item.name}
           </Text>
-        <Text style={dynamicStyles.documentMeta}>
-          {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
-          {item.category && ` • ${item.category}`}
+        <View style={dynamicStyles.documentMetaRow}>
+          <Text style={dynamicStyles.documentMeta}>
+            {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
+            {item.category && ` • ${item.category}`}
+          </Text>
+          {item.totalAmount != null && !Number.isNaN(item.totalAmount) && (
+            <Text style={dynamicStyles.documentMetaAmount}>
+              {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(item.totalAmount)}
             </Text>
+          )}
+        </View>
         </View>
         
         {/* Kebab Menu Button */}
@@ -1391,9 +1475,22 @@ export default function QuickFilesScreen() {
       color: colors.text,
       marginBottom: 2,
     },
+    documentMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
     documentMeta: {
       fontSize: 11,
       color: colors.textSecondary,
+      flex: 1,
+    },
+    documentMetaAmount: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      fontWeight: '600',
+      flexShrink: 0,
     },
     documentActions: {
       position: 'absolute',

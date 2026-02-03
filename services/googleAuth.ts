@@ -27,6 +27,8 @@ interface GoogleAuthResult {
   accessToken?: string;
   idToken?: string;
   error?: string;
+  /** True when native app opened backend OAuth URL; completion happens via grabdocs://login-success deep link. */
+  completedViaDeepLink?: boolean;
 }
 
 interface MobileGoogleLoginResponse {
@@ -132,6 +134,24 @@ class GoogleAuthService {
 
   // ==================== GOOGLE SIGN-IN FLOW ====================
 
+  /**
+   * Native (Android/iOS): Use backend-issued auth URL (no PKCE) so the backend can exchange
+   * the code. App opens the URL in browser; backend redirects to grabdocs://login-success
+   * and the app handles that via deep link in AuthContext.
+   */
+  private async signInWithGoogleNativeBackendFlow(): Promise<GoogleAuthResult> {
+    const res = await fetch(`${API_BASE_URL}/api/v1/web/auth/google-url`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.url) {
+      const err = data?.error || `Failed to get auth URL (${res.status})`;
+      console.error('Google auth URL fetch failed:', err);
+      return { success: false, error: err };
+    }
+    await WebBrowser.openBrowserAsync(data.url);
+    // Completion happens via grabdocs://login-success deep link; AuthContext handles it.
+    return { success: true, completedViaDeepLink: true };
+  }
+
   async signInWithGoogle(): Promise<GoogleAuthResult> {
     try {
       // Check if we're in a proper client environment
@@ -142,7 +162,12 @@ class GoogleAuthService {
         };
       }
 
-      // Check if client ID is properly configured
+      // Native: use backend-issued URL (no PKCE) so backend can exchange the code
+      if (Platform.OS === 'android' || Platform.OS === 'ios') {
+        return this.signInWithGoogleNativeBackendFlow();
+      }
+
+      // Web: use AuthSession (PKCE); app receives code and exchanges it
       if (!this.config.clientId || this.config.clientId === '') {
         return {
           success: false,
@@ -159,14 +184,12 @@ class GoogleAuthService {
 
       console.log('Starting Google OAuth with redirect URI:', this.config.redirectUri);
 
-      // Start the authentication flow
       const result = await this.request.promptAsync(this.discovery);
 
       if (result.type === 'success') {
         const { code } = result.params;
         
         if (code) {
-          // Exchange code for tokens
           const tokenResponse = await AuthSession.exchangeCodeAsync(
             {
               clientId: this.config.clientId,
@@ -178,9 +201,7 @@ class GoogleAuthService {
           );
 
           if (tokenResponse.accessToken) {
-            // Get user info from Google
             const userInfo = await this.fetchGoogleUserInfo(tokenResponse.accessToken);
-            
             if (userInfo) {
               return {
                 success: true,
@@ -200,15 +221,12 @@ class GoogleAuthService {
 
     } catch (error) {
       console.error('Google Sign-In error:', error);
-      
-      // Check if it's a redirect URI error
       if (error instanceof Error && error.message.includes('invalid_request')) {
         return {
           success: false,
           error: 'Google OAuth configuration error. The redirect URI is not properly configured. Please contact support.',
         };
       }
-      
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
@@ -323,10 +341,16 @@ class GoogleAuthService {
     requires2FA?: boolean;
     authMethod?: string;
     message?: string;
+    completedViaDeepLink?: boolean;
   }> {
     try {
       // Step 1: Google OAuth
       const googleResult = await this.signInWithGoogle();
+
+      // Native backend flow: app opened backend URL; completion via grabdocs://login-success deep link
+      if (googleResult.completedViaDeepLink) {
+        return { success: true, completedViaDeepLink: true, message: 'Complete sign-in in the browser.' };
+      }
       
       if (!googleResult.success || !googleResult.user) {
         return {

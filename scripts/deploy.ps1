@@ -4,7 +4,7 @@
 # Usage:
 #   Interactive mode: .\scripts\deploy.ps1
 #   Direct parameters (Android): .\scripts\deploy.ps1 -Platform android -Environment prod -BuildNumber 11 -Version 1.0.3
-#   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod
+#   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 2 -Version 1.0.3
 
 param(
     [string]$Platform,
@@ -122,21 +122,40 @@ function Update-BuildNumber {
 
     Write-Host "📝 Updating build number to $BuildNumber for $Platform..." -ForegroundColor Yellow
 
-    if ($Platform -eq "ios") {
-        # Update iOS buildNumber in app.json
-        $appJsonPath = "$PSScriptRoot\..\app.json"
-        $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-        $appJson.expo.ios.buildNumber = $BuildNumber
-        $appJson | ConvertTo-Json -Depth 10 | Set-Content $appJsonPath -Encoding UTF8
-        Write-Host "✅ Updated iOS buildNumber in app.json" -ForegroundColor Green
-    }
-    elseif ($Platform -eq "android") {
-        # Update Android versionCode in build.gradle
-        $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
-        $content = Get-Content $buildGradlePath -Raw
-        $content = $content -replace '(?<=versionCode\s+)\d+', $BuildNumber
-        Set-Content $buildGradlePath $content -Encoding UTF8
-        Write-Host "✅ Updated Android versionCode in build.gradle" -ForegroundColor Green
+    try {
+        if ($Platform -eq "ios") {
+            # Update iOS buildNumber in app.json
+            $appJsonPath = "$PSScriptRoot\..\app.json"
+            if (-not (Test-Path $appJsonPath)) {
+                throw "app.json not found at $appJsonPath"
+            }
+            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+            if (-not $appJson.expo.ios) {
+                throw "expo.ios section not found in app.json"
+            }
+            $appJson.expo.ios.buildNumber = $BuildNumber
+            $appJson | ConvertTo-Json -Depth 10 | Set-Content $appJsonPath -Encoding UTF8
+            Write-Host "✅ Updated iOS buildNumber in app.json" -ForegroundColor Green
+        }
+        elseif ($Platform -eq "android") {
+            # Update Android versionCode in build.gradle
+            $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
+            if (-not (Test-Path $buildGradlePath)) {
+                throw "build.gradle not found at $buildGradlePath"
+            }
+            $content = Get-Content $buildGradlePath -Raw
+            if ($content -notmatch 'versionCode') {
+                throw "versionCode not found in build.gradle"
+            }
+            $content = $content -replace '(?<=versionCode\s+)\d+', $BuildNumber
+            Set-Content $buildGradlePath $content -Encoding UTF8
+            Write-Host "✅ Updated Android versionCode in build.gradle" -ForegroundColor Green
+        } else {
+            throw "Invalid platform: $Platform"
+        }
+    } catch {
+        Write-Host "❌ Error updating build number: $($_.Exception.Message)" -ForegroundColor Red
+        throw
     }
 }
 
@@ -213,8 +232,8 @@ try {
         "production" { "production" }
     }
 
-    # Handle version name and version code for Android production only (iOS uses its own version/build in app store)
-    if ($normalizedEnv -eq "production" -and $Platform -eq "android") {
+    # Handle version name and build number for production builds
+    if ($normalizedEnv -eq "production") {
         $currentVersion = Get-CurrentVersion
         $currentBuildNumber = Get-CurrentBuildNumber -Platform $Platform
 
@@ -222,10 +241,16 @@ try {
         if (-not $Version) {
             if ($currentVersion) {
                 Write-Host "📦 Current version name: $currentVersion" -ForegroundColor Cyan
-                $Version = Read-Host "Enter new version name for production (current: $currentVersion, or press Enter to keep current)"
-                if ([string]::IsNullOrWhiteSpace($Version)) {
+                $useCurrentVersion = Prompt-WithValidation "Do you want to continue with existing version name ($currentVersion)? (y/n)" @("y", "n")
+                if ($useCurrentVersion -eq "y") {
                     $Version = $currentVersion
-                    Write-Host "ℹ️  Keeping current version name: $Version" -ForegroundColor Yellow
+                    Write-Host "ℹ️  Using current version name: $Version" -ForegroundColor Yellow
+                } else {
+                    $Version = Read-Host "Enter new version name for production (e.g., 1.0.1)"
+                    if ([string]::IsNullOrWhiteSpace($Version)) {
+                        Write-Host "❌ Version name cannot be empty." -ForegroundColor Red
+                        exit 1
+                    }
                 }
             } else {
                 $Version = Read-Host "Enter version name for production (e.g., 1.0.1)"
@@ -244,20 +269,69 @@ try {
             exit 1
         }
 
-        # Prompt for version code
+        # Prompt for build number
         if (-not $BuildNumber) {
             if ($currentBuildNumber) {
-                Write-Host "📦 Current Android version code: $currentBuildNumber" -ForegroundColor Cyan
-                $BuildNumber = Read-Host "Enter new Android version code for production (current: $currentBuildNumber)"
+                $buildLabel = if ($Platform -eq "ios") { "iOS build number" } else { "Android version code" }
+                Write-Host "📦 Current ${buildLabel}: $currentBuildNumber" -ForegroundColor Cyan
+                
+                if ($Platform -eq "android") {
+                    Write-Host "⚠️  Android requires increasing version code for new builds" -ForegroundColor Yellow
+                    $useCurrentBuildNumber = Prompt-WithValidation "Do you want to continue with existing version code ($currentBuildNumber)? Note: Android requires incrementing for new builds. (y/n)" @("y", "n")
+                    if ($useCurrentBuildNumber -eq "y") {
+                        $BuildNumber = $currentBuildNumber
+                        Write-Host "ℹ️  Using current ${buildLabel}: $BuildNumber" -ForegroundColor Yellow
+                        Write-Host "⚠️  Warning: Android builds typically require incrementing version code. This may cause build issues." -ForegroundColor Yellow
+                    } else {
+                        $BuildNumber = Read-Host "Enter new ${buildLabel} for production (must be greater than $currentBuildNumber)"
+                        if ([string]::IsNullOrWhiteSpace($BuildNumber)) {
+                            Write-Host "❌ Build number cannot be empty." -ForegroundColor Red
+                            exit 1
+                        }
+                    }
+                } else {
+                    # iOS
+                    $useCurrentBuildNumber = Prompt-WithValidation "Do you want to continue with existing build number ($currentBuildNumber)? (y/n)" @("y", "n")
+                    if ($useCurrentBuildNumber -eq "y") {
+                        $BuildNumber = $currentBuildNumber
+                        Write-Host "ℹ️  Using current ${buildLabel}: $BuildNumber" -ForegroundColor Yellow
+                    } else {
+                        $BuildNumber = Read-Host "Enter new ${buildLabel} for production"
+                        if ([string]::IsNullOrWhiteSpace($BuildNumber)) {
+                            Write-Host "❌ Build number cannot be empty." -ForegroundColor Red
+                            exit 1
+                        }
+                    }
+                }
             } else {
-                $BuildNumber = Read-Host "Enter Android version code for production"
+                $buildLabel = if ($Platform -eq "ios") { "iOS build number" } else { "Android version code" }
+                $BuildNumber = Read-Host "Enter ${buildLabel} for production"
             }
         }
 
         if ($BuildNumber -match '^\d+$') {
-            Update-BuildNumber -Platform $Platform -BuildNumber $BuildNumber
+            # For Android, validate that the build number is greater than current (unless user explicitly chose to keep existing)
+            if ($Platform -eq "android" -and $currentBuildNumber) {
+                $buildNumberInt = [int]$BuildNumber
+                $currentBuildNumberInt = [int]$currentBuildNumber
+                # Only validate if user entered a new value (not if they chose to keep existing)
+                # If they're equal, it means user chose to keep existing, which is allowed with warning
+                if ($buildNumberInt -lt $currentBuildNumberInt) {
+                    Write-Host "❌ Invalid version code. Must be greater than or equal to current version code ($currentBuildNumber)." -ForegroundColor Red
+                    exit 1
+                } elseif ($buildNumberInt -eq $currentBuildNumberInt) {
+                    Write-Host "⚠️  Warning: Using same version code as current. Android builds typically require incrementing." -ForegroundColor Yellow
+                }
+            }
+            
+            try {
+                Update-BuildNumber -Platform $Platform -BuildNumber $BuildNumber
+            } catch {
+                Write-Host "❌ Error updating build number: $($_.Exception.Message)" -ForegroundColor Red
+                exit 1
+            }
         } else {
-            Write-Host "❌ Invalid version code. Must be a number." -ForegroundColor Red
+            Write-Host "❌ Invalid build number. Must be a number." -ForegroundColor Red
             exit 1
         }
     }
@@ -267,9 +341,10 @@ try {
     Write-Host "   Platform: $Platform" -ForegroundColor White
     Write-Host "   Environment: $normalizedEnv" -ForegroundColor White
     Write-Host "   Profile: $profile" -ForegroundColor White
-    if ($normalizedEnv -eq "production" -and $Platform -eq "android") {
+    if ($normalizedEnv -eq "production") {
         Write-Host "   Version name: $Version" -ForegroundColor White
-        Write-Host "   Version code: $BuildNumber" -ForegroundColor White
+        $buildLabel = if ($Platform -eq "ios") { "Build number" } else { "Version code" }
+        Write-Host "   ${buildLabel}: $BuildNumber" -ForegroundColor White
     }
 
     $confirm = Prompt-WithValidation "`nProceed with deployment? (y/n)" @("y", "n")

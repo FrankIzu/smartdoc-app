@@ -158,7 +158,9 @@ const MOBILE_ENDPOINTS = {
   UPLOAD_LINK_SHARE: (id: number) => `/api/v1/mobile/upload-links/${id}/share`,
   UPLOAD_LINK_FILES: (id: number) => `/api/v1/mobile/upload-links/${id}/files`,
   
-  // Meeting Assets & Webhooks (using existing web endpoints)
+  // Meeting Assets & Webhooks (same endpoints as web)
+  VIDEO_ASSET_CONTENT: '/api/v1/video/asset-content',
+  WEB_FILE_VIEW: (id: number) => `/api/v1/web/files/${id}/view`,
   MEETING_ASSETS: '/api/v1/mobile/meeting-assets',
   MEETINGS: '/api/v1/mobile/meetings',
   MEETING_CREATE: '/api/v1/mobile/meetings/create',
@@ -178,6 +180,10 @@ const MOBILE_ENDPOINTS = {
   // Configuration
   // CONFIG: '/api/v1/mobile/config', // Not available on backend
 } as const;
+
+// Short-lived cache for meeting assets to avoid duplicate requests and timeouts when list + details both fetch
+const MEETING_ASSETS_CACHE_MS = 45000; // 45 seconds
+let meetingAssetsCache: { at: number; response: ApiResponse } | null = null;
 
 // Main API Service Class
 class ApiService {
@@ -281,6 +287,13 @@ class ApiService {
           config.headers['X-Forwarded-Scheme'] = 'https';
         }
         
+        // CRITICAL: For FormData in React Native, remove Content-Type header if manually set
+        // React Native FormData needs to set Content-Type with boundary automatically
+        if (config.data instanceof FormData && config.headers['Content-Type']) {
+          console.log('⚠️ Removing manually set Content-Type for FormData - React Native will set it with boundary');
+          delete config.headers['Content-Type'];
+        }
+        
         // Log request details for debugging - show full URL
         const fullRequestUrl = (config.baseURL || '') + (config.url || '');
         console.log('🌐 API Request:', {
@@ -291,6 +304,7 @@ class ApiService {
           isHTTPS: fullRequestUrl.startsWith('https://'),
           hasForwardedProto: !!config.headers['X-Forwarded-Proto'],
           forwardedProto: config.headers['X-Forwarded-Proto'],
+          isFormData: config.data instanceof FormData,
         });
         
         // Log request details for debugging
@@ -626,34 +640,97 @@ class ApiService {
   /**
    * Upload file - backend automatically encrypts files on save
    * All file operations go through backend encryption class
+   * Uses native fetch() for FormData on React Native (axios XMLHttpRequest often fails with FormData)
    */
   async uploadFile(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
+    const { Platform } = require('react-native');
+    const isReactNative = Platform.OS === 'ios' || Platform.OS === 'android';
+
+    if (isReactNative) {
+      return this.uploadFileWithFetch(file, onProgress);
+    }
+
     try {
-      console.log('🔄 Attempting file upload...');
+      console.log('🔄 Attempting file upload (axios)...');
       console.log('🔐 File will be encrypted by backend encryption class on save');
       const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD, file, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 120000, // Increase timeout to 2 minutes for large files
-        onUploadProgress: (progressEvent) => {
+        timeout: 120000,
+        transformRequest: (data: any) => data,
+        onUploadProgress: (progressEvent: any) => {
           if (onProgress && progressEvent.total) {
             const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            console.log(`📡 Upload progress event: ${progressEvent.loaded}/${progressEvent.total} = ${progress}%`);
             onProgress(progress);
-          } else {
-            console.log(`📡 Upload progress event ignored: onProgress=${!!onProgress}, total=${progressEvent.total}`);
           }
         },
       });
       console.log('✅ Upload successful');
-      console.log('🔐 File encrypted and saved by backend');
-      console.log('📡 Upload response:', response.data);
       return response.data;
     } catch (error: any) {
-      // console.error('❌ Upload failed:', error);
-      // console.error('❌ Upload error response:', error.response?.data);
-      throw new Error(error.response?.data?.message || 'Upload failed');
+      console.error('❌ Upload failed:', error);
+      let errorMessage = error.response?.data?.message || error.message || 'Upload failed';
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * Upload using native fetch() - works reliably with FormData on React Native / Expo Go
+   * Axios XMLHttpRequest adapter often throws "Network Error" with FormData on Android
+   */
+  private async uploadFileWithFetch(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
+    try {
+      console.log('🔄 Attempting file upload (fetch)...');
+      const baseURL = this.client.defaults.baseURL || API_BASE_URL;
+      const uploadUrl = baseURL + MOBILE_ENDPOINTS.UPLOAD;
+
+      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      const deviceToken = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TOKEN);
+
+      const headers: Record<string, string> = {
+        'X-Platform': 'mobile',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      if (deviceToken) {
+        headers['X-Device-Token'] = deviceToken;
+      }
+      if (baseURL.startsWith('https://')) {
+        headers['X-Forwarded-Proto'] = 'https';
+        headers['X-Forwarded-Scheme'] = 'https';
+      }
+      // Do NOT set Content-Type - fetch will set multipart/form-data with boundary automatically
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        headers,
+        body: file,
+        signal: controller.signal,
+        credentials: 'include',
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const text = await response.text();
+        let errData: any = {};
+        try {
+          errData = text ? JSON.parse(text) : {};
+        } catch {
+          errData = { message: text || response.statusText };
+        }
+        throw new Error(errData.message || `Upload failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ Upload successful (fetch)');
+      return data;
+    } catch (error: any) {
+      console.error('❌ Upload failed (fetch):', error);
+      const message = error.name === 'AbortError' ? 'Upload timed out' : (error.message || 'Upload failed');
+      throw new Error(message);
     }
   }
 
@@ -840,9 +917,7 @@ class ApiService {
       formData.append('chunk', chunkBlob as any);
 
       const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_CHUNK, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        // Don't set Content-Type - React Native FormData will set it with proper boundary
         onUploadProgress: (progressEvent) => {
           if (onProgress && progressEvent.total) {
             const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -2790,13 +2865,26 @@ class ApiService {
   }
 
   // ==================== WEB RECEIPT & INVOICE ENDPOINTS ====================
-  // All receipt and invoice operations use web endpoints (no mobile-specific endpoints)
+  // All receipt and invoice operations use web endpoints (no mobile-specific endpoints).
+  // Same as web: GET /api/v1/web/analysis/receipts (search uses similarity match on store name).
 
-  async getReceiptAnalytics(days = 30, category?: string): Promise<ApiResponse> {
+  async getReceiptAnalytics(
+    days?: number, 
+    category?: string, 
+    dateFrom?: string, 
+    dateTo?: string, 
+    search?: string
+  ): Promise<ApiResponse> {
     try {
-      console.log(`📊 Getting receipt analytics (${days} days${category ? `, category: ${category}` : ''})`);
-      const params: any = { days };
+      console.log(`📊 Getting receipt analytics (${days ? `${days} days` : 'custom range'}${category ? `, category: ${category}` : ''}${search ? `, search: ${search}` : ''})`);
+      const params: any = {};
+      if (days !== undefined && days !== null) {
+        params.days = days;
+      }
       if (category) params.category = category;
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      if (search) params.search = search;
       const response = await this.client.get('/api/v1/web/analysis/receipts', { params });
       console.log('✅ Receipt analytics loaded from web endpoint');
       return response.data;
@@ -2864,7 +2952,7 @@ class ApiService {
       // Use web endpoint - route is registered under /api/v1/web prefix
       const endpoint = `/api/v1/web/files/${fileId}/categorize`;
       const payload = { category };
-      
+
       console.log(`📊 Categorizing receipt:`, {
         fileId,
         category,
@@ -2872,13 +2960,13 @@ class ApiService {
         payload,
         baseURL: this.client.defaults.baseURL
       });
-      
+
       const response = await this.client.put(endpoint, payload, {
         headers: {
           'Content-Type': 'application/json'
         }
       });
-      
+
       console.log('📊 Categorize response:', response.data);
       return response.data;
     } catch (error: any) {
@@ -2895,6 +2983,32 @@ class ApiService {
         success: false,
         message: error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to categorize receipt',
         data: null
+      };
+    }
+  }
+
+  /**
+   * Correct file data (receipt/invoice) - same endpoint as web.
+   * POST /api/v1/web/files/<file_id>/correct with correction_data (only edited fields + file_kind).
+   * Backend merges into existing json_data. Mobile uses this for Edit receipt/invoice.
+   */
+  async correctFileData(fileId: number, correctionData: Record<string, unknown>): Promise<ApiResponse> {
+    try {
+      const endpoint = `/api/v1/web/files/${fileId}/correct`;
+      const payload = { correction_data: correctionData };
+
+      const response = await this.client.post(endpoint, payload, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      return response.data;
+    } catch (error: any) {
+      const message = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to save correction';
+      console.error('❌ Correct file data error:', { fileId, message, data: error.response?.data });
+      return {
+        success: false,
+        message,
+        data: null,
       };
     }
   }
@@ -2917,11 +3031,23 @@ class ApiService {
     }
   }
 
-  async getInvoiceAnalytics(days = 30, category?: string): Promise<ApiResponse> {
+  async getInvoiceAnalytics(
+    days?: number, 
+    category?: string, 
+    dateFrom?: string, 
+    dateTo?: string, 
+    search?: string
+  ): Promise<ApiResponse> {
     try {
-      console.log(`📊 Getting invoice analytics (${days} days${category ? `, category: ${category}` : ''})`);
-      const params: any = { days };
+      console.log(`📊 Getting invoice analytics (${days ? `${days} days` : 'custom range'}${category ? `, category: ${category}` : ''}${search ? `, search: ${search}` : ''})`);
+      const params: any = {};
+      if (days !== undefined && days !== null) {
+        params.days = days;
+      }
       if (category) params.category = category;
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      if (search) params.search = search;
       const response = await this.client.get('/api/v1/web/analysis/invoices', { params });
       console.log('✅ Invoice analytics loaded from web endpoint');
       return response.data;
@@ -3872,20 +3998,52 @@ class ApiService {
 
   // ==================== MEETING ASSETS & WEBHOOKS ====================
 
+  /** Fetch asset content by URL (same as web) – transcript/summary/report/chat. */
+  async getVideoAssetContent(assetType: string, url: string): Promise<string> {
+    const response = await this.client.get(MOBILE_ENDPOINTS.VIDEO_ASSET_CONTENT, {
+      params: { asset_type: assetType, url },
+      timeout: 30000,
+    });
+    const data = response.data as { success?: boolean; content?: string };
+    if (data?.success && typeof data.content === 'string') return data.content;
+    throw new Error(data?.content ?? 'Failed to load content');
+  }
+
+  /** Fetch file content by ID (same as web – /api/v1/web/files/:id/view). */
+  async getWebFileContent(fileId: number): Promise<string> {
+    const response = await this.client.get(MOBILE_ENDPOINTS.WEB_FILE_VIEW(fileId), {
+      responseType: 'text',
+      timeout: 30000,
+    });
+    return response.data as string;
+  }
+
   async getMeetingAssets(): Promise<ApiResponse> {
+    const now = Date.now();
+    if (meetingAssetsCache && now - meetingAssetsCache.at < MEETING_ASSETS_CACHE_MS && meetingAssetsCache.response?.success) {
+      console.log('📁 Meeting assets served from cache');
+      return meetingAssetsCache.response;
+    }
     try {
       console.log('📁 Loading meeting assets with local file paths...');
-      // Use shorter timeout for assets (non-critical) - 15 seconds instead of 30
       const response = await this.client.get(MOBILE_ENDPOINTS.MEETING_ASSETS, {
-        timeout: 15000
+        timeout: 30000 // 30s so second request (e.g. meeting-details) doesn't timeout when server is busy
       });
       console.log('📁 Meeting assets response:', response.data);
-      return response.data;
+      const data = response.data as ApiResponse;
+      if (data?.success) {
+        meetingAssetsCache = { at: now, response: data };
+      }
+      return data;
     } catch (error: any) {
       console.error('Get meeting assets failed:', error);
-      // Don't throw for timeout errors - assets are non-critical
+      // On timeout, return cached data if we have it (e.g. from list screen)
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         console.warn('⚠️ Meeting assets request timed out (non-critical)');
+        if (meetingAssetsCache?.response?.success) {
+          console.log('📁 Returning cached meeting assets after timeout');
+          return meetingAssetsCache.response;
+        }
         return { success: false, data: null, message: 'Assets request timed out' };
       }
       throw new Error(error.response?.data?.message || 'Failed to fetch meeting assets');
@@ -3894,6 +4052,7 @@ class ApiService {
 
   async deleteMeetingAssets(meetingId: string): Promise<ApiResponse> {
     try {
+      meetingAssetsCache = null; // Invalidate cache so next fetch is fresh
       console.log('🗑️ Deleting all assets for meeting:', meetingId);
       const response = await this.client.delete(MOBILE_ENDPOINTS.MEETING_DELETE_ASSETS(meetingId));
       console.log('✅ Delete meeting assets response:', response.data);

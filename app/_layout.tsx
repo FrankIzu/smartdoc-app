@@ -49,6 +49,8 @@ function RootLayoutNav() {
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="login-success" options={{ headerShown: false }} />
+          <Stack.Screen name="login-error" options={{ headerShown: false }} />
           <Stack.Screen name="analytics" options={{ headerShown: false }} />
           <Stack.Screen name="bookmarks" options={{ headerShown: false }} />
           <Stack.Screen name="documents" options={{ headerShown: false }} />

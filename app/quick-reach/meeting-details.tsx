@@ -1,12 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Audio, ResizeMode, Video } from 'expo-av';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS, ResizeMode, Video } from 'expo-av';
 import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  InteractionManager,
   Linking,
   Modal,
   PanResponder,
@@ -105,10 +107,17 @@ export default function MeetingDetailsScreen() {
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoKey, setVideoKey] = useState(0); // Key counter to force remounts
   const [videoTitle, setVideoTitle] = useState<string>('');
+  const [videoBuffering, setVideoBuffering] = useState(true); // Track if video is buffering
+  const hasShownVideoErrorRef = useRef(false); // Track if we've shown an error to prevent duplicates
+  const assetsLoadInFlightRef = useRef(false); // Prevent duplicate getMeetingAssets (e.g. Strict Mode)
+  const videoLoadingTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Timeout for video loading
+  const videoBufferingCheckRef = useRef<NodeJS.Timeout | null>(null); // Interval to check buffering progress
+  const currentVideoStreamUrlRef = useRef<string | null>(null); // Stream URL we're playing (so we can switch to cache when download completes)
   const [menuAsset, setMenuAsset] = useState<MeetingAsset | null>(null);
   const [showTextViewer, setShowTextViewer] = useState(false);
   const [textViewerContent, setTextViewerContent] = useState<string>('');
   const [textViewerTitle, setTextViewerTitle] = useState<string>('');
+  const [textViewerAssetType, setTextViewerAssetType] = useState<string>('');
   const [textViewerLoading, setTextViewerLoading] = useState(false);
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const [audioSound, setAudioSound] = useState<Audio.Sound | null>(null);
@@ -121,6 +130,19 @@ export default function MeetingDetailsScreen() {
   const [seekPosition, setSeekPosition] = useState(0);
   const [progressBarWidth, setProgressBarWidth] = useState(300);
   const progressBarRef = useRef<View>(null);
+  const [audioLoadingMessage, setAudioLoadingMessage] = useState('Loading audio...');
+
+  // Set audio mode once on mount so playback has sound (required on iOS/Android)
+  useEffect(() => {
+    Audio.setAudioModeAsync({
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+    }).catch((err) => console.warn('Audio mode set failed:', err));
+  }, []);
 
   useEffect(() => {
     if (meetingId) {
@@ -153,8 +175,18 @@ export default function MeetingDetailsScreen() {
       if (audioSound) {
         audioSound.unloadAsync().catch(console.error);
       }
+      // Clear loading timeout on unmount
+      if (videoLoadingTimeoutRef.current) {
+        clearTimeout(videoLoadingTimeoutRef.current);
+        videoLoadingTimeoutRef.current = null;
+      }
+      // Clear buffering check interval
+      if (videoBufferingCheckRef.current) {
+        clearInterval(videoBufferingCheckRef.current);
+        videoBufferingCheckRef.current = null;
+      }
     };
-  }, [videoRef, audioSound]);
+  }, [videoRef, audioSound, isVideoFallbackInProgress]);
 
   // Audio position update interval
   useEffect(() => {
@@ -181,14 +213,90 @@ export default function MeetingDetailsScreen() {
     return () => clearInterval(interval);
   }, [audioSound, audioPlaying]);
 
+  // Loading timeout: if video doesn't load within 20 seconds, check status and show appropriate error
+  useEffect(() => {
+    if (videoLoading && selectedVideoUrl) {
+      // Clear any existing timeout
+      if (videoLoadingTimeoutRef.current) {
+        clearTimeout(videoLoadingTimeoutRef.current);
+      }
+      
+      // Set new timeout - longer for MP4 videos which may need time to buffer
+      videoLoadingTimeoutRef.current = setTimeout(async () => {
+        if (videoLoading && !hasShownVideoErrorRef.current && videoRef) {
+          // Check video status before assuming format error
+          try {
+            const status = await videoRef.getStatusAsync();
+            if (status.isLoaded) {
+              // Video actually loaded, just clear loading state
+              console.log('🎬 Video loaded during timeout check');
+              setVideoLoading(false);
+              return;
+            }
+          } catch (statusError) {
+            console.warn('🎬 Error checking video status:', statusError);
+          }
+          
+          // Video still not loaded after timeout - show loading timeout message (not format error)
+          console.warn('🎬 Video loading timeout after 20s');
+          setVideoLoading(false);
+          hasShownVideoErrorRef.current = true;
+          
+          const streamUrlForBrowser = (() => {
+            const urlToMatch = originalVideoUrl || selectedVideoUrl || '';
+            const id = urlToMatch.match(/\/recording\/(\d+)(?:\/|$)/)?.[1];
+            return id ? `${API_BASE_URL}/api/v1/video/recording/${id}/stream` : null;
+          })();
+          
+          // Show "Loading Timeout" instead of "Format Not Supported" since backend returns MP4
+          Alert.alert(
+            'Video Loading Timeout',
+            'The video is taking longer than expected to load. This may be due to network speed or file size. You can try opening it in your browser instead.',
+            [
+              { text: 'OK', style: 'cancel' as const },
+              ...(streamUrlForBrowser ? [{
+                text: 'Open in Browser',
+                onPress: async () => {
+                  try {
+                    const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+                    const url = token
+                      ? `${streamUrlForBrowser}?token=${encodeURIComponent(token)}&format=mp4`
+                      : `${streamUrlForBrowser}?format=mp4`;
+                    const canOpen = await Linking.canOpenURL(url);
+                    if (canOpen) await Linking.openURL(url);
+                    else Alert.alert('Error', 'Cannot open browser');
+                  } catch (e) {
+                    console.warn('Open in browser failed:', e);
+                    Alert.alert('Error', 'Could not open browser');
+                  }
+                },
+              }] : []),
+            ]
+          );
+        }
+      }, 20000); // 20 second timeout - MP4 videos may need time to buffer
+    } else {
+      // Clear timeout when loading stops or URL changes
+      if (videoLoadingTimeoutRef.current) {
+        clearTimeout(videoLoadingTimeoutRef.current);
+        videoLoadingTimeoutRef.current = null;
+      }
+    }
+    
+    return () => {
+      if (videoLoadingTimeoutRef.current) {
+        clearTimeout(videoLoadingTimeoutRef.current);
+        videoLoadingTimeoutRef.current = null;
+      }
+    };
+  }, [videoLoading, selectedVideoUrl, originalVideoUrl]);
+
   const loadMeetingAssets = async () => {
+    if (assetsLoadInFlightRef.current) return;
+    assetsLoadInFlightRef.current = true;
     try {
       setLoading(true);
-      
-      // Try to get assets for this specific meeting using the meeting ID
       console.log('📁 Loading assets for meeting ID:', meetingId);
-      
-      // First try the general assets endpoint
       const response = await apiClient.getMeetingAssets();
       if (response.success && response.data) {
         // Handle both response structures: data.assets or data.meetings
@@ -378,6 +486,7 @@ export default function MeetingDetailsScreen() {
       setAssets([]);
     } finally {
       setLoading(false);
+      assetsLoadInFlightRef.current = false;
     }
   };
 
@@ -669,26 +778,78 @@ export default function MeetingDetailsScreen() {
         const separator = videoUrl.includes('?') ? '&' : '?';
         finalUrl = `${videoUrl}${separator}token=${encodeURIComponent(token)}`;
       }
+      // Request MP4 so backend transcodes WebM→MP4 for iOS/Android (backend checks format=mp4)
+      if (finalUrl.includes('/recording/') && finalUrl.includes('/stream') && !finalUrl.includes('format=mp4')) {
+        finalUrl += finalUrl.includes('?') ? '&format=mp4' : '?format=mp4';
+      }
       
-      console.log('🎬 Starting progressive video playback:', finalUrl);
+      // Check if URL has unsupported format extension (WebM not supported on iOS native player)
+      const urlLower = finalUrl.toLowerCase();
+      if (urlLower.includes('.webm') || (urlLower.includes('/download') && !urlLower.includes('format=mp4') && !urlLower.includes('/stream'))) {
+        console.warn('🎬 Detected WebM or unsupported format - will likely fail, showing browser option');
+        // Don't prevent trying, but we'll timeout faster if it fails
+      }
+
+      // Use cached file when available to avoid loading from network each time
+      const videoCachePath = getVideoCachePath(assetId, finalUrl);
+      let uriToPlay = finalUrl;
+      try {
+        const cached = await FileSystem.getInfoAsync(videoCachePath);
+        if (cached.exists && (cached.size ?? 0) > 0) {
+          // expo-av expects file:// for local paths on some platforms
+          uriToPlay = videoCachePath.startsWith('file://') ? videoCachePath : `file://${videoCachePath}`;
+          console.log('🎬 Playing video from cache (no network load)');
+        }
+      } catch (_) {
+        // Ignore cache check errors; fall back to stream
+      }
+      
+      console.log(uriToPlay === videoCachePath ? '🎬 Starting cached video playback' : '🎬 Starting progressive video playback:', uriToPlay === videoCachePath ? '(cached)' : finalUrl);
       
       // Store original URL and assetId for fallback
       setOriginalVideoUrl(videoUrl);
       setVideoAssetId(assetId);
+      setVideoDirectUrl(directUrl || null); // Store direct URL for fallback
       setHasTriedVideoFallback(false); // Reset fallback flag
+      setIsVideoFallbackInProgress(false); // Reset fallback progress flag
+      hasShownVideoErrorRef.current = false; // Reset error shown flag
       
-      // Set video URL - expo-av will handle:
-      // - Progressive streaming with HTTP Range requests
-      // - Automatic buffering and caching
-      // - Network interruption handling
-      // - Resume from cache on replay
       setVideoTitle(title);
-      setSelectedVideoUrl(finalUrl);
+      setSelectedVideoUrl(uriToPlay);
       setShowVideoPlayer(true);
       setVideoLoading(true);
-      
-      // Brief loading indicator - video will start playing as soon as buffer is ready
-      // expo-av handles all the progressive streaming automatically
+      setVideoBuffering(uriToPlay !== (videoCachePath.startsWith('file://') ? videoCachePath : `file://${videoCachePath}`)); // Cached file typically doesn't need buffering
+
+      const isPlayingFromCache = (uriToPlay.startsWith('file://') || uriToPlay === videoCachePath);
+      if (isPlayingFromCache) {
+        currentVideoStreamUrlRef.current = null;
+      } else {
+        currentVideoStreamUrlRef.current = finalUrl; // So we can switch to cache when download completes
+      }
+
+      // When streaming (not from cache), download to cache in background; when done, switch playback to cache so video starts (stream can take 1–2 min to transcode)
+      if (!isPlayingFromCache && finalUrl.includes('/recording/')) {
+        const recordingIdMatch = finalUrl.match(/\/recording\/(\d+)\//);
+        if (recordingIdMatch && token) {
+          const recordingId = recordingIdMatch[1];
+          const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${recordingId}/download?token=${encodeURIComponent(token)}&format=mp4`;
+          const streamUrlForSwitch = finalUrl;
+          const pathForSwitch = videoCachePath;
+          FileSystem.downloadAsync(downloadUrl, videoCachePath).then(() => {
+            console.log('🎬 Video cached for next playback');
+            // If we're still showing this stream (user didn't close or change video), switch to cached file so playback can start (backend stream can take 1–2 min to transcode)
+            if (currentVideoStreamUrlRef.current === streamUrlForSwitch) {
+              const fileUri = pathForSwitch.startsWith('file://') ? pathForSwitch : `file://${pathForSwitch}`;
+              setSelectedVideoUrl(fileUri);
+              setVideoKey((k) => k + 1);
+              setVideoLoading(false);
+              setVideoBuffering(false);
+              currentVideoStreamUrlRef.current = null;
+              console.log('🎬 Switched to cached file – playback should start');
+            }
+          }).catch(() => {});
+        }
+      }
       
     } catch (error) {
       console.error('Failed to prepare video playback:', error);
@@ -703,159 +864,161 @@ export default function MeetingDetailsScreen() {
     }
   };
 
+  const getAudioCachePath = (assetId?: string, url?: string): string => {
+    const dir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+    const key = assetId || (url ? 'url_' + String(url.split('').reduce((a: number, b: string) => ((a << 5) - a) + b.charCodeAt(0), 0) % 1e9) : 'audio');
+    const safe = key.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 80);
+    return `${dir}meeting_audio_${safe}.m4a`;
+  };
+
+  const getVideoCachePath = (assetId?: string, url?: string): string => {
+    const dir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+    const key = assetId || (url ? 'url_' + String(url.split('').reduce((a: number, b: string) => ((a << 5) - a) + b.charCodeAt(0), 0) % 1e9) : 'video');
+    const safe = key.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 80);
+    return `${dir}meeting_video_${safe}.mp4`;
+  };
+
   const playAudioWithCache = async (audioUrl: string, title: string, assetId?: string) => {
-    // Get auth token to append to URL if needed (outside try block so it's available in catch)
     let token: string | null = null;
     try {
       token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
     } catch (tokenError) {
       console.warn('Failed to retrieve auth token:', tokenError);
     }
-    
-    try {
-      let finalUrl = audioUrl;
-      
-      // If URL doesn't already have auth, append token as query parameter
-      // This allows expo-av to authenticate while using progressive streaming
-      if (token && !audioUrl.includes('token=')) {
-        const separator = audioUrl.includes('?') ? '&' : '?';
-        finalUrl = `${audioUrl}${separator}token=${encodeURIComponent(token)}`;
-      }
-      
-      console.log('🎵 Starting progressive audio playback:', finalUrl);
-      
-      setAudioTitle(title);
-      setShowAudioPlayer(true);
-      setAudioLoading(true);
-      
-      // expo-av Audio.Sound will handle:
-      // - Progressive streaming with HTTP Range requests
-      // - Automatic buffering and caching
-      // - Network interruption handling
-      // - Resume from cache on replay
-      
-      // Create audio source - expo-av handles progressive streaming automatically
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: finalUrl },
-        { 
-          shouldPlay: false,
-          isMuted: false,
-          volume: 1.0
+
+    // Show modal and loading UI immediately so user never sees a blank screen
+    setAudioTitle(title);
+    setShowAudioPlayer(true);
+    setAudioLoading(true);
+    setAudioLoadingMessage('Preparing...');
+
+    const doPlay = async () => {
+      try {
+        let finalUrl = audioUrl;
+        if (token && !audioUrl.includes('token=')) {
+          const separator = audioUrl.includes('?') ? '&' : '?';
+          finalUrl = `${audioUrl}${separator}token=${encodeURIComponent(token)}`;
         }
-      );
-      
-      // Wait a moment for sound to load, then get status
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Get duration and verify sound loaded properly
-      const status = await sound.getStatusAsync();
-      if (!status.isLoaded) {
-        throw new Error('Audio failed to load - file may be corrupted or unsupported format');
-      }
-      
-      if (status.durationMillis) {
-        setAudioDuration(status.durationMillis);
-        console.log('🎵 Audio duration:', status.durationMillis, 'ms');
-      }
-      
-      setAudioSound(sound);
-      
-      // Play audio - will start immediately and buffer progressively
-      await sound.playAsync();
-      setAudioPlaying(true);
-      setAudioLoading(false); // Only hide spinner after playback actually starts
-      console.log('🎵 Audio playback started (progressive streaming)');
-      
-    } catch (error) {
-      setAudioLoading(false);
-      
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      
-      // If streaming fails with format error, try download endpoint as fallback
-      // This handles cases where stream endpoint doesn't set proper Content-Type
-      if (errorMessage.includes('format is not supported') || errorMessage.includes('-11828')) {
-        console.log('🎵 Stream endpoint failed (format error), trying download endpoint as fallback...');
-        
-        // Try to extract recording ID and use download endpoint
-        if (audioUrl.includes('/recording/') && audioUrl.includes('/stream')) {
+
+        const cachePath = getAudioCachePath(assetId, audioUrl);
+        const cached = await FileSystem.getInfoAsync(cachePath);
+
+        if (cached.exists && (cached.size ?? 0) > 0) {
+          setAudioLoadingMessage('Loading...');
+          const { sound } = await Audio.Sound.createAsync(
+            { uri: cachePath },
+            { shouldPlay: false, isMuted: false, volume: 1.0 }
+          );
+          await sound.setVolumeAsync(1);
+          await sound.setIsMutedAsync(false);
+          const status = await sound.getStatusAsync();
+          if (status.isLoaded && status.durationMillis) setAudioDuration(status.durationMillis);
+          setAudioSound(sound);
+          await sound.playAsync();
+          setAudioPlaying(true);
+          setAudioLoading(false);
+          console.log('🎵 Audio playing from cache');
+          return;
+        }
+
+        // Progressive play: stream from URL — playback starts as data arrives, no full download first
+        setAudioLoadingMessage('Loading audio...');
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: finalUrl },
+          { shouldPlay: false, isMuted: false, volume: 1.0 }
+        );
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const status = await sound.getStatusAsync();
+        if (!status.isLoaded) throw new Error('Audio failed to load - file may be corrupted or unsupported format');
+        if (status.durationMillis) setAudioDuration(status.durationMillis);
+        setAudioSound(sound);
+        await sound.setVolumeAsync(1);
+        await sound.setIsMutedAsync(false);
+        await sound.playAsync();
+        setAudioPlaying(true);
+        setAudioLoading(false);
+        console.log('🎵 Audio playback started (progressive stream)');
+
+        // Cache in background for next time (does not block playback)
+        if (audioUrl.includes('/recording/') && (audioUrl.includes('/stream') || audioUrl.includes('/download'))) {
           const recordingIdMatch = audioUrl.match(/\/recording\/(\d+)\//);
           if (recordingIdMatch) {
             const recordingId = recordingIdMatch[1];
             const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${recordingId}/download`;
-            const fallbackUrl = token ? `${downloadUrl}?token=${encodeURIComponent(token)}` : downloadUrl;
-            
-            try {
-              console.log('🎵 Trying download endpoint:', fallbackUrl);
-              const { sound: fallbackSound } = await Audio.Sound.createAsync(
-                { uri: fallbackUrl },
-                { 
-                  shouldPlay: false,
-                  isMuted: false,
-                  volume: 1.0
-                }
-              );
-              
-              // Wait a bit longer for audio to load properly
-              await new Promise(resolve => setTimeout(resolve, 200));
-              const fallbackStatus = await fallbackSound.getStatusAsync();
-              
-              if (fallbackStatus.isLoaded) {
-                if (fallbackStatus.durationMillis) {
-                  setAudioDuration(fallbackStatus.durationMillis);
-                }
+            const downloadFinal = token ? `${downloadUrl}?token=${encodeURIComponent(token)}` : downloadUrl;
+            FileSystem.downloadAsync(downloadFinal, cachePath).catch(() => {});
+          }
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes('format is not supported') || errorMessage.includes('-11828')) {
+          if (audioUrl.includes('/recording/') && audioUrl.includes('/stream')) {
+            const recordingIdMatch = audioUrl.match(/\/recording\/(\d+)\//);
+            if (recordingIdMatch) {
+              const recordingId = recordingIdMatch[1];
+              const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${recordingId}/download`;
+              const fallbackUrl = token ? `${downloadUrl}?token=${encodeURIComponent(token)}` : downloadUrl;
+              const cachePath = getAudioCachePath(assetId, audioUrl);
+
+              // Try progressive play from download URL first (no full download wait)
+              try {
+                setAudioLoadingMessage('Loading audio...');
+                const { sound: fallbackSound } = await Audio.Sound.createAsync(
+                  { uri: fallbackUrl },
+                  { shouldPlay: false, isMuted: false, volume: 1.0 }
+                );
+                await fallbackSound.setVolumeAsync(1);
+                await fallbackSound.setIsMutedAsync(false);
+                const st = await fallbackSound.getStatusAsync();
+                if (st.isLoaded && st.durationMillis) setAudioDuration(st.durationMillis);
                 setAudioSound(fallbackSound);
-                // Play audio first, then hide spinner
                 await fallbackSound.playAsync();
                 setAudioPlaying(true);
-                setAudioLoading(false); // Only hide spinner after playback actually starts
-                console.log('🎵 ✅ Audio playback started via download endpoint (fallback succeeded)');
-                return; // Success! Don't show error alert
-              } else {
-                console.warn('🎵 Download endpoint loaded but status shows not loaded:', fallbackStatus);
-                // Try playing anyway - sometimes status check is delayed
-                try {
-                  setAudioSound(fallbackSound);
-                  await fallbackSound.playAsync();
-                  setAudioPlaying(true);
-                  setAudioLoading(false); // Only hide spinner after playback actually starts
-                  console.log('🎵 ✅ Audio playback started via download endpoint (played despite status)');
-                  return; // Success! Don't show error alert
-                } catch (playError) {
-                  console.error('Failed to play fallback audio:', playError);
-                }
+                setAudioLoading(false);
+                console.log('🎵 Audio playing from download URL (progressive)');
+                // Cache in background for next time
+                FileSystem.downloadAsync(fallbackUrl, cachePath).catch(() => {});
+                return;
+              } catch (streamFallbackError) {
+                console.warn('Progressive fallback failed, trying full download:', streamFallbackError);
               }
-            } catch (fallbackError) {
-              const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-              console.error('Download endpoint also failed:', fallbackErrorMessage);
-              
-              // If download endpoint also fails with format error, log detailed info
-              if (fallbackErrorMessage.includes('format is not supported') || 
-                  fallbackErrorMessage.includes('-11828') ||
-                  fallbackErrorMessage.includes('-1100')) {
-                console.error('🎵 Both stream and download endpoints failed. Error details:', {
-                  streamError: errorMessage,
-                  downloadError: fallbackErrorMessage,
-                  audioUrl: audioUrl,
-                  downloadUrl: fallbackUrl
-                });
+
+              // Last resort: full download then play (only when streaming fails)
+              try {
+                setAudioLoadingMessage('Downloading...');
+                await FileSystem.downloadAsync(fallbackUrl, cachePath);
+                setAudioLoadingMessage('Loading...');
+                const { sound: fallbackSound } = await Audio.Sound.createAsync(
+                  { uri: cachePath },
+                  { shouldPlay: false, isMuted: false, volume: 1.0 }
+                );
+                await fallbackSound.setVolumeAsync(1);
+                await fallbackSound.setIsMutedAsync(false);
+                const st = await fallbackSound.getStatusAsync();
+                if (st.isLoaded && st.durationMillis) setAudioDuration(st.durationMillis);
+                setAudioSound(fallbackSound);
+                await fallbackSound.playAsync();
+                setAudioPlaying(true);
+                setAudioLoading(false);
+                console.log('🎵 Audio playing from cache (full download fallback)');
+                return;
+              } catch (fullDownloadError) {
+                console.error('Full download fallback failed:', fullDownloadError);
               }
             }
           }
         }
+        setAudioLoading(false);
+        console.error('🎵 Audio playback failed:', { errorMessage: errorMessage, audioUrl });
+        Alert.alert('Error', `Failed to play audio: ${errorMessage}`);
+        setShowAudioPlayer(false);
       }
-      
-      // Only show error alert if all fallbacks failed
-      // Log final error with context (only if we didn't successfully fallback)
-      console.error('🎵 Audio playback failed after all fallbacks:', {
-        originalError: errorMessage,
-        audioUrl: audioUrl,
-        hasToken: !!token
-      });
-      
-      // Only show alert if we didn't successfully use a fallback
-      Alert.alert('Error', `Failed to play audio: ${errorMessage}`);
-      setShowAudioPlayer(false);
-    }
+    };
+
+    // Defer heavy work so modal and loading spinner paint first
+    InteractionManager.runAfterInteractions(() => {
+      doPlay();
+    });
   };
 
   const openFile = async (asset: MeetingAsset) => {
@@ -998,109 +1161,54 @@ export default function MeetingDetailsScreen() {
       // Define audio/video asset types that should play in a player
       const mediaTypes = ['recording', 'video'];
       
-      // Check if it's a text type - open in TextAssetViewer (same viewer for all text assets)
+      // Check if it's a text type - open in TextAssetViewer (same as web)
       if (textTypes.includes(asset.type)) {
-        // For all text types with file_id, use TextAssetViewer (same as transcripts)
-        if (asset.file_id) {
-          // Fetch content from file_id endpoint and display in TextAssetViewer
-          setTextViewerLoading(true);
-          setShowTextViewer(true);
-          
-          const defaultTitle = asset.type === 'transcript' || asset.type === 'call_transcript' ? 'Transcript' :
-                              asset.type === 'meeting_summary' || asset.type === 'summary' ? 'Summary' :
-                              asset.type === 'meeting_report' || asset.type === 'report' ? 'Report' :
-                              asset.type === 'chat_log' || asset.type === 'chat' || asset.type === 'meeting_chat' ? 'Chat' :
-                              asset.type === 'notes' ? 'Notes' : 'Document';
-          
-          const fullTitle = asset.title || asset.original_filename || defaultTitle;
-          setTextViewerTitle(fullTitle);
-          
-          try {
-            const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-            const viewUrl = `${API_BASE_URL}/api/v1/mobile/file/${asset.file_id}/view`;
-            const headers: HeadersInit = {};
-            if (token) {
-              headers['Authorization'] = `Bearer ${token}`;
-              headers['X-Platform'] = 'android';
-            }
-            
-            const response = await fetch(viewUrl, { headers });
-            if (response.ok) {
-              const content = await response.text();
-              setTextViewerContent(content);
-              setTextViewerLoading(false);
-              return;
-            } else {
-              // Try download endpoint as fallback
-              const downloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${asset.file_id}/download`;
-              const downloadResponse = await fetch(downloadUrl, { headers });
-              if (downloadResponse.ok) {
-                const content = await downloadResponse.text();
-                setTextViewerContent(content);
-                setTextViewerLoading(false);
-                return;
-              } else {
-                throw new Error(`Failed to fetch: ${downloadResponse.status}`);
-              }
-            }
-          } catch (error) {
-            console.error('Failed to fetch text asset content from file_id:', error);
-            setTextViewerLoading(false);
-            Alert.alert('Error', 'Failed to load content. The file may not be available.');
-            setShowTextViewer(false);
-            return;
-          }
-        } else if (asset.url) {
-          // Only use URL if no file_id exists
-          setTextViewerLoading(true);
-          setShowTextViewer(true);
-          
-          const defaultTitle = asset.type === 'transcript' || asset.type === 'call_transcript' ? 'Transcript' :
-                              asset.type === 'meeting_summary' || asset.type === 'summary' ? 'Summary' :
-                              asset.type === 'meeting_report' || asset.type === 'report' ? 'Report' :
-                              asset.type === 'chat_log' || asset.type === 'chat' || asset.type === 'meeting_chat' ? 'Chat' :
-                              asset.type === 'notes' ? 'Notes' : 'Document';
-          
-          const fullTitle = asset.title || asset.original_filename || defaultTitle;
-          setTextViewerTitle(fullTitle);
-          
-          try {
-            // Try to get auth token for authenticated requests
-            const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-            const headers: HeadersInit = {};
-            if (token) {
-              headers['Authorization'] = `Bearer ${token}`;
-              headers['X-Platform'] = 'android';
-            }
-            
-            const response = await fetch(asset.url, { headers });
-            if (response.ok) {
-              const content = await response.text();
-              setTextViewerContent(content);
-              setTextViewerLoading(false);
-              return;
-            } else {
-              throw new Error(`Failed to fetch: ${response.status}`);
-            }
-          } catch (error) {
-            console.error('Failed to fetch content from URL:', error);
-            setTextViewerLoading(false);
-            Alert.alert('Error', 'Failed to load content. The file may not be available.');
-            setShowTextViewer(false);
-            return;
-          }
-        } else {
-          // Fallback: try to open file if no file_id and no URL
-          if (asset.local_transcript_path || asset.local_file_path || asset.local_chat_path || asset.local_report_path) {
-            await openFile(asset);
-            return;
+        const defaultTitle = asset.type === 'transcript' || asset.type === 'call_transcript' ? 'Transcript' :
+                            asset.type === 'meeting_summary' || asset.type === 'summary' ? 'Summary' :
+                            asset.type === 'meeting_report' || asset.type === 'report' ? 'Report' :
+                            asset.type === 'chat_log' || asset.type === 'chat' || asset.type === 'meeting_chat' ? 'Chat' :
+                            asset.type === 'notes' ? 'Notes' : 'Document';
+        const fullTitle = asset.title || asset.original_filename || defaultTitle;
+
+        setTextViewerLoading(true);
+        setShowTextViewer(true);
+        setTextViewerTitle(fullTitle);
+        setTextViewerAssetType(asset.type);
+
+        try {
+          if (asset.file_id) {
+            // Same as web: /api/v1/web/files/:id/view
+            const content = await apiClient.getWebFileContent(Number(asset.file_id));
+            setTextViewerContent(content);
+          } else if (asset.url) {
+            // Same as web: /api/v1/video/asset-content?asset_type=&url=
+            const assetType = asset.type === 'transcript' || asset.type === 'call_transcript' ? 'transcript' :
+                             asset.type === 'meeting_summary' || asset.type === 'summary' ? 'meeting_summary' :
+                             asset.type === 'meeting_report' || asset.type === 'report' ? 'meeting_report' :
+                             asset.type === 'chat_log' || asset.type === 'chat' || asset.type === 'meeting_chat' ? 'meeting_chat' :
+                             asset.type === 'notes' ? 'meeting_note' : 'transcript';
+            const content = await apiClient.getVideoAssetContent(assetType, asset.url);
+            setTextViewerContent(content);
           } else {
-            Alert.alert('Error', 'No file available for this asset');
+            setTextViewerLoading(false);
+            setShowTextViewer(false);
+            if (asset.local_transcript_path || asset.local_file_path || asset.local_chat_path || asset.local_report_path) {
+              await openFile(asset);
+            } else {
+              Alert.alert('Error', 'No file available for this asset');
+            }
             return;
           }
+          setTextViewerLoading(false);
+        } catch (error) {
+          console.error('Failed to fetch text asset content:', error);
+          setTextViewerLoading(false);
+          Alert.alert('Error', 'Failed to load content. The file may not be available.');
+          setShowTextViewer(false);
         }
+        return;
       }
-      
+
       // Check if it's audio or video - play in player
       if (mediaTypes.includes(asset.type)) {
         await playRecording(asset);
@@ -1235,8 +1343,8 @@ export default function MeetingDetailsScreen() {
       // The asset.id format varies:
       // - "recording_1125" or "call_recording_123" -> recording ID
       // - "transcript_1125" or "call_transcript_456" -> transcript ID  
-      // - "report_202" -> MeetingReport.id = 202
-      // - "meeting_report_789" -> MeetingReport.id = 789
+      // - "report_file_123" -> File.id = 123 (combined CSV, same as web)
+      // - "report_202" / "meeting_report_789" -> legacy MeetingReport.id (deprecated)
       
       if (typeof asset.id === 'string') {
         // Extract numeric ID from formatted IDs
@@ -1253,8 +1361,10 @@ export default function MeetingDetailsScreen() {
             console.log('🗑️ Extracted ID from asset.id:', fileId, '(VideoCall.id or CallTranscript.id)');
           } else if (asset.id.startsWith('call_transcript_')) {
             console.log('🗑️ Extracted ID from asset.id:', fileId, '(CallTranscript.id)');
+          } else if (asset.id.startsWith('report_file_')) {
+            console.log('🗑️ Extracted ID from asset.id:', fileId, '(File.id - combined meeting report CSV)');
           } else if (asset.id.startsWith('report_') || asset.id.startsWith('meeting_report_')) {
-            console.log('🗑️ Extracted ID from asset.id:', fileId, '(MeetingReport.id)');
+            console.log('🗑️ Extracted ID from asset.id:', fileId, '(MeetingReport.id, legacy)');
           } else {
             console.log('🗑️ Extracted ID from asset.id:', fileId);
           }
@@ -1336,7 +1446,7 @@ export default function MeetingDetailsScreen() {
               } else if (asset.type === 'transcript') {
                 console.log('🗑️ Transcript assets may be in: File, CallTranscript, or VideoCall table');
               } else if (asset.type === 'meeting_report' || asset.type === 'report') {
-                console.log('🗑️ Report assets are in: MeetingReport table');
+                console.log('🗑️ Report assets are in: File table (combined CSV) or legacy MeetingReport table');
               }
               
               await apiClient.deleteFile(fileIdNum);
@@ -1587,6 +1697,9 @@ export default function MeetingDetailsScreen() {
     if (asset.type === 'meeting_summary' || asset.type === 'summary') {
       return 'Summary';
     }
+    if (asset.type === 'meeting_report' || asset.type === 'report') {
+      return 'Report';
+    }
     
     // For other types, capitalize the first letter
     return asset.type.charAt(0).toUpperCase() + asset.type.slice(1).replace(/_/g, ' ');
@@ -1752,8 +1865,9 @@ export default function MeetingDetailsScreen() {
       case 'call_transcript':
         return 'Call Transcript';
       case 'meeting_report':
-      case 'summary':
       case 'report':
+        return 'Report';
+      case 'summary':
       case 'meeting_summary':
         return 'Summary';
       case 'recording':
@@ -2267,13 +2381,21 @@ export default function MeetingDetailsScreen() {
                   setHasTriedVideoFallback(false);
                   setIsVideoFallbackInProgress(false);
                   setVideoLoading(false);
+                  setVideoBuffering(false);
                   setVideoKey(0); // Reset key for next time
+                  hasShownVideoErrorRef.current = false; // Reset error flag
+                  currentVideoStreamUrlRef.current = null;
+                  // Clear buffering check interval
+                  if (videoBufferingCheckRef.current) {
+                    clearInterval(videoBufferingCheckRef.current);
+                    videoBufferingCheckRef.current = null;
+                  }
                 }}
               >
         <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {/* Header */}
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, paddingTop: Math.max(insets.top, 12), paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            {/* Floating close – top center, same row as native player controls bar */}
+            <View style={{ position: 'absolute', top: (insets.top || 12) + 4, left: 0, right: 0, alignItems: 'center', zIndex: 20 }}>
               <TouchableOpacity
                 onPress={async () => {
                   setShowVideoPlayer(false);
@@ -2292,17 +2414,25 @@ export default function MeetingDetailsScreen() {
                   setVideoDirectUrl(null);
                   setHasTriedVideoFallback(false);
                   setIsVideoFallbackInProgress(false);
-                  setVideoDirectUrl(null);
-                  setHasTriedVideoFallback(false);
                   setVideoLoading(false);
+                  setVideoBuffering(false);
+                  hasShownVideoErrorRef.current = false;
+                  currentVideoStreamUrlRef.current = null;
+                  if (videoBufferingCheckRef.current) {
+                    clearInterval(videoBufferingCheckRef.current);
+                    videoBufferingCheckRef.current = null;
+                  }
                 }}
+                style={{
+                  backgroundColor: 'rgba(0,0,0,0.5)',
+                  borderRadius: 22,
+                  padding: 10,
+                  paddingHorizontal: 12,
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               >
-                <Ionicons name="close" size={28} color="#fff" />
+                <Ionicons name="close" size={24} color="#fff" />
               </TouchableOpacity>
-              <Text style={{ fontSize: 18, fontWeight: '600', color: '#fff', flex: 1, textAlign: 'center', marginHorizontal: 16 }} numberOfLines={1} ellipsizeMode="tail">
-                {videoTitle}
-              </Text>
-              <View style={{ width: 28 }} />
             </View>
 
             {videoLoading && !selectedVideoUrl ? (
@@ -2324,22 +2454,131 @@ export default function MeetingDetailsScreen() {
                 </Text>
               </View>
             ) : selectedVideoUrl ? (
-                <Video
-                  key={`${selectedVideoUrl}-${videoKey}`} // Force remount when URL or key changes
-                  ref={(ref) => {
-                    setVideoRef(ref);
-                    // Don't set loading to false here - wait for onLoad callback
+              <View style={{ flex: 1, width: '100%' }}>
+                {videoBuffering && (
+                  <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 5, justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
+                      <ActivityIndicator size="small" color="#fff" />
+                      <Text style={{ color: '#fff', fontSize: 12, marginTop: 4 }}>Buffering...</Text>
+                    </View>
+                  </View>
+                )}
+                <View style={{ flex: 1, alignSelf: 'stretch', width: '100%' }}>
+                  <Video
+                    key={`${selectedVideoUrl}-${videoKey}`} // Force remount when URL or key changes
+                    ref={(ref) => {
+                      setVideoRef(ref);
+                      // Don't set loading to false here - wait for onLoad callback
+                    }}
+                    source={{ uri: selectedVideoUrl }}
+                    style={{ flex: 1, width: '100%', minHeight: 200 }}
+                    useNativeControls
+                    resizeMode={ResizeMode.CONTAIN}
+                    shouldPlay={false} // Don't auto-play - we'll start when buffered
+                    progressUpdateIntervalMillis={500} // Update progress every 500ms for buffering check
+                  onLoadStart={() => {
+                    console.log('🎬 Video load started - buffering begins');
+                    setVideoBuffering(true);
                   }}
-                  source={{ uri: selectedVideoUrl }}
-                  style={{ width: '100%', height: '100%' }}
-                  useNativeControls
-                  resizeMode={ResizeMode.CONTAIN}
-                  shouldPlay
-                  onLoad={() => {
-                    // Video loaded and ready to play
-                    setVideoLoading(false);
-                    setIsVideoFallbackInProgress(false); // Clear fallback flag on successful load
-                    console.log('🎬 ✅ Video loaded successfully, progressive streaming active');
+                  onReadyForDisplay={async () => {
+                    console.log('🎬 Video ready for display - first frame available');
+                    // First frame is ready - start playback immediately for progressive loading
+                    if (videoRef) {
+                      try {
+                        await videoRef.playAsync();
+                        console.log('🎬 ✅ Started playback (progressive)');
+                        setVideoLoading(false); // Hide loading indicator
+                        setVideoBuffering(false);
+                      } catch (playError) {
+                        console.warn('🎬 Auto-play failed:', playError);
+                        // Still hide loading - user can tap play button
+                        setVideoLoading(false);
+                      }
+                    }
+                  }}
+                  onLoad={async () => {
+                    // Video metadata loaded - check if we have enough buffered data
+                    if (videoRef) {
+                      try {
+                        const status = await videoRef.getStatusAsync();
+                        if (status.isLoaded) {
+                          const playableDuration = status.playableDurationMillis || 0;
+                          const duration = status.durationMillis || 0;
+                          
+                          console.log(`🎬 Video metadata loaded - playable: ${(playableDuration/1000).toFixed(1)}s, total: ${(duration/1000).toFixed(1)}s`);
+                          
+                          // If we have at least 2 seconds buffered or 10% of video, start playing
+                          const minBufferMs = Math.min(2000, duration * 0.1);
+                          if (playableDuration >= minBufferMs && !status.isPlaying) {
+                            await videoRef.playAsync();
+                            console.log('🎬 ✅ Started playback (enough buffered)');
+                            setVideoLoading(false);
+                            setVideoBuffering(false);
+                          } else if (playableDuration > 0) {
+                            // Some data buffered but not enough - start monitoring
+                            setVideoLoading(false); // Hide loading spinner, show video
+                            // Start monitoring buffering progress
+                            if (videoBufferingCheckRef.current) {
+                              clearInterval(videoBufferingCheckRef.current);
+                            }
+                            videoBufferingCheckRef.current = setInterval(async () => {
+                              if (videoRef) {
+                                try {
+                                  const currentStatus = await videoRef.getStatusAsync();
+                                  if (currentStatus.isLoaded) {
+                                    const currentPlayable = currentStatus.playableDurationMillis || 0;
+                                    const currentDuration = currentStatus.durationMillis || 0;
+                                    const minBuffer = Math.min(2000, currentDuration * 0.1);
+                                    
+                                    // Start playing when we have enough buffered
+                                    if (currentPlayable >= minBuffer && !currentStatus.isPlaying && !currentStatus.isBuffering) {
+                                      await videoRef.playAsync();
+                                      console.log('🎬 ✅ Started playback (buffered enough)');
+                                      setVideoBuffering(false);
+                                      if (videoBufferingCheckRef.current) {
+                                        clearInterval(videoBufferingCheckRef.current);
+                                        videoBufferingCheckRef.current = null;
+                                      }
+                                    }
+                                  }
+                                } catch (err) {
+                                  console.warn('Buffering check error:', err);
+                                }
+                              }
+                            }, 500);
+                          }
+                          
+                          // Clear loading timeout since video is loading
+                          if (videoLoadingTimeoutRef.current) {
+                            clearTimeout(videoLoadingTimeoutRef.current);
+                            videoLoadingTimeoutRef.current = null;
+                          }
+                        }
+                      } catch (statusError) {
+                        console.warn('Error checking video status:', statusError);
+                      }
+                    }
+                  }}
+                  onPlaybackStatusUpdate={async (status) => {
+                    if (status.isLoaded) {
+                      // Update buffering state based on playback status
+                      if (status.isBuffering && !videoBuffering) {
+                        setVideoBuffering(true);
+                      } else if (!status.isBuffering && videoBuffering && status.isPlaying) {
+                        setVideoBuffering(false);
+                      }
+                      
+                      // Clear loading state once playback starts
+                      if (status.isPlaying && videoLoading) {
+                        setVideoLoading(false);
+                        setIsVideoFallbackInProgress(false);
+                        // Clear timeout
+                        if (videoLoadingTimeoutRef.current) {
+                          clearTimeout(videoLoadingTimeoutRef.current);
+                          videoLoadingTimeoutRef.current = null;
+                        }
+                      }
+                    }
                   }}
                   onError={async (error: any) => {
                     let errorMessage: string;
@@ -2350,7 +2589,8 @@ export default function MeetingDetailsScreen() {
                     } else {
                       errorMessage = String(error);
                     }
-                    console.error('Video playback error:', errorMessage);
+                    // Use warn so AVFoundation -11800 doesn't dump a red ERROR stack (known: format/load failure in native player)
+                    console.warn('Video playback error (native):', errorMessage);
                     
                     // Don't process errors if we're already in the middle of a fallback attempt
                     if (isVideoFallbackInProgress) {
@@ -2358,48 +2598,18 @@ export default function MeetingDetailsScreen() {
                       return;
                     }
                     
-                    // Check if we're already on the download endpoint or have tried fallback
+                    // We use the same stream endpoint as web: /api/v1/video/recording/{id}/stream
+                    // Don't fallback to download for format errors - same file (WebM) fails on iOS either way
                     const isDownloadEndpoint = selectedVideoUrl?.includes('/download');
-                    const isStreamEndpoint = selectedVideoUrl?.includes('/stream');
+                    const isFormatError = errorMessage.includes('format is not supported') ||
+                                         errorMessage.includes('-11828') ||
+                                         errorMessage.includes('-11800') ||
+                                         errorMessage.includes('-12792') ||
+                                         errorMessage.includes('AVFoundationErrorDomain');
                     
-                    // If streaming fails with format error, try download endpoint as fallback
-                    if ((errorMessage.includes('format is not supported') || errorMessage.includes('-11828')) && 
-                        !hasTriedVideoFallback && 
-                        isStreamEndpoint) {
-                      console.log('🎬 Stream endpoint failed, trying download endpoint as fallback...');
-                      
-                      // Try to extract recording ID and use download endpoint
-                      if (originalVideoUrl && originalVideoUrl.includes('/recording/') && originalVideoUrl.includes('/stream')) {
-                        const recordingIdMatch = originalVideoUrl.match(/\/recording\/(\d+)\//);
-                        if (recordingIdMatch) {
-                          const recordingId = recordingIdMatch[1];
-                          
-                          // Get token for fallback URL
-                          let fallbackToken: string | null = null;
-                          try {
-                            fallbackToken = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-                          } catch (tokenError) {
-                            console.warn('Failed to retrieve auth token for fallback:', tokenError);
-                          }
-                          
-                          const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${recordingId}/download`;
-                          const fallbackUrl = fallbackToken ? `${downloadUrl}?token=${encodeURIComponent(fallbackToken)}` : downloadUrl;
-                          
-                          console.log('🎬 Trying download endpoint:', fallbackUrl);
-                          setIsVideoFallbackInProgress(true); // Mark that fallback is in progress
-                          setHasTriedVideoFallback(true); // Mark that we've tried fallback
-                          // Increment key to force Video component remount with new URL
-                          setVideoKey(prev => prev + 1);
-                          setSelectedVideoUrl(fallbackUrl);
-                          setVideoLoading(true);
-                          return; // Don't show error alert yet
-                        }
-                      }
-                    }
-                    
-                    // If download endpoint also failed, try direct URL if available
-                    if (isDownloadEndpoint && videoDirectUrl && hasTriedVideoFallback) {
-                      console.log('🎬 Download endpoint failed, trying direct URL as fallback...');
+                    // Only try direct URL if download failed with a non-format error (e.g. network)
+                    if (isDownloadEndpoint && hasTriedVideoFallback && !isFormatError && videoDirectUrl) {
+                      console.log('🎬 Download endpoint failed with non-format error, trying direct URL as fallback...');
                       
                       let directUrl = videoDirectUrl;
                       let fallbackToken: string | null = null;
@@ -2423,12 +2633,59 @@ export default function MeetingDetailsScreen() {
                       return; // Don't show error alert yet
                     }
                     
-                    // Only show error if all fallbacks have been exhausted
+                    // Only show error if all fallbacks have been exhausted and we haven't shown it yet
+                    if (hasShownVideoErrorRef.current) {
+                      console.log('🎬 Error already shown, skipping duplicate alert');
+                      return;
+                    }
+                    
                     setIsVideoFallbackInProgress(false);
                     setVideoLoading(false);
-                    Alert.alert('Error', 'Failed to play video');
+                    hasShownVideoErrorRef.current = true; // Mark that we've shown the error
+                    
+                    // Provide more specific error message; offer "Open in Browser" (same stream URL as web)
+                    const errorTitle = isFormatError ? 'Video Format Not Supported' : 'Failed to Play Video';
+                    const errorText = isFormatError 
+                      ? 'This video format is not supported in the app. You can open the same stream in your browser to try playback there.'
+                      : 'Failed to play video. Please check your connection and try again.';
+                    
+                    const streamUrlForBrowser = (() => {
+                      const urlToMatch = originalVideoUrl || selectedVideoUrl || '';
+                      const id = urlToMatch.match(/\/recording\/(\d+)(?:\/|$)/)?.[1];
+                      return id ? `${API_BASE_URL}/api/v1/video/recording/${id}/stream` : null;
+                    })();
+                    
+                    if (isFormatError && streamUrlForBrowser) {
+                      Alert.alert(errorTitle, errorText, [
+                        { text: 'OK', style: 'cancel' as const },
+                        {
+                          text: 'Open in Browser',
+                          onPress: async () => {
+                            try {
+                              const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+                              const baseUrl = token
+                                ? `${streamUrlForBrowser}?token=${encodeURIComponent(token)}`
+                                : streamUrlForBrowser;
+                              const url = baseUrl.includes('format=mp4') 
+                                ? baseUrl 
+                                : `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}format=mp4`;
+                              const canOpen = await Linking.canOpenURL(url);
+                              if (canOpen) await Linking.openURL(url);
+                              else Alert.alert('Error', 'Cannot open browser');
+                            } catch (e) {
+                              console.warn('Open in browser failed:', e);
+                              Alert.alert('Error', 'Could not open browser');
+                            }
+                          },
+                        },
+                      ]);
+                    } else {
+                      Alert.alert(errorTitle, errorText);
+                    }
                   }}
-                />
+                  />
+                </View>
+              </View>
             ) : (
               <Text style={{ color: '#fff' }}>No video loaded</Text>
             )}
@@ -2454,8 +2711,8 @@ export default function MeetingDetailsScreen() {
       >
         <SafeAreaView style={{ flex: 1, backgroundColor: themeColors.background }}>
           <View style={{ flex: 1, padding: 20 }}>
-            {/* Header */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30, paddingTop: Math.max(insets.top - 20, 8) }}>
+            {/* Close center top; title below so it doesn't cover progress/play controls */}
+            <View style={{ marginBottom: 24, paddingTop: Math.max(insets.top - 20, 8), alignItems: 'center' }}>
               <TouchableOpacity
                 onPress={async () => {
                   if (audioSound) {
@@ -2467,17 +2724,23 @@ export default function MeetingDetailsScreen() {
                   setAudioPosition(0);
                   setAudioDuration(0);
                 }}
+                style={{
+                  backgroundColor: 'rgba(0,0,0,0.08)',
+                  borderRadius: 22,
+                  padding: 10,
+                  paddingHorizontal: 12,
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               >
-                <Ionicons name="close" size={28} color={themeColors.text} />
+                <Ionicons name="close" size={24} color={themeColors.text} />
               </TouchableOpacity>
-              <Text style={{ fontSize: 18, fontWeight: '600', color: themeColors.text, flex: 1, textAlign: 'center', marginHorizontal: 16 }} numberOfLines={1} ellipsizeMode="tail">
+              <Text style={{ fontSize: 18, fontWeight: '600', color: themeColors.text, marginTop: 12, textAlign: 'center', paddingHorizontal: 16 }} numberOfLines={1} ellipsizeMode="tail">
                 {audioTitle}
               </Text>
-              <View style={{ width: 28 }} />
             </View>
 
             {/* Audio Player Content */}
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 280 }}>
               {audioLoading || !audioSound ? (
                 <View style={{ alignItems: 'center', width: '100%', paddingHorizontal: 40 }}>
                   <View style={{ 
@@ -2487,13 +2750,15 @@ export default function MeetingDetailsScreen() {
                     backgroundColor: `${themeColors.tint || '#007AFF'}20`,
                     justifyContent: 'center',
                     alignItems: 'center',
-                    marginBottom: 40
+                    marginBottom: 24
                   }}>
                     <ActivityIndicator size="large" color={themeColors.tint || '#007AFF'} />
                   </View>
-                  
-                  <Text style={{ marginBottom: 24, fontSize: 18, fontWeight: '600', color: themeColors.text, textAlign: 'center' }}>
-                    Loading audio...
+                  <Text style={{ marginBottom: 8, fontSize: 18, fontWeight: '600', color: themeColors.text, textAlign: 'center' }}>
+                    {audioLoadingMessage}
+                  </Text>
+                  <Text style={{ fontSize: 14, color: themeColors.textSecondary || themeColors.text, textAlign: 'center', opacity: 0.8 }}>
+                    {audioTitle ? `${audioTitle}` : 'Audio player'}
                   </Text>
                 </View>
               ) : (
@@ -2677,10 +2942,12 @@ export default function MeetingDetailsScreen() {
         title={textViewerTitle}
         content={textViewerContent}
         loading={textViewerLoading}
+        assetType={textViewerAssetType}
         onClose={() => {
           setShowTextViewer(false);
           setTextViewerContent('');
           setTextViewerTitle('');
+          setTextViewerAssetType('');
           setTextViewerLoading(false);
         }}
       />

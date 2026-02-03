@@ -89,8 +89,12 @@ export default function SignUpScreen() {
       const result = await googleAuthService.signInWithGoogleEnhanced();
       
       if (result.success) {
-        Alert.alert('Success', 'Account created with Google successfully!');
-        router.replace('/(tabs)');
+        if (result.completedViaDeepLink) {
+          Alert.alert('Complete sign-in', 'Please complete sign-in in the browser. You\'ll return to the app when done.');
+        } else {
+          Alert.alert('Success', 'Account created with Google successfully!');
+          router.replace('/(tabs)');
+        }
       } else if (result.requires2FA) {
         Alert.alert(
           '2FA Required',
