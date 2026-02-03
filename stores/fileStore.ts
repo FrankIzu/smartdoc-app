@@ -1,16 +1,21 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
+import Constants from 'expo-constants';
 import { Alert, Platform } from 'react-native';
 import { create } from 'zustand';
 import { apiService } from '../services/api';
 import { FileState, FileUpload, UploadProgress } from '../types';
 import { convertHeicToPng, isHeicFile } from '../utils/imageConversion';
 
+// Check if running in Expo Go (which doesn't support custom native modules/plugins)
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
+
 interface FileStore extends FileState {
   // Global state
   isDocumentPickerOpen: boolean;
   isImagePickerOpen: boolean;
+  lastUploadTime: number; // Track when upload happened for immediate refresh
   
   // Actions
   fetchFiles: (page?: number, search?: string, category?: string) => Promise<void>;
@@ -30,6 +35,7 @@ interface FileStore extends FileState {
   forceResetDocumentPicker: () => Promise<void>;
   setImagePickerOpen: (isOpen: boolean) => void;
   resetImagePicker: () => void;
+  setLastUploadTime: (timestamp: number) => void;
 }
 
 export const useFileStore = create<FileStore>((set, get) => ({
@@ -40,6 +46,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   uploadProgress: {},
   isDocumentPickerOpen: false,
   isImagePickerOpen: false,
+  lastUploadTime: 0, // Track when upload happened for immediate refresh
 
   // Actions
   fetchFiles: async (page = 1, search?, category?) => {
@@ -140,12 +147,35 @@ export const useFileStore = create<FileStore>((set, get) => ({
           });
         }
 
+        // Prepare FormData for upload
+        // In React Native/Expo, FormData needs specific format
         const formData = new FormData();
-        formData.append('file', {
+        
+        // Log file details for debugging
+        console.log('📤 Preparing upload:', {
           uri: fileToUpload.uri,
           type: fileToUpload.type,
           name: fileToUpload.name,
+          size: fileToUpload.size,
+          isExpoGo,
+        });
+        
+        // Check if URI is valid (should start with file://, content://, or http://)
+        if (!fileToUpload.uri || (!fileToUpload.uri.startsWith('file://') && 
+            !fileToUpload.uri.startsWith('content://') && 
+            !fileToUpload.uri.startsWith('http://') &&
+            !fileToUpload.uri.startsWith('https://'))) {
+          throw new Error(`Invalid file URI: ${fileToUpload.uri}`);
+        }
+        
+        // Format for React Native FormData
+        formData.append('file', {
+          uri: fileToUpload.uri,
+          type: fileToUpload.type || 'image/jpeg',
+          name: fileToUpload.name || `image_${Date.now()}.jpg`,
         } as any);
+        
+        console.log('📤 FormData created, starting upload...');
         
         const response = await apiService.uploadFileWithProgressPolling(
           formData,
@@ -156,6 +186,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
             progressStore.updateProgress(progressId, {
               progress: progress,
               status: 'in-progress',
+              message: message || `Uploading... ${progress}%`,
             });
             
             console.log(`📊 Updated global progress bar for ${progressId}`);
@@ -191,6 +222,10 @@ export const useFileStore = create<FileStore>((set, get) => ({
           // For mobile uploads, immediately reload files to show them with 'pending' status
           // This matches the web behavior where files appear quickly with pending status
           console.log('📁 Upload complete, immediately reloading files to show pending status...');
+          
+          // Mark upload time for Files screen to bypass debounce
+          set({ lastUploadTime: Date.now() });
+          
           // Reload immediately (no delay) to show files with pending status
           get().fetchFiles(1); // Refresh files list immediately
           
@@ -219,23 +254,54 @@ export const useFileStore = create<FileStore>((set, get) => ({
           });
         }
       } catch (error: any) {
-        console.log('📁 Upload exception:', error);
+        console.error('📁 Upload exception:', error);
+        console.error('📁 Upload error details:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          stack: error.stack,
+          file: file.name,
+          uri: file.uri,
+        });
         allSuccessful = false;
         
-        // Update global progress to error
+        // Update global progress to error with detailed message
+        const errorMessage = error.response?.data?.message || error.message || 'Upload failed';
         progressStore.updateProgress(progressId, {
           status: 'error',
+          message: errorMessage,
         });
         
         // Update old progress system
         get().updateUploadProgress(fileId, {
           status: 'error',
-          error: error.message || 'Upload failed',
+          error: errorMessage,
         });
+        
+        // Set global error state
+        const fullErrorMessage = `Failed to upload ${file.name}: ${errorMessage}`;
+        set({ error: fullErrorMessage });
+        
+        // Show alert to user with error details
+        Alert.alert(
+          'Upload Failed',
+          fullErrorMessage,
+          [{ text: 'OK' }]
+        );
       }
     }
     
     console.log('📁 Upload batch completed. All successful:', allSuccessful);
+    
+    // Show summary alert if any uploads failed
+    if (!allSuccessful) {
+      Alert.alert(
+        'Upload Incomplete',
+        'Some files failed to upload. Please check the error messages and try again.',
+        [{ text: 'OK' }]
+      );
+    }
+    
     return allSuccessful;
   },
 
@@ -263,7 +329,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
         const file: FileUpload = {
           uri: asset.uri,
           name: `photo_${Date.now()}.${asset.type?.includes('heic') ? 'heic' : 'jpg'}`,
-          type: asset.type || 'image/jpeg',
+          // Use mimeType if available, fallback to type, then default
+          type: asset.mimeType || asset.type || 'image/jpeg',
           size: asset.fileSize,
         };
         
@@ -284,21 +351,40 @@ export const useFileStore = create<FileStore>((set, get) => ({
       // Set image picker state
       set({ isImagePickerOpen: true, error: null });
       
-      // First try with expo-media-library approach
-      console.log('🖼️ Requesting media library permissions...');
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      console.log('🖼️ MediaLibrary permission status:', status);
-      
-      if (status !== 'granted') {
-        console.log('🖼️ MediaLibrary permission denied');
-        
-        // Fallback to ImagePicker permissions
+      // In Expo Go, MediaLibrary plugin isn't available, so use ImagePicker directly
+      // In development/production builds, MediaLibrary supports all media types (images, videos, audio)
+      if (isExpoGo) {
+        console.log('🖼️ Running in Expo Go - using ImagePicker (photos only)...');
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
         console.log('🖼️ ImagePicker permission result:', permissionResult);
         
         if (!permissionResult.granted) {
-          set({ error: 'Media library permission is required to select photos', isImagePickerOpen: false });
+          set({ error: 'Media library permission is required to select files', isImagePickerOpen: false });
           return false;
+        }
+      } else {
+        // Try MediaLibrary first (supports images, videos, and audio) in dev/prod builds
+        let mediaLibraryGranted = false;
+        try {
+          console.log('🖼️ Requesting media library permissions...');
+          const { status } = await MediaLibrary.requestPermissionsAsync();
+          console.log('🖼️ MediaLibrary permission status:', status);
+          mediaLibraryGranted = status === 'granted';
+        } catch (mediaLibraryError: any) {
+          console.warn('🖼️ MediaLibrary permission request failed (app may need rebuild):', mediaLibraryError?.message);
+          console.log('🖼️ Falling back to ImagePicker (photos only)...');
+        }
+        
+        if (!mediaLibraryGranted) {
+          // Fallback to ImagePicker permissions (only requests photo access, no audio needed)
+          console.log('🖼️ Using ImagePicker for photo selection...');
+          const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          console.log('🖼️ ImagePicker permission result:', permissionResult);
+          
+          if (!permissionResult.granted) {
+            set({ error: 'Media library permission is required to select files', isImagePickerOpen: false });
+            return false;
+          }
         }
       }
       
@@ -337,7 +423,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
           const originalFile: FileUpload = {
             uri: asset.uri,
             name: asset.fileName || `image_${Date.now()}_${i}.jpg`,
-            type: asset.type || 'image/jpeg',
+            // Use mimeType instead of type - mimeType is the actual MIME type (e.g., "image/jpeg")
+            // type is just "image" which doesn't work for FormData
+            type: asset.mimeType || asset.type || 'image/jpeg',
             size: asset.fileSize || 0,
           };
 
@@ -580,5 +668,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
   resetImagePicker: () => {
     console.log('🔄 Resetting image picker state');
     set({ isImagePickerOpen: false });
+  },
+  
+  setLastUploadTime: (timestamp: number) => {
+    set({ lastUploadTime: timestamp });
   },
 })); 
