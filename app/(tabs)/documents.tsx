@@ -44,6 +44,7 @@ interface Document {
   formData?: any; // Store original form data for form-specific actions
   responseCount?: number; // Number of responses for forms
   totalAmount?: number; // For receipt/invoice: from json_data
+  is_global?: boolean; // File is global (available across workspaces)
 }
 
 interface ApiDocument {
@@ -59,6 +60,7 @@ interface ApiDocument {
   file_kind?: string;
   json_data?: Record<string, unknown> | null;
   processing_status?: 'pending' | 'processing' | 'processed' | 'error';
+  is_global?: boolean;
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
@@ -137,6 +139,19 @@ export default function QuickFilesScreen() {
   const [bookmarks, setBookmarks] = useState<any[]>([]);
   const [showBookmarkModal, setShowBookmarkModal] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<any>(null);
+  // Create new bookmark (from Add to Bookmark modal)
+  const [newBookmarkName, setNewBookmarkName] = useState('');
+  const [newBookmarkColor, setNewBookmarkColor] = useState('#007AFF');
+  const [creatingBookmark, setCreatingBookmark] = useState(false);
+  const bookmarkColors = ['#007AFF', '#34C759', '#FF9500', '#FF3B30', '#AF52DE', '#5856D6', '#8E44AD', '#E74C3C'];
+
+  // Make Global (workspace visibility) state
+  const [showMakeGlobalModal, setShowMakeGlobalModal] = useState(false);
+  const [makeGlobalDocument, setMakeGlobalDocument] = useState<Document | null>(null);
+  const [makeGlobalWorkspaces, setMakeGlobalWorkspaces] = useState<{ id: number; name?: string }[]>([]);
+  const [makeGlobalSelectedIds, setMakeGlobalSelectedIds] = useState<number[]>([]);
+  const [makeGlobalLoading, setMakeGlobalLoading] = useState(false);
+  const [makeGlobalSaving, setMakeGlobalSaving] = useState(false);
 
   // Status indicator state for recently completed files
   const [recentlyCompletedFiles, setRecentlyCompletedFiles] = useState<Set<string>>(new Set());
@@ -649,6 +664,7 @@ export default function QuickFilesScreen() {
               category: doc.receipt_category || undefined, // Use receipt_category for the actual category (Supplies, Rent, etc.)
               file_kind: doc.file_kind, // Store raw file_kind to check for receipts
               totalAmount,
+              is_global: doc.is_global,
             };
           });
           
@@ -1159,10 +1175,115 @@ export default function QuickFilesScreen() {
     }
   };
 
+  const handleCreateNewBookmarkAndAddFile = async () => {
+    if (!selectedDocumentForMenu) return;
+    const name = newBookmarkName.trim();
+    if (!name) {
+      Alert.alert('Error', 'Please enter a bookmark name');
+      return;
+    }
+    setCreatingBookmark(true);
+    try {
+      const createResponse = await apiClient.createBookmark({
+        name,
+        color: newBookmarkColor,
+      });
+      if (!createResponse.success) {
+        Alert.alert('Error', createResponse.message || 'Failed to create bookmark');
+        setCreatingBookmark(false);
+        return;
+      }
+      const newBookmark = (createResponse as any).data ?? (createResponse as any).bookmark;
+      const newId = newBookmark?.id ?? newBookmark?.bookmark_id;
+      if (newId == null) {
+        Alert.alert('Error', 'Bookmark created but could not add file. Please add it from the bookmark.');
+        setShowBookmarkModal(false);
+        setNewBookmarkName('');
+        setCreatingBookmark(false);
+        loadBookmarks();
+        return;
+      }
+      const addResponse = await apiClient.addFileToBookmark(newId, parseInt(selectedDocumentForMenu.id));
+      if (addResponse.success) {
+        Alert.alert('Success', `"${selectedDocumentForMenu.name}" added to new bookmark "${name}"`);
+        setShowBookmarkModal(false);
+        setShowKebabMenu(false);
+        setNewBookmarkName('');
+        setNewBookmarkColor('#007AFF');
+        loadBookmarks();
+      } else {
+        Alert.alert('Success', `Bookmark "${name}" created. Could not add file: ${addResponse.message || 'Please add it from the bookmark.'}`);
+        setShowBookmarkModal(false);
+        setNewBookmarkName('');
+        loadBookmarks();
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to create bookmark');
+    } finally {
+      setCreatingBookmark(false);
+    }
+  };
+
   const handleShowBookmarkModal = () => {
     loadBookmarks();
+    setNewBookmarkName('');
+    setNewBookmarkColor('#007AFF');
     setShowBookmarkModal(true);
     setShowKebabMenu(false);
+  };
+
+  const handleShowMakeGlobalModal = async () => {
+    const doc = selectedDocumentForMenu;
+    if (!doc) return;
+    setShowKebabMenu(false);
+    setMakeGlobalDocument(doc);
+    setMakeGlobalWorkspaces([]);
+    setMakeGlobalSelectedIds([]);
+    setShowMakeGlobalModal(true);
+    setMakeGlobalLoading(true);
+    try {
+      const [workspacesRes, visibilityRes] = await Promise.all([
+        apiClient.getMobileWorkspaces(100, 0),
+        apiClient.getFileWorkspaceVisibility(Number(doc.id)).catch(() => ({ success: false, visible_workspaces: [] })),
+      ]);
+      const list = (workspacesRes as any)?.data ?? (workspacesRes as any)?.workspaces ?? (Array.isArray(workspacesRes) ? workspacesRes : []);
+      setMakeGlobalWorkspaces(Array.isArray(list) ? list : []);
+      const visible = (visibilityRes as any)?.visible_workspaces ?? [];
+      const ids = Array.isArray(visible) ? visible.map((w: { id: number }) => w.id) : [];
+      setMakeGlobalSelectedIds(ids);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to load workspaces');
+      setShowMakeGlobalModal(false);
+    } finally {
+      setMakeGlobalLoading(false);
+    }
+  };
+
+  const handleMakeGlobalToggleWorkspace = (workspaceId: number) => {
+    setMakeGlobalSelectedIds((prev) =>
+      prev.includes(workspaceId) ? prev.filter((id) => id !== workspaceId) : [...prev, workspaceId]
+    );
+  };
+
+  const handleMakeGlobalSave = async () => {
+    const doc = makeGlobalDocument;
+    if (!doc) return;
+    setMakeGlobalSaving(true);
+    try {
+      const res = await apiClient.setFileWorkspaceVisibility(Number(doc.id), makeGlobalSelectedIds);
+      if ((res as any)?.success) {
+        Alert.alert('Success', 'Workspace visibility updated. This file is now shared with the selected workspaces.');
+        setShowMakeGlobalModal(false);
+        setMakeGlobalDocument(null);
+        loadDocuments(true);
+      } else {
+        Alert.alert('Error', (res as any)?.message || 'Failed to update workspace visibility');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to update workspace visibility');
+    } finally {
+      setMakeGlobalSaving(false);
+    }
   };
 
   const handleExternalFileImport = (file: ExternalFile) => {
@@ -1291,10 +1412,17 @@ export default function QuickFilesScreen() {
             {item.name}
           </Text>
         <View style={dynamicStyles.documentMetaRow}>
-          <Text style={dynamicStyles.documentMeta}>
-            {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
-            {item.category && ` • ${item.category}`}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', flex: 1 }}>
+            <Text style={dynamicStyles.documentMeta}>
+              {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
+            </Text>
+            {item.is_global && (
+              <Ionicons name="globe-outline" size={12} color={colors.tint} style={{ marginLeft: 4 }} />
+            )}
+            {item.category && (
+              <Text style={dynamicStyles.documentMeta}> • {item.category}</Text>
+            )}
+          </View>
           {item.totalAmount != null && !Number.isNaN(item.totalAmount) && (
             <Text style={dynamicStyles.documentMetaAmount}>
               {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(item.totalAmount)}
@@ -1637,6 +1765,62 @@ export default function QuickFilesScreen() {
       fontSize: 16,
       fontWeight: '500',
       color: colors.text,
+    },
+    bookmarkCreateSection: {
+      paddingVertical: 12,
+    },
+    bookmarkSectionLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      marginBottom: 8,
+      textTransform: 'uppercase',
+    },
+    bookmarkInputRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 12,
+    },
+    bookmarkNameInput: {
+      flex: 1,
+      minWidth: 0,
+      borderWidth: 1,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+    },
+    bookmarkCreateButtonIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 10,
+      backgroundColor: '#007AFF',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    bookmarkColorRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 12,
+    },
+    bookmarkColorChip: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+    },
+    bookmarkColorChipSelected: {
+      borderWidth: 3,
+      borderColor: '#fff',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.3,
+      shadowRadius: 2,
+      elevation: 2,
+    },
+    bookmarkDivider: {
+      height: 1,
+      marginVertical: 16,
     },
     bookmarkItemText: {
       fontSize: 16,
@@ -2013,6 +2197,14 @@ export default function QuickFilesScreen() {
               <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
               <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={handleShowMakeGlobalModal}
+            >
+              <Ionicons name="globe-outline" size={20} color="#0EA5E9" />
+              <Text style={dynamicStyles.kebabMenuText}>{selectedDocumentForMenu?.is_global ? 'Change Global' : 'Make Global'}</Text>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -2029,7 +2221,7 @@ export default function QuickFilesScreen() {
           activeOpacity={1}
           onPress={() => setShowBookmarkModal(false)}
         >
-          <View style={dynamicStyles.bookmarkModalContainer}>
+          <View style={dynamicStyles.bookmarkModalContainer} onStartShouldSetResponder={() => true}>
             <View style={dynamicStyles.bookmarkModalHeader}>
               <Text style={dynamicStyles.bookmarkModalTitle}>Add to Bookmark</Text>
               <TouchableOpacity
@@ -2039,19 +2231,141 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             </View>
             
-            <View style={dynamicStyles.bookmarkList}>
+            <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={dynamicStyles.bookmarkList} keyboardShouldPersistTaps="handled">
+              {/* Create new bookmark section */}
+              <View style={dynamicStyles.bookmarkCreateSection}>
+                <Text style={[dynamicStyles.bookmarkSectionLabel, { color: colors.textSecondary }]}>Create new bookmark</Text>
+                <View style={dynamicStyles.bookmarkInputRow}>
+                  <TextInput
+                    style={[dynamicStyles.bookmarkNameInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                    placeholder="Bookmark name"
+                    placeholderTextColor={colors.textSecondary}
+                    value={newBookmarkName}
+                    onChangeText={setNewBookmarkName}
+                    editable={!creatingBookmark}
+                  />
+                  <TouchableOpacity
+                    style={[dynamicStyles.bookmarkCreateButtonIcon, { opacity: creatingBookmark || !newBookmarkName.trim() ? 0.5 : 1 }]}
+                    onPress={handleCreateNewBookmarkAndAddFile}
+                    disabled={creatingBookmark || !newBookmarkName.trim()}
+                  >
+                    {creatingBookmark ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Ionicons name="add-circle" size={28} color="#fff" />
+                    )}
+                  </TouchableOpacity>
+                </View>
+                <View style={dynamicStyles.bookmarkColorRow}>
+                  {bookmarkColors.map((color) => (
+                    <TouchableOpacity
+                      key={color}
+                      style={[
+                        dynamicStyles.bookmarkColorChip,
+                        { backgroundColor: color },
+                        newBookmarkColor === color && dynamicStyles.bookmarkColorChipSelected,
+                      ]}
+                      onPress={() => setNewBookmarkColor(color)}
+                    />
+                  ))}
+                </View>
+              </View>
+
+              <View style={[dynamicStyles.bookmarkDivider, { backgroundColor: colors.border }]} />
+              <Text style={[dynamicStyles.bookmarkSectionLabel, { color: colors.textSecondary }]}>Existing bookmarks</Text>
+              
               {bookmarks.map((bookmark) => (
                 <TouchableOpacity
                   key={bookmark.id}
                   style={dynamicStyles.bookmarkItem}
                   onPress={() => handleAddToBookmark(bookmark)}
                 >
-                  <View style={[dynamicStyles.bookmarkColor, { backgroundColor: bookmark.color }]} />
+                  <View style={[dynamicStyles.bookmarkColor, { backgroundColor: bookmark.color || '#007AFF' }]} />
                   <Text style={dynamicStyles.bookmarkName}>{bookmark.name}</Text>
                   <Ionicons name="chevron-forward" size={20} color="#ccc" />
                 </TouchableOpacity>
               ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Make Global (workspace visibility) Modal */}
+      <Modal
+        visible={showMakeGlobalModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !makeGlobalSaving && setShowMakeGlobalModal(false)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !makeGlobalSaving && setShowMakeGlobalModal(false)}
+        >
+          <View style={[dynamicStyles.bookmarkModalContainer, { maxWidth: 360 }]} onStartShouldSetResponder={() => true}>
+            <View style={dynamicStyles.bookmarkModalHeader}>
+              <Text style={dynamicStyles.bookmarkModalTitle}>{makeGlobalDocument?.is_global ? 'Change Global' : 'Make Global'}</Text>
+              <TouchableOpacity
+                onPress={() => !makeGlobalSaving && setShowMakeGlobalModal(false)}
+                disabled={makeGlobalSaving}
+              >
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
             </View>
+            {makeGlobalDocument && (
+              <Text style={[dynamicStyles.bookmarkSectionLabel, { color: colors.textSecondary, marginBottom: 8 }]} numberOfLines={1}>
+                Share &quot;{makeGlobalDocument.name}&quot; with workspaces
+              </Text>
+            )}
+            {makeGlobalLoading ? (
+              <View style={{ padding: 24, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#007AFF" />
+                <Text style={{ marginTop: 8, color: colors.textSecondary }}>Loading workspaces…</Text>
+              </View>
+            ) : (
+              <>
+                <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={dynamicStyles.bookmarkList} keyboardShouldPersistTaps="handled">
+                  {makeGlobalWorkspaces.length === 0 && !makeGlobalLoading && (
+                    <Text style={{ color: colors.textSecondary, padding: 16 }}>No workspaces. Create one in Workspaces.</Text>
+                  )}
+                  {makeGlobalWorkspaces.map((ws) => (
+                    <TouchableOpacity
+                      key={ws.id}
+                      style={dynamicStyles.bookmarkItem}
+                      onPress={() => handleMakeGlobalToggleWorkspace(ws.id)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={makeGlobalSelectedIds.includes(ws.id) ? 'checkbox' : 'square-outline'}
+                        size={24}
+                        color={makeGlobalSelectedIds.includes(ws.id) ? '#007AFF' : colors.textSecondary}
+                      />
+                      <Text style={[dynamicStyles.bookmarkName, { flex: 1 }]} numberOfLines={1}>{ws.name ?? `Workspace ${ws.id}`}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <View style={{ flexDirection: 'row', padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
+                  <TouchableOpacity
+                    style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: colors.border, alignItems: 'center' }}
+                    onPress={() => setShowMakeGlobalModal(false)}
+                    disabled={makeGlobalSaving}
+                  >
+                    <Text style={{ color: colors.text }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center' }}
+                    onPress={handleMakeGlobalSave}
+                    disabled={makeGlobalSaving}
+                  >
+                    {makeGlobalSaving ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         </TouchableOpacity>
       </Modal>

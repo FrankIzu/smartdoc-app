@@ -99,6 +99,7 @@ const MOBILE_ENDPOINTS = {
   FILE_DELETE: (id: number) => `/api/v1/mobile/file/${id}`,
   FILE_CATEGORIZE: (id: number) => `/api/v1/mobile/file/${id}/categorize`,
   FILE_AUTO_CATEGORIZE: (id: number) => `/api/v1/mobile/file/${id}/auto-categorize`,
+  FILE_WORKSPACE_VISIBILITY: (id: number) => `/api/v1/mobile/file/${id}/workspace-visibility`,
   
   // Chat
   CHAT_HISTORY: '/api/v1/mobile/chat/history',
@@ -176,6 +177,15 @@ const MOBILE_ENDPOINTS = {
   // Error Logging
   ERROR_LOG: '/api/v1/mobile/error-log',
   ERROR_LOGS: '/api/v1/mobile/error-logs', // GET endpoint to view error logs
+  
+  // Notifications (same data as web)
+  NOTIFICATIONS: '/api/v1/mobile/notifications',
+  NOTIFICATION_MARK_READ: (id: number) => `/api/v1/mobile/notifications/${id}/read`,
+  NOTIFICATION_MARK_ALL_READ: '/api/v1/mobile/notifications/mark-all-read',
+  NOTIFICATION_CLEAR_ALL: '/api/v1/mobile/notifications/clear-all',
+  
+  // Push notifications (for when user is not in app)
+  PUSH_TOKEN: '/api/v1/mobile/push-token',
   
   // Configuration
   // CONFIG: '/api/v1/mobile/config', // Not available on backend
@@ -2864,6 +2874,61 @@ class ApiService {
     }
   }
 
+  // ==================== NOTIFICATIONS ====================
+
+  async getNotifications(): Promise<ApiResponse & { data?: { notifications: any[]; unreadCount: number } }> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.NOTIFICATIONS);
+      return response.data;
+    } catch (error: any) {
+      return {
+        success: false,
+        data: { notifications: [], unreadCount: 0 },
+        message: error.response?.data?.message || 'Failed to get notifications',
+      };
+    }
+  }
+
+  async markNotificationRead(notificationId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.NOTIFICATION_MARK_READ(notificationId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to mark notification as read');
+    }
+  }
+
+  async markAllNotificationsRead(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.NOTIFICATION_MARK_ALL_READ);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to mark all as read');
+    }
+  }
+
+  async clearAllNotifications(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(MOBILE_ENDPOINTS.NOTIFICATION_CLEAR_ALL);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to clear all notifications');
+    }
+  }
+
+  async registerPushToken(expoPushToken: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.PUSH_TOKEN, {
+        token: expoPushToken,
+        expo_push_token: expoPushToken,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.warn('Register push token failed:', error.response?.data?.message || error.message);
+      return { success: false, message: error.response?.data?.message || 'Failed to register push token' };
+    }
+  }
+
   // ==================== WEB RECEIPT & INVOICE ENDPOINTS ====================
   // All receipt and invoice operations use web endpoints (no mobile-specific endpoints).
   // Same as web: GET /api/v1/web/analysis/receipts (search uses similarity match on store name).
@@ -3469,6 +3534,18 @@ class ApiService {
   }
 
   // ==================== MOBILE WORKSPACES ====================
+
+  /** Get workspaces where a file is visible (Make Global / workspace sharing). */
+  async getFileWorkspaceVisibility(fileId: number): Promise<ApiResponse & { visible_workspaces?: { id: number; name?: string }[] }> {
+    const response = await this.client.get(MOBILE_ENDPOINTS.FILE_WORKSPACE_VISIBILITY(fileId));
+    return response.data;
+  }
+
+  /** Set which workspaces can see a file (Make Global). Reuses web logic via mobile route. */
+  async setFileWorkspaceVisibility(fileId: number, workspaceIds: number[]): Promise<ApiResponse> {
+    const response = await this.client.put(MOBILE_ENDPOINTS.FILE_WORKSPACE_VISIBILITY(fileId), { workspace_ids: workspaceIds });
+    return response.data;
+  }
   
   async getMobileWorkspaces(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {

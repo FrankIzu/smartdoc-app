@@ -1,5 +1,5 @@
 // Import polyfills for mobile compatibility
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { LogBox, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
@@ -17,7 +17,7 @@ LogBox.ignoreLogs([
   '@100mslive/react-native-hms', // HMS module errors
 ]);
 
-import { SplashScreen, Stack } from 'expo-router';
+import { SplashScreen, Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -27,9 +27,11 @@ import GlobalProgressBar from '../components/GlobalProgressBar';
 import NetworkIndicator from '../components/NetworkIndicator';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
+import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
 import { AuthProvider, useAuth } from './context/auth';
+import { initializePushNotifications, pushNotificationService } from './services/pushNotifications';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -37,6 +39,44 @@ SplashScreen.preventAutoHideAsync();
 function RootLayoutNav() {
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
   const { isDark } = useTheme();
+  const { user } = useAuth();
+  const router = useRouter();
+  const pushListenerRef = useRef<{ remove: () => void } | null>(null);
+
+  // Register for push and send token to backend when user is logged in
+  useEffect(() => {
+    if (!user) return;
+    let mounted = true;
+    initializePushNotifications().then((token) => {
+      if (mounted && token) {
+        apiClient.registerPushToken(token).catch(() => {});
+      }
+    });
+    return () => { mounted = false; };
+  }, [user]);
+
+  // When user taps a push notification, open notifications screen or deep link
+  useEffect(() => {
+    pushNotificationService.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.screen === 'notifications' || data?.type === 'workspace_invite') {
+        router.push('/notifications');
+      } else if (data?.screen) {
+        try {
+          router.push(data.screen as any);
+        } catch {
+          router.push('/notifications');
+        }
+      } else {
+        router.push('/notifications');
+      }
+    }).then((subscription) => {
+      pushListenerRef.current = subscription;
+    });
+    return () => {
+      pushListenerRef.current?.remove();
+    };
+  }, [router]);
 
   return (
     <>
@@ -60,6 +100,7 @@ function RootLayoutNav() {
           <Stack.Screen name="workspaces" options={{ headerShown: false }} />
           <Stack.Screen name="scanner" options={{ headerShown: false }} />
           <Stack.Screen name="public-upload" options={{ headerShown: false }} />
+          <Stack.Screen name="notifications" options={{ headerShown: false }} />
         </Stack>
         <View style={styles.bottomNavContainer}>
           <PersistentBottomNavigation />

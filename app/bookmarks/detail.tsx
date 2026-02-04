@@ -2,18 +2,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
@@ -44,6 +44,7 @@ export default function BookmarkDetailScreen() {
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const themeColors = useThemeColors();
+  const insets = useSafeAreaInsets();
   
   const [bookmark, setBookmark] = useState<Bookmark | null>(null);
   const [files, setFiles] = useState<Document[]>([]);
@@ -717,8 +718,8 @@ export default function BookmarkDetailScreen() {
 
       {/* Edit Bookmark Modal */}
       <Modal visible={showEditModal} animationType="slide" presentationStyle="fullScreen">
-        <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
-          <View style={dynamicStyles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={() => setShowEditModal(false)}>
               <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
             </TouchableOpacity>
@@ -777,8 +778,8 @@ export default function BookmarkDetailScreen() {
 
       {/* Add Files Modal */}
       <Modal visible={showAddFilesModal} animationType="slide" presentationStyle="fullScreen">
-        <SafeAreaView style={dynamicStyles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
-          <View style={dynamicStyles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={() => {
               setShowAddFilesModal(false);
               setSelectedFiles(new Set());

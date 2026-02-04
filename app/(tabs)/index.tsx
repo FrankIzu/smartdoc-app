@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
@@ -18,6 +18,7 @@ import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
 import { useAuth } from '../context/auth';
+import { pushNotificationService } from '../services/pushNotifications';
 
 // Debug functions removed for production build
 
@@ -376,6 +377,20 @@ function DashboardScreen() {
     loadDashboardData();
   }, [loadDashboardData]);
 
+  // Refetch when screen gains focus (e.g. returning from notifications screen) so badge count updates
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthenticated && user) loadDashboardData();
+    }, [isAuthenticated, user, loadDashboardData])
+  );
+
+  // Keep app icon badge in sync with unread notification count
+  useEffect(() => {
+    if (user && typeof stats.unreadNotifications === 'number') {
+      pushNotificationService.setBadgeCount(stats.unreadNotifications);
+    }
+  }, [user, stats.unreadNotifications]);
+
   // Auto-refresh dashboard periodically when user is authenticated
   useEffect(() => {
     if (!isAuthenticated || !user) return;
@@ -626,19 +641,7 @@ function DashboardScreen() {
   };
 
   const handleNotificationPress = () => {
-    Alert.alert(
-      'Notifications',
-      `You have ${stats.unreadNotifications || 0} unread notifications`,
-      [
-        { 
-          text: 'View All', 
-          onPress: () => {
-            Alert.alert('Coming Soon', 'Notifications panel will be available in the next update!');
-          }
-        },
-        { text: 'Dismiss', style: 'cancel' },
-      ]
-    );
+    router.push('/notifications');
   };
 
   const handleTestProgress = () => {

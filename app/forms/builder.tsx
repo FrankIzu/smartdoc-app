@@ -5,22 +5,22 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    ScrollView,
-    Share,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
 
 interface FormField {
@@ -55,6 +55,7 @@ const FIELD_TYPES = [
 export default function FormBuilderScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
   const [formData, setFormData] = useState<FormData>({
     name: (params.templateName as string) || 'Untitled Form',
     description: (params.templateDescription as string) || '',
@@ -1066,8 +1067,8 @@ export default function FormBuilderScreen() {
         animationType="slide"
         presentationStyle="fullScreen"
       >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <SafeAreaView style={styles.modalContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[styles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={() => setShowFieldTypeSelector(false)}>
               <Text style={styles.modalCancel}>Cancel</Text>
             </TouchableOpacity>
@@ -1140,12 +1141,12 @@ function FieldEditorModal({ field, visible, onSave, onCancel }: FieldEditorModal
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom', 'left', 'right']}>
+      <SafeAreaView style={styles.modalContainer} edges={['left', 'right', 'bottom']}>
         <KeyboardAvoidingView 
           style={styles.modalContainer}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <View style={styles.modalHeader}>
+          <View style={[styles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={onCancel}>
               <Text style={styles.modalCancel}>Cancel</Text>
             </TouchableOpacity>

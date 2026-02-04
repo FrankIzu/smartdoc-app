@@ -12,7 +12,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
@@ -57,6 +57,7 @@ export default function WorkspaceDetailsScreen() {
   const { id } = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1072,8 +1073,8 @@ export default function WorkspaceDetailsScreen() {
         presentationStyle="fullScreen"
         onRequestClose={() => setInviteModalVisible(false)}
       >
-        <SafeAreaView style={dynamicStyles.modalContainer}>
-          <View style={dynamicStyles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={() => setInviteModalVisible(false)}>
               <Text style={dynamicStyles.modalCancel}>Cancel</Text>
             </TouchableOpacity>
