@@ -48,7 +48,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
           const userData = { id: String(u.id), email: u.email || '', name };
           await secureStorage.setItem('user', JSON.stringify(userData));
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          
+          // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
+          // The backend now returns a JWT token for mobile requests in the 'token' field
+          const authToken = (result as any).token || 'session_token';
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken);
+          
+          if (authToken && authToken !== 'session_token') {
+            console.log('✅ Google OAuth deep link: JWT token stored');
+          } else {
+            console.warn('⚠️ Google OAuth deep link: No JWT token received, using session_token fallback');
+          }
+          
           setUser(userData);
           console.log('✅ Google OAuth deep link: session established');
         }

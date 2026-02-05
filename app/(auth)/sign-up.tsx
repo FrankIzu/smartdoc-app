@@ -163,7 +163,16 @@ export default function SignUpScreen() {
         }
         
         await secureStorage.setItem('user', JSON.stringify(userData));
-        await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+        
+        // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
+        const authToken = result.token || 'session_token';
+        await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken);
+        
+        if (authToken && authToken !== 'session_token') {
+          console.log('✅ Apple Sign-Up: JWT token stored');
+        } else {
+          console.warn('⚠️ Apple Sign-Up: No JWT token received, using session_token fallback');
+        }
         
         Alert.alert('Success', 'Account created with Apple successfully!');
         

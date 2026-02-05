@@ -322,7 +322,16 @@ export default function SignInScreen() {
         
         console.log('💾 Storing Apple sign-in user data:', userData);
         await secureStorage.setItem('user', JSON.stringify(userData));
-        await secureStorage.setItem('auth_token', 'session_token');
+        
+        // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
+        const authToken = result.token || 'session_token';
+        await secureStorage.setItem('auth_token', authToken);
+        
+        if (authToken && authToken !== 'session_token') {
+          console.log('✅ Apple Sign-In: JWT token stored');
+        } else {
+          console.warn('⚠️ Apple Sign-In: No JWT token received, using session_token fallback');
+        }
         
         // Refresh the auth context to pick up the new user
         await refreshSession();

@@ -478,12 +478,16 @@ class ApiService {
   /**
    * Exchange a temporary Google OAuth token (from backend redirect flow) for a session.
    * Used when the app is opened via grabdocs://login-success?token=...
+   * Returns JWT token for mobile requests.
    */
-  async exchangeGoogleOAuthToken(loginToken: string): Promise<{ success: boolean; user?: { id: number; username: string; email: string; firstName?: string; lastName?: string } }> {
+  async exchangeGoogleOAuthToken(loginToken: string): Promise<{ success: boolean; user?: { id: number; username: string; email: string; firstName?: string; lastName?: string }; token?: string }> {
     const response = await this.client.post('/api/v1/web/oauth/exchange-token', {
       login_token: loginToken,
     }, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Platform': 'mobile', // Indicate this is a mobile request to get JWT token
+      },
       withCredentials: true,
     });
     return response.data;
