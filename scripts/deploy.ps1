@@ -81,12 +81,12 @@ function Get-CurrentBuildNumber {
             }
         }
         elseif ($Platform -eq "android") {
-            # Get Android versionCode from build.gradle
-            $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
-            if (Test-Path $buildGradlePath) {
-                $content = Get-Content $buildGradlePath -Raw
-                if ($content -match 'versionCode\s+(\d+)') {
-                    return $matches[1]
+            # Get Android versionCode from app.json (EAS reads from here)
+            $appJsonPath = "$PSScriptRoot\..\app.json"
+            if (Test-Path $appJsonPath) {
+                $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+                if ($appJson.expo.android -and $appJson.expo.android.versionCode) {
+                    return $appJson.expo.android.versionCode.ToString()
                 }
             }
         }
@@ -144,7 +144,21 @@ function Update-BuildNumber {
             Write-Host "✅ Updated iOS buildNumber in app.json" -ForegroundColor Green
         }
         elseif ($Platform -eq "android") {
-            # Update Android versionCode in build.gradle
+            # Update Android versionCode in app.json (EAS reads from here)
+            $appJsonPath = "$PSScriptRoot\..\app.json"
+            if (-not (Test-Path $appJsonPath)) {
+                throw "app.json not found at $appJsonPath"
+            }
+            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+            if (-not $appJson.expo.android) {
+                throw "expo.android section not found in app.json"
+            }
+            # Convert BuildNumber to int for app.json (it should be a number, not string)
+            $appJson.expo.android.versionCode = [int]$BuildNumber
+            $appJson | ConvertTo-Json -Depth 10 | Set-Content $appJsonPath -Encoding UTF8
+            Write-Host "✅ Updated Android versionCode in app.json" -ForegroundColor Green
+            
+            # Also update Android versionCode in build.gradle (for local builds)
             $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
             if (-not (Test-Path $buildGradlePath)) {
                 throw "build.gradle not found at $buildGradlePath"
