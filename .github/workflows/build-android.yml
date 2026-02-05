@@ -1,6 +1,12 @@
 # Build Android app with EAS local (no EAS cloud charge).
-# Trigger: manual (workflow_dispatch) or push to main.
+# Trigger: manual (workflow_dispatch) or push of a version tag (e.g. v1.0.0).
 # Requires: GitHub secret EXPO_TOKEN (Expo access token).
+#
+# Combo for 5–8 min release builds (<5 min on warm cache):
+#   Gradle cache (optimized) + configuration cache + tag-only + Linux + no clean + cache npm.
+#
+# Cache rotation (FIFO-style): Bump CACHE_VERSION below to stay under ~10GB repo cache limit.
+# Larger runner: Set runs-on to e.g. ubuntu-latest-4-cores if your plan allows.
 
 name: Build Android (EAS local)
 
@@ -17,18 +23,34 @@ on:
           - preview
           - development
   push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'manager-francis/**'
-      - '.github/**'
+    tags:
+      - 'v*'
 
 jobs:
   build:
+    # Optional: use a larger runner for faster R8/compile (e.g. ubuntu-latest-4-cores)
     runs-on: ubuntu-latest
+    env:
+      CACHE_VERSION: "1"
+      ANDROID_SDK_CACHE_PATH: ${{ runner.tool_cache }}/android-sdk
+      GRADLE_USER_HOME: ${{ runner.tool_cache }}/gradle
     steps:
-      - name: Checkout
+      - name: Checkout (exclude manager-francis; app build does not use it)
         uses: actions/checkout@v4
+        with:
+          submodules: false
+          sparse-checkout: |
+            /*
+            !manager-francis
+          sparse-checkout-cone-mode: false
+
+      - name: Remove manager-francis submodule entry so git commands do not touch it
+        run: |
+          git config -f .gitmodules --remove-section submodule.manager-francis 2>/dev/null || true
+          git submodule deinit -f manager-francis 2>/dev/null || true
+          git rm --cached manager-francis 2>/dev/null || true
+          rm -rf .git/modules/manager-francis manager-francis 2>/dev/null || true
+        continue-on-error: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,32 +64,105 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Restore Android SDK cache
+        uses: actions/cache/restore@v4
+        id: android-sdk-cache
+        with:
+          path: ${{ env.ANDROID_SDK_CACHE_PATH }}
+          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-34-25.1.8937393
+          restore-keys: |
+            android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-
+
       - name: Setup Android SDK
+        id: setup-android
         run: |
           set -e
-          ANDROID_HOME="$RUNNER_TEMP/android-sdk"
-          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          ANDROID_HOME="$ANDROID_SDK_CACHE_PATH"
+          RUNNER_SDK="/usr/local/lib/android/sdk"
+          SDKMANAGER=""
+          DOWNLOADED="false"
+          if [ -x "$ANDROID_SDK_CACHE_PATH/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "Using cached Android SDK at $ANDROID_HOME"
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif [ -x "$RUNNER_SDK/cmdline-tools/latest/bin/sdkmanager" ] || [ -x "$RUNNER_SDK/cmdline-tools/12.0/bin/sdkmanager" ]; then
+            for d in "$RUNNER_SDK/cmdline-tools/latest/bin" "$RUNNER_SDK/cmdline-tools/12.0/bin"; do
+              [ -x "$d/sdkmanager" ] && SDKMANAGER="$d/sdkmanager" && break
+            done
+            if [ -n "$SDKMANAGER" ]; then
+              ANDROID_HOME="$RUNNER_SDK"
+              echo "Using runner preinstalled Android SDK at $ANDROID_HOME"
+              export PATH="$RUNNER_SDK/cmdline-tools/latest/bin:$RUNNER_SDK/cmdline-tools/12.0/bin:$RUNNER_SDK/platform-tools:$PATH"
+              yes | "$SDKMANAGER" --licenses || true
+              "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
+            fi
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "Downloading Android commandline-tools (cache miss and no runner SDK)"
+            DOWNLOADED="true"
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            CDL="commandlinetools-linux-11076708_latest.zip"
+            wget -q "https://dl.google.com/android/repository/$CDL" -O /tmp/cmdline-tools.zip
+            unzip -q -o /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+            yes | "$SDKMANAGER" --licenses || true
+            "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
+          fi
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
-          # Download and install commandline-tools (no dependency on runner image)
-          CDL="commandlinetools-linux-11076708_latest.zip"
-          wget -q "https://dl.google.com/android/repository/$CDL" -O /tmp/cmdline-tools.zip
-          unzip -q -o /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
-          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
+          echo "downloaded=$DOWNLOADED" >> $GITHUB_OUTPUT
           echo "$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          if [ "$ANDROID_HOME" = "$RUNNER_SDK" ]; then
+            echo "$RUNNER_SDK/cmdline-tools/latest/bin:$RUNNER_SDK/cmdline-tools/12.0/bin:$RUNNER_SDK/platform-tools" >> $GITHUB_PATH
+          fi
+
+      - name: Save Android SDK cache
+        if: steps.android-sdk-cache.outputs.cache-restored != 'true' && steps.setup-android.outputs.downloaded == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ANDROID_SDK_CACHE_PATH }}
+          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-34-25.1.8937393
+
+      - name: Restore Gradle cache
+        uses: actions/cache/restore@v4
+        id: gradle-cache
+        with:
+          path: ${{ env.GRADLE_USER_HOME }}
+          key: gradle-${{ runner.os }}-${{ env.CACHE_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'package-lock.json') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-${{ env.CACHE_VERSION }}-
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Prepare preview build (single ABI, no minify)
+        if: github.event.inputs.profile == 'preview' || github.event.inputs.profile == 'development'
+        run: |
+          echo "Preview/development: single ABI (arm64-v8a), minify disabled"
+          sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
+          sed -i 's/^android\.enableMinifyInReleaseBuilds=.*/android.enableMinifyInReleaseBuilds=false/' android/gradle.properties
+          sed -i 's/^android\.enableShrinkResourcesInReleaseBuilds=.*/android.enableShrinkResourcesInReleaseBuilds=false/' android/gradle.properties
+
+      # No clean: we don't run gradle clean; incremental build uses Gradle cache (5–8 min, <5 warm).
       - name: EAS Build (local)
         run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_TOKEN secret is missing or empty. Add it in repo Settings → Secrets and variables → Actions (name exactly: EXPO_TOKEN)"
+            exit 1
+          fi
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
           eas build --platform android --profile "$PROFILE" --local --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GRADLE_USER_HOME: ${{ env.GRADLE_USER_HOME }}
+          GRADLE_OPTS: -Xmx4096m -XX:MaxMetaspaceSize=512m
+
+      - name: Save Gradle cache
+        uses: actions/cache/save@v4
+        if: success() && steps.gradle-cache.outputs.cache-restored != 'true'
+        with:
+          path: ${{ env.GRADLE_USER_HOME }}
+          key: gradle-${{ runner.os }}-${{ env.CACHE_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'package-lock.json') }}
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4

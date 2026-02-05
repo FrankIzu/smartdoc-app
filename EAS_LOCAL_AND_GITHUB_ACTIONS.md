@@ -70,17 +70,39 @@ Workflows run **EAS local** on GitHub’s runners so builds are free (no EAS clo
 
 | Workflow file              | Platform | Trigger                    | Runner        |
 |---------------------------|----------|----------------------------|---------------|
-| `.github/workflows/build-android.yml` | Android  | Manual or push to `main`   | `ubuntu-latest` |
+| `.github/workflows/build-android.yml` | Android  | Manual or **push tag** (e.g. `v1.0.0`) | `ubuntu-latest` (Linux) |
 | `.github/workflows/build-ios.yml`     | iOS      | Manual or push to `main`   | `macos-latest`  |
 
 - **Manual run**: Actions → **Build Android (EAS local)** or **Build iOS (EAS local)** → **Run workflow** (optionally choose profile: production / preview / development).
-- **On push to `main`**: same workflows run automatically (unless only docs/ignored paths changed).
+- **Android: on push of a version tag** (e.g. `git tag v1.0.5 && git push origin v1.0.5`): workflow runs for that tag. Tag-only avoids a build on every push and targets release builds (typically 5–8 min, &lt;5 min on warm cache).
 
 Artifacts (e.g. `.aab`, `.apk`, `.ipa`) are uploaded to the run; download them from the **Summary** page of the workflow run.
 
 ### Optional: disable automatic builds on push
 
 To run only manually, remove the `push:` block from each workflow file under `on:`.
+
+### Build optimizations (Android workflow)
+
+Combo for **5–8 minutes per release build** (sometimes &lt;5 min on warm cache):
+
+- **Gradle cache (optimized)** – `GRADLE_USER_HOME` cached; **configuration cache** and **build cache** enabled in `android/gradle.properties` (`org.gradle.configuration-cache=true`, `org.gradle.caching=true`).
+- **Tag-only builds** – Workflow runs on **push of a tag** (e.g. `v*`). Trigger with `git tag v1.0.5 && git push origin v1.0.5`. Manual dispatch still available.
+- **Linux runner** – `runs-on: ubuntu-latest`.
+- **No clean** – No `gradle clean`; incremental build reuses cached task outputs.
+- **Cache npm** – `setup-node` uses `cache: 'npm'`.
+
+Additional optimizations:
+
+- **Android SDK/NDK cache** – Restored before Setup Android SDK; saved only when a fresh download was done.
+- **Runner’s preinstalled SDK** – If the runner has Android SDK, the workflow uses it and only runs `sdkmanager` for missing packages.
+- **Preview/development profile** – Single ABI (`arm64-v8a`) and minify disabled for faster preview builds.
+
+**Cache rotation (FIFO-style, stay under 10GB):**  
+Only two cache keys are used (Android SDK and Gradle). To rotate caches and avoid hitting the repo limit, bump **`CACHE_VERSION`** in the workflow (e.g. from `"1"` to `"2"`). New runs use the new key; old caches expire by GitHub’s LRU eviction.
+
+**Larger runner:**  
+For faster R8/compile you can switch to a larger runner (e.g. `ubuntu-latest-4-cores`) in the workflow if your plan allows. See the comment at the top of `build-android.yml`.
 
 ---
 
