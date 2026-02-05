@@ -65,7 +65,7 @@ jobs:
         id: android-sdk-cache
         with:
           path: ${{ env.ANDROID_SDK_CACHE_PATH }}
-          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-34-25.1.8937393
+          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-25.1.8937393
           restore-keys: |
             android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-
 
@@ -89,7 +89,7 @@ jobs:
               echo "Using runner preinstalled Android SDK at $ANDROID_HOME"
               export PATH="$RUNNER_SDK/cmdline-tools/latest/bin:$RUNNER_SDK/cmdline-tools/12.0/bin:$RUNNER_SDK/platform-tools:$PATH"
               yes | "$SDKMANAGER" --licenses || true
-              "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
+              "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;25.1.8937393"
             fi
           fi
           if [ -z "$SDKMANAGER" ]; then
@@ -102,7 +102,7 @@ jobs:
             mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
             yes | "$SDKMANAGER" --licenses || true
-            "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
+            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;25.1.8937393"
           fi
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
@@ -117,7 +117,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.ANDROID_SDK_CACHE_PATH }}
-          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-34-25.1.8937393
+          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-25.1.8937393
 
       - name: Restore Gradle cache
         uses: actions/cache/restore@v4
@@ -130,6 +130,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Disable configuration cache (Expo/RN build.gradle runs Node during config)
+        run: |
+          sed -i 's/^org\.gradle\.configuration-cache=.*/org.gradle.configuration-cache=false/' android/gradle.properties
 
       - name: Prepare preview build (single ABI, no minify)
         if: github.event.inputs.profile == 'preview' || github.event.inputs.profile == 'development'
@@ -171,6 +175,7 @@ jobs:
 
       - name: Submit to Google Play (optional)
         if: success()
+        continue-on-error: true
         run: |
           if [ -z "$ANDROID_SERVICE_ACCOUNT_JSON" ]; then
             echo "ANDROID_SERVICE_ACCOUNT_JSON not set; skipping submit to Google Play."

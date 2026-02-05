@@ -71,6 +71,7 @@ jobs:
 
       - name: Submit to App Store (optional)
         if: success()
+        continue-on-error: true
         run: |
           HAS_ASC=$([ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; echo $?)
           HAS_PASSWORD=$([ -n "$EXPO_APPLE_APP_SPECIFIC_PASSWORD" ]; echo $?)
