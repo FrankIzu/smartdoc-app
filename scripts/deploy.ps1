@@ -518,51 +518,31 @@ try {
                 }
             }
             
-            Write-Host "   Pulling latest main..." -ForegroundColor Gray
-            git pull origin main 2>&1 | Out-Null
-            # Ignore errors for pull (might fail if main doesn't exist on remote)
-            
-            # Use merge strategy that favors francis's changes to avoid conflicts
-            Write-Host "   Merging francis INTO main (francis's changes will take precedence)..." -ForegroundColor Gray
-            
-            # Try merge with strategy favoring francis (theirs)
-            git merge francis --no-edit -X theirs --no-ff 2>&1 | Out-Null
+            # Simplest approach: Reset main to match francis exactly, then force push
+            # This avoids merge conflicts and ensures main always matches francis
+            Write-Host "   Resetting main to match francis exactly..." -ForegroundColor Gray
+            git reset --hard francis 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "   Strategy merge failed, trying regular merge..." -ForegroundColor Yellow
-                git merge francis --no-edit --no-ff 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    # Last resort: reset main to match francis exactly
-                    Write-Host "⚠️  Merge conflicts. Resetting main to match francis exactly..." -ForegroundColor Yellow
-                    git reset --hard francis 2>&1 | Out-Null
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-Host "❌ Failed to reset main to francis" -ForegroundColor Red
-                        Write-Host "   Switching back to francis branch..." -ForegroundColor Yellow
-                        git checkout francis 2>&1 | Out-Null
-                        Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
-                        Write-Host "   Resolve manually: git checkout main, fix conflicts, git add ., git commit, git push origin main" -ForegroundColor Gray
-                        exit 1
-                    }
-                    Write-Host "✅ Reset main to match francis (no conflicts)" -ForegroundColor Green
-                } else {
-                    Write-Host "✅ Merged francis INTO main" -ForegroundColor Green
-                }
-            } else {
-                Write-Host "✅ Merged francis INTO main" -ForegroundColor Green
+                Write-Host "❌ Failed to reset main to francis" -ForegroundColor Red
+                Write-Host "   Switching back to francis branch..." -ForegroundColor Yellow
+                git checkout francis 2>&1 | Out-Null
+                Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
+                exit 1
             }
+            Write-Host "✅ Reset main to match francis exactly" -ForegroundColor Green
             
-            # Push main branch
-            Write-Host "`n⬆️  Pushing main branch..." -ForegroundColor Yellow
-            git push origin main 2>&1 | Out-Null
+            # Force push main (required since we reset main's history)
+            Write-Host "`n⬆️  Pushing main branch (force-with-lease)..." -ForegroundColor Yellow
+            git push origin main --force-with-lease 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                # If push fails, try to set upstream
-                Write-Host "   Setting upstream and pushing..." -ForegroundColor Gray
-                git push -u origin main 2>&1 | Out-Null
+                Write-Host "   Force-with-lease failed, trying regular force push..." -ForegroundColor Yellow
+                git push origin main --force 2>&1 | Out-Null
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "❌ Failed to push main branch" -ForegroundColor Red
                     Write-Host "   Switching back to francis branch..." -ForegroundColor Yellow
                     git checkout francis 2>&1 | Out-Null
                     Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
-                    Write-Host "   Push manually: git checkout main && git push origin main" -ForegroundColor Gray
+                    Write-Host "   Push manually: git checkout main && git push origin main --force" -ForegroundColor Gray
                     exit 1
                 }
             }
