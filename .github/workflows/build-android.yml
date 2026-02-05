@@ -26,6 +26,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,13 +46,20 @@ jobs:
 
       - name: Setup Android SDK (accept licenses non-interactively)
         run: |
-          # GitHub runner has SDK at ANDROID_HOME; ensure cmdline-tools bin is on PATH
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
+          SDK_ROOT="/usr/local/lib/android/sdk"
+          # Find sdkmanager (runner may use cmdline-tools/latest or cmdline-tools/12.0)
+          SDKMANAGER=""
+          for d in "$SDK_ROOT/cmdline-tools/latest/bin" "$SDK_ROOT/cmdline-tools/12.0/bin"; do
+            if [ -x "$d/sdkmanager" ]; then SDKMANAGER="$d/sdkmanager"; break; fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$SDK_ROOT" -name sdkmanager -type f -executable 2>/dev/null | head -1)
+          fi
+          if [ -z "$SDKMANAGER" ]; then echo "sdkmanager not found in $SDK_ROOT"; exit 1; fi
+          echo "Using $SDKMANAGER"
+          export ANDROID_HOME="$SDK_ROOT"
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
       - name: Install dependencies
         run: npm ci
