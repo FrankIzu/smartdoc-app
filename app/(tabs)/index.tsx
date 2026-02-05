@@ -1197,7 +1197,7 @@ function DashboardScreen() {
             />
             <QuickActionCard
               key="action-chat"
-              title="Chat"
+              title="Chat with someone"
               subtitle="Message your team members"
               icon="chatbubbles"
               color="#FF2D55"

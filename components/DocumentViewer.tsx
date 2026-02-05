@@ -645,15 +645,19 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
     // This WebView is used for iOS PDFs (when native viewer not available), Office documents, and SVG files.
     // On native platforms, use local file when provided so we don't rely on WebView sending headers.
     // iOS WebView doesn't reliably send Authorization headers, so local file is preferred.
+    // For signed URLs (sig=, exp=, uid=), do NOT send Authorization - the URL is self-authenticating.
+    const isSignedUrl = typeof finalUrl === 'string' && finalUrl.includes('sig=') && finalUrl.includes('exp=') && finalUrl.includes('uid=');
     const source = localFileUri
       ? { uri: localFileUri }
-      : {
-          uri: finalUrl,
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'X-Platform': Platform.OS,
-          },
-        };
+      : isSignedUrl
+        ? { uri: finalUrl }
+        : {
+            uri: finalUrl,
+            headers: {
+              'Authorization': `Bearer ${authToken}`,
+              'X-Platform': Platform.OS,
+            },
+          };
     
     // For SVG files, embed in HTML for proper rendering
     if (isSvg && !localFileUri) {
@@ -1833,21 +1837,16 @@ export default function DocumentViewer({
 
   const getImageDimensionsWithAuth = async (imageUrl: string) => {
     try {
-      // Get auth token for authenticated request
+      // Signed URLs (sig=, exp=, uid=) are self-authenticating - do not send Authorization
+      const isSignedUrl = typeof imageUrl === 'string' && imageUrl.includes('sig=') && imageUrl.includes('exp=') && imageUrl.includes('uid=');
       const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-      
-      if (!token) {
-        console.warn('No auth token available for image dimensions');
-        setImageDimensions({ width: 300, height: 400 });
-        return;
-      }
 
-      // Make authenticated request to get image data
       const response = await fetch(imageUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-Platform': 'android'
-        }
+        headers: isSignedUrl
+          ? { 'X-Platform': Platform.OS === 'ios' ? 'ios' : 'android' }
+          : token
+            ? { 'Authorization': `Bearer ${token}`, 'X-Platform': Platform.OS === 'ios' ? 'ios' : 'android' }
+            : {}
       });
 
       if (response.ok) {
