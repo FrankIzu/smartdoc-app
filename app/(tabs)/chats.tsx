@@ -6,21 +6,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,6 +28,7 @@ import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
+import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { secureStorage } from '../../utils/storage';
@@ -4408,6 +4409,18 @@ export default function ChatsScreen() {
         chatId: selectedChat?.id,
         messageText: newMessage?.trim() || 'N/A',
         userId: userProfileRef.current?.data?.id || userProfileRef.current?.id
+      });
+
+      // Send to backend so we can see chat failures (e.g. Android prod) in error_logs
+      const status = (error as any)?.response?.status;
+      const detail = (error as any)?.response?.data;
+      const summary = [error?.message, status != null ? `status=${status}` : '', detail ? JSON.stringify(detail).slice(0, 200) : ''].filter(Boolean).join(' | ');
+      errorLogger.logError(new Error(summary), {
+        severity: 'error',
+        screenName: 'Chats',
+        userAction: 'SendMessage',
+        errorType: 'ChatSendFailed',
+        userId: userProfileRef.current?.data?.id ?? userProfileRef.current?.id,
       });
       
       // Determine user-friendly error message based on error type

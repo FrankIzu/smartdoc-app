@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     Dimensions,
     Linking,
@@ -30,6 +31,14 @@ export default function ScannerScreen() {
       requestPermission();
     }
   }, [permission]);
+
+  // Reset capturing state when screen comes back into focus (e.g., user cancelled from process-scan)
+  useFocusEffect(
+    useCallback(() => {
+      // Reset capturing state when screen is focused
+      setIsCapturing(false);
+    }, [])
+  );
 
   if (!permission) {
     // Camera permissions are still loading.
@@ -77,13 +86,15 @@ export default function ScannerScreen() {
 
     try {
       setIsCapturing(true);
+      // Reduced quality from 0.8 to 0.6 for faster capture/encoding
+      // This makes the camera exit faster while still maintaining good image quality
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.8,
+        quality: 0.6,
         base64: false,
       });
 
       if (photo) {
-        // Navigate to document processing screen with the captured image
+        // Navigate immediately after capture completes (no delay)
         router.push({
           pathname: '/documents/process-scan',
           params: { imageUri: photo.uri }
@@ -92,9 +103,10 @@ export default function ScannerScreen() {
     } catch (error) {
       console.error('Error taking picture:', error);
       Alert.alert('Error', 'Failed to capture image. Please try again.');
-    } finally {
       setIsCapturing(false);
     }
+    // Note: Don't reset isCapturing here if navigation succeeded - let it stay true during navigation
+    // This prevents double-taps. It will reset when component unmounts or user returns.
   };
 
   const pickFromGallery = async () => {
@@ -163,9 +175,17 @@ export default function ScannerScreen() {
           {/* Instructions */}
           <View style={styles.instructionsContainer}>
             <Text style={styles.instructionsText}>
-              Position document within the frame
+              {isCapturing ? 'Saving photo...' : 'Position document within the frame'}
             </Text>
           </View>
+          
+          {/* Loading overlay during capture */}
+          {isCapturing && (
+            <View style={styles.capturingOverlay}>
+              <ActivityIndicator size="large" color="#fff" />
+              <Text style={styles.capturingText}>Capturing...</Text>
+            </View>
+          )}
         </CameraView>
       </View>
 
@@ -380,5 +400,18 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 30,
     backgroundColor: '#fff',
+  },
+  capturingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  capturingText: {
+    color: '#fff',
+    fontSize: 16,
+    marginTop: 16,
+    fontWeight: '600',
   },
 }); 

@@ -2273,7 +2273,9 @@ class ApiService {
     signal?: AbortSignal,
     onChunk?: (type: string, data: any) => void
   ): Promise<void> {
-    
+    // Declare in outer scope so catch block can cancel the job if start succeeded but later code threw
+    let currentJobId: string | null = null;
+
     try {
       console.log('💬 [POLLING] Starting chat message via polling');
       
@@ -2309,6 +2311,7 @@ class ApiService {
       }
 
       const jobId: string = startResponse.job_id;
+      currentJobId = jobId; // set for catch-block cleanup
       let cursor = 0;
       let isDone = false;
       let accumulatedContent = ''; // Track accumulated content for streaming-like display
@@ -2321,9 +2324,6 @@ class ApiService {
       const maxPollTime = 300000; // Max 5 minutes
       const startTime = Date.now();
       let pollCount = 0; // Track number of polls
-      
-      // Store jobId in outer scope for error handling
-      const currentJobId = jobId;
       
       // Network resilience: Track failures and implement exponential backoff
       let consecutiveFailures = 0; // Track consecutive failures
@@ -4190,6 +4190,43 @@ class ApiService {
     } catch (error: any) {
       console.error('Download meeting asset failed:', error);
       throw new Error(error.response?.data?.message || 'Failed to download meeting asset');
+    }
+  }
+
+  // ==================== ERROR LOGGING ====================
+  /**
+   * Log error to database for debugging
+   */
+  async logError(error: {
+    errorType: string;
+    errorMessage: string;
+    errorTraceback?: string;
+    severity?: 'critical' | 'error' | 'warning';
+    screenName?: string;
+    userAction?: string;
+    platform?: string;
+    appVersion?: string;
+    deviceInfo?: any;
+  }): Promise<void> {
+    try {
+      const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
+      await this.client.post(MOBILE_ENDPOINTS.ERROR_LOG, {
+        errorType: error.errorType,
+        errorMessage: error.errorMessage,
+        errorTraceback: error.errorTraceback,
+        severity: error.severity || 'error',
+        screenName: error.screenName || 'DocumentViewer',
+        userAction: error.userAction || 'view_file',
+        platform: error.platform || platform,
+        appVersion: Constants.expoConfig?.version || 'unknown',
+        deviceInfo: error.deviceInfo || {
+          platform: Platform.OS,
+          version: Platform.Version
+        }
+      });
+    } catch (logError: any) {
+      // Don't throw - error logging should be non-blocking
+      console.warn('Failed to log error to backend:', logError);
     }
   }
 

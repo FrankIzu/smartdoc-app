@@ -1,22 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system/legacy';
+import { Image as ExpoImage } from 'expo-image';
 import * as Linking from 'expo-linking';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    Image,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  Image,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring
+} from 'react-native-reanimated';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useThemeColors } from '../hooks/useThemeColors';
@@ -60,55 +67,300 @@ interface DocumentViewerProps {
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-// Custom Image component that handles authentication by fetching image data
+// PDF.js viewer HTML for Expo Go (Android WebView doesn't render <embed> PDF; draw to canvas instead).
+const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105';
+function buildExpoGoPdfViewerHtml(dataUri: string): string {
+  const uriEscaped = dataUri.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\u003c').replace(/\n/g, '\\n');
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=3.0"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src * 'unsafe-inline';">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html{background:#fff;width:100%;height:100%;overflow-y:auto;overflow-x:hidden}
+    body{background:#fff!important;padding:8px;min-height:100vh;width:100%}
+    #pages{width:100%;display:block;background:#fff;min-height:100vh;padding-top:20px}
+    canvas{display:block!important;visibility:visible!important;opacity:1!important;margin:12px auto;max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,0.3);background:#fff!important;position:relative;z-index:10}
+    .loading{color:#333;text-align:center;padding:24px;font-family:sans-serif;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;background:#fff;border-radius:8px}
+    .error{color:#f44;text-align:center;padding:24px;font-family:sans-serif;white-space:pre-wrap;word-break:break-all;background:#fff;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:20}
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading">Loading PDF.js…</div>
+  <div id="pages"></div>
+  <script>
+    window.addEventListener('error', function(e) {
+      var el = document.getElementById('loading');
+      el.innerHTML = '<span class="error">Error: ' + (e.message || 'Unknown') + '<br>File: ' + (e.filename || '') + '</span>';
+      el.style.display = 'block';
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'error', message: e.message }));
+      }
+    });
+    function showError(msg) {
+      var el = document.getElementById('loading');
+      el.innerHTML = '<span class="error">' + msg + '</span>';
+      el.style.display = 'block';
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'error', message: msg }));
+      }
+    }
+    function log(msg) {
+      console.log('[PDF Viewer]', msg);
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'log', message: String(msg) }));
+      }
+    }
+  <\/script>
+  <script>
+    function loadPdf() {
+      if (typeof pdfjsLib === 'undefined') {
+        showError('PDF.js library not loaded. Check internet connection.');
+        return;
+      }
+      log('PDF.js loaded');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '${PDFJS_CDN}/pdf.worker.min.js';
+      var uri = '${uriEscaped}';
+      log('Data URI length: ' + uri.length);
+      try {
+        var base64 = uri.indexOf(',') >= 0 ? uri.split(',')[1] : uri;
+        log('Base64 length: ' + base64.length);
+        if (!base64 || base64.length < 100) {
+          showError('Invalid PDF data (too short)');
+          return;
+        }
+        var raw = atob(base64);
+        log('Decoded length: ' + raw.length);
+        var arr = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        log('Uint8Array created, length: ' + arr.length);
+        pdfjsLib.getDocument({ data: arr }).promise.then(function(pdf) {
+          log('PDF loaded, pages: ' + pdf.numPages);
+          document.getElementById('loading').innerHTML = 'Rendering pages…';
+          var container = document.getElementById('pages');
+          container.style.display = 'block';
+          container.style.visibility = 'visible';
+          var w = Math.max(300, (window.innerWidth || 400) - 16);
+          log('Container width: ' + w + ', window.innerWidth: ' + window.innerWidth);
+          var numPages = pdf.numPages;
+          function renderPage(n) {
+            if (n > numPages) {
+              var loadingEl = document.getElementById('loading');
+              loadingEl.style.display = 'none';
+              loadingEl.style.visibility = 'hidden';
+              log('All pages rendered');
+              return;
+            }
+            pdf.getPage(n).then(function(page) {
+              log('Rendering page ' + n);
+              var pageRotation = page.rotate || 0;
+              log('Page ' + n + ' rotation: ' + pageRotation);
+              var viewport = page.getViewport({ scale: 1, rotation: pageRotation });
+              log('Page ' + n + ' viewport at scale 1: ' + viewport.width + 'x' + viewport.height);
+              if (viewport.width <= 0 || viewport.height <= 0) {
+                showError('Invalid page dimensions: ' + viewport.width + 'x' + viewport.height);
+                return;
+              }
+              var scale = 1.5;
+              if (w > 0 && viewport.width > 0 && !isNaN(w / viewport.width) && isFinite(w / viewport.width)) {
+                scale = Math.min(2.5, Math.max(0.5, w / viewport.width));
+              } else {
+                log('Using default scale 1.5 (w=' + w + ', viewport.width=' + viewport.width + ')');
+              }
+              var dpr = window.devicePixelRatio || 2;
+              var renderScale = scale * dpr;
+              log('Using scale: ' + scale + ', dpr: ' + dpr + ', renderScale: ' + renderScale + ' for page ' + n);
+              viewport = page.getViewport({ scale: renderScale, rotation: pageRotation });
+              log('Scaled viewport: ' + viewport.width + 'x' + viewport.height);
+              
+              if (!viewport || viewport.width <= 0 || viewport.height <= 0 || !isFinite(viewport.width) || !isFinite(viewport.height)) {
+                log('ERROR: Scaled viewport invalid, trying scale 2.0');
+                viewport = page.getViewport({ scale: 2.0, rotation: pageRotation });
+                if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
+                  showError('Invalid viewport: ' + (viewport ? viewport.width + 'x' + viewport.height : 'null'));
+                  return;
+                }
+              }
+              
+              var canvasWidth = Math.max(100, Math.round(viewport.width));
+              var canvasHeight = Math.max(100, Math.round(viewport.height));
+              if (!isFinite(canvasWidth) || !isFinite(canvasHeight)) {
+                canvasWidth = 800;
+                canvasHeight = 1000;
+                log('Using fallback dimensions: 800x1000');
+              }
+              log('Final canvas dimensions: ' + canvasWidth + 'x' + canvasHeight);
+              var canvas = document.createElement('canvas');
+              canvas.width = canvasWidth;
+              canvas.height = canvasHeight;
+              var displayWidth = canvasWidth / dpr;
+              var displayHeight = canvasHeight / dpr;
+              canvas.style.width = displayWidth + 'px';
+              canvas.style.height = displayHeight + 'px';
+              canvas.style.display = 'block';
+              canvas.style.visibility = 'visible';
+              canvas.style.opacity = '1';
+              canvas.style.maxWidth = '100%';
+              log('Creating canvas for page ' + n + ': ' + canvasWidth + 'x' + canvasHeight + ', display: ' + displayWidth + 'x' + displayHeight);
+              if (canvas.width <= 0 || canvas.height <= 0) {
+                showError('Canvas has invalid dimensions before render: ' + canvas.width + 'x' + canvas.height);
+                return;
+              }
+              var ctx = canvas.getContext('2d');
+              if (!ctx) {
+                showError('Failed to get canvas context');
+                return;
+              }
+              log('About to render page ' + n + ' to canvas ' + canvas.width + 'x' + canvas.height);
+              page.render({ canvasContext: ctx, viewport: viewport }).promise.then(function() {
+                log('Page ' + n + ' render complete, canvas actual size: ' + canvas.width + 'x' + canvas.height);
+                if (canvas.width > 0 && canvas.height > 0 && isFinite(canvas.width) && isFinite(canvas.height)) {
+                  container.appendChild(canvas);
+                  log('Canvas appended to container. Container now has ' + container.children.length + ' children, container height: ' + container.offsetHeight);
+                  if (n === 1) {
+                    var loadingEl = document.getElementById('loading');
+                    loadingEl.style.display = 'none';
+                    loadingEl.style.visibility = 'hidden';
+                  }
+                } else {
+                  log('ERROR: Canvas has zero dimensions after render: ' + canvas.width + 'x' + canvas.height);
+                  showError('Canvas rendering failed: invalid dimensions');
+                }
+                renderPage(n + 1);
+              }).catch(function(err) {
+                showError('Failed to render page ' + n + ': ' + (err.message || err));
+              });
+            }).catch(function(err) {
+              showError('Failed to get page ' + n + ': ' + (err.message || err));
+            });
+          }
+          renderPage(1);
+        }).catch(function(err) {
+          showError('Failed to load PDF: ' + (err.message || err) + ' (code: ' + (err.code || '?') + ')');
+        });
+      } catch (err) {
+        showError('Error processing PDF data: ' + (err.message || err));
+      }
+    }
+    var script = document.createElement('script');
+    script.src = '${PDFJS_CDN}/pdf.min.js';
+    script.onload = function() {
+      setTimeout(loadPdf, 100);
+    };
+    script.onerror = function() {
+      showError('Failed to load PDF.js from CDN. Try opening in browser.');
+    };
+    document.head.appendChild(script);
+    setTimeout(function() {
+      if (typeof pdfjsLib === 'undefined') {
+        showError('PDF.js loading timeout. Check internet connection.');
+      }
+    }, 10000);
+  <\/script>
+</body>
+</html>`;
+}
+
+// Custom Image component that handles authentication.
+// On native (iOS/Android): use Image with headers - FileReader.readAsDataURL is unreliable in RN.
+// On web: fetch + FileReader + data URL (browsers support it).
 const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...props }: any) => {
   const [imageData, setImageData] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Load auth token once (and stop native loading state once we know)
   useEffect(() => {
-    const loadAuthenticatedImage = async () => {
-      try {
-        if (source?.uri) {
-          // Get auth token
-          const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-          
-          if (token) {
-            // Fetch image data with authentication
-            const response = await fetch(source.uri, {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'X-Platform': 'android'
-              }
-            });
+    let cancelled = false;
+    secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN).then((token) => {
+      if (!cancelled) {
+        setAuthToken(token || null);
+        if (Platform.OS !== 'web') setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
-            if (response.ok) {
-              const blob = await response.blob();
-              const dataUrl = await new Promise<string>((resolve) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result as string);
-                reader.readAsDataURL(blob);
-              });
-              setImageData(dataUrl);
-            } else {
-              console.error('Failed to fetch image:', response.status);
-              onError?.(new Error(`Failed to load image: ${response.status}`));
-            }
-          } else {
-            console.warn('No auth token available for image');
-            onError?.(new Error('Authentication required'));
+  // Web only: fetch image and convert to data URL (FileReader works in browser)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !source?.uri || !authToken) {
+      if (Platform.OS === 'web' && source?.uri && !authToken) setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const loadViaFetch = async () => {
+      try {
+        const response = await fetch(source.uri, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'X-Platform': 'web'
           }
+        });
+        if (cancelled) return;
+        if (!response.ok) {
+          onError?.(new Error(`Failed to load image: ${response.status}`));
+          setLoading(false);
+          return;
         }
-      } catch (error) {
-        console.error('Failed to load authenticated image:', error);
-        onError?.(error);
+        const blob = await response.blob();
+        if (cancelled) return;
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+        if (!cancelled) setImageData(dataUrl);
+      } catch (err) {
+        if (!cancelled) onError?.(err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
+    loadViaFetch();
+    return () => { cancelled = true; };
+  }, [source?.uri, authToken, onError]);
 
-    loadAuthenticatedImage();
-  }, [source, onError]);
+  // Native: use expo-image which properly supports headers on Android
+  if (Platform.OS !== 'web') {
+    if (!source?.uri) {
+      return null;
+    }
+    if (loading && !authToken) {
+      return (
+        <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
+          <ActivityIndicator size="small" color="#007AFF" />
+        </View>
+      );
+    }
+    if (!authToken) {
+      return (
+        <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
+          <Text style={{ color: '#666', textAlign: 'center' }}>Authentication required</Text>
+        </View>
+      );
+    }
+    // Use expo-image which properly supports headers on Android
+    return (
+      <ExpoImage
+        source={{
+          uri: source.uri,
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'X-Platform': Platform.OS
+          }
+        }}
+        style={style}
+        contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'cover' ? 'cover' : 'fill'}
+        onError={onError}
+        onLoad={onLoad}
+        transition={200}
+        {...props}
+      />
+    );
+  }
 
+  // Web: show loading or image from data URL
   if (loading) {
     return (
       <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -116,17 +368,13 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
       </View>
     );
   }
-
   if (!imageData) {
     return (
       <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
-        <Text style={{ color: '#666', textAlign: 'center' }}>
-          Failed to load image
-        </Text>
+        <Text style={{ color: '#666', textAlign: 'center' }}>Failed to load image</Text>
       </View>
     );
   }
-
   return (
     <Image
       source={{ uri: imageData }}
@@ -159,7 +407,7 @@ const getDocumentTypeName = (fileName: string) => {
 
 
 // Authenticated WebView Component
-const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { fileUrl: string; authToken: string; fileName: string; fileType: string }) => {
+const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFileUri }: { fileUrl: string; authToken: string; fileName: string; fileType: string; localFileUri?: string | null }) => {
   const colors = useThemeColors();
   const [htmlContent, setHtmlContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -277,18 +525,20 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType }: { file
     const isPdf = fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf');
     
     // Note: Android PDFs are handled at renderDocumentPreview level with native viewer
-    // This WebView is only used for iOS PDFs and Office documents
-    
-    // iOS: Use direct URL (iOS WebView can handle PDFs)
-    return (
-      <WebView
-        source={{ 
+    // This WebView is only used for iOS PDFs and Office documents.
+    // On Android, use local file when provided so we don't rely on WebView sending headers.
+    const source = localFileUri
+      ? { uri: localFileUri }
+      : {
           uri: finalUrl,
           headers: {
             'Authorization': `Bearer ${authToken}`,
-            'X-Platform': Platform.OS
-          }
-        }}
+            'X-Platform': Platform.OS,
+          },
+        };
+    return (
+      <WebView
+        source={source}
         style={styles.webView}
         javaScriptEnabled={true}
         domStorageEnabled={true}
@@ -350,19 +600,44 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
 
   useEffect(() => {
     const loadTextContent = async () => {
+      if (!fileUrl) {
+        console.warn('TextDocumentViewer: No fileUrl provided');
+        setError('No file URL provided');
+        setLoading(false);
+        return;
+      }
+      if (!authToken) {
+        console.warn('TextDocumentViewer: No authToken provided');
+        setError('Authentication required');
+        setLoading(false);
+        return;
+      }
+      
       try {
         setLoading(true);
         setError(null);
+        console.log('TextDocumentViewer: Fetching text file from:', fileUrl);
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
         
         const response = await fetch(fileUrl, {
           headers: {
             'Authorization': `Bearer ${authToken}`,
-            'X-Platform': 'android'
-          }
+            'X-Platform': Platform.OS
+          },
+          signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
+
+        console.log('TextDocumentViewer: Response status:', response.status, response.statusText);
 
         if (!response.ok) {
-          setError(`Failed to load text content: ${response.status}`);
+          const errorText = await response.text().catch(() => 'Unknown error');
+          console.error('TextDocumentViewer: Failed to load:', response.status, errorText);
+          setError(`Failed to load text content: ${response.status} ${response.statusText}`);
+          setLoading(false);
           return;
         }
 
@@ -370,29 +645,34 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
         const contentLength = response.headers.get('content-length');
         if (contentLength && parseInt(contentLength) > MAX_FILE_SIZE) {
           setError(`File is too large (${(parseInt(contentLength) / 1024 / 1024).toFixed(2)} MB). Maximum size is ${MAX_FILE_SIZE / 1024 / 1024} MB.`);
+          setLoading(false);
           return;
         }
 
         const text = await response.text();
+        console.log('TextDocumentViewer: Loaded text, length:', text.length);
         
         // Check actual size after loading
         if (text.length > MAX_FILE_SIZE) {
           setError(`File is too large (${(text.length / 1024 / 1024).toFixed(2)} MB). Maximum size is ${MAX_FILE_SIZE / 1024 / 1024} MB.`);
+          setLoading(false);
           return;
         }
         
         setContent(text);
+        setLoading(false);
       } catch (err: any) {
-        console.error('Text document load error:', err);
-        setError(err.message || 'Failed to load text document');
-      } finally {
+        console.error('TextDocumentViewer: Load error:', err);
+        if (err.name === 'AbortError') {
+          setError('Request timed out. Please try again.');
+        } else {
+          setError(err.message || 'Failed to load text document');
+        }
         setLoading(false);
       }
     };
 
-    if (fileUrl && authToken) {
-      loadTextContent();
-    }
+    loadTextContent();
   }, [fileUrl, authToken]);
 
   if (loading) {
@@ -434,10 +714,46 @@ export default function DocumentViewer({
   const colors = useThemeColors();
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [pdfLocalUri, setPdfLocalUri] = useState<string | null>(null);
+  /** Local file URI for WebView (Office docs only when native PDF not used). PDF uses only native viewer. */
+  const [webViewLocalUri, setWebViewLocalUri] = useState<string | null>(null);
+  /** Expo Go only: PDF as data URI for WebView (no native PDF module in Expo Go). */
+  const [webViewPdfDataUri, setWebViewPdfDataUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
+  
+  // Pinch-to-zoom state (moved to component level for hooks)
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+  
+  // Reset zoom when fileUrl changes
+  useEffect(() => {
+    if (fileUrl) {
+      scale.value = 1;
+      savedScale.value = 1;
+      translateX.value = 0;
+      translateY.value = 0;
+      savedTranslateX.value = 0;
+      savedTranslateY.value = 0;
+    }
+  }, [fileUrl]);
+  
+  // Animated style for the image (must be at component level)
+  const animatedImageStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateX: translateX.value },
+        { translateY: translateY.value },
+        { scale: scale.value },
+      ],
+    };
+  });
   
   const dynamicStyles = StyleSheet.create({
     container: {
@@ -568,6 +884,64 @@ export default function DocumentViewer({
     downloadPdfForNativeViewer();
   }, [fileUrl, authToken, fileType, fileName]);
 
+  // Expo Go only: fetch PDF with auth and set base64 data URI so WebView can display it (no native PDF in Expo Go).
+  const EXPO_GO_PDF_MAX_BYTES = 8 * 1024 * 1024; // 8MB
+  useEffect(() => {
+    if (!isExpoGo || !isPdfFile(fileType) || !fileUrl || !authToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(fileUrl, {
+          headers: { 'Authorization': `Bearer ${authToken}`, 'X-Platform': Platform.OS },
+        });
+        if (cancelled || !res.ok) return;
+        const blob = await res.blob();
+        if (cancelled || blob.size > EXPO_GO_PDF_MAX_BYTES) return;
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        if (!cancelled) setWebViewPdfDataUri(dataUrl);
+      } catch (e) {
+        if (!cancelled) console.warn('Expo Go PDF fetch failed:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [fileUrl, authToken, fileType]);
+
+  // For Office docs only (not PDF): download to local file for WebView on Android when native PDF isn't used.
+  // PDF is only shown via native viewer (download → cache → react-native-pdf); no WebView for PDF.
+  useEffect(() => {
+    const needOfficeFallback =
+      (Platform.OS === 'android' || isExpoGo) &&
+      isOfficeDocument(fileType) &&
+      !isPdfFile(fileType) &&
+      !!fileUrl &&
+      !!authToken;
+    if (!needOfficeFallback) return;
+
+    const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+    if (!cacheDir) return;
+    (async () => {
+      try {
+        const ext = fileName.match(/\.[a-z0-9]+$/i)?.[0] || '.pdf';
+        const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 80);
+        const localUri = `${cacheDir}webview_${Date.now()}_${safeName}${ext}`;
+        await FileSystem.downloadAsync(fileUrl, localUri, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'X-Platform': Platform.OS,
+          },
+        });
+        setWebViewLocalUri(localUri);
+      } catch (e) {
+        console.warn('WebView fallback download failed:', e);
+      }
+    })();
+  }, [fileUrl, authToken, fileType, fileName]);
+
   const loadFileUrl = async () => {
     try {
       setLoading(true);
@@ -575,14 +949,32 @@ export default function DocumentViewer({
       
       // For image files containing documents, we need to get the file info first
       // then construct a preview URL that serves the image content directly
+      console.log('📥 Fetching file info for fileId:', fileId);
       const fileInfo = await apiClient.getFileById(parseInt(fileId));
+      
+      console.log('📦 File info response:', {
+        success: fileInfo.success,
+        hasFile: !!fileInfo.file,
+        fileKeys: fileInfo.file ? Object.keys(fileInfo.file) : [],
+        viewUrl: fileInfo.file?.view_url,
+        downloadUrl: fileInfo.file?.download_url
+      });
       
       if (fileInfo.success && fileInfo.file) {
         // Use view endpoint - backend automatically decrypts encrypted files
         // All file operations go through backend encryption class
         // If view endpoint doesn't exist, fallback to download endpoint
         console.log('🔐 File will be decrypted by backend encryption class for viewing');
-        let previewUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/view`;
+        
+        // Use view_url from API response if available, otherwise construct it
+        let previewUrl = fileInfo.file.view_url;
+        if (!previewUrl) {
+          // Fallback: construct URL manually
+          console.warn('⚠️ No view_url in response, constructing URL manually');
+          previewUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/view`;
+        }
+        
+        console.log('📄 Using preview URL:', previewUrl);
         
         // File loaded successfully - backend handles decryption automatically
         
@@ -592,8 +984,37 @@ export default function DocumentViewer({
         if (isImageFile(fileType)) {
           await getImageDimensionsWithAuth(previewUrl);
         }
+        
+        // For text files and images, loading is complete (no secondary download)
+        // For PDF/Office, loading continues until native viewer or WebView data is ready
+        if (isTextDocument(fileType) || isImageFile(fileType)) {
+          console.log('Text/image file loaded, clearing loading state');
+          setLoading(false);
+        }
       } else {
-        setError('Failed to load file information');
+        const errorMsg = 'Failed to load file information';
+        setError(errorMsg);
+        setLoading(false);
+        
+        // Log error when file info fetch fails
+        try {
+          await apiClient.logError({
+            errorType: 'FileInfoError',
+            errorMessage: `Failed to get file info for file ${fileId}: ${fileInfo?.message || 'Unknown error'}`,
+            severity: 'error',
+            screenName: 'DocumentViewer',
+            userAction: 'get_file_info',
+            platform: Platform.OS,
+            deviceInfo: {
+              fileId: fileId,
+              fileType: fileType,
+              responseSuccess: fileInfo?.success,
+              hasFile: !!fileInfo?.file
+            }
+          });
+        } catch (logError) {
+          console.warn('Failed to log file info error:', logError);
+        }
       }
     } catch (error: any) {
       const message = error?.message ?? '';
@@ -602,9 +1023,11 @@ export default function DocumentViewer({
       if (is404) {
         console.warn('File not found:', fileId, message);
         setError('File not found. It may have been deleted or moved.');
+        setLoading(false);
         return;
       }
       console.error('Failed to load file URL:', error);
+      setLoading(false);
 
       // If view endpoint returns 404, try download endpoint as fallback (axios error with response)
       if (error.response?.status === 404) {
@@ -617,22 +1040,36 @@ export default function DocumentViewer({
           if (isImageFile(fileType)) {
             await getImageDimensionsWithAuth(downloadUrl);
           }
+          if (isTextDocument(fileType) || isImageFile(fileType)) {
+            setLoading(false);
+          }
           return;
         } catch (fallbackError: any) {
           console.error('Fallback to download endpoint also failed:', fallbackError);
           setError('File not found. It may have been deleted or moved.');
+          setLoading(false);
         }
       } else if (error.response?.status === 401) {
         setError('Authentication required. Please log in again.');
+        setLoading(false);
       } else if (error.response?.status === 403) {
         setError('You do not have permission to access this file.');
+        setLoading(false);
       } else if (message.includes('Network Error')) {
         setError('Network error. Please check your connection and try again.');
+        setLoading(false);
       } else {
         setError(`Failed to load file: ${message || 'Unknown error'}`);
+        setLoading(false);
       }
     } finally {
-      setLoading(false);
+      // Ensure loading is cleared for files that don't need secondary processing
+      // PDF/Office continue loading until native viewer or WebView data is ready
+      const needsSecondaryLoad = isPdfFile(fileType) || isOfficeDocument(fileType);
+      if (!needsSecondaryLoad) {
+        console.log('No secondary load needed, clearing loading state');
+        setLoading(false);
+      }
     }
   };
 
@@ -711,6 +1148,7 @@ export default function DocumentViewer({
   const isTextDocument = (type: string) => {
     const textExtensions = /\.(txt|rtf|md|log|csv|json|xml|yaml|yml|ini|conf|config|properties)$/;
     return type === 'text' || 
+           type === 'txt' ||
            type.includes('text/') ||
            type.includes('plain') ||
            fileName.toLowerCase().match(textExtensions);
@@ -755,51 +1193,143 @@ export default function DocumentViewer({
   const renderImage = () => {
     if (!fileUrl) return null;
 
-    const maxWidth = screenWidth - 32;
-    const maxHeight = screenHeight - 200;
+    // Use full screen dimensions for image viewer (no padding/margins)
+    const maxWidth = screenWidth;
+    const maxHeight = screenHeight;
 
     let imageWidth = maxWidth;
     let imageHeight = maxHeight;
 
     if (imageDimensions) {
       const aspectRatio = imageDimensions.width / imageDimensions.height;
-      if (aspectRatio > maxWidth / maxHeight) {
+      const screenAspectRatio = maxWidth / maxHeight;
+      
+      if (aspectRatio > screenAspectRatio) {
+        // Image is wider - fill width, height will be less
         imageWidth = maxWidth;
         imageHeight = maxWidth / aspectRatio;
       } else {
+        // Image is taller - fill height, width will be less
         imageHeight = maxHeight;
         imageWidth = maxHeight * aspectRatio;
       }
     }
 
+    // Pinch gesture for zoom
+    const pinchGesture = Gesture.Pinch()
+      .onUpdate((e) => {
+        scale.value = savedScale.value * e.scale;
+        // Limit zoom between 1x and 5x
+        scale.value = Math.max(1, Math.min(5, scale.value));
+      })
+      .onEnd(() => {
+        savedScale.value = scale.value;
+        // Reset to 1x if zoomed out too much
+        if (scale.value < 1.1) {
+          scale.value = withSpring(1);
+          savedScale.value = 1;
+          translateX.value = withSpring(0);
+          translateY.value = withSpring(0);
+          savedTranslateX.value = 0;
+          savedTranslateY.value = 0;
+        }
+      });
+
+    // Pan gesture for dragging when zoomed
+    // On Android, configure activeOffset to make it more responsive
+    const panGesture = Gesture.Pan()
+      .minPointers(1)
+      .maxPointers(1)
+      .activeOffsetX([-10, 10]) // Activate after 10px horizontal movement
+      .activeOffsetY([-10, 10]) // Activate after 10px vertical movement
+      .onUpdate((e) => {
+        // Only pan if zoomed in
+        if (scale.value > 1) {
+          translateX.value = savedTranslateX.value + e.translationX;
+          translateY.value = savedTranslateY.value + e.translationY;
+        }
+      })
+      .onEnd(() => {
+        savedTranslateX.value = translateX.value;
+        savedTranslateY.value = translateY.value;
+        // Constrain panning to image bounds
+        const maxTranslateX = (imageWidth * scale.value - maxWidth) / 2;
+        const maxTranslateY = (imageHeight * scale.value - maxHeight) / 2;
+        if (Math.abs(translateX.value) > maxTranslateX) {
+          translateX.value = withSpring(Math.sign(translateX.value) * maxTranslateX);
+          savedTranslateX.value = translateX.value;
+        }
+        if (Math.abs(translateY.value) > maxTranslateY) {
+          translateY.value = withSpring(Math.sign(translateY.value) * maxTranslateY);
+          savedTranslateY.value = translateY.value;
+        }
+      });
+
+    // Double tap to zoom
+    const doubleTapGesture = Gesture.Tap()
+      .numberOfTaps(2)
+      .onEnd((e) => {
+        if (scale.value > 1.5) {
+          // Zoom out
+          scale.value = withSpring(1);
+          savedScale.value = 1;
+          translateX.value = withSpring(0);
+          translateY.value = withSpring(0);
+          savedTranslateX.value = 0;
+          savedTranslateY.value = 0;
+        } else {
+          // Zoom in to 2x
+          scale.value = withSpring(2);
+          savedScale.value = 2;
+        }
+      });
+
+    // Compose gestures for Android compatibility
+    // Use Simultaneous for pinch+pan so they can work together
+    // Use Race so double-tap takes priority over pinch+pan
+    const pinchAndPan = Gesture.Simultaneous(pinchGesture, panGesture);
+    const composedGesture = Gesture.Race(doubleTapGesture, pinchAndPan);
+
     return (
-      <ScrollView 
-        style={styles.imageContainer}
-        contentContainerStyle={styles.imageScrollContent}
-        maximumZoomScale={3}
-        minimumZoomScale={1}
-        showsHorizontalScrollIndicator={false}
-        showsVerticalScrollIndicator={false}
-      >
-        <AuthenticatedImage
-          source={{ uri: fileUrl }}
-          style={[
-            styles.image,
-            {
-              width: imageWidth,
-              height: imageHeight,
-            }
-          ]}
-          resizeMode="contain"
-          onError={(error) => {
-            console.error('Image load error:', error);
-            setError('Failed to load image. The file may be corrupted or in an unsupported format.');
-          }}
-          onLoad={() => {
-            console.log('Image loaded successfully');
-          }}
-        />
-      </ScrollView>
+      <View style={styles.imageContainer}>
+        <GestureDetector gesture={composedGesture}>
+          <Animated.View
+            style={[
+              styles.imageScrollContent,
+              {
+                width: '100%',
+                height: '100%',
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: 0, // Remove padding for full screen
+              },
+            ]}
+          >
+            <Animated.View style={animatedImageStyle}>
+              <AuthenticatedImage
+                source={{ uri: fileUrl }}
+                style={[
+                  styles.image,
+                  {
+                    width: imageWidth,
+                    height: imageHeight,
+                    maxWidth: maxWidth,
+                    maxHeight: maxHeight,
+                  }
+                ]}
+                contentFit="contain"
+                onError={(error: Error | string) => {
+                  console.error('Image load error:', error);
+                  setError('Failed to load image. The file may be corrupted or in an unsupported format.');
+                }}
+                onLoad={() => {
+                  console.log('Image loaded successfully');
+                }}
+              />
+            </Animated.View>
+          </Animated.View>
+        </GestureDetector>
+      </View>
     );
   };
 
@@ -826,14 +1356,14 @@ export default function DocumentViewer({
           <View style={{ flex: 1, backgroundColor: colors.background }}>
             <Pdf
               source={{ uri: pdfLocalUri, cache: true }}
-              onLoadComplete={(numberOfPages) => {
+              onLoadComplete={(numberOfPages: number) => {
                 console.log(`✅ PDF loaded successfully: ${numberOfPages} pages`);
                 setLoading(false);
               }}
-              onPageChanged={(page, numberOfPages) => {
+              onPageChanged={(page: number, numberOfPages: number) => {
                 console.log(`PDF page ${page} of ${numberOfPages}`);
               }}
-              onError={(error) => {
+              onError={(error: Error | string) => {
                 console.error('PDF render error:', error);
                 setError('Failed to render PDF. The file may be corrupted.');
               }}
@@ -865,94 +1395,85 @@ export default function DocumentViewer({
         );
       }
 
-      // Native PDF viewer not available (Expo Go) - use WebView or show option to open externally
+      // Native PDF viewer not available (Expo Go or no native module).
+      // Expo Go: use WebView + base64 so PDFs can still be viewed in-app.
       if (isExpoGo || !Pdf) {
-        // In Expo Go, show option to open externally or use WebView
-        return (
-          <View style={{ flex: 1, backgroundColor: colors.background }}>
-            <View style={styles.errorContainer}>
-              <Ionicons name="document-text-outline" size={64} color="#007AFF" />
-              <Text style={[dynamicStyles.errorText, { color: colors.textSecondary, marginTop: 16 }]}>
-                PDF Viewer requires a development build
-              </Text>
-              <Text style={[dynamicStyles.errorText, { color: colors.textSecondary, fontSize: 14, marginTop: 8 }]}>
-                Native PDF viewing is not available in Expo Go. You can view the PDF in your browser or create a development build.
-              </Text>
-              <TouchableOpacity
-                style={{
-                  marginTop: 24,
-                  backgroundColor: '#007AFF',
-                  paddingHorizontal: 24,
-                  paddingVertical: 12,
-                  borderRadius: 8,
-                }}
-                onPress={async () => {
-                  try {
-                    // Open PDF in external browser/app
-                    await Linking.openURL(fileUrl);
-                  } catch (err: any) {
-                    Alert.alert('Error', 'Failed to open PDF. Please try again.');
+        if (isExpoGo && webViewPdfDataUri) {
+          return (
+            <WebView
+              source={{ html: buildExpoGoPdfViewerHtml(webViewPdfDataUri) }}
+              style={styles.webView}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              originWhitelist={['*']}
+              mixedContentMode="compatibility"
+              scalesPageToFit={Platform.OS === 'android'}
+              setSupportZoom={false}
+              showsHorizontalScrollIndicator={true}
+              showsVerticalScrollIndicator={true}
+              onMessage={(event) => {
+                try {
+                  const data = JSON.parse(event.nativeEvent.data);
+                  if (data.type === 'log') {
+                    console.log('[PDF.js]', data.message);
+                  } else if (data.type === 'error') {
+                    console.error('[PDF.js Error]', data.message);
+                    setError(`PDF.js error: ${data.message}`);
                   }
-                }}
-              >
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
-                  Open in Browser
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{
-                  marginTop: 12,
-                  backgroundColor: 'transparent',
-                  paddingHorizontal: 24,
-                  paddingVertical: 12,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: '#007AFF',
-                }}
-                onPress={() => {
-                  // Fall back to WebView (may not work well on Android)
-                  setError(null);
-                }}
-              >
-                <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>
-                  Try WebView
-                </Text>
-              </TouchableOpacity>
+                } catch (e) {
+                  // Ignore parse errors
+                }
+              }}
+              onError={(syntheticEvent) => {
+                const { nativeEvent } = syntheticEvent;
+                console.error('PDF WebView error:', nativeEvent);
+                setError(`Failed to display PDF: ${nativeEvent.description || 'Unknown error'}`);
+              }}
+              onHttpError={(syntheticEvent) => {
+                const { nativeEvent } = syntheticEvent;
+                console.error('PDF WebView HTTP error:', nativeEvent);
+                setError(`HTTP error loading PDF: ${nativeEvent.statusCode}`);
+              }}
+            />
+          );
+        }
+        if (isExpoGo && fileUrl && authToken && !webViewPdfDataUri) {
+          return (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={dynamicStyles.loadingText}>Loading PDF...</Text>
             </View>
-            {/* Show WebView as fallback if user clicks "Try WebView" */}
-            {!error && (
-              <WebView
-                source={{ 
-                  uri: fileUrl,
-                  headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                    'X-Platform': Platform.OS
-                  }
-                }}
-                style={styles.webView}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                startInLoadingState={true}
-                onError={(syntheticEvent) => {
-                  const { nativeEvent } = syntheticEvent;
-                  console.error('PDF WebView error:', nativeEvent);
-                  Alert.alert(
-                    'PDF Viewing Not Available',
-                    'PDF viewing requires a development build. Please open the PDF in your browser or create a development build.',
-                    [
-                      { text: 'Open in Browser', onPress: async () => {
-                        try {
-                          await Linking.openURL(fileUrl);
-                        } catch (err) {
-                          Alert.alert('Error', 'Failed to open PDF.');
-                        }
-                      }},
-                      { text: 'OK', style: 'cancel' }
-                    ]
-                  );
-                }}
-              />
-            )}
+          );
+        }
+        return (
+          <View style={{ flex: 1, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <Ionicons name="document-text-outline" size={64} color={colors.primary} />
+            <Text style={[dynamicStyles.errorText, { color: colors.textSecondary, marginTop: 16, textAlign: 'center' }]}>
+              {isExpoGo ? 'PDF could not be loaded in Expo Go.' : 'Native PDF viewer requires a development build.'}
+            </Text>
+            <Text style={[dynamicStyles.errorText, { color: colors.textSecondary, fontSize: 14, marginTop: 8, textAlign: 'center' }]}>
+              {isExpoGo ? 'Try again or open in your browser.' : 'Run with a dev or production build to view PDFs in-app.'}
+            </Text>
+            <TouchableOpacity
+              style={{
+                marginTop: 24,
+                backgroundColor: colors.primary,
+                paddingHorizontal: 24,
+                paddingVertical: 14,
+                borderRadius: 10,
+              }}
+              onPress={async () => {
+                try {
+                  if (fileUrl) await Linking.openURL(fileUrl);
+                } catch (err: any) {
+                  Alert.alert('Error', 'Failed to open PDF. Please try again.');
+                }
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                Open in Browser
+              </Text>
+            </TouchableOpacity>
           </View>
         );
       }
@@ -1019,12 +1540,22 @@ export default function DocumentViewer({
     }
 
     // Use the AuthenticatedWebView for Office documents (PDFs use native viewer above)
+    // On Android, wait for webViewLocalUri so the WebView doesn't load the URL without auth
+    if (Platform.OS === 'android' && !webViewLocalUri && fileUrl && authToken) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={dynamicStyles.loadingText}>Loading document...</Text>
+        </View>
+      );
+    }
     return (
       <AuthenticatedWebView 
         fileUrl={fileUrl} 
         authToken={authToken} 
         fileName={fileName} 
-        fileType={fileType} 
+        fileType={fileType}
+        localFileUri={Platform.OS === 'android' ? webViewLocalUri : undefined}
       />
     );
   };
@@ -1112,34 +1643,58 @@ export default function DocumentViewer({
   };
 
   // DocumentViewer rendering
+  const isImageView = !loading && !error && isImageFile(fileType);
 
   return (
     <Modal
       visible={true}
       animationType="slide"
       presentationStyle="fullScreen"
+      statusBarTranslucent
     >
-      <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom', 'left', 'right']}>
-        <View style={dynamicStyles.header}>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color={colors.primary} />
-          </TouchableOpacity>
-          <Text style={dynamicStyles.title} numberOfLines={1}>
-            {getViewerTitle()}
-          </Text>
-          <View style={styles.placeholder} />
-        </View>
-        
-        <View style={styles.content}>
-          {renderContent()}
-        </View>
-        
-        {/* Bottom Close Button */}
-        <View style={dynamicStyles.bottomContainer}>
-          <TouchableOpacity style={styles.bottomCloseButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color="#007AFF" />
-          </TouchableOpacity>
-        </View>
+      <SafeAreaView 
+        style={[dynamicStyles.container, isImageView && { backgroundColor: '#000' }]} 
+        edges={isImageView ? ['top', 'bottom'] : ['top', 'bottom', 'left', 'right']}
+      >
+        {isImageView ? (
+          <>
+            <View style={[styles.content, styles.imageViewerContent]}>
+              {renderContent()}
+            </View>
+            {/* Single overlay bar: close + filename */}
+            <View style={styles.imageViewerOverlay} pointerEvents="box-none">
+              <View style={[styles.imageViewerTopBar, { paddingTop: Math.max(insets.top + 8, 12) }]}>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={styles.imageViewerCloseButton}
+                  activeOpacity={0.8}
+                  accessibilityLabel="Close"
+                >
+                  <Ionicons name="close" size={24} color="#fff" />
+                </TouchableOpacity>
+                <Text numberOfLines={1} style={styles.imageViewerTitle}>
+                  {fileName}
+                </Text>
+                <View style={styles.placeholder} />
+              </View>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={dynamicStyles.header}>
+              <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+                <Ionicons name="close" size={24} color={colors.primary} />
+              </TouchableOpacity>
+              <Text style={dynamicStyles.title} numberOfLines={1}>
+                {getViewerTitle()}
+              </Text>
+              <View style={styles.placeholder} />
+            </View>
+            <View style={styles.content}>
+              {renderContent()}
+            </View>
+          </>
+        )}
       </SafeAreaView>
     </Modal>
   );
@@ -1212,17 +1767,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  imageViewerContent: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  imageViewerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  imageViewerTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  imageViewerCloseButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageViewerTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.95)',
+    marginHorizontal: 12,
+  },
   imageContainer: {
     flex: 1,
+    width: '100%',
+    height: '100%',
   },
   imageScrollContent: {
-    flexGrow: 1,
+    width: '100%',
+    height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    padding: 0, // No padding for full-screen image viewer
   },
   image: {
-    backgroundColor: '#f8f9fa',
+    backgroundColor: 'transparent',
   },
   placeholderContainer: {
     flex: 1,
@@ -1274,6 +1862,7 @@ const styles = StyleSheet.create({
   },
   webView: {
     flex: 1,
+    backgroundColor: '#fff',
   },
   webViewLoading: {
     position: 'absolute',

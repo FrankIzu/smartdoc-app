@@ -16,6 +16,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
@@ -33,6 +34,7 @@ export default function SignInScreen() {
   const [biometricType, setBiometricType] = useState('Biometric');
   const [needsOtp, setNeedsOtp] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
+  const insets = useSafeAreaInsets();
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
   const { signIn, loading, refreshSession } = useAuth();
@@ -352,16 +354,17 @@ export default function SignInScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <View style={styles.content}>
-
-
-        {/* Profile Section */}
-        <View style={styles.profileSection}>
-          <Text style={styles.welcomeText}>GrabDocs</Text>
-        </View>
-        
-        {/* Form */}
-        <View style={styles.form}>
+      <View style={[styles.content, { paddingTop: insets.top + (Platform.OS === 'android' ? 20 : 24) }]}>
+        <View style={styles.centeredBlock}>
+          {/* Top spacer: pushes sign-in block down toward middle/lower-middle */}
+          <View style={styles.topSpacer} />
+          {/* Profile Section */}
+          <View style={styles.profileSection}>
+            <Text style={styles.welcomeText}>GrabDocs</Text>
+          </View>
+          
+          {/* Form */}
+          <View style={styles.form}>
           {/* Username Input */}
           <View style={styles.inputContainer}>
             <View style={styles.inputWrapper}>
@@ -506,10 +509,13 @@ export default function SignInScreen() {
             </Link>
           </View>
         </View>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
 }
+
+const isAndroid = Platform.OS === 'android';
 
 const styles = StyleSheet.create({
   container: {
@@ -518,15 +524,22 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 100,
+    paddingHorizontal: isAndroid ? 20 : 24,
+    // paddingTop set dynamically with insets.top so content stays below status bar
+  },
+  centeredBlock: {
+    flex: 1,
+  },
+  topSpacer: {
+    flex: 0.1,
+    minHeight: 40,
   },
   profileSection: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: isAndroid ? 16 : 40,
   },
   welcomeText: {
-    fontSize: 32,
+    fontSize: isAndroid ? 26 : 32,
     fontWeight: '700',
     color: '#333',
   },
@@ -534,31 +547,31 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   inputContainer: {
-    marginBottom: 16,
+    marginBottom: isAndroid ? 10 : 16,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    borderRadius: isAndroid ? 8 : 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
   inputIcon: {
-    marginRight: 12,
+    marginRight: 10,
   },
   input: {
     flex: 1,
-    fontSize: 16,
+    fontSize: isAndroid ? 15 : 16,
     color: '#333',
   },
   optionsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: isAndroid ? 14 : 24,
   },
   rememberMeContainer: {
     flexDirection: 'row',
@@ -568,7 +581,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   rememberMeLabel: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#333',
   },
   faceIdContainer: {
@@ -576,16 +589,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   faceIdText: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#007AFF',
     marginLeft: 6,
     fontWeight: '500',
   },
   errorContainer: {
     backgroundColor: '#ffebee',
-    padding: 12,
+    padding: isAndroid ? 8 : 12,
     borderRadius: 8,
-    marginBottom: 16,
+    marginBottom: isAndroid ? 10 : 16,
     borderLeftWidth: 4,
     borderLeftColor: '#f44336',
   },
@@ -595,34 +608,34 @@ const styles = StyleSheet.create({
   },
   signInButton: {
     backgroundColor: '#007AFF',
-    paddingVertical: 16,
-    borderRadius: 12,
+    paddingVertical: isAndroid ? 12 : 16,
+    borderRadius: isAndroid ? 8 : 12,
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: isAndroid ? 14 : 24,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   signInButtonText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: isAndroid ? 16 : 18,
     fontWeight: '600',
   },
   forgotPasswordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 32,
+    marginBottom: isAndroid ? 16 : 32,
   },
   forgotPasswordText: {
     color: '#007AFF',
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     marginRight: 6,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: isAndroid ? 14 : 24,
   },
   dividerLine: {
     flex: 1,
@@ -630,7 +643,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0e0e0',
   },
   dividerText: {
-    marginHorizontal: 16,
+    marginHorizontal: isAndroid ? 12 : 16,
     color: '#666',
     fontSize: 14,
   },
@@ -638,33 +651,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e0e0e0',
-    paddingVertical: 16,
-    borderRadius: 12,
+    paddingVertical: isAndroid ? 12 : 16,
+    borderRadius: isAndroid ? 8 : 12,
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: isAndroid ? 10 : 16,
   },
   googleButtonText: {
     color: '#333',
-    fontSize: 16,
+    fontSize: isAndroid ? 15 : 16,
     fontWeight: '500',
   },
   appleButton: {
     width: '100%',
-    height: 50,
-    marginBottom: 32,
+    height: isAndroid ? 44 : 50,
+    marginBottom: isAndroid ? 16 : 32,
   },
   signUpContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 40,
+    paddingBottom: isAndroid ? 20 : 40,
   },
   signUpText: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#666',
   },
   signUpLink: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#007AFF',
     fontWeight: '500',
   },

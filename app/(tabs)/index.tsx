@@ -67,6 +67,15 @@ function DashboardScreen() {
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
 
+  // When not signed in, stay on login screen (redirect to sign-in)
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) {
+        router.replace('/(auth)/sign-in');
+      }
+    }, [user, router])
+  );
+
   // Helper function to safely set upload state with timeout
   const setUploadStateWithTimeout = (uploading: boolean) => {
     setIsUploading(uploading);
@@ -944,47 +953,6 @@ function DashboardScreen() {
     shadowRadius: 6,
     elevation: 6,
   },
-  welcomeContainer: {
-    padding: 16,
-      backgroundColor: colors.card,
-    borderRadius: 8,
-    margin: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  welcomeCard: {
-    alignItems: 'center',
-    padding: 20,
-  },
-  welcomeTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-      color: colors.text,
-    marginTop: 15,
-    textAlign: 'center',
-  },
-  welcomeSubtitle: {
-    fontSize: 15,
-      color: colors.textSecondary,
-    marginTop: 5,
-    textAlign: 'center',
-  },
-  welcomeButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 8,
-    marginTop: 20,
-  },
-  welcomeButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
   badge: {
     position: 'absolute',
     top: -5,
@@ -1114,25 +1082,6 @@ function DashboardScreen() {
               : 'Connection Error: Check if backend is running'
             }
           </Text>
-        </View>
-      )}
-      
-      {/* Welcome Message for Non-Authenticated Users */}
-      {!user && (
-        <View style={dynamicStyles.welcomeContainer}>
-          <View style={dynamicStyles.welcomeCard}>
-            <Ionicons name="person-circle-outline" size={52} color="#007AFF" />
-            <Text style={dynamicStyles.welcomeTitle}>Welcome to GrabDocs</Text>
-            <Text style={dynamicStyles.welcomeSubtitle}>
-              Sign in to access your documents and see your personalized dashboard
-            </Text>
-            <TouchableOpacity
-              style={dynamicStyles.welcomeButton}
-              onPress={() => router.push('/(auth)')}
-            >
-              <Text style={dynamicStyles.welcomeButtonText}>Sign In</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       )}
 
