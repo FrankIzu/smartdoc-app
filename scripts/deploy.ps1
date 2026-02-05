@@ -7,6 +7,9 @@
 #   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 2 -Version 1.0.3
 #   Local build (no EAS cloud): .\scripts\deploy.ps1 -Platform android -Environment prod -Local
 #   Local build (iOS, requires macOS): .\scripts\deploy.ps1 -Platform ios -Environment prod -Local
+#
+#   In interactive mode you can choose: (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions.
+#   Option 3 commits version/build and pushes; iOS runs on push to main, Android runs on push to main or tag.
 
 param(
     [string]$Platform,
@@ -359,24 +362,69 @@ try {
         Write-Host "   ${buildLabel}: $BuildNumber" -ForegroundColor White
     }
 
-    # If -Local was not passed, prompt to choose local (free) vs cloud build
+    # If -Local was not passed, prompt: local / cloud / GitHub Actions
+    $useGitHubActions = $false
     if (-not $PSBoundParameters.ContainsKey('Local')) {
-        $doLocal = Prompt-WithValidation "Build locally (free, no EAS charge)? (y/n)" @("y", "n") "n"
-        $Local = ($doLocal -eq "y")
+        $where = Prompt-WithValidation "Where to build? (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions" @("1", "2", "3") "2"
+        if ($where -eq "1") { $Local = $true }
+        elseif ($where -eq "3") { $useGitHubActions = $true }
+        else { $Local = $false }
+    }
+
+    # GitHub Actions: commit version/build, push, then trigger only the selected platform workflow
+    if ($useGitHubActions) {
+        $confirm = Prompt-WithValidation "`nCommit, push, and trigger $Platform build only (version $Version, build $BuildNumber)? (y/n)" @("y", "n")
+        if ($confirm -ne "y") { Write-Host "Cancelled." -ForegroundColor Yellow; exit 0 }
+        Set-Location "$PSScriptRoot\.."
+        $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
+        if (-not $branch) {
+            Write-Host "❌ Not a git repository or could not get current branch." -ForegroundColor Red
+            exit 1
+        }
+        $msg = "Release $Version ($Platform build $BuildNumber)"
+        git add app.json
+        if ($Platform -eq "android" -and (Test-Path "android\app\build.gradle")) { git add android\app\build.gradle }
+        $status = git status --porcelain
+        if (-not $status) {
+            $wf = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
+            Write-Host "⚠️  No version/build changes to commit. Push manually, then run: gh workflow run $wf -f profile=$profile --ref $branch" -ForegroundColor Yellow
+            exit 0
+        }
+        git commit -m $msg
+        if ($LASTEXITCODE -ne 0) { Write-Host "❌ Commit failed." -ForegroundColor Red; exit 1 }
+        git push origin $branch
+        if ($LASTEXITCODE -ne 0) { Write-Host "❌ Push failed." -ForegroundColor Red; exit 1 }
+        # Use workflow filename (must exist on default branch, e.g. main, to be triggerable)
+        $workflowFile = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
+        Write-Host "Triggering $workflowFile for ref $branch (profile $profile)..." -ForegroundColor Cyan
+        # Ensure gh is on PATH (Cursor/integrated terminal often has minimal PATH)
+        if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+            $ghPaths = @("$env:ProgramFiles\GitHub CLI\gh.exe", "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe", "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe")
+            foreach ($p in $ghPaths) {
+                if (Test-Path $p) { $env:PATH = "$(Split-Path $p);$env:PATH"; break }
+            }
+        }
+        gh workflow run $workflowFile -f profile=$profile --ref $branch
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "⚠️  Could not trigger workflow (workflow must exist on default branch). Run manually: gh workflow run $workflowFile -f profile=$profile --ref $branch" -ForegroundColor Yellow
+        } else {
+            Write-Host "✅ Pushed and triggered $Platform build on $branch. See Actions tab for run." -ForegroundColor Green
+        }
+        exit 0
     }
 
     # EAS local does not support Windows (macOS or Linux only). Warn and exit for local + Windows.
     if ($Local -and $Platform -eq "android" -and $env:OS -eq "Windows_NT") {
         Write-Host "❌ EAS local build for Android is not supported on Windows (Expo requires macOS or Linux)." -ForegroundColor Red
         Write-Host "   Options:" -ForegroundColor Yellow
-        Write-Host "   1. Use GitHub Actions: push to main or run 'gh workflow run ""Build Android (EAS local)""' (builds on Linux)." -ForegroundColor White
+        Write-Host "   1. Use GitHub Actions: push to main or run 'gh workflow run build-android.yml' (builds on Linux)." -ForegroundColor White
         Write-Host "   2. Use EAS cloud (this script without -Local): run again and choose 'n' for build locally." -ForegroundColor White
         Write-Host "   3. Use WSL: run this script from inside WSL (Linux) on your PC." -ForegroundColor White
         exit 1
     }
     if ($Local -and $Platform -eq "ios" -and $env:OS -eq "Windows_NT") {
         Write-Host "❌ EAS local build for iOS requires macOS (Xcode). Windows cannot build iOS." -ForegroundColor Red
-        Write-Host "   Use GitHub Actions: 'gh workflow run ""Build iOS (EAS local)""' or push to main." -ForegroundColor Yellow
+        Write-Host "   Use GitHub Actions: 'gh workflow run build-ios.yml' or push to main." -ForegroundColor Yellow
         exit 1
     }
 

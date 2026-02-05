@@ -1,12 +1,9 @@
 # Build Android app with EAS local (no EAS cloud charge).
-# Trigger: manual (workflow_dispatch) or push of a version tag (e.g. v1.0.0).
+# Trigger: manual (workflow_dispatch) only. Deploy script triggers the selected platform (iOS or Android) via gh workflow run after push.
 # Requires: GitHub secret EXPO_TOKEN (Expo access token).
 #
-# Combo for 5–8 min release builds (<5 min on warm cache):
-#   Gradle cache (optimized) + configuration cache + tag-only + Linux + no clean + cache npm.
-#
-# Cache rotation (FIFO-style): Bump CACHE_VERSION below to stay under ~10GB repo cache limit.
-# Larger runner: Set runs-on to e.g. ubuntu-latest-4-cores if your plan allows.
+# Combo for 5–8 min release builds (<5 min on warm cache): Gradle cache + configuration cache + Linux + no clean + cache npm.
+# Cache rotation: Bump CACHE_VERSION below to stay under ~10GB repo cache limit.
 
 name: Build Android (EAS local)
 
@@ -22,9 +19,6 @@ on:
           - production
           - preview
           - development
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   build:
@@ -32,9 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CACHE_VERSION: "1"
-      ANDROID_SDK_CACHE_PATH: ${{ runner.tool_cache }}/android-sdk
-      GRADLE_USER_HOME: ${{ runner.tool_cache }}/gradle
     steps:
+      - name: Set cache paths
+        run: |
+          echo "ANDROID_SDK_CACHE_PATH=${{ runner.temp }}/android-sdk" >> $GITHUB_ENV
+          echo "GRADLE_USER_HOME=${{ runner.temp }}/gradle" >> $GITHUB_ENV
       - name: Checkout (exclude manager-francis; app build does not use it)
         uses: actions/checkout@v4
         with:
@@ -172,3 +168,14 @@ jobs:
             *.aab
             *.apk
           if-no-files-found: ignore
+
+      - name: Submit to Google Play (optional)
+        if: success() && secrets.ANDROID_SERVICE_ACCOUNT_JSON != ''
+        run: |
+          AAB=$(find . -maxdepth 3 -name "*.aab" -type f 2>/dev/null | head -1)
+          if [ -z "$AAB" ]; then echo "No .aab found"; exit 1; fi
+          echo "$ANDROID_SERVICE_ACCOUNT_JSON" > /tmp/play-service-account.json
+          npx eas-cli submit --platform android --path "$AAB" --non-interactive --service-account-key-path /tmp/play-service-account.json
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ANDROID_SERVICE_ACCOUNT_JSON: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}

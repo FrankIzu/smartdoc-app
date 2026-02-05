@@ -1,5 +1,5 @@
 # Build iOS app with EAS local (no EAS cloud charge).
-# Trigger: manual (workflow_dispatch) or push to main.
+# Trigger: manual (workflow_dispatch) only. Deploy script triggers the selected platform (iOS or Android) via gh workflow run after push.
 # Requires: GitHub secret EXPO_TOKEN (Expo access token).
 # Runs on macOS (uses GitHub-hosted macOS runner).
 
@@ -17,19 +17,27 @@ on:
           - production
           - preview
           - development
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'manager-francis/**'
-      - '.github/**'
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Checkout
+      - name: Checkout (exclude manager-francis; app build does not use it)
         uses: actions/checkout@v4
+        with:
+          submodules: false
+          sparse-checkout: |
+            /*
+            !manager-francis
+          sparse-checkout-cone-mode: false
+
+      - name: Remove manager-francis submodule entry so git cleanup does not fail
+        run: |
+          git config -f .gitmodules --remove-section submodule.manager-francis 2>/dev/null || true
+          git submodule deinit -f manager-francis 2>/dev/null || true
+          git rm --cached manager-francis 2>/dev/null || true
+          rm -rf .git/modules/manager-francis manager-francis 2>/dev/null || true
+        continue-on-error: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -60,3 +68,21 @@ jobs:
           path: |
             *.ipa
           if-no-files-found: ignore
+
+      - name: Submit to App Store (optional)
+        if: success() && (secrets.ASC_KEY_ID != '' && secrets.ASC_ISSUER_ID != '' && secrets.ASC_KEY_P8_BASE64 != '' || secrets.EXPO_APPLE_APP_SPECIFIC_PASSWORD != '')
+        run: |
+          IPA=$(find . -maxdepth 3 -name "*.ipa" -type f 2>/dev/null | head -1)
+          if [ -z "$IPA" ]; then echo "No .ipa found"; exit 1; fi
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
+            echo "$ASC_KEY_P8_BASE64" | base64 -d > /tmp/asc-key.p8
+            npx eas-cli submit --platform ios --path "$IPA" --non-interactive --asc-api-key-path /tmp/asc-key.p8 --asc-api-key-id "$ASC_KEY_ID" --asc-api-key-issuer-id "$ASC_ISSUER_ID"
+          else
+            npx eas-cli submit --platform ios --path "$IPA" --non-interactive
+          fi
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.EXPO_APPLE_APP_SPECIFIC_PASSWORD }}
