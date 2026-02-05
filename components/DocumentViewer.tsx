@@ -5,23 +5,23 @@ import { Image as ExpoImage } from 'expo-image';
 import * as Linking from 'expo-linking';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  Image,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Image,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring
 } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -626,11 +626,14 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
     );
   }
 
-  // For PDFs and Office documents, use direct WebView with authenticated URL
+  // For PDFs, Office documents, and SVG files, use direct WebView with authenticated URL
   // Office documents will be converted to PDF by the backend view endpoint automatically
+  // SVG files are vector graphics that need WebView rendering
+  const isSvg = fileName.toLowerCase().endsWith('.svg') || fileType === 'image/svg+xml';
   if (fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf') ||
       fileType === 'doc' || fileType === 'docx' || fileType.includes('document') || 
-      fileName.toLowerCase().match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/)) {
+      fileName.toLowerCase().match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/) ||
+      isSvg) {
     
     // Use view endpoint for Office documents - backend will convert to PDF automatically
     // No need to modify URL - view endpoint handles Office-to-PDF conversion
@@ -638,9 +641,10 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
     
     const isPdf = fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf');
     
-    // Note: Android PDFs are handled at renderDocumentPreview level with native viewer
-    // This WebView is only used for iOS PDFs and Office documents.
-    // On Android, use local file when provided so we don't rely on WebView sending headers.
+    // Note: Native PDFs are handled at renderDocumentPreview level with native viewer
+    // This WebView is used for iOS PDFs (when native viewer not available), Office documents, and SVG files.
+    // On native platforms, use local file when provided so we don't rely on WebView sending headers.
+    // iOS WebView doesn't reliably send Authorization headers, so local file is preferred.
     const source = localFileUri
       ? { uri: localFileUri }
       : {
@@ -650,6 +654,63 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
             'X-Platform': Platform.OS,
           },
         };
+    
+    // For SVG files, embed in HTML for proper rendering
+    if (isSvg && !localFileUri) {
+      // SVG files need to be fetched and embedded in HTML
+      return (
+        <WebView
+          source={{
+            html: `
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=3.0"/>
+                  <style>
+                    * { margin: 0; padding: 0; box-sizing: border-box; }
+                    html, body { width: 100%; height: 100%; overflow: hidden; }
+                    body { 
+                      display: flex; 
+                      justify-content: center; 
+                      align-items: center; 
+                      background: ${colors.isDark ? '#1c1c1e' : '#ffffff'};
+                    }
+                    img { 
+                      max-width: 100%; 
+                      max-height: 100%; 
+                      width: auto; 
+                      height: auto; 
+                      object-fit: contain;
+                    }
+                  </style>
+                </head>
+                <body>
+                  <img src="${finalUrl}" alt="${fileName}" />
+                </body>
+              </html>
+            `
+          }}
+          style={styles.webView}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={true}
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.error('SVG WebView error:', nativeEvent);
+            setError('Failed to load SVG');
+          }}
+          onHttpError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.error('SVG WebView HTTP error:', nativeEvent);
+            setError(`Failed to load SVG: HTTP ${nativeEvent.statusCode}`);
+          }}
+          onLoadEnd={() => {
+            console.log('SVG WebView loaded successfully');
+          }}
+        />
+      );
+    }
+    
     return (
       <WebView
         source={source}
@@ -833,10 +894,14 @@ export default function DocumentViewer({
   const [officePdfDataUri, setOfficePdfDataUri] = useState<string | null>(null); // For Office docs converted to PDF in Expo Go
   /** Expo Go only: PDF as data URI for WebView (no native PDF module in Expo Go). */
   const [webViewPdfDataUri, setWebViewPdfDataUri] = useState<string | null>(null);
+  /** SVG content read from local file (for WebView rendering - iOS can't open file:// URIs) */
+  const [svgContent, setSvgContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const [fileKind, setFileKind] = useState<string | null>(null);
+  const [actualFileType, setActualFileType] = useState<string | null>(null); // Store file_type from API
   const insets = useSafeAreaInsets();
   
   // Pinch-to-zoom state (moved to component level for hooks)
@@ -880,10 +945,13 @@ export default function DocumentViewer({
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingHorizontal: 16,
-      paddingVertical: 16,
+      paddingTop: Math.max(insets.top, 8) + 10,
+      paddingBottom: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       backgroundColor: colors.background,
+      zIndex: 1000,
+      elevation: 5, // Android shadow
     },
     title: {
       flex: 1,
@@ -1156,13 +1224,18 @@ export default function DocumentViewer({
     return () => { cancelled = true; };
   }, [fileUrl, authToken, fileType]);
 
-  // For Office docs only (not PDF): download to local file for WebView on Android when native PDF isn't used.
+  // For Office docs and SVG files (not PDF): download to local file for WebView on native platforms.
+  // iOS WebView doesn't reliably send Authorization headers, so we need to download locally.
   // PDF is only shown via native viewer (download → cache → react-native-pdf); no WebView for PDF.
+  // SVG files need WebView rendering (ExpoImage doesn't support SVG).
   // Tiered strategy: Signed URLs for >= 5MB, Bearer token + base64 for smaller files.
   useEffect(() => {
+    // Use actualFileType from API if available, otherwise fall back to fileType prop
+    const effectiveFileType = actualFileType || fileType;
+    const isSvg = isSvgFile(fileName, effectiveFileType);
     const needOfficeFallback =
-      (Platform.OS === 'android' || isExpoGo) &&
-      isOfficeDocument(fileType) &&
+      (Platform.OS !== 'web') &&
+      (isOfficeDocument(fileType) || isSvg) &&
       !isPdfFile(fileType) &&
       !!fileUrl &&
       !!authToken;
@@ -1175,24 +1248,39 @@ export default function DocumentViewer({
     
     (async () => {
       try {
-        // Office documents are converted to PDF by backend, so always use PDF extension
         const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 80);
         const baseName = safeName.replace(/\.[^.]+$/, ''); // Remove original extension
-        const localUri = `${cacheDir}webview_${Date.now()}_${baseName}.pdf`;
         
-        console.log('📄 [OFFICE-DOWNLOAD] Downloading Office document (will be converted to PDF by backend):', fileUrl);
+        // Office documents are converted to PDF by backend, so use PDF extension
+        // SVG files keep their .svg extension
+        const fileExtension = isSvg ? '.svg' : '.pdf';
+        const localUri = `${cacheDir}webview_${Date.now()}_${baseName}${fileExtension}`;
+        
+        if (isSvg) {
+          console.log('🖼️ [SVG-DOWNLOAD] Downloading SVG file:', fileUrl);
+        } else {
+          console.log('📄 [OFFICE-DOWNLOAD] Downloading Office document (will be converted to PDF by backend):', fileUrl);
+        }
         
         // Check if URL is a signed URL (contains sig= and exp= parameters)
         const isSignedUrl = fileUrl.includes('sig=') && fileUrl.includes('exp=');
         
         if (isSignedUrl) {
           // Signed URL: Use FileSystem.downloadAsync (no headers needed)
-          console.log('🔐 [SIGNED-URL] Using signed URL for Office document download');
+          if (isSvg) {
+            console.log('🔐 [SIGNED-URL] Using signed URL for SVG download');
+          } else {
+            console.log('🔐 [SIGNED-URL] Using signed URL for Office document download');
+          }
           const result = await FileSystem.downloadAsync(fileUrl, localUri);
           if (cancelled) return;
           setWebViewLocalUri(result.uri);
           setLoading(false); // Clear loading state when file is ready
-          console.log('✅ [OFFICE-DOWNLOAD] Office document downloaded via signed URL (as PDF):', result.uri);
+          if (isSvg) {
+            console.log('✅ [SVG-DOWNLOAD] SVG file downloaded via signed URL:', result.uri);
+          } else {
+            console.log('✅ [OFFICE-DOWNLOAD] Office document downloaded via signed URL (as PDF):', result.uri);
+          }
         } else {
           // Bearer token URL: Use fetch + base64
           console.log('🔐 [BEARER-TOKEN] Using Bearer token URL for Office document download');
@@ -1207,16 +1295,19 @@ export default function DocumentViewer({
           if (cancelled) return;
           
           if (!response.ok) {
-            throw new Error(`Failed to fetch Office document: ${response.status} ${response.statusText}`);
+            const errorMsg = isSvg 
+              ? `Failed to fetch SVG file: ${response.status} ${response.statusText}`
+              : `Failed to fetch Office document: ${response.status} ${response.statusText}`;
+            throw new Error(errorMsg);
           }
 
-          // Check Content-Type - backend converts Office docs to PDF
+          // Check Content-Type - backend converts Office docs to PDF, but SVG stays as SVG
           const contentType = response.headers.get('content-type') || '';
-          const isPdfResponse = contentType.includes('application/pdf');
+          const isPdfResponse = !isSvg && contentType.includes('application/pdf');
           
-          // If backend converted to PDF, use PDF extension
+          // If backend converted to PDF, use PDF extension (only for Office docs, not SVG)
           let finalLocalUri = localUri;
-          if (isPdfResponse) {
+          if (isPdfResponse && !isSvg) {
             const pdfUri = localUri.replace(/\.[^.]+$/, '.pdf');
             console.log('📄 [OFFICE-PDF] Backend converted Office document to PDF, using PDF extension');
             finalLocalUri = pdfUri;
@@ -1226,12 +1317,20 @@ export default function DocumentViewer({
           const blob = await response.blob();
           if (cancelled) return;
           
-          console.log('📄 [OFFICE-DOWNLOAD] Blob received:', {
-            size: blob.size,
-            type: blob.type,
-            isPdfResponse,
-            expectedType: 'application/pdf'
-          });
+          if (isSvg) {
+            console.log('🖼️ [SVG-DOWNLOAD] Blob received:', {
+              size: blob.size,
+              type: blob.type,
+              expectedType: 'image/svg+xml'
+            });
+          } else {
+            console.log('📄 [OFFICE-DOWNLOAD] Blob received:', {
+              size: blob.size,
+              type: blob.type,
+              isPdfResponse,
+              expectedType: 'application/pdf'
+            });
+          }
 
           // Convert blob to base64 using FileReader
           const base64 = await new Promise<string>((resolve, reject) => {
@@ -1267,7 +1366,11 @@ export default function DocumentViewer({
           if (cancelled) return;
 
           // Write base64 to file (FileSystem.writeAsStringAsync with Base64 encoding decodes base64 and writes binary)
-          console.log('📄 [OFFICE-DOWNLOAD] Writing file to:', finalLocalUri);
+          if (isSvg) {
+            console.log('🖼️ [SVG-DOWNLOAD] Writing SVG file to:', finalLocalUri);
+          } else {
+            console.log('📄 [OFFICE-DOWNLOAD] Writing file to:', finalLocalUri);
+          }
           await FileSystem.writeAsStringAsync(finalLocalUri, base64, {
             encoding: FileSystem.EncodingType.Base64
           });
@@ -1279,14 +1382,22 @@ export default function DocumentViewer({
           if (!fileInfo.exists) {
             throw new Error('File was not written successfully');
           }
-          console.log('✅ [OFFICE-DOWNLOAD] File written successfully:', {
-            uri: finalLocalUri,
-            size: fileInfo.size,
-            exists: fileInfo.exists
-          });
+          if (isSvg) {
+            console.log('✅ [SVG-DOWNLOAD] SVG file written successfully:', {
+              uri: finalLocalUri,
+              size: fileInfo.size,
+              exists: fileInfo.exists
+            });
+          } else {
+            console.log('✅ [OFFICE-DOWNLOAD] File written successfully:', {
+              uri: finalLocalUri,
+              size: fileInfo.size,
+              exists: fileInfo.exists
+            });
+          }
           
-          // If backend converted to PDF, also create data URI for Expo Go PDF viewer
-          if (isPdfResponse && isExpoGo) {
+          // If backend converted to PDF, also create data URI for Expo Go PDF viewer (only for Office docs, not SVG)
+          if (isPdfResponse && isExpoGo && !isSvg) {
             // For Expo Go, use PDF.js viewer with data URI
             const dataUri = `data:application/pdf;base64,${base64}`;
             setOfficePdfDataUri(dataUri);
@@ -1295,12 +1406,21 @@ export default function DocumentViewer({
           
           setWebViewLocalUri(finalLocalUri);
           setLoading(false); // Clear loading state when file is ready
-          console.log('✅ [OFFICE-DOWNLOAD] Office document downloaded and ready:', finalLocalUri, isPdfResponse ? '(converted to PDF)' : '');
+          if (isSvg) {
+            console.log('✅ [SVG-DOWNLOAD] SVG file downloaded and ready:', finalLocalUri);
+          } else {
+            console.log('✅ [OFFICE-DOWNLOAD] Office document downloaded and ready:', finalLocalUri, isPdfResponse ? '(converted to PDF)' : '');
+          }
         }
       } catch (e) {
         if (!cancelled) {
-          console.error('❌ [OFFICE-DOWNLOAD] WebView fallback download failed:', e);
-          setError('Failed to load Office document. Please try again.');
+          if (isSvg) {
+            console.error('❌ [SVG-DOWNLOAD] SVG download failed:', e);
+            setError('Failed to load SVG file. Please try again.');
+          } else {
+            console.error('❌ [OFFICE-DOWNLOAD] WebView fallback download failed:', e);
+            setError('Failed to load Office document. Please try again.');
+          }
           setLoading(false);
         }
       }
@@ -1309,7 +1429,40 @@ export default function DocumentViewer({
     return () => {
       cancelled = true;
     };
-  }, [fileUrl, authToken, fileType, fileName]);
+  }, [fileUrl, authToken, fileType, fileName, actualFileType]);
+
+  // Read SVG file content when local file is available (iOS WebView can't open file:// URIs)
+  useEffect(() => {
+    const effectiveFileType = actualFileType || fileType;
+    const isSvg = isSvgFile(fileName, effectiveFileType);
+    
+    if (!isSvg || !webViewLocalUri || Platform.OS === 'web') {
+      setSvgContent(null);
+      return;
+    }
+
+    let cancelled = false;
+    
+    (async () => {
+      try {
+        console.log('🖼️ [SVG] Reading SVG file content from:', webViewLocalUri);
+        const content = await FileSystem.readAsStringAsync(webViewLocalUri);
+        if (!cancelled) {
+          console.log('✅ [SVG] SVG content read successfully, length:', content.length);
+          setSvgContent(content);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.error('❌ [SVG] Failed to read SVG file content:', e);
+          setSvgContent(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [webViewLocalUri, fileName, fileType, actualFileType]);
 
   const loadFileUrl = async () => {
     try {
@@ -1326,7 +1479,11 @@ export default function DocumentViewer({
         hasFile: !!fileInfo.file,
         fileKeys: fileInfo.file ? Object.keys(fileInfo.file) : [],
         viewUrl: fileInfo.file?.view_url,
-        downloadUrl: fileInfo.file?.download_url
+        downloadUrl: fileInfo.file?.download_url,
+        file_kind: fileInfo.file?.file_kind,
+        file_type: fileInfo.file?.file_type,
+        fileCategory: fileCategory,
+        fileType: fileType
       });
       
       if (fileInfo.success && fileInfo.file) {
@@ -1358,6 +1515,9 @@ export default function DocumentViewer({
         
         // Store URLs and metadata for tiered download strategy
         setFileUrl(previewUrl);
+        // Store file_kind and file_type for image detection
+        setFileKind(fileInfo.file.file_kind || null);
+        setActualFileType(fileInfo.file.file_type || null);
         // Store signed URL flag and file size for download logic
         (window as any).__fileMetadata = {
           signedUrl: hasSignedUrl,
@@ -1366,13 +1526,20 @@ export default function DocumentViewer({
         };
         
         // For images, get dimensions with authentication
-        if (isImageFile(fileType)) {
+        // Check both file_kind from API and fileCategory prop
+        // Skip dimensions for SVG files (vector graphics, no fixed dimensions)
+        const detectedFileKind = fileInfo.file.file_kind || fileCategory;
+        const detectedFileType = fileInfo.file.file_type || fileType;
+        if (isImageFile(fileType, detectedFileKind, fileCategory) && !isSvgFile(fileName, detectedFileType)) {
+          console.log('🖼️ [IMAGE-DETECT] Image file detected, getting dimensions:', { fileType, file_kind: detectedFileKind, fileCategory });
           await getImageDimensionsWithAuth(previewUrl);
+        } else if (isSvgFile(fileName, detectedFileType)) {
+          console.log('🖼️ [SVG] SVG file detected, skipping dimension check (vector graphics)');
         }
         
         // For text files and images, loading is complete (no secondary download)
         // For PDF/Office, loading continues until native viewer or WebView data is ready
-        if (isTextDocument(fileType) || isImageFile(fileType)) {
+        if (isTextDocument(fileType) || isImageFile(fileType, detectedFileKind, fileCategory)) {
           console.log('Text/image file loaded, clearing loading state');
           setLoading(false);
         } else if (isPdfFile(fileType)) {
@@ -1431,10 +1598,13 @@ export default function DocumentViewer({
           console.log('🔐 Using download endpoint - backend will decrypt file');
           setFileUrl(downloadUrl);
 
-          if (isImageFile(fileType)) {
+          const detectedFileKind = fileKind || fileCategory;
+          if (isImageFile(fileType, detectedFileKind, fileCategory) && !isSvgFile(fileName, fileType)) {
             await getImageDimensionsWithAuth(downloadUrl);
+          } else if (isSvgFile(fileName, fileType)) {
+            console.log('🖼️ [SVG] SVG file detected in fallback, skipping dimension check');
           }
-          if (isTextDocument(fileType) || isImageFile(fileType)) {
+          if (isTextDocument(fileType) || isImageFile(fileType, detectedFileKind, fileCategory)) {
             setLoading(false);
           }
           return;
@@ -1511,12 +1681,34 @@ export default function DocumentViewer({
     }
   };
 
-  const isImageFile = (type: string) => {
+  const isImageFile = (type: string, kind?: string | null, category?: string | null) => {
+    const kindLower = kind?.toLowerCase();
+    const categoryLower = category?.toLowerCase();
+    const fileNameLower = fileName.toLowerCase();
+    const typeLower = type?.toLowerCase() || '';
+    const isSvg = fileNameLower.endsWith('.svg') || typeLower === 'image/svg+xml' || typeLower.includes('svg');
+    
     const isImage = type === 'image' || 
            type.includes('image/') || 
-           fileName.toLowerCase().match(/\.(jpg|jpeg|png|gif|bmp|webp|heic|heif)$/);
+           fileNameLower.match(/\.(jpg|jpeg|png|gif|bmp|webp|heic|heif|svg)$/) ||
+           kindLower === 'picture' ||
+           kindLower === 'image' ||
+           categoryLower === 'picture' ||
+           categoryLower === 'image';
+    
+    if (isImage && (kindLower === 'picture' || categoryLower === 'picture')) {
+      console.log('🖼️ [IMAGE-DETECT] Detected picture file_kind:', { type, kind, category, fileName, isSvg });
+    }
     
     return isImage;
+  };
+  
+  const isSvgFile = (fileName: string, fileType?: string) => {
+    const fileNameLower = fileName.toLowerCase();
+    const fileTypeLower = fileType?.toLowerCase() || '';
+    return fileNameLower.endsWith('.svg') || 
+           fileTypeLower === 'image/svg+xml' || 
+           fileTypeLower.includes('svg');
   };
 
   const isPdfFile = (type: string) => {
@@ -1550,7 +1742,8 @@ export default function DocumentViewer({
 
   const isDocumentImage = (type: string, category?: string) => {
     // Check if this is an image file that contains a document (scanned document, receipt, etc.)
-    return isImageFile(type) && (
+    const detectedFileKind = fileKind || category;
+    return isImageFile(type, detectedFileKind, category) && (
       category?.toLowerCase().includes('document') ||
       category?.toLowerCase().includes('receipt') ||
       category?.toLowerCase().includes('invoice') ||
@@ -1577,7 +1770,7 @@ export default function DocumentViewer({
       return 'Office Document';
     } else if (isTextDocument(fileType)) {
       return 'Text Document';
-    } else if (isImageFile(fileType)) {
+    } else if (isImageFile(fileType, fileKind, fileCategory)) {
       return 'Image Viewer';
     }
     
@@ -1587,9 +1780,109 @@ export default function DocumentViewer({
   const renderImage = () => {
     if (!fileUrl) return null;
 
-    // Use full screen dimensions for image viewer (no padding/margins)
+    // SVG files need special handling - use WebView instead of ExpoImage
+    // Wait for local file download on native platforms (iOS WebView doesn't send headers reliably)
+    // Use actualFileType from API if available, otherwise fall back to fileType prop
+    const effectiveFileType = actualFileType || fileType;
+    if (isSvgFile(fileName, effectiveFileType)) {
+      if (Platform.OS !== 'web' && !webViewLocalUri && fileUrl && authToken) {
+        console.log('🖼️ [SVG] Waiting for SVG file download...');
+        return (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={dynamicStyles.loadingText}>Loading SVG...</Text>
+          </View>
+        );
+      }
+      
+      // On native platforms, read SVG content and embed in HTML (iOS WebView can't open file:// URIs)
+      if (Platform.OS !== 'web' && webViewLocalUri) {
+        if (!svgContent) {
+          console.log('🖼️ [SVG] Reading SVG content...');
+          return (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={dynamicStyles.loadingText}>Loading SVG...</Text>
+            </View>
+          );
+        }
+        
+        console.log('🖼️ [SVG] Rendering SVG file in WebView with embedded content');
+        // Embed SVG content directly in HTML (SVG is valid HTML)
+        const html = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=3.0"/>
+              <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                html, body { width: 100%; height: 100%; overflow: auto; }
+                body { 
+                  display: flex; 
+                  justify-content: center; 
+                  align-items: center; 
+                  background: ${colors.isDark ? '#1c1c1e' : '#ffffff'};
+                  padding: 20px;
+                }
+                svg { 
+                  max-width: 100%; 
+                  max-height: 100%; 
+                  width: auto; 
+                  height: auto; 
+                }
+              </style>
+            </head>
+            <body>
+              ${svgContent}
+            </body>
+          </html>
+        `;
+        
+        return (
+          <View style={styles.imageContainer}>
+            <WebView
+              source={{ html }}
+              style={styles.webView}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              startInLoadingState={false}
+              scalesPageToFit={true}
+              onError={(syntheticEvent) => {
+                const { nativeEvent } = syntheticEvent;
+                console.error('SVG WebView error:', nativeEvent);
+                setError('Failed to load SVG');
+              }}
+              onLoadEnd={() => {
+                console.log('SVG WebView loaded successfully');
+              }}
+            />
+          </View>
+        );
+      }
+      
+      // On web or when no local file, use AuthenticatedWebView with URL
+      console.log('🖼️ [SVG] Rendering SVG file in WebView:', fileName, webViewLocalUri ? '(using local file)' : '(using URL)');
+      return (
+        <View style={styles.imageContainer}>
+          <AuthenticatedWebView
+            fileUrl={fileUrl}
+            authToken={authToken || ''}
+            fileName={fileName}
+            fileType="image/svg+xml"
+            localFileUri={undefined}
+          />
+        </View>
+      );
+    }
+
+    // Calculate available height: screen height minus header height
+    // Header height = safe area top + padding top (10) + content height (~44) + padding bottom (10) + border (1)
+    const headerHeight = Math.max(insets.top, 8) + 10 + 44 + 10 + 1; // ~73-100px depending on device
+    const availableHeight = screenHeight - headerHeight;
+    
+    // Use full screen width, but account for header height
     const maxWidth = screenWidth;
-    const maxHeight = screenHeight;
+    const maxHeight = availableHeight;
 
     let imageWidth = maxWidth;
     let imageHeight = maxHeight;
@@ -2035,8 +2328,9 @@ export default function DocumentViewer({
     }
     
     // Use the AuthenticatedWebView for Office documents (fallback if PDF viewer not available)
-    // On Android, wait for webViewLocalUri so the WebView doesn't load the URL without auth
-    if (Platform.OS === 'android' && !webViewLocalUri && fileUrl && authToken) {
+    // On native platforms (Android/iOS), wait for webViewLocalUri so the WebView doesn't load the URL without auth
+    // iOS WebView doesn't reliably send headers, so we need to download locally first
+    if (Platform.OS !== 'web' && !webViewLocalUri && fileUrl && authToken) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
@@ -2050,7 +2344,7 @@ export default function DocumentViewer({
         authToken={authToken} 
         fileName={fileName} 
         fileType={fileType}
-        localFileUri={Platform.OS === 'android' ? webViewLocalUri : undefined}
+        localFileUri={Platform.OS !== 'web' ? webViewLocalUri : undefined}
       />
     );
   };
@@ -2112,7 +2406,7 @@ export default function DocumentViewer({
       );
     }
 
-    const isImage = isImageFile(fileType);
+    const isImage = isImageFile(fileType, fileKind, fileCategory);
     const isPdf = isPdfFile(fileType);
     const isOffice = isOfficeDocument(fileType);
     const isText = isTextDocument(fileType);
@@ -2137,9 +2431,7 @@ export default function DocumentViewer({
     return renderDocumentPreview();
   };
 
-  // DocumentViewer rendering
-  const isImageView = !loading && !error && isImageFile(fileType);
-
+  // Use same layout for all file types: header + content (no overlay for images)
   return (
     <Modal
       visible={true}
@@ -2148,48 +2440,21 @@ export default function DocumentViewer({
       statusBarTranslucent
     >
       <SafeAreaView 
-        style={[dynamicStyles.container, isImageView && { backgroundColor: '#000' }]} 
-        edges={isImageView ? ['top', 'bottom'] : ['top', 'bottom', 'left', 'right']}
+        style={dynamicStyles.container} 
+        edges={['left', 'right', 'bottom']}
       >
-        {isImageView ? (
-          <>
-            <View style={[styles.content, styles.imageViewerContent]}>
-              {renderContent()}
-            </View>
-            {/* Single overlay bar: close + filename */}
-            <View style={styles.imageViewerOverlay} pointerEvents="box-none">
-              <View style={[styles.imageViewerTopBar, { paddingTop: Math.max(insets.top + 8, 12) }]}>
-                <TouchableOpacity
-                  onPress={onClose}
-                  style={styles.imageViewerCloseButton}
-                  activeOpacity={0.8}
-                  accessibilityLabel="Close"
-                >
-                  <Ionicons name="close" size={24} color="#fff" />
-                </TouchableOpacity>
-                <Text numberOfLines={1} style={styles.imageViewerTitle}>
-                  {fileName}
-                </Text>
-                <View style={styles.placeholder} />
-              </View>
-            </View>
-          </>
-        ) : (
-          <>
-            <View style={dynamicStyles.header}>
-              <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-                <Ionicons name="close" size={24} color={colors.primary} />
-              </TouchableOpacity>
-              <Text style={dynamicStyles.title} numberOfLines={1}>
-                {getViewerTitle()}
-              </Text>
-              <View style={styles.placeholder} />
-            </View>
-            <View style={styles.content}>
-              {renderContent()}
-            </View>
-          </>
-        )}
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <Ionicons name="close" size={24} color={colors.primary} />
+          </TouchableOpacity>
+          <Text style={dynamicStyles.title} numberOfLines={1}>
+            {getViewerTitle()}
+          </Text>
+          <View style={styles.placeholder} />
+        </View>
+        <View style={[styles.content, isImageFile(fileType, fileKind, fileCategory) && styles.imageViewerContent]}>
+          {renderContent()}
+        </View>
       </SafeAreaView>
     </Modal>
   );
@@ -2213,6 +2478,10 @@ const styles = StyleSheet.create({
   closeButton: {
     padding: 12,
     borderRadius: 20,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     flex: 1,
