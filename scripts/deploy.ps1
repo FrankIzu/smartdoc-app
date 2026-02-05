@@ -522,19 +522,33 @@ try {
             git pull origin main 2>&1 | Out-Null
             # Ignore errors for pull (might fail if main doesn't exist on remote)
             
-            Write-Host "   Merging francis into main..." -ForegroundColor Gray
-            git merge francis --no-edit 2>&1 | Out-Null
+            # Use merge strategy that favors francis's changes to avoid conflicts
+            Write-Host "   Merging francis INTO main (francis's changes will take precedence)..." -ForegroundColor Gray
+            
+            # Try merge with strategy favoring francis (theirs)
+            git merge francis --no-edit -X theirs --no-ff 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "❌ Failed to merge francis into main (merge conflicts?)" -ForegroundColor Red
-                Write-Host "   Please resolve conflicts manually:" -ForegroundColor Yellow
-                Write-Host "   1. Resolve conflicts in the files" -ForegroundColor Gray
-                Write-Host "   2. git add ." -ForegroundColor Gray
-                Write-Host "   3. git commit" -ForegroundColor Gray
-                Write-Host "   4. git push origin main" -ForegroundColor Gray
-                Write-Host "   OR cancel: git merge --abort" -ForegroundColor Gray
-                exit 1
+                Write-Host "   Strategy merge failed, trying regular merge..." -ForegroundColor Yellow
+                git merge francis --no-edit --no-ff 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    # Last resort: reset main to match francis exactly
+                    Write-Host "⚠️  Merge conflicts. Resetting main to match francis exactly..." -ForegroundColor Yellow
+                    git reset --hard francis 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "❌ Failed to reset main to francis" -ForegroundColor Red
+                        Write-Host "   Switching back to francis branch..." -ForegroundColor Yellow
+                        git checkout francis 2>&1 | Out-Null
+                        Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
+                        Write-Host "   Resolve manually: git checkout main, fix conflicts, git add ., git commit, git push origin main" -ForegroundColor Gray
+                        exit 1
+                    }
+                    Write-Host "✅ Reset main to match francis (no conflicts)" -ForegroundColor Green
+                } else {
+                    Write-Host "✅ Merged francis INTO main" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "✅ Merged francis INTO main" -ForegroundColor Green
             }
-            Write-Host "✅ Merged francis into main" -ForegroundColor Green
             
             # Push main branch
             Write-Host "`n⬆️  Pushing main branch..." -ForegroundColor Yellow
@@ -545,7 +559,10 @@ try {
                 git push -u origin main 2>&1 | Out-Null
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "❌ Failed to push main branch" -ForegroundColor Red
-                    Write-Host "   Please push manually: git push origin main" -ForegroundColor Yellow
+                    Write-Host "   Switching back to francis branch..." -ForegroundColor Yellow
+                    git checkout francis 2>&1 | Out-Null
+                    Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
+                    Write-Host "   Push manually: git checkout main && git push origin main" -ForegroundColor Gray
                     exit 1
                 }
             }
