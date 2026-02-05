@@ -1,0 +1,62 @@
+# Build iOS app with EAS local (no EAS cloud charge).
+# Trigger: manual (workflow_dispatch) or push to main.
+# Requires: GitHub secret EXPO_TOKEN (Expo access token).
+# Runs on macOS (uses GitHub-hosted macOS runner).
+
+name: Build iOS (EAS local)
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'EAS profile'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+          - development
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'manager-francis/**'
+      - '.github/**'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: EAS Build (local)
+        run: |
+          PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          eas build --platform ios --profile "$PROFILE" --local --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: |
+            *.ipa
+          if-no-files-found: ignore

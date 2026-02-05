@@ -5,12 +5,15 @@
 #   Interactive mode: .\scripts\deploy.ps1
 #   Direct parameters (Android): .\scripts\deploy.ps1 -Platform android -Environment prod -BuildNumber 11 -Version 1.0.3
 #   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 2 -Version 1.0.3
+#   Local build (no EAS cloud): .\scripts\deploy.ps1 -Platform android -Environment prod -Local
+#   Local build (iOS, requires macOS): .\scripts\deploy.ps1 -Platform ios -Environment prod -Local
 
 param(
     [string]$Platform,
     [string]$Environment,
     [string]$BuildNumber,
-    [string]$Version
+    [string]$Version,
+    [switch]$Local
 )
 
 Write-Host "🚀 GrabDocs Deployment Script" -ForegroundColor Cyan
@@ -163,13 +166,19 @@ function Update-BuildNumber {
 function Run-EasBuild {
     param(
         [string]$Platform,
-        [string]$Profile
+        [string]$Profile,
+        [switch]$Local
     )
 
-    Write-Host "🏗️  Running EAS build for $Platform ($Profile)..." -ForegroundColor Yellow
+    $buildType = if ($Local) { "EAS local" } else { "EAS cloud" }
+    Write-Host "🏗️  Running $buildType build for $Platform ($Profile)..." -ForegroundColor Yellow
 
     # Use npx to run eas command (works even if eas is not globally installed)
     $command = "npx eas-cli build --platform $Platform --profile $Profile --non-interactive"
+    if ($Local) {
+        $command += " --local"
+        Write-Host "ℹ️  Local build: runs on this machine (no EAS cloud charge). EAS local requires macOS or Linux (Windows not supported)." -ForegroundColor Cyan
+    }
 
     Write-Host "Executing: $command" -ForegroundColor Gray
 
@@ -341,10 +350,34 @@ try {
     Write-Host "   Platform: $Platform" -ForegroundColor White
     Write-Host "   Environment: $normalizedEnv" -ForegroundColor White
     Write-Host "   Profile: $profile" -ForegroundColor White
+    if ($Local) {
+        Write-Host "   Build: Local (--local)" -ForegroundColor White
+    }
     if ($normalizedEnv -eq "production") {
         Write-Host "   Version name: $Version" -ForegroundColor White
         $buildLabel = if ($Platform -eq "ios") { "Build number" } else { "Version code" }
         Write-Host "   ${buildLabel}: $BuildNumber" -ForegroundColor White
+    }
+
+    # If -Local was not passed, prompt to choose local (free) vs cloud build
+    if (-not $PSBoundParameters.ContainsKey('Local')) {
+        $doLocal = Prompt-WithValidation "Build locally (free, no EAS charge)? (y/n)" @("y", "n") "n"
+        $Local = ($doLocal -eq "y")
+    }
+
+    # EAS local does not support Windows (macOS or Linux only). Warn and exit for local + Windows.
+    if ($Local -and $Platform -eq "android" -and $env:OS -eq "Windows_NT") {
+        Write-Host "❌ EAS local build for Android is not supported on Windows (Expo requires macOS or Linux)." -ForegroundColor Red
+        Write-Host "   Options:" -ForegroundColor Yellow
+        Write-Host "   1. Use GitHub Actions: push to main or run 'gh workflow run ""Build Android (EAS local)""' (builds on Linux)." -ForegroundColor White
+        Write-Host "   2. Use EAS cloud (this script without -Local): run again and choose 'n' for build locally." -ForegroundColor White
+        Write-Host "   3. Use WSL: run this script from inside WSL (Linux) on your PC." -ForegroundColor White
+        exit 1
+    }
+    if ($Local -and $Platform -eq "ios" -and $env:OS -eq "Windows_NT") {
+        Write-Host "❌ EAS local build for iOS requires macOS (Xcode). Windows cannot build iOS." -ForegroundColor Red
+        Write-Host "   Use GitHub Actions: 'gh workflow run ""Build iOS (EAS local)""' or push to main." -ForegroundColor Yellow
+        exit 1
     }
 
     $confirm = Prompt-WithValidation "`nProceed with deployment? (y/n)" @("y", "n")
@@ -354,7 +387,7 @@ try {
     }
 
     # Run the build
-    Run-EasBuild -Platform $Platform -Profile $profile
+    Run-EasBuild -Platform $Platform -Profile $profile -Local:$Local
 
 } catch {
     Write-Host "❌ Script error: $($_.Exception.Message)" -ForegroundColor Red

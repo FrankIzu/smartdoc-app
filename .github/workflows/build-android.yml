@@ -1,0 +1,71 @@
+# Build Android app with EAS local (no EAS cloud charge).
+# Trigger: manual (workflow_dispatch) or push to main.
+# Requires: GitHub secret EXPO_TOKEN (Expo access token).
+
+name: Build Android (EAS local)
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'EAS profile'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+          - development
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'manager-francis/**'
+      - '.github/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-34
+            build-tools;34.0.0
+            ndk;25.1.8937393
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: EAS Build (local)
+        run: |
+          PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          eas build --platform android --profile "$PROFILE" --local --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build
+          path: |
+            *.aab
+            *.apk
+          if-no-files-found: ignore
