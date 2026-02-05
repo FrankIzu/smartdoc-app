@@ -371,9 +371,9 @@ try {
         else { $Local = $false }
     }
 
-    # GitHub Actions: commit version/build, push, then trigger only the selected platform workflow
+    # GitHub Actions: trigger workflow only (commit/push done manually)
     if ($useGitHubActions) {
-        $confirm = Prompt-WithValidation "`nCommit, push, and trigger $Platform build only (version $Version, build $BuildNumber)? (y/n)" @("y", "n")
+        $confirm = Prompt-WithValidation "`nTrigger $Platform build (version $Version, build $BuildNumber)? Push your branch first if needed. (y/n)" @("y", "n")
         if ($confirm -ne "y") { Write-Host "Cancelled." -ForegroundColor Yellow; exit 0 }
         Set-Location "$PSScriptRoot\.."
         $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
@@ -381,23 +381,8 @@ try {
             Write-Host "❌ Not a git repository or could not get current branch." -ForegroundColor Red
             exit 1
         }
-        $msg = "Release $Version ($Platform build $BuildNumber)"
-        git add app.json
-        if ($Platform -eq "android" -and (Test-Path "android\app\build.gradle")) { git add android\app\build.gradle }
-        $status = git status --porcelain
-        if (-not $status) {
-            $wf = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
-            Write-Host "⚠️  No version/build changes to commit. Push manually, then run: gh workflow run $wf -f profile=$profile --ref $branch" -ForegroundColor Yellow
-            exit 0
-        }
-        git commit -m $msg
-        if ($LASTEXITCODE -ne 0) { Write-Host "❌ Commit failed." -ForegroundColor Red; exit 1 }
-        git push origin $branch
-        if ($LASTEXITCODE -ne 0) { Write-Host "❌ Push failed." -ForegroundColor Red; exit 1 }
-        # Use workflow filename (must exist on default branch, e.g. main, to be triggerable)
         $workflowFile = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
         Write-Host "Triggering $workflowFile for ref $branch (profile $profile)..." -ForegroundColor Cyan
-        # Ensure gh is on PATH (Cursor/integrated terminal often has minimal PATH)
         if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
             $ghPaths = @("$env:ProgramFiles\GitHub CLI\gh.exe", "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe", "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe")
             foreach ($p in $ghPaths) {
@@ -408,7 +393,7 @@ try {
         if ($LASTEXITCODE -ne 0) {
             Write-Host "⚠️  Could not trigger workflow (workflow must exist on default branch). Run manually: gh workflow run $workflowFile -f profile=$profile --ref $branch" -ForegroundColor Yellow
         } else {
-            Write-Host "✅ Pushed and triggered $Platform build on $branch. See Actions tab for run." -ForegroundColor Green
+            Write-Host "✅ Triggered $Platform build on $branch. See Actions tab for run." -ForegroundColor Green
         }
         exit 0
     }

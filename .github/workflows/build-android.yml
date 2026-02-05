@@ -170,8 +170,12 @@ jobs:
           if-no-files-found: ignore
 
       - name: Submit to Google Play (optional)
-        if: success() && secrets.ANDROID_SERVICE_ACCOUNT_JSON != ''
+        if: success()
         run: |
+          if [ -z "$ANDROID_SERVICE_ACCOUNT_JSON" ]; then
+            echo "ANDROID_SERVICE_ACCOUNT_JSON not set; skipping submit to Google Play."
+            exit 0
+          fi
           AAB=$(find . -maxdepth 3 -name "*.aab" -type f 2>/dev/null | head -1)
           if [ -z "$AAB" ]; then echo "No .aab found"; exit 1; fi
           echo "$ANDROID_SERVICE_ACCOUNT_JSON" > /tmp/play-service-account.json

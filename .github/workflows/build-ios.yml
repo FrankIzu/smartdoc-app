@@ -70,8 +70,14 @@ jobs:
           if-no-files-found: ignore
 
       - name: Submit to App Store (optional)
-        if: success() && (secrets.ASC_KEY_ID != '' && secrets.ASC_ISSUER_ID != '' && secrets.ASC_KEY_P8_BASE64 != '' || secrets.EXPO_APPLE_APP_SPECIFIC_PASSWORD != '')
+        if: success()
         run: |
+          HAS_ASC=$([ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; echo $?)
+          HAS_PASSWORD=$([ -n "$EXPO_APPLE_APP_SPECIFIC_PASSWORD" ]; echo $?)
+          if [ "$HAS_ASC" -ne 0 ] && [ "$HAS_PASSWORD" -ne 0 ]; then
+            echo "No Apple credentials set; skipping submit to App Store."
+            exit 0
+          fi
           IPA=$(find . -maxdepth 3 -name "*.ipa" -type f 2>/dev/null | head -1)
           if [ -z "$IPA" ]; then echo "No .ipa found"; exit 1; fi
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
