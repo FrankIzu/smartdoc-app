@@ -600,10 +600,9 @@ try {
         else { $Local = $false }
     }
 
-    # GitHub Actions: trigger workflow only (commit/push done manually)
+    # GitHub Actions: trigger workflow (branch already pushed earlier)
     if ($useGitHubActions) {
-        $confirm = Prompt-WithValidation "`nTrigger $Platform build (version $Version, build $BuildNumber)? Push your branch first if needed. (y/n)" @("y", "n")
-        if ($confirm -ne "y") { Write-Host "Cancelled." -ForegroundColor Yellow; exit 0 }
+        Write-Host "`n🚀 Triggering GitHub Actions workflow..." -ForegroundColor Cyan
         Set-Location "$PSScriptRoot\.."
         $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
         if (-not $branch) {
