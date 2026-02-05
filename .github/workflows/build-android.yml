@@ -26,8 +26,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,22 +42,22 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Setup Android SDK (accept licenses non-interactively)
+      - name: Setup Android SDK
         run: |
-          SDK_ROOT="/usr/local/lib/android/sdk"
-          # Find sdkmanager (runner may use cmdline-tools/latest or cmdline-tools/12.0)
-          SDKMANAGER=""
-          for d in "$SDK_ROOT/cmdline-tools/latest/bin" "$SDK_ROOT/cmdline-tools/12.0/bin"; do
-            if [ -x "$d/sdkmanager" ]; then SDKMANAGER="$d/sdkmanager"; break; fi
-          done
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "$SDK_ROOT" -name sdkmanager -type f -executable 2>/dev/null | head -1)
-          fi
-          if [ -z "$SDKMANAGER" ]; then echo "sdkmanager not found in $SDK_ROOT"; exit 1; fi
-          echo "Using $SDKMANAGER"
-          export ANDROID_HOME="$SDK_ROOT"
+          set -e
+          ANDROID_HOME="$RUNNER_TEMP/android-sdk"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          # Download and install commandline-tools (no dependency on runner image)
+          CDL="commandlinetools-linux-11076708_latest.zip"
+          wget -q "https://dl.google.com/android/repository/$CDL" -O /tmp/cmdline-tools.zip
+          unzip -q -o /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
 
       - name: Install dependencies
         run: npm ci
