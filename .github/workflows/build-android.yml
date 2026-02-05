@@ -44,9 +44,13 @@ jobs:
 
       - name: Setup Android SDK (accept licenses non-interactively)
         run: |
-          # Use preinstalled SDK on GitHub runner; accept all licenses without prompt (avoids "Accept? (y/N)" hang)
+          # GitHub runner has SDK at ANDROID_HOME; ensure cmdline-tools bin is on PATH
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
           yes | sdkmanager --licenses || true
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
 
       - name: Install dependencies
         run: npm ci
