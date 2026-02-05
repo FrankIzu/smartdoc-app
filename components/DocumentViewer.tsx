@@ -263,12 +263,15 @@ function buildExpoGoPdfViewerHtml(dataUri: string): string {
 }
 
 // Custom Image component that handles authentication.
-// On native (iOS/Android): use Image with headers - FileReader.readAsDataURL is unreliable in RN.
 // On web: fetch + FileReader + data URL (browsers support it).
+// On native: fetch with auth is done via FileSystem.downloadAsync (with headers), then we display
+// the local file. This avoids relying on native Image components to send Authorization headers
+// (expo-image may not forward them on all platforms).
 const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...props }: any) => {
   const [imageData, setImageData] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [nativeLocalUri, setNativeLocalUri] = useState<string | null>(null);
 
   // Load auth token once (and stop native loading state once we know)
   useEffect(() => {
@@ -321,7 +324,120 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
     return () => { cancelled = true; };
   }, [source?.uri, authToken, onError]);
 
-  // Native: use expo-image which properly supports headers on Android
+  // Native: Tiered download strategy for images
+  // < 5MB: fetch + base64 (current approach)
+  // >= 5MB: Signed URL + FileSystem.downloadAsync (no headers needed)
+  // > 20MB: Fallback to external opening
+  const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit for base64 conversion
+  const LARGE_FILE_THRESHOLD = 20 * 1024 * 1024; // 20MB - use signed URL only
+  useEffect(() => {
+    if (Platform.OS === 'web' || !source?.uri || !authToken) return;
+
+    const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+    if (!cacheDir) {
+      setLoading(false);
+      return;
+    }
+
+    setNativeLocalUri(null);
+    setLoading(true);
+
+    let cancelled = false;
+    const localUri = `${cacheDir}auth_image_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+
+    (async () => {
+      try {
+        // Check if URL is a signed URL (contains sig= and exp= parameters)
+        const isSignedUrl = source.uri.includes('sig=') && source.uri.includes('exp=');
+        
+        if (isSignedUrl) {
+          // Signed URL: Use FileSystem.downloadAsync (no headers needed, signature is in URL)
+          console.log('🔐 [SIGNED-URL] Using signed URL for image download');
+          const result = await FileSystem.downloadAsync(source.uri, localUri);
+          if (cancelled) return;
+          setNativeLocalUri(result.uri);
+          setLoading(false);
+        } else {
+          // Bearer token URL: Use fetch + base64 (for files < 5MB)
+          console.log('🔐 [BEARER-TOKEN] Using Bearer token URL for image download');
+          
+          const response = await fetch(source.uri, {
+            headers: {
+              'Authorization': `Bearer ${authToken}`,
+              'X-Platform': Platform.OS
+            }
+          });
+          if (cancelled) return;
+          if (!response.ok) {
+            throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+          }
+          
+          // Check content length if available
+          const contentLength = response.headers.get('content-length');
+          if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_SIZE_BYTES) {
+            throw new Error(`Image too large: ${Math.round(parseInt(contentLength, 10) / 1024 / 1024)}MB (max ${MAX_IMAGE_SIZE_BYTES / 1024 / 1024}MB)`);
+          }
+          
+          // Get blob and check size
+          const blob = await response.blob();
+          if (cancelled) return;
+          
+          if (blob.size > MAX_IMAGE_SIZE_BYTES) {
+            throw new Error(`Image too large: ${Math.round(blob.size / 1024 / 1024)}MB (max ${MAX_IMAGE_SIZE_BYTES / 1024 / 1024}MB)`);
+          }
+          
+          // Convert blob to base64 using FileReader (works in React Native)
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              try {
+                // FileReader returns data URL (data:image/jpeg;base64,...), extract base64 part
+                const dataUrl = reader.result as string;
+                if (!dataUrl || !dataUrl.includes(',')) {
+                  reject(new Error('Invalid data URL from FileReader'));
+                  return;
+                }
+                const base64Data = dataUrl.split(',')[1];
+                if (!base64Data) {
+                  reject(new Error('Failed to extract base64 data'));
+                  return;
+                }
+                resolve(base64Data);
+              } catch (e) {
+                reject(e);
+              }
+            };
+            reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+            reader.readAsDataURL(blob);
+          });
+          
+          if (cancelled) return;
+          
+          // Write base64 to file (FileSystem.writeAsStringAsync with Base64 encoding works in production)
+          await FileSystem.writeAsStringAsync(localUri, base64, {
+            encoding: FileSystem.EncodingType.Base64
+          });
+          
+          if (cancelled) return;
+          setNativeLocalUri(localUri);
+          setLoading(false);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          console.error('Failed to load authenticated image:', err);
+          onError?.(err);
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+    };
+  }, [source?.uri, authToken, onError]);
+
+  // Native: render from local file (no headers needed)
   if (Platform.OS !== 'web') {
     if (!source?.uri) {
       return null;
@@ -340,16 +456,16 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
         </View>
       );
     }
-    // Use expo-image which properly supports headers on Android
+    if (loading || !nativeLocalUri) {
+      return (
+        <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
+          <ActivityIndicator size="small" color="#007AFF" />
+        </View>
+      );
+    }
     return (
       <ExpoImage
-        source={{
-          uri: source.uri,
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'X-Platform': Platform.OS
-          }
-        }}
+        source={{ uri: nativeLocalUri }}
         style={style}
         contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'cover' ? 'cover' : 'fill'}
         onError={onError}
@@ -511,16 +627,14 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
   }
 
   // For PDFs and Office documents, use direct WebView with authenticated URL
+  // Office documents will be converted to PDF by the backend view endpoint automatically
   if (fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf') ||
       fileType === 'doc' || fileType === 'docx' || fileType.includes('document') || 
       fileName.toLowerCase().match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/)) {
     
-    // For Office documents, automatically try to get PDF version (with conversion if needed)
+    // Use view endpoint for Office documents - backend will convert to PDF automatically
+    // No need to modify URL - view endpoint handles Office-to-PDF conversion
     let finalUrl = fileUrl;
-    if (fileType === 'doc' || fileType === 'docx' || fileType.includes('document') || 
-        fileName.toLowerCase().match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/)) {
-      finalUrl = fileUrl.replace('/download', '/download?pdf=true');
-    }
     
     const isPdf = fileType === 'pdf' || fileType.includes('pdf') || fileName.toLowerCase().endsWith('.pdf');
     
@@ -716,6 +830,7 @@ export default function DocumentViewer({
   const [pdfLocalUri, setPdfLocalUri] = useState<string | null>(null);
   /** Local file URI for WebView (Office docs only when native PDF not used). PDF uses only native viewer. */
   const [webViewLocalUri, setWebViewLocalUri] = useState<string | null>(null);
+  const [officePdfDataUri, setOfficePdfDataUri] = useState<string | null>(null); // For Office docs converted to PDF in Expo Go
   /** Expo Go only: PDF as data URI for WebView (no native PDF module in Expo Go). */
   const [webViewPdfDataUri, setWebViewPdfDataUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -836,12 +951,30 @@ export default function DocumentViewer({
   }, []);
 
   // Download PDF to local cache for native viewer (only if native module is available)
+  // Tiered strategy: Signed URLs for >= 5MB, Bearer token + base64 for smaller files
   useEffect(() => {
     const downloadPdfForNativeViewer = async () => {
       // Only download if native PDF viewer is available (not in Expo Go)
       if (!Pdf || isExpoGo || !fileUrl || !authToken || !isPdfFile(fileType)) {
+        console.log('📄 [PDF-DOWNLOAD] Skipping download:', {
+          hasPdf: !!Pdf,
+          isExpoGo,
+          hasFileUrl: !!fileUrl,
+          hasAuthToken: !!authToken,
+          isPdf: isPdfFile(fileType),
+          fileType,
+          fileUrl
+        });
         return;
       }
+      
+      console.log('📄 [PDF-DOWNLOAD] Starting PDF download:', {
+        fileUrl,
+        fileType,
+        fileName
+      });
+
+      let cancelled = false;
 
       try {
         setLoading(true);
@@ -849,6 +982,7 @@ export default function DocumentViewer({
         const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
         if (!cacheDir) {
           console.warn('Cache directory not available for PDF download');
+          setLoading(false);
           return;
         }
 
@@ -863,49 +997,160 @@ export default function DocumentViewer({
         console.log('📥 Downloading PDF for native viewer:', fileUrl);
         console.log('📁 Saving to:', localUri);
 
-        // Download with authentication headers
-        const downloadResult = await FileSystem.downloadAsync(fileUrl, localUri, {
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'X-Platform': Platform.OS
+        // Check if URL is a signed URL (contains sig= and exp= parameters)
+        const isSignedUrl = fileUrl.includes('sig=') && fileUrl.includes('exp=');
+        
+        if (isSignedUrl) {
+          // Signed URL: Use FileSystem.downloadAsync (no headers needed, signature is in URL)
+          console.log('🔐 [SIGNED-URL] Using signed URL for PDF download');
+          const result = await FileSystem.downloadAsync(fileUrl, localUri);
+          if (cancelled) return;
+          console.log('✅ PDF downloaded successfully for native viewer:', result.uri);
+          setPdfLocalUri(result.uri);
+          setLoading(false);
+        } else {
+          // Bearer token URL: Use fetch + base64 (for files < 5MB)
+          console.log('🔐 [BEARER-TOKEN] Using Bearer token URL for PDF download');
+          
+          const response = await fetch(fileUrl, {
+            headers: {
+              'Authorization': `Bearer ${authToken}`,
+              'X-Platform': Platform.OS
+            }
+          });
+          
+          if (cancelled) return;
+          
+          if (!response.ok) {
+            throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
           }
-        });
 
-        console.log('✅ PDF downloaded successfully for native viewer:', downloadResult.uri);
-        setPdfLocalUri(downloadResult.uri);
-        setLoading(false);
+          // Get blob and convert to base64
+          const blob = await response.blob();
+          if (cancelled) return;
+
+          // Convert blob to base64 using FileReader (works in React Native)
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              try {
+                const dataUrl = reader.result as string;
+                if (!dataUrl || !dataUrl.includes(',')) {
+                  reject(new Error('Invalid data URL from FileReader'));
+                  return;
+                }
+                const base64Data = dataUrl.split(',')[1];
+                if (!base64Data) {
+                  reject(new Error('Failed to extract base64 data'));
+                  return;
+                }
+                resolve(base64Data);
+              } catch (e) {
+                reject(e);
+              }
+            };
+            reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+            reader.readAsDataURL(blob);
+          });
+
+          if (cancelled) return;
+
+          // Write base64 to file (FileSystem.writeAsStringAsync with Base64 encoding works in production)
+          await FileSystem.writeAsStringAsync(localUri, base64, {
+            encoding: FileSystem.EncodingType.Base64
+          });
+
+          if (cancelled) return;
+
+          console.log('✅ PDF downloaded successfully for native viewer:', localUri);
+          setPdfLocalUri(localUri);
+          setLoading(false);
+        }
       } catch (error: any) {
-        console.error('Failed to download PDF for native viewer:', error);
-        setError('Failed to load PDF. Please try again.');
-        setLoading(false);
+        if (!cancelled) {
+          console.error('❌ [PDF-DOWNLOAD] Failed to download PDF for native viewer:', error);
+          console.error('❌ [PDF-DOWNLOAD] Error details:', {
+            message: error?.message,
+            stack: error?.stack,
+            fileUrl,
+            fileType,
+            fileName
+          });
+          setError('Failed to load PDF. Please try again.');
+          setLoading(false);
+        }
       }
     };
 
     downloadPdfForNativeViewer();
+    
+    return () => {
+      // Cleanup on unmount
+    };
   }, [fileUrl, authToken, fileType, fileName]);
 
   // Expo Go only: fetch PDF with auth and set base64 data URI so WebView can display it (no native PDF in Expo Go).
   const EXPO_GO_PDF_MAX_BYTES = 8 * 1024 * 1024; // 8MB
   useEffect(() => {
-    if (!isExpoGo || !isPdfFile(fileType) || !fileUrl || !authToken) return;
+    if (!isExpoGo || !isPdfFile(fileType) || !fileUrl || !authToken) {
+      console.log('📄 [EXPO-GO-PDF] Skipping Expo Go PDF load:', {
+        isExpoGo,
+        isPdf: isPdfFile(fileType),
+        hasFileUrl: !!fileUrl,
+        hasAuthToken: !!authToken,
+        fileType
+      });
+      return;
+    }
+    
+    console.log('📄 [EXPO-GO-PDF] Starting Expo Go PDF fetch:', fileUrl);
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(fileUrl, {
           headers: { 'Authorization': `Bearer ${authToken}`, 'X-Platform': Platform.OS },
         });
-        if (cancelled || !res.ok) return;
+        if (cancelled) {
+          console.log('📄 [EXPO-GO-PDF] Cancelled before response');
+          return;
+        }
+        if (!res.ok) {
+          console.error('📄 [EXPO-GO-PDF] Fetch failed:', res.status, res.statusText);
+          return;
+        }
         const blob = await res.blob();
-        if (cancelled || blob.size > EXPO_GO_PDF_MAX_BYTES) return;
+        if (cancelled) {
+          console.log('📄 [EXPO-GO-PDF] Cancelled after blob');
+          return;
+        }
+        if (blob.size > EXPO_GO_PDF_MAX_BYTES) {
+          console.warn('📄 [EXPO-GO-PDF] PDF too large:', blob.size, 'bytes');
+          return;
+        }
+        console.log('📄 [EXPO-GO-PDF] Converting blob to data URL, size:', blob.size, 'bytes');
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(reader.error);
+          reader.onload = () => {
+            console.log('📄 [EXPO-GO-PDF] Data URL created successfully');
+            resolve(reader.result as string);
+          };
+          reader.onerror = () => {
+            console.error('📄 [EXPO-GO-PDF] FileReader error:', reader.error);
+            reject(reader.error);
+          };
           reader.readAsDataURL(blob);
         });
-        if (!cancelled) setWebViewPdfDataUri(dataUrl);
+        if (!cancelled) {
+          console.log('✅ [EXPO-GO-PDF] PDF data URI set, length:', dataUrl.length);
+          setWebViewPdfDataUri(dataUrl);
+          setLoading(false);
+        }
       } catch (e) {
-        if (!cancelled) console.warn('Expo Go PDF fetch failed:', e);
+        if (!cancelled) {
+          console.error('❌ [EXPO-GO-PDF] PDF fetch failed:', e);
+          setError('Failed to load PDF in Expo Go. Please try again.');
+          setLoading(false);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -913,6 +1158,7 @@ export default function DocumentViewer({
 
   // For Office docs only (not PDF): download to local file for WebView on Android when native PDF isn't used.
   // PDF is only shown via native viewer (download → cache → react-native-pdf); no WebView for PDF.
+  // Tiered strategy: Signed URLs for >= 5MB, Bearer token + base64 for smaller files.
   useEffect(() => {
     const needOfficeFallback =
       (Platform.OS === 'android' || isExpoGo) &&
@@ -924,22 +1170,145 @@ export default function DocumentViewer({
 
     const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
     if (!cacheDir) return;
+    
+    let cancelled = false;
+    
     (async () => {
       try {
-        const ext = fileName.match(/\.[a-z0-9]+$/i)?.[0] || '.pdf';
+        // Office documents are converted to PDF by backend, so always use PDF extension
         const safeName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 80);
-        const localUri = `${cacheDir}webview_${Date.now()}_${safeName}${ext}`;
-        await FileSystem.downloadAsync(fileUrl, localUri, {
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'X-Platform': Platform.OS,
-          },
-        });
-        setWebViewLocalUri(localUri);
+        const baseName = safeName.replace(/\.[^.]+$/, ''); // Remove original extension
+        const localUri = `${cacheDir}webview_${Date.now()}_${baseName}.pdf`;
+        
+        console.log('📄 [OFFICE-DOWNLOAD] Downloading Office document (will be converted to PDF by backend):', fileUrl);
+        
+        // Check if URL is a signed URL (contains sig= and exp= parameters)
+        const isSignedUrl = fileUrl.includes('sig=') && fileUrl.includes('exp=');
+        
+        if (isSignedUrl) {
+          // Signed URL: Use FileSystem.downloadAsync (no headers needed)
+          console.log('🔐 [SIGNED-URL] Using signed URL for Office document download');
+          const result = await FileSystem.downloadAsync(fileUrl, localUri);
+          if (cancelled) return;
+          setWebViewLocalUri(result.uri);
+          setLoading(false); // Clear loading state when file is ready
+          console.log('✅ [OFFICE-DOWNLOAD] Office document downloaded via signed URL (as PDF):', result.uri);
+        } else {
+          // Bearer token URL: Use fetch + base64
+          console.log('🔐 [BEARER-TOKEN] Using Bearer token URL for Office document download');
+          
+          const response = await fetch(fileUrl, {
+            headers: {
+              'Authorization': `Bearer ${authToken}`,
+              'X-Platform': Platform.OS,
+            },
+          });
+          
+          if (cancelled) return;
+          
+          if (!response.ok) {
+            throw new Error(`Failed to fetch Office document: ${response.status} ${response.statusText}`);
+          }
+
+          // Check Content-Type - backend converts Office docs to PDF
+          const contentType = response.headers.get('content-type') || '';
+          const isPdfResponse = contentType.includes('application/pdf');
+          
+          // If backend converted to PDF, use PDF extension
+          let finalLocalUri = localUri;
+          if (isPdfResponse) {
+            const pdfUri = localUri.replace(/\.[^.]+$/, '.pdf');
+            console.log('📄 [OFFICE-PDF] Backend converted Office document to PDF, using PDF extension');
+            finalLocalUri = pdfUri;
+          }
+
+          // Get blob and convert to base64
+          const blob = await response.blob();
+          if (cancelled) return;
+          
+          console.log('📄 [OFFICE-DOWNLOAD] Blob received:', {
+            size: blob.size,
+            type: blob.type,
+            isPdfResponse,
+            expectedType: 'application/pdf'
+          });
+
+          // Convert blob to base64 using FileReader
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              try {
+                const dataUrl = reader.result as string;
+                if (!dataUrl || !dataUrl.includes(',')) {
+                  reject(new Error('Invalid data URL from FileReader'));
+                  return;
+                }
+                // Extract base64 part (everything after the comma)
+                const base64Data = dataUrl.split(',')[1];
+                if (!base64Data) {
+                  reject(new Error('Failed to extract base64 data'));
+                  return;
+                }
+                // Validate base64 format (basic check)
+                if (base64Data.length < 100) {
+                  reject(new Error('Base64 data too short, file may be corrupted'));
+                  return;
+                }
+                console.log('📄 [OFFICE-DOWNLOAD] Base64 conversion successful, length:', base64Data.length);
+                resolve(base64Data);
+              } catch (e) {
+                reject(e);
+              }
+            };
+            reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+            reader.readAsDataURL(blob);
+          });
+
+          if (cancelled) return;
+
+          // Write base64 to file (FileSystem.writeAsStringAsync with Base64 encoding decodes base64 and writes binary)
+          console.log('📄 [OFFICE-DOWNLOAD] Writing file to:', finalLocalUri);
+          await FileSystem.writeAsStringAsync(finalLocalUri, base64, {
+            encoding: FileSystem.EncodingType.Base64
+          });
+
+          if (cancelled) return;
+          
+          // Verify file was written
+          const fileInfo = await FileSystem.getInfoAsync(finalLocalUri);
+          if (!fileInfo.exists) {
+            throw new Error('File was not written successfully');
+          }
+          console.log('✅ [OFFICE-DOWNLOAD] File written successfully:', {
+            uri: finalLocalUri,
+            size: fileInfo.size,
+            exists: fileInfo.exists
+          });
+          
+          // If backend converted to PDF, also create data URI for Expo Go PDF viewer
+          if (isPdfResponse && isExpoGo) {
+            // For Expo Go, use PDF.js viewer with data URI
+            const dataUri = `data:application/pdf;base64,${base64}`;
+            setOfficePdfDataUri(dataUri);
+            console.log('📄 [OFFICE-PDF] Created PDF data URI for Expo Go viewer, length:', dataUri.length);
+          }
+          
+          setWebViewLocalUri(finalLocalUri);
+          setLoading(false); // Clear loading state when file is ready
+          console.log('✅ [OFFICE-DOWNLOAD] Office document downloaded and ready:', finalLocalUri, isPdfResponse ? '(converted to PDF)' : '');
+        }
       } catch (e) {
-        console.warn('WebView fallback download failed:', e);
+        if (!cancelled) {
+          console.error('❌ [OFFICE-DOWNLOAD] WebView fallback download failed:', e);
+          setError('Failed to load Office document. Please try again.');
+          setLoading(false);
+        }
       }
     })();
+    
+    return () => {
+      cancelled = true;
+    };
   }, [fileUrl, authToken, fileType, fileName]);
 
   const loadFileUrl = async () => {
@@ -966,19 +1335,35 @@ export default function DocumentViewer({
         // If view endpoint doesn't exist, fallback to download endpoint
         console.log('🔐 File will be decrypted by backend encryption class for viewing');
         
-        // Use view_url from API response if available, otherwise construct it
-        let previewUrl = fileInfo.file.view_url;
+        // Tiered strategy: Use signed URLs for files >= 5MB, Bearer token URLs for smaller files
+        const fileSize = fileInfo.file.file_size || 0;
+        const hasSignedUrl = !!(fileInfo.file.signed_view_url || fileInfo.file.signed_download_url);
+        
+        // Prefer signed URL if available (files >= 5MB)
+        let previewUrl = fileInfo.file.signed_view_url || fileInfo.file.view_url;
+        let downloadUrl = fileInfo.file.signed_download_url || fileInfo.file.download_url;
+        
         if (!previewUrl) {
           // Fallback: construct URL manually
           console.warn('⚠️ No view_url in response, constructing URL manually');
           previewUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/view`;
         }
         
+        if (hasSignedUrl) {
+          console.log('🔐 Using signed URL (file size:', Math.round(fileSize / 1024 / 1024), 'MB)');
+        } else {
+          console.log('🔐 Using Bearer token URL (file size:', Math.round(fileSize / 1024 / 1024), 'MB)');
+        }
         console.log('📄 Using preview URL:', previewUrl);
         
-        // File loaded successfully - backend handles decryption automatically
-        
+        // Store URLs and metadata for tiered download strategy
         setFileUrl(previewUrl);
+        // Store signed URL flag and file size for download logic
+        (window as any).__fileMetadata = {
+          signedUrl: hasSignedUrl,
+          fileSize: fileSize,
+          downloadUrl: downloadUrl
+        };
         
         // For images, get dimensions with authentication
         if (isImageFile(fileType)) {
@@ -990,6 +1375,15 @@ export default function DocumentViewer({
         if (isTextDocument(fileType) || isImageFile(fileType)) {
           console.log('Text/image file loaded, clearing loading state');
           setLoading(false);
+        } else if (isPdfFile(fileType)) {
+          // For PDFs, loading will be cleared by the PDF download effect
+          // But if native PDF viewer is not available, clear loading here
+          if (isExpoGo || !Pdf) {
+            console.log('PDF file URL set, but native viewer not available - will use WebView fallback');
+            // Loading will be cleared when WebView data is ready
+          } else {
+            console.log('PDF file URL set, waiting for native viewer download to complete');
+          }
         }
       } else {
         const errorMsg = 'Failed to load file information';
@@ -1539,7 +1933,108 @@ export default function DocumentViewer({
       }
     }
 
-    // Use the AuthenticatedWebView for Office documents (PDFs use native viewer above)
+    // Office documents converted to PDF: Use PDF viewer (same as PDFs)
+    // Check if we have a PDF data URI (Expo Go) or local PDF file (production)
+    if (isOfficeDocument(fileType)) {
+      // Expo Go: Use PDF.js viewer with data URI if available
+      // Wait for PDF data URI to be ready
+      if (isExpoGo) {
+        if (officePdfDataUri) {
+          return (
+            <WebView
+              source={{ html: buildExpoGoPdfViewerHtml(officePdfDataUri) }}
+              style={styles.webView}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              originWhitelist={['*']}
+              mixedContentMode="compatibility"
+              scalesPageToFit={Platform.OS === 'android'}
+              setSupportZoom={false}
+              showsHorizontalScrollIndicator={true}
+              showsVerticalScrollIndicator={true}
+              onMessage={(event) => {
+                try {
+                  const data = JSON.parse(event.nativeEvent.data);
+                  if (data.type === 'log') {
+                    console.log('[PDF.js]', data.message);
+                  } else if (data.type === 'error') {
+                    console.error('[PDF.js Error]', data.message);
+                    setError(`PDF.js error: ${data.message}`);
+                  }
+                } catch (e) {
+                  // Ignore parse errors
+                }
+              }}
+              onError={(syntheticEvent) => {
+                const { nativeEvent } = syntheticEvent;
+                console.error('PDF WebView error:', nativeEvent);
+                setError('Failed to load PDF');
+              }}
+              onLoadEnd={() => {
+                console.log('PDF WebView loaded successfully');
+                setLoading(false);
+              }}
+            />
+          );
+        } else if (loading) {
+          // Still loading the PDF data URI
+          return (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={dynamicStyles.loadingText}>Converting to PDF...</Text>
+            </View>
+          );
+        }
+      }
+      
+      // Production Android: Use native PDF viewer if we have local PDF file
+      if (!isExpoGo && Pdf && webViewLocalUri && webViewLocalUri.endsWith('.pdf')) {
+        console.log('📄 Using native PDF viewer for converted Office document');
+        return (
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
+            <Pdf
+              source={{ uri: webViewLocalUri, cache: true }}
+              onLoadComplete={(numberOfPages: number) => {
+                console.log(`✅ Office document (converted to PDF) loaded successfully: ${numberOfPages} pages`);
+                setLoading(false);
+              }}
+              onPageChanged={(page: number, numberOfPages: number) => {
+                console.log(`PDF page ${page} of ${numberOfPages}`);
+              }}
+              onError={(error: Error | string) => {
+                console.error('PDF render error:', error);
+                setError('Failed to render PDF. The file may be corrupted.');
+              }}
+              style={{
+                flex: 1,
+                width: screenWidth,
+                height: screenHeight,
+                backgroundColor: colors.background,
+              }}
+              enablePaging={true}
+              horizontal={false}
+              spacing={10}
+              enableRTL={false}
+              enableAnnotationRendering={true}
+              fitPolicy={0}
+              singlePage={false}
+              page={1}
+              scale={1.0}
+              minScale={0.5}
+              maxScale={3.0}
+              activityIndicator={
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#007AFF" />
+                  <Text style={dynamicStyles.loadingText}>Loading PDF...</Text>
+                </View>
+              }
+            />
+          </View>
+        );
+      }
+    }
+    
+    // Use the AuthenticatedWebView for Office documents (fallback if PDF viewer not available)
     // On Android, wait for webViewLocalUri so the WebView doesn't load the URL without auth
     if (Platform.OS === 'android' && !webViewLocalUri && fileUrl && authToken) {
       return (
