@@ -108,3 +108,57 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.EXPO_APPLE_APP_SPECIFIC_PASSWORD }}
+
+      - name: Send success email
+        if: success() && github.event.inputs.profile == 'production'
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '✅ iOS Build & Deploy Successful - GrabDocs'
+          to: dev@grabdocs.com
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            iOS build and deployment completed successfully!
+            
+            Platform: iOS
+            Profile: ${{ github.event.inputs.profile }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Actor: ${{ github.actor }}
+            
+            View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          content_type: text/html
+
+      - name: Send failure email
+        if: failure() && github.event.inputs.profile == 'production'
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '❌ iOS Build & Deploy Failed - GrabDocs'
+          to: dev@grabdocs.com
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            iOS build or deployment failed!
+            
+            Platform: iOS
+            Profile: ${{ github.event.inputs.profile }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Actor: ${{ github.actor }}
+            
+            View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            Please check the workflow logs for details.
+          content_type: text/html

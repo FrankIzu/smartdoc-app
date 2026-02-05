@@ -523,7 +523,7 @@ const getDocumentTypeName = (fileName: string) => {
 
 
 // Authenticated WebView Component
-const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFileUri }: { fileUrl: string; authToken: string; fileName: string; fileType: string; localFileUri?: string | null }) => {
+const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFileUri, fileId }: { fileUrl: string; authToken: string; fileName: string; fileType: string; localFileUri?: string | null; fileId?: string | number }) => {
   const colors = useThemeColors();
   const [htmlContent, setHtmlContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -698,11 +698,49 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
             const { nativeEvent } = syntheticEvent;
             console.error('SVG WebView error:', nativeEvent);
             setError('Failed to load SVG');
+            
+            // Log WebView error
+            apiClient.logError({
+              errorType: 'WebViewError',
+              errorMessage: `SVG WebView error: ${nativeEvent.description || nativeEvent.message || 'Unknown error'}`,
+              errorTraceback: JSON.stringify(nativeEvent, null, 2),
+              severity: 'error',
+              screenName: 'DocumentViewer',
+              userAction: 'load_svg_webview',
+              platform: Platform.OS,
+              deviceInfo: {
+                fileId: fileId,
+                fileName: fileName,
+                fileType: fileType,
+                webViewError: nativeEvent.description || nativeEvent.message,
+                webViewUrl: fileUrl,
+                hasLocalFile: !!localFileUri,
+              }
+            }).catch(err => console.warn('Failed to log WebView error:', err));
           }}
           onHttpError={(syntheticEvent) => {
             const { nativeEvent } = syntheticEvent;
             console.error('SVG WebView HTTP error:', nativeEvent);
             setError(`Failed to load SVG: HTTP ${nativeEvent.statusCode}`);
+            
+            // Log WebView HTTP error
+            apiClient.logError({
+              errorType: 'WebViewHttpError',
+              errorMessage: `SVG WebView HTTP error: ${nativeEvent.statusCode}`,
+              errorTraceback: JSON.stringify(nativeEvent, null, 2),
+              severity: 'error',
+              screenName: 'DocumentViewer',
+              userAction: 'load_svg_webview',
+              platform: Platform.OS,
+              deviceInfo: {
+                fileId: fileId,
+                fileName: fileName,
+                fileType: fileType,
+                statusCode: nativeEvent.statusCode,
+                webViewUrl: fileUrl,
+                hasLocalFile: !!localFileUri,
+              }
+            }).catch(err => console.warn('Failed to log WebView HTTP error:', err));
           }}
           onLoadEnd={() => {
             console.log('SVG WebView loaded successfully');
@@ -722,11 +760,49 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
           const { nativeEvent } = syntheticEvent;
           console.error('Document WebView error:', nativeEvent);
           setError('Failed to load document');
+          
+          // Log WebView error
+          apiClient.logError({
+            errorType: 'WebViewError',
+            errorMessage: `Document WebView error: ${nativeEvent.description || nativeEvent.message || 'Unknown error'}`,
+            errorTraceback: JSON.stringify(nativeEvent, null, 2),
+            severity: 'error',
+            screenName: 'DocumentViewer',
+            userAction: 'load_document_webview',
+            platform: Platform.OS,
+            deviceInfo: {
+              fileId: fileId,
+              fileName: fileName,
+              fileType: fileType,
+              webViewError: nativeEvent.description || nativeEvent.message,
+              webViewUrl: fileUrl,
+              hasLocalFile: !!localFileUri,
+            }
+          }).catch(err => console.warn('Failed to log WebView error:', err));
         }}
         onHttpError={(syntheticEvent) => {
           const { nativeEvent } = syntheticEvent;
           console.error('Document WebView HTTP error:', nativeEvent);
           setError(`Failed to load document: HTTP ${nativeEvent.statusCode}`);
+          
+          // Log WebView HTTP error
+          apiClient.logError({
+            errorType: 'WebViewHttpError',
+            errorMessage: `Document WebView HTTP error: ${nativeEvent.statusCode}`,
+            errorTraceback: JSON.stringify(nativeEvent, null, 2),
+            severity: 'error',
+            screenName: 'DocumentViewer',
+            userAction: 'load_document_webview',
+            platform: Platform.OS,
+            deviceInfo: {
+              fileId: fileId,
+              fileName: fileName,
+              fileType: fileType,
+              statusCode: nativeEvent.statusCode,
+              webViewUrl: fileUrl,
+              hasLocalFile: !!localFileUri,
+            }
+          }).catch(err => console.warn('Failed to log WebView HTTP error:', err));
         }}
         onLoadEnd={() => {
           console.log('Document WebView loaded successfully');
@@ -1557,20 +1633,45 @@ export default function DocumentViewer({
         setError(errorMsg);
         setLoading(false);
         
-        // Log error when file info fetch fails
+        // Log error when file info fetch fails with detailed context
         try {
           await apiClient.logError({
             errorType: 'FileInfoError',
             errorMessage: `Failed to get file info for file ${fileId}: ${fileInfo?.message || 'Unknown error'}`,
+            errorTraceback: JSON.stringify({
+              fileId: fileId,
+              fileName: fileName,
+              fileType: fileType,
+              fileCategory: fileCategory,
+              apiBaseUrl: API_BASE_URL,
+              responseSuccess: fileInfo?.success,
+              hasFile: !!fileInfo?.file,
+              responseData: fileInfo,
+              requestUrl: `${API_BASE_URL}/api/v1/mobile/get-file/${fileId}`,
+            }, null, 2),
             severity: 'error',
             screenName: 'DocumentViewer',
             userAction: 'get_file_info',
             platform: Platform.OS,
             deviceInfo: {
               fileId: fileId,
+              fileName: fileName,
               fileType: fileType,
+              fileCategory: fileCategory,
+              apiBaseUrl: API_BASE_URL,
               responseSuccess: fileInfo?.success,
-              hasFile: !!fileInfo?.file
+              hasFile: !!fileInfo?.file,
+              responseMessage: fileInfo?.message,
+              responseFile: fileInfo?.file ? {
+                id: fileInfo.file.id,
+                hasViewUrl: !!fileInfo.file.view_url,
+                hasSignedViewUrl: !!fileInfo.file.signed_view_url,
+                hasDownloadUrl: !!fileInfo.file.download_url,
+                hasSignedDownloadUrl: !!fileInfo.file.signed_download_url,
+                fileSize: fileInfo.file.file_size,
+                fileKind: fileInfo.file.file_kind,
+                fileType: fileInfo.file.file_type,
+              } : null,
             }
           });
         } catch (logError) {
@@ -1580,6 +1681,69 @@ export default function DocumentViewer({
     } catch (error: any) {
       const message = error?.message ?? '';
       const is404 = error?.response?.status === 404 || /not found|404/i.test(message);
+      const statusCode = error?.response?.status;
+      const errorData = error?.response?.data;
+
+      // Get file metadata if available
+      const fileMetadata = (window as any).__fileMetadata || {};
+      const previewUrl = fileUrl || fileMetadata.previewUrl;
+      const downloadUrl = fileMetadata.downloadUrl;
+      const hasSignedUrl = fileMetadata.signedUrl || false;
+      const fileSize = fileMetadata.fileSize || 0;
+
+      // Log detailed error information
+      const errorDetails = {
+        fileId: fileId,
+        fileName: fileName,
+        fileType: fileType,
+        fileCategory: fileCategory,
+        fileSize: fileSize,
+        statusCode: statusCode,
+        errorMessage: message,
+        errorResponse: errorData,
+        previewUrl: previewUrl,
+        downloadUrl: downloadUrl,
+        hasSignedUrl: hasSignedUrl,
+        apiBaseUrl: API_BASE_URL,
+        errorStack: error?.stack,
+        errorName: error?.name,
+        responseHeaders: error?.response?.headers ? Object.keys(error?.response?.headers) : [],
+        requestUrl: error?.config?.url || error?.request?.url,
+        requestMethod: error?.config?.method || 'GET',
+      };
+
+      console.error('❌ [FILE-OPEN-ERROR] Failed to load file:', errorDetails);
+
+      // Log error to backend with comprehensive details
+      try {
+        await apiClient.logError({
+          errorType: 'FileOpenError',
+          errorMessage: `Failed to open file ${fileId} (${fileName}): ${message || 'Unknown error'}`,
+          errorTraceback: error?.stack || JSON.stringify(errorDetails, null, 2),
+          severity: statusCode === 404 ? 'warning' : statusCode === 401 || statusCode === 403 ? 'error' : 'error',
+          screenName: 'DocumentViewer',
+          userAction: 'open_file',
+          platform: Platform.OS,
+          deviceInfo: {
+            fileId: fileId,
+            fileName: fileName,
+            fileType: fileType,
+            fileCategory: fileCategory,
+            fileSize: fileSize,
+            statusCode: statusCode,
+            hasSignedUrl: hasSignedUrl,
+            previewUrl: previewUrl,
+            downloadUrl: downloadUrl,
+            apiBaseUrl: API_BASE_URL,
+            errorMessage: message,
+            errorResponse: errorData ? JSON.stringify(errorData).substring(0, 500) : undefined,
+            requestUrl: error?.config?.url || error?.request?.url,
+            requestMethod: error?.config?.method || 'GET',
+          }
+        });
+      } catch (logError) {
+        console.warn('Failed to log file open error:', logError);
+      }
 
       if (is404) {
         console.warn('File not found:', fileId, message);
@@ -1594,13 +1758,13 @@ export default function DocumentViewer({
       if (error.response?.status === 404) {
         console.log('⚠️ View endpoint not available, falling back to download endpoint');
         try {
-          const downloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/download`;
+          const fallbackDownloadUrl = `${API_BASE_URL}/api/v1/mobile/file/${fileId}/download`;
           console.log('🔐 Using download endpoint - backend will decrypt file');
-          setFileUrl(downloadUrl);
+          setFileUrl(fallbackDownloadUrl);
 
           const detectedFileKind = fileKind || fileCategory;
           if (isImageFile(fileType, detectedFileKind, fileCategory) && !isSvgFile(fileName, fileType)) {
-            await getImageDimensionsWithAuth(downloadUrl);
+            await getImageDimensionsWithAuth(fallbackDownloadUrl);
           } else if (isSvgFile(fileName, fileType)) {
             console.log('🖼️ [SVG] SVG file detected in fallback, skipping dimension check');
           }
@@ -1610,6 +1774,36 @@ export default function DocumentViewer({
           return;
         } catch (fallbackError: any) {
           console.error('Fallback to download endpoint also failed:', fallbackError);
+          
+          // Log fallback failure
+          try {
+            await apiClient.logError({
+              errorType: 'FileOpenFallbackError',
+              errorMessage: `Fallback to download endpoint failed for file ${fileId}: ${fallbackError?.message || 'Unknown error'}`,
+              errorTraceback: fallbackError?.stack || JSON.stringify({
+                fileId,
+                fileName,
+                downloadUrl: `${API_BASE_URL}/api/v1/mobile/file/${fileId}/download`,
+                originalError: message,
+                fallbackError: fallbackError?.message,
+              }, null, 2),
+              severity: 'error',
+              screenName: 'DocumentViewer',
+              userAction: 'open_file_fallback',
+              platform: Platform.OS,
+              deviceInfo: {
+                fileId: fileId,
+                fileName: fileName,
+                downloadUrl: `${API_BASE_URL}/api/v1/mobile/file/${fileId}/download`,
+                originalError: message,
+                fallbackError: fallbackError?.message,
+                fallbackStatusCode: fallbackError?.response?.status,
+              }
+            });
+          } catch (logError) {
+            console.warn('Failed to log fallback error:', logError);
+          }
+          
           setError('File not found. It may have been deleted or moved.');
           setLoading(false);
         }
@@ -1674,10 +1868,55 @@ export default function DocumentViewer({
       } else {
         console.warn('Failed to get image data:', response.status);
         setImageDimensions({ width: 300, height: 400 });
+        
+        // Log error when image fetch fails
+        try {
+          await apiClient.logError({
+            errorType: 'ImageFetchError',
+            errorMessage: `Failed to fetch image data: HTTP ${response.status}`,
+            severity: 'warning',
+            screenName: 'DocumentViewer',
+            userAction: 'get_image_dimensions',
+            platform: Platform.OS,
+            deviceInfo: {
+              imageUrl: imageUrl,
+              statusCode: response.status,
+              statusText: response.statusText,
+              hasAuthToken: !!token,
+            }
+          });
+        } catch (logError) {
+          console.warn('Failed to log image fetch error:', logError);
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.warn('Failed to get image dimensions with auth:', error);
       setImageDimensions({ width: 300, height: 400 });
+      
+      // Log error when image dimension fetch fails
+      try {
+        await apiClient.logError({
+          errorType: 'ImageDimensionError',
+          errorMessage: `Failed to get image dimensions: ${error?.message || 'Unknown error'}`,
+          errorTraceback: error?.stack || JSON.stringify({
+            imageUrl: imageUrl,
+            error: error?.message,
+            hasAuthToken: !!token,
+          }, null, 2),
+          severity: 'warning',
+          screenName: 'DocumentViewer',
+          userAction: 'get_image_dimensions',
+          platform: Platform.OS,
+          deviceInfo: {
+            imageUrl: imageUrl,
+            errorMessage: error?.message,
+            hasAuthToken: !!token,
+            errorName: error?.name,
+          }
+        });
+      } catch (logError) {
+        console.warn('Failed to log image dimension error:', logError);
+      }
     }
   };
 
@@ -1851,6 +2090,25 @@ export default function DocumentViewer({
                 const { nativeEvent } = syntheticEvent;
                 console.error('SVG WebView error:', nativeEvent);
                 setError('Failed to load SVG');
+                
+                // Log WebView error
+                apiClient.logError({
+                  errorType: 'WebViewError',
+                  errorMessage: `SVG WebView error (embedded): ${nativeEvent.description || nativeEvent.message || 'Unknown error'}`,
+                  errorTraceback: JSON.stringify(nativeEvent, null, 2),
+                  severity: 'error',
+                  screenName: 'DocumentViewer',
+                  userAction: 'load_svg_webview_embedded',
+                  platform: Platform.OS,
+                  deviceInfo: {
+                    fileId: fileId,
+                    fileName: fileName,
+                    fileType: fileType,
+                    webViewError: nativeEvent.description || nativeEvent.message,
+                    hasLocalFile: !!webViewLocalUri,
+                    hasSvgContent: !!svgContent,
+                  }
+                }).catch(err => console.warn('Failed to log WebView error:', err));
               }}
               onLoadEnd={() => {
                 console.log('SVG WebView loaded successfully');
@@ -1870,6 +2128,7 @@ export default function DocumentViewer({
             fileName={fileName}
             fileType="image/svg+xml"
             localFileUri={undefined}
+            fileId={fileId}
           />
         </View>
       );
@@ -2115,11 +2374,49 @@ export default function DocumentViewer({
                 const { nativeEvent } = syntheticEvent;
                 console.error('PDF WebView error:', nativeEvent);
                 setError(`Failed to display PDF: ${nativeEvent.description || 'Unknown error'}`);
+                
+                // Log WebView error
+                apiClient.logError({
+                  errorType: 'WebViewError',
+                  errorMessage: `PDF WebView error (Expo Go): ${nativeEvent.description || nativeEvent.message || 'Unknown error'}`,
+                  errorTraceback: JSON.stringify(nativeEvent, null, 2),
+                  severity: 'error',
+                  screenName: 'DocumentViewer',
+                  userAction: 'load_pdf_webview_expo',
+                  platform: Platform.OS,
+                  deviceInfo: {
+                    fileId: fileId,
+                    fileName: fileName,
+                    fileType: fileType,
+                    webViewError: nativeEvent.description || nativeEvent.message,
+                    hasPdfDataUri: !!webViewPdfDataUri,
+                    isExpoGo: true,
+                  }
+                }).catch(err => console.warn('Failed to log WebView error:', err));
               }}
               onHttpError={(syntheticEvent) => {
                 const { nativeEvent } = syntheticEvent;
                 console.error('PDF WebView HTTP error:', nativeEvent);
                 setError(`HTTP error loading PDF: ${nativeEvent.statusCode}`);
+                
+                // Log WebView HTTP error
+                apiClient.logError({
+                  errorType: 'WebViewHttpError',
+                  errorMessage: `PDF WebView HTTP error (Expo Go): ${nativeEvent.statusCode}`,
+                  errorTraceback: JSON.stringify(nativeEvent, null, 2),
+                  severity: 'error',
+                  screenName: 'DocumentViewer',
+                  userAction: 'load_pdf_webview_expo',
+                  platform: Platform.OS,
+                  deviceInfo: {
+                    fileId: fileId,
+                    fileName: fileName,
+                    fileType: fileType,
+                    statusCode: nativeEvent.statusCode,
+                    hasPdfDataUri: !!webViewPdfDataUri,
+                    isExpoGo: true,
+                  }
+                }).catch(err => console.warn('Failed to log WebView HTTP error:', err));
               }}
             />
           );
@@ -2262,6 +2559,24 @@ export default function DocumentViewer({
                 const { nativeEvent } = syntheticEvent;
                 console.error('PDF WebView error:', nativeEvent);
                 setError('Failed to load PDF');
+                
+                // Log WebView error
+                apiClient.logError({
+                  errorType: 'WebViewError',
+                  errorMessage: `PDF WebView error: ${nativeEvent.description || nativeEvent.message || 'Unknown error'}`,
+                  errorTraceback: JSON.stringify(nativeEvent, null, 2),
+                  severity: 'error',
+                  screenName: 'DocumentViewer',
+                  userAction: 'load_pdf_webview',
+                  platform: Platform.OS,
+                  deviceInfo: {
+                    fileId: fileId,
+                    fileName: fileName,
+                    fileType: fileType,
+                    webViewError: nativeEvent.description || nativeEvent.message,
+                    webViewUrl: fileUrl,
+                  }
+                }).catch(err => console.warn('Failed to log WebView error:', err));
               }}
               onLoadEnd={() => {
                 console.log('PDF WebView loaded successfully');
@@ -2345,6 +2660,7 @@ export default function DocumentViewer({
         fileName={fileName} 
         fileType={fileType}
         localFileUri={Platform.OS !== 'web' ? webViewLocalUri : undefined}
+        fileId={fileId}
       />
     );
   };

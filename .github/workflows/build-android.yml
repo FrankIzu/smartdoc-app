@@ -156,6 +156,13 @@ jobs:
           sed -i 's/^android\.enableShrinkResourcesInReleaseBuilds=.*/android.enableShrinkResourcesInReleaseBuilds=false/' android/gradle.properties
 
       # No clean: we don't run gradle clean; incremental build uses Gradle cache (5–8 min, <5 warm).
+      - name: Clean old build artifacts
+        run: |
+          echo "Cleaning old AAB/APK files..."
+          find . -maxdepth 3 -name "*.aab" -type f -delete 2>/dev/null || true
+          find . -maxdepth 3 -name "*.apk" -type f -delete 2>/dev/null || true
+          echo "Old artifacts cleaned"
+      
       - name: EAS Build (local)
         run: |
           if [ -z "$EXPO_TOKEN" ]; then
@@ -182,7 +189,7 @@ jobs:
         with:
           name: android-build
           path: |
-            *.aab
+            build-*.aab
             *.apk
           if-no-files-found: ignore
 
@@ -193,15 +200,93 @@ jobs:
             echo "::error::ANDROID_SERVICE_ACCOUNT_JSON not set. Add it to GitHub Secrets to enable auto-submit."
             exit 1
           fi
-          AAB=$(find . -maxdepth 3 -name "*.aab" -type f 2>/dev/null | head -1)
+          # Find the EAS-generated AAB file (build-*.aab)
+          AAB=$(find . -maxdepth 3 -name "build-*.aab" -type f 2>/dev/null | head -1)
+          if [ -z "$AAB" ]; then
+            # Fallback to any AAB if build-*.aab not found
+            AAB=$(find . -maxdepth 3 -name "*.aab" -type f 2>/dev/null | head -1)
+          fi
           if [ -z "$AAB" ]; then 
             echo "::error::No .aab file found after build"
             exit 1
           fi
           echo "Submitting Android app to Google Play Store..."
-          echo "$ANDROID_SERVICE_ACCOUNT_JSON" > /tmp/play-service-account.json
-          npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive --service-account-key-path /tmp/play-service-account.json
+          # Write service account JSON to temp file
+          SERVICE_ACCOUNT_PATH="/tmp/play-service-account.json"
+          echo "$ANDROID_SERVICE_ACCOUNT_JSON" > "$SERVICE_ACCOUNT_PATH"
+          
+          # Temporarily update eas.json to use the temp file
+          # Backup original eas.json
+          cp eas.json eas.json.backup
+          # Update serviceAccountKeyPath using Node.js
+          node -e "
+            const fs = require('fs');
+            const easJson = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
+            easJson.submit.production.android.serviceAccountKeyPath = '$SERVICE_ACCOUNT_PATH';
+            fs.writeFileSync('eas.json', JSON.stringify(easJson, null, 2) + '\n');
+          "
+          
+          # Submit using eas.json configuration
+          npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive
+          
+          # Restore original eas.json
+          mv eas.json.backup eas.json
+          
           echo "✅ Successfully submitted to Google Play Store!"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ANDROID_SERVICE_ACCOUNT_JSON: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}
+
+      - name: Send success email
+        if: success() && github.event.inputs.profile == 'production'
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '✅ Android Build & Deploy Successful - GrabDocs'
+          to: dev@grabdocs.com
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            Android build and deployment completed successfully!
+            
+            Platform: Android
+            Profile: ${{ github.event.inputs.profile }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Actor: ${{ github.actor }}
+            
+            View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          content_type: text/html
+
+      - name: Send failure email
+        if: failure() && github.event.inputs.profile == 'production'
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '❌ Android Build & Deploy Failed - GrabDocs'
+          to: dev@grabdocs.com
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            Android build or deployment failed!
+            
+            Platform: Android
+            Profile: ${{ github.event.inputs.profile }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Actor: ${{ github.actor }}
+            
+            View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            Please check the workflow logs for details.
+          content_type: text/html

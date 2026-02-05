@@ -21,6 +21,7 @@ import { API_BASE_URL } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
+import { GoogleLogo } from '../../components/GoogleLogo';
 import { useAuth } from '../context/auth';
 
 export default function SignInScreen() {
@@ -479,25 +480,26 @@ export default function SignInScreen() {
             <View style={styles.dividerLine} />
           </View>
 
-          {/* Google Sign In */}
-          <TouchableOpacity
-            style={[styles.googleButton, loading && styles.buttonDisabled]}
-            onPress={handleGoogleSignIn}
-            disabled={loading}
-          >
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
-          </TouchableOpacity>
-
-          {/* Apple Sign In - iOS only when available */}
-          {Platform.OS === 'ios' && appleSignInAvailable && (
-            <AppleAuthentication.AppleAuthenticationButton
-              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-              cornerRadius={12}
-              style={styles.appleButton}
-              onPress={handleAppleSignIn}
-            />
-          )}
+          {/* Social sign-in: square icon buttons */}
+          <View style={styles.socialRow}>
+            <TouchableOpacity
+              style={[styles.socialButtonSquare, styles.googleButton, loading && styles.buttonDisabled]}
+              onPress={handleGoogleSignIn}
+              disabled={loading}
+            >
+              <GoogleLogo size={24} />
+            </TouchableOpacity>
+            {Platform.OS === 'ios' && appleSignInAvailable && (
+              <TouchableOpacity
+                style={[styles.socialButtonSquare, styles.appleButton, loading && styles.buttonDisabled]}
+                onPress={handleAppleSignIn}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="logo-apple" size={24} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
 
           {/* Sign Up Link */}
           <View style={styles.signUpContainer}>
@@ -547,15 +549,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   inputContainer: {
-    marginBottom: isAndroid ? 10 : 16,
+    marginBottom: isAndroid ? 10 : 18,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
     borderRadius: isAndroid ? 8 : 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: isAndroid ? 8 : 14,
+    paddingVertical: isAndroid ? 4 : 12,
+    minHeight: isAndroid ? undefined : 48,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
@@ -566,6 +569,8 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: isAndroid ? 15 : 16,
     color: '#333',
+    minHeight: isAndroid ? undefined : 24,
+    paddingVertical: isAndroid ? 0 : 4,
   },
   optionsRow: {
     flexDirection: 'row',
@@ -625,7 +630,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: isAndroid ? 16 : 32,
+    marginBottom: isAndroid ? 10 : 16,
   },
   forgotPasswordText: {
     color: '#007AFF',
@@ -635,7 +640,7 @@ const styles = StyleSheet.create({
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: isAndroid ? 14 : 24,
+    marginBottom: isAndroid ? 8 : 12,
   },
   dividerLine: {
     flex: 1,
@@ -643,28 +648,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0e0e0',
   },
   dividerText: {
-    marginHorizontal: isAndroid ? 12 : 16,
+    marginHorizontal: isAndroid ? 8 : 10,
     color: '#666',
     fontSize: 14,
+  },
+  socialRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    width: '100%',
+    marginBottom: isAndroid ? 16 : 24,
+  },
+  socialButtonSquare: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   googleButton: {
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e0e0e0',
-    paddingVertical: isAndroid ? 12 : 16,
-    borderRadius: isAndroid ? 8 : 12,
-    alignItems: 'center',
-    marginBottom: isAndroid ? 10 : 16,
-  },
-  googleButtonText: {
-    color: '#333',
-    fontSize: isAndroid ? 15 : 16,
-    fontWeight: '500',
   },
   appleButton: {
-    width: '100%',
-    height: isAndroid ? 44 : 50,
-    marginBottom: isAndroid ? 16 : 32,
+    backgroundColor: '#000',
   },
   signUpContainer: {
     flexDirection: 'row',
