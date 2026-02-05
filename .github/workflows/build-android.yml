@@ -1,6 +1,8 @@
 # Build Android app with EAS local (no EAS cloud charge).
 # Trigger: manual (workflow_dispatch) only. Deploy script triggers the selected platform (iOS or Android) via gh workflow run after push.
 # Requires: GitHub secret EXPO_TOKEN (Expo access token).
+# Auto-submit: Automatically submits to Google Play Store after successful production builds.
+#   Requires: ANDROID_SERVICE_ACCOUNT_JSON in GitHub Secrets.
 #
 # Combo for 5–8 min release builds (<5 min on warm cache): Gradle cache + configuration cache + Linux + no clean + cache npm.
 # Cache rotation: Bump CACHE_VERSION below to stay under ~10GB repo cache limit.
@@ -42,10 +44,17 @@ jobs:
 
       - name: Remove manager-francis submodule entry so git commands do not touch it
         run: |
+          set +e
+          # Remove submodule references
           git config -f .gitmodules --remove-section submodule.manager-francis 2>/dev/null || true
           git submodule deinit -f manager-francis 2>/dev/null || true
           git rm --cached manager-francis 2>/dev/null || true
           rm -rf .git/modules/manager-francis manager-francis 2>/dev/null || true
+          # Ensure git is in a clean state
+          git reset --hard HEAD 2>/dev/null || true
+          git clean -fd 2>/dev/null || true
+          # Verify git is working
+          git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
         continue-on-error: true
 
       - name: Setup Node.js
@@ -63,6 +72,7 @@ jobs:
       - name: Restore Android SDK cache
         uses: actions/cache/restore@v4
         id: android-sdk-cache
+        continue-on-error: true
         with:
           path: ${{ env.ANDROID_SDK_CACHE_PATH }}
           key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-25.1.8937393
@@ -115,6 +125,7 @@ jobs:
       - name: Save Android SDK cache
         if: steps.android-sdk-cache.outputs.cache-restored != 'true' && steps.setup-android.outputs.downloaded == 'true'
         uses: actions/cache/save@v4
+        continue-on-error: true
         with:
           path: ${{ env.ANDROID_SDK_CACHE_PATH }}
           key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-25.1.8937393
@@ -122,6 +133,7 @@ jobs:
       - name: Restore Gradle cache
         uses: actions/cache/restore@v4
         id: gradle-cache
+        continue-on-error: true
         with:
           path: ${{ env.GRADLE_USER_HOME }}
           key: gradle-${{ runner.os }}-${{ env.CACHE_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'package-lock.json') }}
@@ -160,6 +172,7 @@ jobs:
       - name: Save Gradle cache
         uses: actions/cache/save@v4
         if: success() && steps.gradle-cache.outputs.cache-restored != 'true'
+        continue-on-error: true
         with:
           path: ${{ env.GRADLE_USER_HOME }}
           key: gradle-${{ runner.os }}-${{ env.CACHE_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'package-lock.json') }}
@@ -173,18 +186,22 @@ jobs:
             *.apk
           if-no-files-found: ignore
 
-      - name: Submit to Google Play (optional)
-        if: success()
-        continue-on-error: true
+      - name: Submit to Google Play
+        if: success() && github.event.inputs.profile == 'production'
         run: |
           if [ -z "$ANDROID_SERVICE_ACCOUNT_JSON" ]; then
-            echo "ANDROID_SERVICE_ACCOUNT_JSON not set; skipping submit to Google Play."
-            exit 0
+            echo "::error::ANDROID_SERVICE_ACCOUNT_JSON not set. Add it to GitHub Secrets to enable auto-submit."
+            exit 1
           fi
           AAB=$(find . -maxdepth 3 -name "*.aab" -type f 2>/dev/null | head -1)
-          if [ -z "$AAB" ]; then echo "No .aab found"; exit 1; fi
+          if [ -z "$AAB" ]; then 
+            echo "::error::No .aab file found after build"
+            exit 1
+          fi
+          echo "Submitting Android app to Google Play Store..."
           echo "$ANDROID_SERVICE_ACCOUNT_JSON" > /tmp/play-service-account.json
-          npx eas-cli submit --platform android --path "$AAB" --non-interactive --service-account-key-path /tmp/play-service-account.json
+          npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive --service-account-key-path /tmp/play-service-account.json
+          echo "✅ Successfully submitted to Google Play Store!"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ANDROID_SERVICE_ACCOUNT_JSON: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}

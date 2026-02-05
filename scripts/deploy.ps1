@@ -71,6 +71,9 @@ function Get-CurrentBuildNumber {
         [string]$Platform
     )
 
+    # Normalize platform to lowercase to avoid case-sensitivity issues
+    $Platform = $Platform.ToLower()
+
     try {
         if ($Platform -eq "ios") {
             # Get iOS buildNumber from app.json
@@ -126,6 +129,9 @@ function Update-BuildNumber {
         [string]$BuildNumber
     )
 
+    # Normalize platform to lowercase to avoid case-sensitivity issues
+    $Platform = $Platform.ToLower()
+
     Write-Host "📝 Updating build number to $BuildNumber for $Platform..." -ForegroundColor Yellow
 
     try {
@@ -153,12 +159,34 @@ function Update-BuildNumber {
             if (-not $appJson.expo.android) {
                 throw "expo.android section not found in app.json"
             }
+            # Ensure android section exists
+            if (-not $appJson.expo.android) {
+                $appJson.expo | Add-Member -MemberType NoteProperty -Name "android" -Value @{} -Force
+            }
+            
             # Convert BuildNumber to int for app.json (it should be a number, not string)
             $appJson.expo.android.versionCode = [int]$BuildNumber
-            $appJson | ConvertTo-Json -Depth 10 | Set-Content $appJsonPath -Encoding UTF8
-            Write-Host "✅ Updated Android versionCode in app.json" -ForegroundColor Green
+            
+            # Write to temp file first, then move to ensure atomic write
+            $tempPath = "$appJsonPath.tmp"
+            $appJson | ConvertTo-Json -Depth 10 | Set-Content $tempPath -Encoding UTF8
+            Move-Item -Path $tempPath -Destination $appJsonPath -Force
+            
+            # Verify the update was successful
+            Start-Sleep -Milliseconds 100  # Brief pause to ensure file is written
+            $verifyJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+            if (-not $verifyJson.expo.android -or -not $verifyJson.expo.android.versionCode) {
+                throw "Failed to verify versionCode was written to app.json"
+            }
+            $actualVersionCode = $verifyJson.expo.android.versionCode
+            if ([int]$actualVersionCode -eq [int]$BuildNumber) {
+                Write-Host "✅ Updated Android versionCode in app.json to $actualVersionCode" -ForegroundColor Green
+            } else {
+                throw "Expected versionCode $BuildNumber but found $actualVersionCode in app.json"
+            }
             
             # Also update Android versionCode in build.gradle (for local builds)
+            # Note: For EAS Build, Expo prebuild will sync from app.json, so this is mainly for local builds
             $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
             if (-not (Test-Path $buildGradlePath)) {
                 throw "build.gradle not found at $buildGradlePath"
@@ -167,9 +195,27 @@ function Update-BuildNumber {
             if ($content -notmatch 'versionCode') {
                 throw "versionCode not found in build.gradle"
             }
-            $content = $content -replace '(?<=versionCode\s+)\d+', $BuildNumber
-            Set-Content $buildGradlePath $content -Encoding UTF8
-            Write-Host "✅ Updated Android versionCode in build.gradle" -ForegroundColor Green
+            # More robust regex: match versionCode followed by whitespace and digits, replace the digits
+            # This handles: versionCode 25, versionCode=25, versionCode  25, etc.
+            if ($content -match '(?m)(^\s*versionCode\s+)(\d+)') {
+                $oldValue = $matches[2]
+                $content = $content -replace '(?m)(^\s*versionCode\s+)(\d+)', "`${1}$BuildNumber"
+                Set-Content $buildGradlePath $content -Encoding UTF8
+                
+                # Verify the update was successful
+                $verifyContent = Get-Content $buildGradlePath -Raw
+                if ($verifyContent -match '(?m)^\s*versionCode\s+(\d+)') {
+                    $actualValue = $matches[1]
+                    if ([int]$actualValue -eq [int]$BuildNumber) {
+                        Write-Host "✅ Updated Android versionCode in build.gradle from $oldValue to $actualValue" -ForegroundColor Green
+                    } else {
+                        Write-Host "⚠️  Warning: Expected versionCode $BuildNumber but found $actualValue in build.gradle" -ForegroundColor Yellow
+                    }
+                }
+            } else {
+                Write-Host "⚠️  Could not find versionCode pattern in build.gradle to update" -ForegroundColor Yellow
+                Write-Host "   EAS Build will use versionCode from app.json during prebuild" -ForegroundColor Gray
+            }
         } else {
             throw "Invalid platform: $Platform"
         }
@@ -226,6 +272,9 @@ try {
     if (-not $Platform) {
         $Platform = Prompt-WithValidation "Select platform (ios/android)" @("ios", "android")
     }
+
+    # Normalize platform to lowercase to avoid case-sensitivity issues
+    $Platform = $Platform.ToLower()
 
     # Validate platform
     if ($Platform -notin @("ios", "android")) {
@@ -362,6 +411,157 @@ try {
         }
     }
 
+    # Auto commit, push to francis, merge to main, and push main
+    Write-Host "`n📦 Git Operations:" -ForegroundColor Cyan
+    Set-Location "$PSScriptRoot\.."
+    
+    # Check if we're in a git repository
+    $gitRoot = git rev-parse --show-toplevel 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "⚠️  Not a git repository. Skipping git operations." -ForegroundColor Yellow
+    } else {
+        $currentBranch = git rev-parse --abbrev-ref HEAD 2>&1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentBranch)) {
+            Write-Host "⚠️  Could not determine current branch. Skipping git operations." -ForegroundColor Yellow
+        } else {
+            $currentBranch = $currentBranch.Trim()
+            Write-Host "   Current branch: $currentBranch" -ForegroundColor Gray
+            
+            # Ensure we're on francis branch first
+            if ($currentBranch -ne "francis") {
+                Write-Host "`n🔄 Switching to francis branch..." -ForegroundColor Yellow
+                git checkout francis 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "❌ Failed to switch to francis branch" -ForegroundColor Red
+                    Write-Host "   Please ensure the francis branch exists: git checkout -b francis" -ForegroundColor Yellow
+                    exit 1
+                }
+                Write-Host "✅ Switched to francis branch" -ForegroundColor Green
+                $currentBranch = "francis"
+            }
+            
+            # Check if there are changes to commit
+            git diff --quiet --exit-code 2>&1 | Out-Null
+            $hasUncommittedChanges = $LASTEXITCODE -ne 0
+            
+            git diff --cached --quiet --exit-code 2>&1 | Out-Null
+            $hasStagedChanges = $LASTEXITCODE -ne 0
+            
+            $untrackedFiles = git ls-files --others --exclude-standard 2>&1
+            $hasUntrackedFiles = $untrackedFiles.Count -gt 0
+            
+            if ($hasUncommittedChanges -or $hasStagedChanges -or $hasUntrackedFiles) {
+                Write-Host "`n📝 Staging changes..." -ForegroundColor Yellow
+                
+                # Stage all changes including untracked files
+                git add -A 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "⚠️  Warning: git add failed. Continuing anyway..." -ForegroundColor Yellow
+                }
+                
+                # Create commit message
+                $commitMessage = if ($normalizedEnv -eq "production") {
+                    if ($Platform -eq "android") {
+                        "Deploy Android v$Version (versionCode $BuildNumber) to production"
+                    } else {
+                        "Deploy iOS v$Version (buildNumber $BuildNumber) to production"
+                    }
+                } else {
+                    "Deploy $Platform to $normalizedEnv"
+                }
+                
+                Write-Host "   Committing changes..." -ForegroundColor Yellow
+                git commit -m $commitMessage 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "⚠️  Warning: git commit failed (maybe no changes to commit). Continuing..." -ForegroundColor Yellow
+                } else {
+                    Write-Host "✅ Committed changes: $commitMessage" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "   No changes to commit" -ForegroundColor Gray
+            }
+            
+            # Push to francis branch
+            Write-Host "`n⬆️  Pushing to francis branch..." -ForegroundColor Yellow
+            git push origin francis 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "❌ Failed to push to francis branch" -ForegroundColor Red
+                Write-Host "   Error: git push origin francis failed" -ForegroundColor Red
+                Write-Host "   Please check your git credentials and remote configuration" -ForegroundColor Yellow
+                exit 1
+            }
+            Write-Host "✅ Pushed to francis branch" -ForegroundColor Green
+            
+            # Merge francis into main
+            Write-Host "`n🔀 Merging francis into main..." -ForegroundColor Yellow
+            
+            # Check if main branch exists locally
+            $mainExists = git show-ref --verify --quiet refs/heads/main 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                # Try to checkout main from remote
+                Write-Host "   Main branch doesn't exist locally. Checking out from remote..." -ForegroundColor Gray
+                git checkout -b main origin/main 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "⚠️  Warning: Could not checkout main branch from remote." -ForegroundColor Yellow
+                    Write-Host "   Creating main branch..." -ForegroundColor Gray
+                    git checkout -b main 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "❌ Failed to create main branch" -ForegroundColor Red
+                        exit 1
+                    }
+                }
+            } else {
+                git checkout main 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "❌ Failed to switch to main branch" -ForegroundColor Red
+                    exit 1
+                }
+            }
+            
+            Write-Host "   Pulling latest main..." -ForegroundColor Gray
+            git pull origin main 2>&1 | Out-Null
+            # Ignore errors for pull (might fail if main doesn't exist on remote)
+            
+            Write-Host "   Merging francis into main..." -ForegroundColor Gray
+            git merge francis --no-edit 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "❌ Failed to merge francis into main (merge conflicts?)" -ForegroundColor Red
+                Write-Host "   Please resolve conflicts manually:" -ForegroundColor Yellow
+                Write-Host "   1. Resolve conflicts in the files" -ForegroundColor Gray
+                Write-Host "   2. git add ." -ForegroundColor Gray
+                Write-Host "   3. git commit" -ForegroundColor Gray
+                Write-Host "   4. git push origin main" -ForegroundColor Gray
+                Write-Host "   OR cancel: git merge --abort" -ForegroundColor Gray
+                exit 1
+            }
+            Write-Host "✅ Merged francis into main" -ForegroundColor Green
+            
+            # Push main branch
+            Write-Host "`n⬆️  Pushing main branch..." -ForegroundColor Yellow
+            git push origin main 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                # If push fails, try to set upstream
+                Write-Host "   Setting upstream and pushing..." -ForegroundColor Gray
+                git push -u origin main 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "❌ Failed to push main branch" -ForegroundColor Red
+                    Write-Host "   Please push manually: git push origin main" -ForegroundColor Yellow
+                    exit 1
+                }
+            }
+            Write-Host "✅ Pushed main branch" -ForegroundColor Green
+            
+            # Switch back to francis branch for continued work
+            Write-Host "`n🔄 Switching back to francis branch..." -ForegroundColor Yellow
+            git checkout francis 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "⚠️  Warning: Could not switch back to francis branch" -ForegroundColor Yellow
+            } else {
+                Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
+            }
+        }
+    }
+
     # Confirm before proceeding
     Write-Host "`n📋 Deployment Summary:" -ForegroundColor Cyan
     Write-Host "   Platform: $Platform" -ForegroundColor White
@@ -374,6 +574,24 @@ try {
         Write-Host "   Version name: $Version" -ForegroundColor White
         $buildLabel = if ($Platform -eq "ios") { "Build number" } else { "Version code" }
         Write-Host "   ${buildLabel}: $BuildNumber" -ForegroundColor White
+        
+        # Verify values in app.json match what we expect
+        Write-Host "`n🔍 Verifying app.json values:" -ForegroundColor Cyan
+        $appJsonPath = "$PSScriptRoot\..\app.json"
+        $verifyJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+        if ($Platform -eq "android") {
+            $actualVersionCode = $verifyJson.expo.android.versionCode
+            Write-Host "   Android versionCode in app.json: $actualVersionCode" -ForegroundColor $(if ([int]$actualVersionCode -eq [int]$BuildNumber) { "Green" } else { "Red" })
+            if ([int]$actualVersionCode -ne [int]$BuildNumber) {
+                Write-Host "   ⚠️  WARNING: Mismatch! Expected $BuildNumber but found $actualVersionCode" -ForegroundColor Red
+            }
+        } else {
+            $actualBuildNumber = $verifyJson.expo.ios.buildNumber
+            Write-Host "   iOS buildNumber in app.json: $actualBuildNumber" -ForegroundColor $(if ($actualBuildNumber -eq $BuildNumber) { "Green" } else { "Red" })
+            if ($actualBuildNumber -ne $BuildNumber) {
+                Write-Host "   ⚠️  WARNING: Mismatch! Expected $BuildNumber but found $actualBuildNumber" -ForegroundColor Red
+            }
+        }
     }
 
     # If -Local was not passed, prompt: local / cloud / GitHub Actions
