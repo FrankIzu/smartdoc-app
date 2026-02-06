@@ -600,28 +600,27 @@ try {
         else { $Local = $false }
     }
 
-    # GitHub Actions: trigger workflow (branch already pushed earlier)
+    # GitHub Actions: trigger workflow (main was just pushed with francis content)
     if ($useGitHubActions) {
         Write-Host "`n🚀 Triggering GitHub Actions workflow..." -ForegroundColor Cyan
         Set-Location "$PSScriptRoot\.."
-        $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
-        if (-not $branch) {
-            Write-Host "❌ Not a git repository or could not get current branch." -ForegroundColor Red
-            exit 1
-        }
         $workflowFile = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
-        Write-Host "Triggering $workflowFile for ref $branch (profile $profile)..." -ForegroundColor Cyan
+        # Use main so workflow_dispatch is valid (workflow definition lives on default branch)
+        $ref = "main"
+        Write-Host "Triggering $workflowFile for ref $ref (profile $profile)..." -ForegroundColor Cyan
         if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
             $ghPaths = @("$env:ProgramFiles\GitHub CLI\gh.exe", "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe", "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe")
             foreach ($p in $ghPaths) {
                 if (Test-Path $p) { $env:PATH = "$(Split-Path $p);$env:PATH"; break }
             }
         }
-        gh workflow run $workflowFile -f profile=$profile --ref $branch
+        gh workflow run $workflowFile -f profile=$profile --ref $ref
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "⚠️  Could not trigger workflow (workflow must exist on default branch). Run manually: gh workflow run $workflowFile -f profile=$profile --ref $branch" -ForegroundColor Yellow
+            Write-Host "⚠️  Could not trigger workflow." -ForegroundColor Yellow
+            Write-Host "   Ensure workflow has 'workflow_dispatch' on default branch and gh is logged into the correct repo." -ForegroundColor Gray
+            Write-Host "   Run manually: gh workflow run $workflowFile -f profile=$profile --ref $ref" -ForegroundColor Gray
         } else {
-            Write-Host "✅ Triggered $Platform build on $branch. See Actions tab for run." -ForegroundColor Green
+            Write-Host "✅ Triggered $Platform build on $ref. See Actions tab for run." -ForegroundColor Green
         }
         exit 0
     }
