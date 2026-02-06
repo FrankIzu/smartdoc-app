@@ -440,6 +440,20 @@ try {
                 $currentBranch = "francis"
             }
             
+            # Ensure workflow files are tracked and committed
+            $workflowFiles = @(".github/workflows/build-ios.yml", ".github/workflows/build-android.yml")
+            $workflowNeedsCommit = $false
+            foreach ($wf in $workflowFiles) {
+                if (Test-Path $wf) {
+                    # Check if file is tracked and has changes, or is untracked
+                    $status = git status --porcelain $wf 2>&1
+                    if ($status -match '^\?\?' -or $status -match '^ M' -or $status -match '^A ' -or $status -match '^AM') {
+                        $workflowNeedsCommit = $true
+                        Write-Host "   Found workflow file that needs to be committed: $wf" -ForegroundColor Gray
+                    }
+                }
+            }
+            
             # Check if there are changes to commit
             git diff --quiet --exit-code 2>&1 | Out-Null
             $hasUncommittedChanges = $LASTEXITCODE -ne 0
@@ -450,10 +464,20 @@ try {
             $untrackedFiles = git ls-files --others --exclude-standard 2>&1
             $hasUntrackedFiles = $untrackedFiles.Count -gt 0
             
-            if ($hasUncommittedChanges -or $hasStagedChanges -or $hasUntrackedFiles) {
+            if ($hasUncommittedChanges -or $hasStagedChanges -or $hasUntrackedFiles -or $workflowNeedsCommit) {
                 Write-Host "`n📝 Staging changes..." -ForegroundColor Yellow
                 
-                # Stage all changes including untracked files
+                # Explicitly add workflow files to ensure they're included
+                foreach ($wf in $workflowFiles) {
+                    if (Test-Path $wf) {
+                        git add $wf 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "   Staged workflow file: $wf" -ForegroundColor Gray
+                        }
+                    }
+                }
+                
+                # Stage all other changes including untracked files
                 git add -A 2>&1 | Out-Null
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "⚠️  Warning: git add failed. Continuing anyway..." -ForegroundColor Yellow
@@ -548,16 +572,34 @@ try {
             }
             Write-Host "✅ Pushed main branch" -ForegroundColor Green
             
-            # Verify workflow file was included in the push (check before switching branches)
+            # Verify workflow file was included in the push (check on main branch before switching)
             $workflowFileCheck = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
             $workflowPathCheck = ".github/workflows/$workflowFileCheck"
             Write-Host "   Verifying workflow file exists in pushed commit..." -ForegroundColor Gray
             if (Test-Path $workflowPathCheck) {
+                # Check if file exists in the current HEAD (main branch after reset)
                 $workflowInCommit = git ls-tree HEAD --name-only | Select-String -Pattern $workflowFileCheck
                 if ($workflowInCommit) {
                     Write-Host "   ✅ Workflow file confirmed in commit" -ForegroundColor Green
                 } else {
                     Write-Host "   ⚠️  Warning: Workflow file exists locally but not in commit" -ForegroundColor Yellow
+                    Write-Host "   This may cause workflow_dispatch to fail. Ensuring workflow file is committed..." -ForegroundColor Yellow
+                    # Try to add and commit the workflow file if it's missing
+                    git add $workflowPathCheck 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        git commit -m "Ensure workflow file is included for workflow_dispatch" --allow-empty 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "   ✅ Committed workflow file" -ForegroundColor Green
+                            Write-Host "   Pushing updated commit to main..." -ForegroundColor Yellow
+                            git push origin main --force-with-lease 2>&1 | Out-Null
+                            if ($LASTEXITCODE -ne 0) {
+                                git push origin main --force 2>&1 | Out-Null
+                            }
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Host "   ✅ Pushed workflow file to main" -ForegroundColor Green
+                            }
+                        }
+                    }
                 }
             } else {
                 Write-Host "   ⚠️  Warning: Workflow file not found: $workflowPathCheck" -ForegroundColor Yellow
