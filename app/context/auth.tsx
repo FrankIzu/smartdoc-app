@@ -157,7 +157,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string, remember: boolean = false) => {
     try {
-      setLoading(true);
+      // Do NOT set loading=true here: it would unmount the entire app (AuthWrapper returns null)
+      // and the sign-in screen would remount with lost state, so the user wouldn't see the error.
+      // The sign-in screen uses its own loading state for the button.
       
       // Use real API only - no fallback
       const response = await apiService.login({ 
@@ -246,10 +248,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (error) {
       console.error('❌ Sign in failed:', error);
-      // Ensure user state is cleared on any error
+      // Ensure user state is cleared on any error so we never redirect to home
       setUser(null);
       throw error;
     } finally {
+      // Only clear loading if we had set it (we no longer set it for signIn to avoid unmounting)
       setLoading(false);
     }
   };

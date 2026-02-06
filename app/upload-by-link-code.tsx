@@ -32,27 +32,18 @@ export default function UploadByLinkCodeScreen() {
 
     setLoading(true);
     try {
-      // Validate the code by checking if the upload link exists
-      // Mobile endpoint: /api/v1/mobile/upload-to/by-code/{code}
+      // Web endpoint (same as grabdocs.com) so shared links are reachable
       const trimmedCode = code.trim();
-      const url = `${API_BASE_URL}/api/v1/mobile/upload-to/by-code/${trimmedCode}`;
-      console.log('🔍 Validating upload code:', trimmedCode, 'URL:', url);
-      
+      const url = `${API_BASE_URL}/api/v1/web/upload-to/by-code/${encodeURIComponent(trimmedCode)}`;
       const response = await fetch(url);
       const data = await response.json();
 
-      console.log('📡 Upload code validation response:', {
-        status: response.status,
-        ok: response.ok,
-        success: data.success,
-        data: data
-      });
-
-      if (response.ok && data.success) {
-        // Code is valid, navigate to upload form
+      if (response.ok && data.success && data.upload_link) {
+        // Resolve to link_token and open upload form (URLs use link_token, not short code)
+        const linkToken = data.upload_link.link_token ?? trimmedCode;
         router.push({
           pathname: '/upload-by-link',
-          params: { token: trimmedCode },
+          params: { token: linkToken },
         });
       } else {
         let errorMessage = 'The upload code you entered is invalid or has expired.';

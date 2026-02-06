@@ -95,8 +95,33 @@ jobs:
           echo "Submitting iOS app to App Store Connect..."
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
+            # Write the API key to a temporary file
             echo "$ASC_KEY_P8_BASE64" | base64 -d > /tmp/asc-key.p8
-            npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive --asc-api-key-path /tmp/asc-key.p8 --asc-api-key-id "$ASC_KEY_ID" --asc-api-key-issuer-id "$ASC_ISSUER_ID"
+            chmod 600 /tmp/asc-key.p8
+            # Update eas.json to include ASC API key configuration (newer EAS CLI reads from eas.json)
+            # Use jq if available, otherwise use sed/python
+            if command -v jq &> /dev/null; then
+              jq '.submit.production.ios.ascApiKeyPath = "/tmp/asc-key.p8" | .submit.production.ios.ascApiKeyId = "'"$ASC_KEY_ID"'" | .submit.production.ios.ascApiKeyIssuerId = "'"$ASC_ISSUER_ID"'"' eas.json > eas.json.tmp && mv eas.json.tmp eas.json
+            else
+              # Fallback: use Python to update JSON
+              python3 << 'EOF'
+import json
+import sys
+import os
+
+with open('eas.json', 'r') as f:
+    config = json.load(f)
+
+config['submit']['production']['ios']['ascApiKeyPath'] = '/tmp/asc-key.p8'
+config['submit']['production']['ios']['ascApiKeyId'] = os.environ['ASC_KEY_ID']
+config['submit']['production']['ios']['ascApiKeyIssuerId'] = os.environ['ASC_ISSUER_ID']
+
+with open('eas.json', 'w') as f:
+    json.dump(config, f, indent=2)
+EOF
+            fi
+            # Submit using the profile (credentials are read from eas.json)
+            npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
           else
             echo "Using app-specific password"
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
@@ -133,7 +158,6 @@ jobs:
             Actor: ${{ github.actor }}
             
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          content_type: text/html
 
       - name: Send failure email
         if: failure() && github.event.inputs.profile == 'production'
@@ -161,4 +185,3 @@ jobs:
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
             
             Please check the workflow logs for details.
-          content_type: text/html

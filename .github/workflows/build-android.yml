@@ -261,7 +261,6 @@ jobs:
             Actor: ${{ github.actor }}
             
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          content_type: text/html
 
       - name: Send failure email
         if: failure() && github.event.inputs.profile == 'production'
@@ -289,4 +288,3 @@ jobs:
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
             
             Please check the workflow logs for details.
-          content_type: text/html

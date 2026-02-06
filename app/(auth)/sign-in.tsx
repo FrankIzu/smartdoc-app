@@ -35,10 +35,13 @@ export default function SignInScreen() {
   const [biometricType, setBiometricType] = useState('Biometric');
   const [needsOtp, setNeedsOtp] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const insets = useSafeAreaInsets();
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
-  const { signIn, loading, refreshSession } = useAuth();
+  // Note: We use local isSubmitting for the button so the screen doesn't unmount on login (auth loading would hide entire app)
+  const { signIn, loading: authLoading, refreshSession } = useAuth();
+  const loading = authLoading || isSubmitting;
   const { loginWithBiometric } = useEnhanced2FAAuth();
 
   // Check biometric availability on component mount
@@ -108,11 +111,13 @@ export default function SignInScreen() {
         return;
       }
 
+      setIsSubmitting(true);
+
       // Step 1: Try regular login first
       try {
         await signIn(username, password, rememberDevice);
-        // If successful without OTP, navigation handled by auth context
-        // Only navigate if login was actually successful (user is set)
+        // Success: we're on sign-in screen so we must navigate to home (index only redirects when it's the active route)
+        router.replace('/(tabs)');
         return;
       } catch (loginError: any) {
         // IMPORTANT: On login failure, stay on login screen and show error
@@ -131,6 +136,7 @@ export default function SignInScreen() {
           const email = userData?.email || '';
           const phoneNumber = userData?.phone_number || userData?.phoneNumber || '';
           
+          setIsSubmitting(false);
           // Navigate to OTP verification screen with user info
           // Note: We pass password temporarily so we can complete login after OTP verification
           // This is stored in memory only and cleared after use
@@ -162,22 +168,20 @@ export default function SignInScreen() {
           // Request OTP - this will navigate to OTP screen on success
           await requestOtpForUser(username);
         } else {
-          // If no OTP needed, show the login error and STAY on login screen
+          // If no OTP needed, show the login error and STAY on login screen (do not redirect)
           const errorMessage = loginError.message || 'Invalid username or password';
           console.log('❌ Login failed - showing error on login screen:', errorMessage);
           setError(errorMessage);
-          // Explicitly ensure we stay on login screen - no navigation
           return;
         }
       }
-
     } catch (error: any) {
       console.error('Enhanced login error:', error);
-      // On any error, show error message and stay on login screen
+      // On any error, show error on login screen and stay here (do not redirect to home)
       const errorMessage = error.message || 'Login failed. Please try again.';
       setError(errorMessage);
-      // Explicitly prevent navigation - stay on login screen
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -364,9 +368,9 @@ export default function SignInScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <View style={[styles.content, { paddingTop: insets.top + (Platform.OS === 'android' ? 20 : 24) }]}>
+      <View style={[styles.content, { paddingTop: insets.top + (Platform.OS === 'android' ? 20 : 28) }]}>
         <View style={styles.centeredBlock}>
-          {/* Top spacer: pushes sign-in block down toward middle/lower-middle */}
+          {/* Top spacer */}
           <View style={styles.topSpacer} />
           {/* Profile Section */}
           <View style={styles.profileSection}>
@@ -489,23 +493,25 @@ export default function SignInScreen() {
             <View style={styles.dividerLine} />
           </View>
 
-          {/* Social sign-in: square icon buttons */}
-          <View style={styles.socialRow}>
+          {/* Social sign-in: regular full-width buttons with "Sign in with Google" / "Sign in with Apple" */}
+          <View style={styles.socialContainer}>
             <TouchableOpacity
-              style={[styles.socialButtonSquare, styles.googleButton, loading && styles.buttonDisabled]}
+              style={[styles.socialButton, styles.googleButton, loading && styles.buttonDisabled]}
               onPress={handleGoogleSignIn}
               disabled={loading}
             >
-              <GoogleLogo size={24} />
+              <GoogleLogo size={20} />
+              <Text style={styles.socialButtonText}>Sign in with Google</Text>
             </TouchableOpacity>
             {Platform.OS === 'ios' && appleSignInAvailable && (
               <TouchableOpacity
-                style={[styles.socialButtonSquare, styles.appleButton, loading && styles.buttonDisabled]}
+                style={[styles.socialButton, styles.appleButton, loading && styles.buttonDisabled]}
                 onPress={handleAppleSignIn}
                 disabled={loading}
                 activeOpacity={0.8}
               >
-                <Ionicons name="logo-apple" size={24} color="#fff" />
+                <Ionicons name="logo-apple" size={20} color="#fff" />
+                <Text style={[styles.socialButtonText, styles.appleButtonText]}>Sign in with Apple</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -542,8 +548,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   topSpacer: {
-    flex: 0.1,
-    minHeight: 40,
+    minHeight: 32,
   },
   profileSection: {
     alignItems: 'center',
@@ -558,16 +563,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   inputContainer: {
-    marginBottom: isAndroid ? 10 : 18,
+    marginBottom: 18,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: isAndroid ? 8 : 12,
-    paddingHorizontal: isAndroid ? 8 : 14,
-    paddingVertical: isAndroid ? 4 : 12,
-    minHeight: isAndroid ? undefined : 48,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 48,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
@@ -576,10 +581,10 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontSize: isAndroid ? 15 : 16,
+    fontSize: 16,
     color: '#333',
-    minHeight: isAndroid ? undefined : 24,
-    paddingVertical: isAndroid ? 0 : 4,
+    minHeight: 24,
+    paddingVertical: 4,
   },
   optionsRow: {
     flexDirection: 'row',
@@ -661,20 +666,18 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
   },
-  socialRow: {
+  socialContainer: {
+    width: '100%',
+    marginBottom: isAndroid ? 16 : 24,
+    gap: 12,
+  },
+  socialButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    width: '100%',
-    marginBottom: isAndroid ? 16 : 24,
-  },
-  socialButtonSquare: {
-    width: 56,
-    height: 56,
+    paddingVertical: 16,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 10,
   },
   googleButton: {
     backgroundColor: '#fff',
@@ -683,6 +686,14 @@ const styles = StyleSheet.create({
   },
   appleButton: {
     backgroundColor: '#000',
+  },
+  socialButtonText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#333',
+  },
+  appleButtonText: {
+    color: '#fff',
   },
   signUpContainer: {
     flexDirection: 'row',

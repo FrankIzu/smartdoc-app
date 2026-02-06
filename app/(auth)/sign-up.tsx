@@ -404,29 +404,39 @@ export default function SignUpScreen() {
         </View>
 
         <View style={styles.socialSection}>
-          <Text style={styles.socialLabel}>Sign up with:</Text>
-          <View style={styles.socialIconsCenter}>
-            <View style={styles.socialRow}>
-              <TouchableOpacity
-                style={[styles.socialButtonSquare, styles.googleButton, isLoading && styles.buttonDisabled]}
-                onPress={handleGoogleSignUp}
-                disabled={isLoading}
-              >
-                <GoogleLogo size={24} />
-              </TouchableOpacity>
-
-              {Platform.OS === 'ios' && appleSignInAvailable && (
+          {Platform.OS === 'android' ? (
+            <TouchableOpacity
+              style={[styles.socialButtonFull, styles.googleButton, isLoading && styles.buttonDisabled]}
+              onPress={handleGoogleSignUp}
+              disabled={isLoading}
+            >
+              <GoogleLogo size={20} />
+              <Text style={styles.socialButtonFullText}>Sign up with Google</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <Text style={styles.socialLabel}>Sign up with</Text>
+              <View style={styles.socialRow}>
                 <TouchableOpacity
-                  style={[styles.socialButtonSquare, styles.appleButtonSquare, isLoading && styles.buttonDisabled]}
-                  onPress={handleAppleSignUp}
+                  style={[styles.socialButtonSquare, styles.googleButton, isLoading && styles.buttonDisabled]}
+                  onPress={handleGoogleSignUp}
                   disabled={isLoading}
-                  activeOpacity={0.8}
                 >
-                  <Ionicons name="logo-apple" size={24} color="#fff" />
+                  <GoogleLogo size={24} />
                 </TouchableOpacity>
-              )}
-            </View>
-          </View>
+                {appleSignInAvailable && (
+                  <TouchableOpacity
+                    style={[styles.socialButtonSquare, styles.appleButtonSquare, isLoading && styles.buttonDisabled]}
+                    onPress={handleAppleSignUp}
+                    disabled={isLoading}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="logo-apple" size={24} color="#fff" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          )}
         </View>
 
         <View style={styles.footer}>
@@ -465,22 +475,22 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     width: '100%',
-    marginBottom: isAndroid ? 8 : 18,
+    marginBottom: 18,
   },
   inputLabel: {
     fontSize: 13,
     fontWeight: '500',
     color: '#333',
-    marginBottom: isAndroid ? 3 : 5,
+    marginBottom: 5,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: isAndroid ? 8 : 12,
-    paddingHorizontal: isAndroid ? 8 : 14,
-    paddingVertical: isAndroid ? 4 : 12,
-    minHeight: isAndroid ? undefined : 48,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 48,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
@@ -489,10 +499,10 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontSize: isAndroid ? 15 : 16,
+    fontSize: 16,
     color: '#333',
-    minHeight: isAndroid ? undefined : 24,
-    paddingVertical: isAndroid ? 0 : 4,
+    minHeight: 24,
+    paddingVertical: 4,
   },
   nameContainer: {
     flexDirection: 'row',
@@ -596,30 +606,34 @@ const styles = StyleSheet.create({
   },
   socialSection: {
     width: '100%',
-    flexDirection: 'row',
     alignItems: 'center',
     marginBottom: isAndroid ? 8 : 10,
-    minHeight: 56,
   },
   socialLabel: {
     color: '#666',
-    fontSize: isAndroid ? 14 : 16,
+    fontSize: 16,
     fontWeight: 'bold',
-    marginRight: 8,
-  },
-  socialIconsCenter: {
-    flex: 1,
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
+    marginBottom: 8,
   },
   socialRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
+  },
+  socialButtonFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 10,
+  },
+  socialButtonFullText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#333',
   },
   socialButtonSquare: {
     width: 56,

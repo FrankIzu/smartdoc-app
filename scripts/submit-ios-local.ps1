@@ -21,8 +21,8 @@ if (Test-Path $envLocalPath) {
             $value = $matches[2].Trim()
             if ($key -eq "EXPO_TOKEN" -or $key -eq "EXPO_APPLE_APP_SPECIFIC_PASSWORD" -or 
                 $key -eq "ASC_KEY_ID" -or $key -eq "ASC_ISSUER_ID" -or $key -eq "ASC_KEY_P8_BASE64") {
-                # Set both PowerShell $env: and Process-level environment variables
-                Set-Item -Path "env:$key" -Value $value
+                # Set both PowerShell env drive and Process-level environment variables
+                Set-Item -Path (Join-Path 'env:' $key) -Value $value
                 [Environment]::SetEnvironmentVariable($key, $value, "Process")
                 Write-Host "   ✅ Loaded $key" -ForegroundColor Gray
             }
@@ -48,9 +48,8 @@ $hasAppPassword = $env:EXPO_APPLE_APP_SPECIFIC_PASSWORD
 
 if (-not $hasApiKeys -and -not $hasAppPassword) {
     Write-Host "`n❌ No Apple authentication method found" -ForegroundColor Red
-    Write-Host "   Option 1 (Recommended): Set App Store Connect API keys:" -ForegroundColor Yellow
-    Write-Host "      ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64" -ForegroundColor Gray
-    Write-Host "   Option 2: Set app-specific password:" -ForegroundColor Yellow
+    Write-Host "   Option 1 - Set ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64" -ForegroundColor Yellow
+    Write-Host "   Option 2 - Set EXPO_APPLE_APP_SPECIFIC_PASSWORD" -ForegroundColor Yellow
     Write-Host "      EXPO_APPLE_APP_SPECIFIC_PASSWORD" -ForegroundColor Gray
     Write-Host "   Add them to .env.local or set as environment variables" -ForegroundColor Yellow
     exit 1
@@ -119,42 +118,80 @@ Write-Host "   IPA: $IpaPath" -ForegroundColor Gray
 Write-Host "   Profile: production" -ForegroundColor Gray
 Write-Host "   Apple ID: francis.onodueze@gmail.com" -ForegroundColor Gray
 
-# Verify credentials are set
-if (-not $env:EXPO_APPLE_APP_SPECIFIC_PASSWORD) {
-    Write-Host "`n❌ EXPO_APPLE_APP_SPECIFIC_PASSWORD is not set in environment" -ForegroundColor Red
-    Write-Host "   Please set it: `$env:EXPO_APPLE_APP_SPECIFIC_PASSWORD = 'your-password'" -ForegroundColor Yellow
+# When using app-specific password, verify it is set
+if (-not $hasApiKeys -and -not $env:EXPO_APPLE_APP_SPECIFIC_PASSWORD) {
+    Write-Host "`n❌ EXPO_APPLE_APP_SPECIFIC_PASSWORD is not set" -ForegroundColor Red
+    Write-Host "   Add it to .env.local or set the environment variable" -ForegroundColor Yellow
     exit 1
 }
 
-# Verify password format (should be xxxx-xxxx-xxxx-xxxx)
-$passwordPattern = '^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$'
-if ($env:EXPO_APPLE_APP_SPECIFIC_PASSWORD -notmatch $passwordPattern) {
-    Write-Host "`n⚠️  Warning: App-specific password format looks incorrect" -ForegroundColor Yellow
-    Write-Host "   Expected format: xxxx-xxxx-xxxx-xxxx (lowercase letters)" -ForegroundColor Gray
-    Write-Host "   Current value: $($env:EXPO_APPLE_APP_SPECIFIC_PASSWORD.Substring(0, [Math]::Min(10, $env:EXPO_APPLE_APP_SPECIFIC_PASSWORD.Length)))..." -ForegroundColor Gray
-    Write-Host "   Make sure there are no extra spaces or characters" -ForegroundColor Yellow
+if (-not $hasApiKeys -and $env:EXPO_APPLE_APP_SPECIFIC_PASSWORD) {
+    $passwordPattern = '^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$'
+    if ($env:EXPO_APPLE_APP_SPECIFIC_PASSWORD -notmatch $passwordPattern) {
+        Write-Host "`n⚠️  Warning: App-specific password format looks incorrect (expected xxxx-xxxx-xxxx-xxxx)" -ForegroundColor Yellow
+    }
+}
+
+# When using API keys from .env.local: write .p8 and inject into eas.json so EAS uses them
+# (EAS otherwise uses a stored key on their servers which may be invalid.)
+$easJsonBackup = $null
+$tempP8Path = $null
+if ($hasApiKeys) {
+    try {
+        $tempP8Path = Join-Path $env:TEMP "asc-key-$([Guid]::NewGuid().ToString('n')).p8"
+        [System.Convert]::FromBase64String($env:ASC_KEY_P8_BASE64) | Set-Content -Path $tempP8Path -Encoding Byte
+        if (-not (Test-Path $tempP8Path)) { throw "Failed to write .p8 file" }
+        $tempP8Path = (Resolve-Path $tempP8Path).Path
+
+        $easPath = Join-Path $PWD "eas.json"
+        $eas = Get-Content $easPath -Raw | ConvertFrom-Json
+        $easJsonBackup = Get-Content $easPath -Raw
+
+        if (-not $eas.submit.production.ios) { $eas.submit.production | Add-Member -MemberType NoteProperty -Name ios -Value @{} -Force }
+        $eas.submit.production.ios | Add-Member -MemberType NoteProperty -Name ascApiKeyPath -Value $tempP8Path -Force
+        $eas.submit.production.ios | Add-Member -MemberType NoteProperty -Name ascApiKeyId -Value $env:ASC_KEY_ID -Force
+        $eas.submit.production.ios | Add-Member -MemberType NoteProperty -Name ascApiKeyIssuerId -Value $env:ASC_ISSUER_ID -Force
+
+        $eas | ConvertTo-Json -Depth 10 | Set-Content $easPath -Encoding UTF8
+        Write-Host "   Using local ASC API key from .env.local (Key ID: $env:ASC_KEY_ID)" -ForegroundColor Green
+    } catch {
+        Write-Host "`n⚠️  Could not inject ASC key into eas.json: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "   EAS may use stored key; if submit fails with 'Invalid ASC API key', update credentials at expo.dev" -ForegroundColor Gray
+    }
 }
 
 try {
     Write-Host "`nExecuting submission..." -ForegroundColor Gray
-    
-    # Use app-specific password method (more reliable, works across all EAS CLI versions)
-    # EAS will pick up EXPO_APPLE_APP_SPECIFIC_PASSWORD from environment
-        # and Apple ID from eas.json (francis.onodueze@gmail.com)
-    Write-Host "   Using app-specific password authentication" -ForegroundColor Gray
-    Write-Host "   Apple ID: francis.onodueze@gmail.com" -ForegroundColor Gray
-    
+    if ($hasApiKeys) {
+        Write-Host "   Auth: App Store Connect API key (from .env.local)" -ForegroundColor Gray
+    } else {
+        Write-Host "   Auth: App-specific password" -ForegroundColor Gray
+    }
+
     npx eas-cli submit --platform ios --path $IpaPath --profile production --non-interactive
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`n✅ Submission completed successfully!" -ForegroundColor Green
         Write-Host "   Check App Store Connect: https://appstoreconnect.apple.com" -ForegroundColor Cyan
         Write-Host "   Build may take 15 minutes to several hours to appear in TestFlight" -ForegroundColor Yellow
     } else {
         Write-Host "`n❌ Submission failed with exit code $LASTEXITCODE" -ForegroundColor Red
+        if ($easJsonBackup) { Set-Content -Path (Join-Path $PWD "eas.json") -Value $easJsonBackup -Encoding UTF8 }
+        if ($tempP8Path -and (Test-Path $tempP8Path)) { Remove-Item $tempP8Path -Force -ErrorAction SilentlyContinue }
         exit $LASTEXITCODE
     }
 } catch {
     Write-Host "`n❌ Error during submission: $($_.Exception.Message)" -ForegroundColor Red
+    if ($easJsonBackup) { Set-Content -Path (Join-Path $PWD "eas.json") -Value $easJsonBackup -Encoding UTF8 }
+    if ($tempP8Path -and (Test-Path $tempP8Path)) { Remove-Item $tempP8Path -Force -ErrorAction SilentlyContinue }
     exit 1
+} finally {
+    # Restore eas.json and remove temp .p8
+    if ($easJsonBackup) {
+        Set-Content -Path (Join-Path $PWD "eas.json") -Value $easJsonBackup -Encoding UTF8
+        Write-Host "   Restored eas.json" -ForegroundColor Gray
+    }
+    if ($tempP8Path -and (Test-Path $tempP8Path)) {
+        Remove-Item $tempP8Path -Force -ErrorAction SilentlyContinue
+    }
 }

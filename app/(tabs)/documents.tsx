@@ -111,6 +111,11 @@ export default function QuickFilesScreen() {
   const [showPaymentStatusModal, setShowPaymentStatusModal] = useState(false);
   const [updatingPaymentStatus, setUpdatingPaymentStatus] = useState(false);
   
+  // Rename modal state
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameInputValue, setRenameInputValue] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  
   // Receipt categories (must match backend validation)
   const receiptCategories = [
     'Uncategorized',
@@ -1235,6 +1240,44 @@ export default function QuickFilesScreen() {
     setSelectedDocumentForMenu(null);
   };
 
+  const handleRenameDocument = () => {
+    if (!selectedDocumentForMenu) return;
+    const name = selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename || '';
+    const nameWithoutExt = name.replace(/\.[^/.]+$/, '');
+    setRenameInputValue(nameWithoutExt);
+    setShowKebabMenu(false);
+    setShowRenameModal(true);
+  };
+
+  const handleSubmitRename = async () => {
+    if (!selectedDocumentForMenu || !renameInputValue.trim()) return;
+    const name = selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename || '';
+    const ext = name.match(/\.[^/.]+$/)?.[0] || '';
+    const finalFilename = renameInputValue.trim() + ext;
+    if (finalFilename === name) {
+      setShowRenameModal(false);
+      return;
+    }
+    setRenaming(true);
+    try {
+      const response = await apiClient.renameFile(parseInt(selectedDocumentForMenu.id), finalFilename);
+      if (response.success) {
+        setDocuments(prev => prev.map(doc =>
+          doc.id === selectedDocumentForMenu.id ? { ...doc, name: finalFilename } : doc
+        ));
+        setShowRenameModal(false);
+        setSelectedDocumentForMenu(null);
+        Alert.alert('Success', 'File renamed successfully.');
+      } else {
+        Alert.alert('Error', (response as any).message || 'Failed to rename file');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to rename file');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
   const handleViewFormResponses = () => {
     if (!selectedDocumentForMenu) return;
     
@@ -1897,6 +1940,64 @@ export default function QuickFilesScreen() {
       marginLeft: 12,
       fontWeight: '500',
     },
+    renameModalContent: {
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      padding: 20,
+      width: '90%',
+      maxWidth: 360,
+    },
+    renameModalTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    renameModalCurrentLabel: {
+      fontSize: 13,
+      color: colors.textLight,
+      marginBottom: 12,
+    },
+    renameModalInput: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: colors.text,
+      marginBottom: 16,
+    },
+    renameModalButtons: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 12,
+    },
+    renameModalCancelBtn: {
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+    },
+    renameModalCancelText: {
+      fontSize: 16,
+      color: colors.textLight,
+      fontWeight: '500',
+    },
+    renameModalRenameBtn: {
+      backgroundColor: '#007AFF',
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      borderRadius: 10,
+      minWidth: 88,
+      alignItems: 'center',
+    },
+    renameModalRenameText: {
+      fontSize: 16,
+      color: '#fff',
+      fontWeight: '600',
+    },
+    renameModalBtnDisabled: {
+      opacity: 0.6,
+    },
     bookmarkModalContainer: {
       backgroundColor: colors.card,
       borderRadius: 20,
@@ -2348,17 +2449,6 @@ export default function QuickFilesScreen() {
               <Ionicons name="share-outline" size={20} color="#10B981" />
               <Text style={dynamicStyles.kebabMenuText}>Share</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
-              onPress={() => {
-                console.log('🗑️ Delete button pressed in kebab menu');
-                handleDeleteDocument();
-              }}
-            >
-              <Ionicons name="trash-outline" size={20} color="#EF4444" />
-              <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
-            </TouchableOpacity>
 
             <TouchableOpacity
               style={dynamicStyles.kebabMenuItem}
@@ -2383,6 +2473,82 @@ export default function QuickFilesScreen() {
               <Ionicons name="globe-outline" size={20} color="#0EA5E9" />
               <Text style={dynamicStyles.kebabMenuText}>{selectedDocumentForMenu?.is_global ? 'Change Global' : 'Make Global'}</Text>
             </TouchableOpacity>
+
+            {/* Rename: only for files that are not receipt or invoice */}
+            {(() => {
+              const fk = selectedDocumentForMenu?.file_kind?.toLowerCase();
+              const isReceiptOrInvoice = fk === 'receipt' || fk === 'receipts' || fk === 'invoice' || fk === 'invoices';
+              return !isReceiptOrInvoice;
+            })() && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleRenameDocument}
+              >
+                <Ionicons name="pencil-outline" size={20} color="#6B7280" />
+                <Text style={dynamicStyles.kebabMenuText}>Rename</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={() => {
+                console.log('🗑️ Delete button pressed in kebab menu');
+                handleDeleteDocument();
+              }}
+            >
+              <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Rename File Modal */}
+      <Modal
+        visible={showRenameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !renaming && setShowRenameModal(false)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !renaming && setShowRenameModal(false)}
+        >
+          <View style={dynamicStyles.renameModalContent} onStartShouldSetResponder={() => true}>
+            <Text style={dynamicStyles.renameModalTitle}>Rename File</Text>
+            {selectedDocumentForMenu ? (
+              <Text style={dynamicStyles.renameModalCurrentLabel}>Current: {selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename}</Text>
+            ) : null}
+            <TextInput
+              style={dynamicStyles.renameModalInput}
+              value={renameInputValue}
+              onChangeText={setRenameInputValue}
+              placeholder="New filename (no extension)"
+              placeholderTextColor="#999"
+              editable={!renaming}
+              autoCapitalize="none"
+            />
+            <View style={dynamicStyles.renameModalButtons}>
+              <TouchableOpacity
+                style={dynamicStyles.renameModalCancelBtn}
+                onPress={() => !renaming && setShowRenameModal(false)}
+                disabled={renaming}
+              >
+                <Text style={dynamicStyles.renameModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.renameModalRenameBtn, (!renameInputValue.trim() || renaming) && dynamicStyles.renameModalBtnDisabled]}
+                onPress={handleSubmitRename}
+                disabled={!renameInputValue.trim() || renaming}
+              >
+                {renaming ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={dynamicStyles.renameModalRenameText}>Rename</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </TouchableOpacity>
       </Modal>

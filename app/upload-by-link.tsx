@@ -81,22 +81,30 @@ export default function UploadByLinkScreen() {
 
   const loadUploadInfo = async () => {
     try {
-      // Mobile endpoint: /api/v1/mobile/upload-to/by-code/{code}
-      const response = await api.get<UploadLinkResponse>(`/api/v1/mobile/upload-to/by-code/${token}`);
-      if (response.data.success) {
-        setUploadInfo(response.data.upload_link);
+      // Web endpoint (same as grabdocs.com/upload-to) so shared links are reachable
+      const response = await api.get<UploadLinkResponse>(`/api/v1/web/upload-to/${token}`);
+      if (response.data.success && response.data.upload_link) {
+        const raw = response.data.upload_link;
+        setUploadInfo({
+          name: raw.link_name ?? raw.name ?? 'File Request',
+          description: raw.description ?? '',
+          current_uploads: raw.upload_count ?? raw.current_uploads ?? 0,
+          max_uploads: raw.max_uploads ?? null,
+          expires_at: raw.expires_at ?? null,
+        });
       } else {
         Alert.alert('Error', 'Invalid or expired upload link');
         router.back();
       }
     } catch (error: any) {
       console.error('Failed to load upload info:', error);
+      const status = error.response?.status;
       const message =
-        error.response?.status === 404
+        status === 404
           ? 'Upload link not found'
-          : error.response?.status === 410
+          : status === 410
           ? 'Upload link has expired'
-          : error.response?.status === 409
+          : status === 409
           ? 'Upload limit reached'
           : 'Failed to load upload information';
 
@@ -212,14 +220,12 @@ export default function UploadByLinkScreen() {
         }
 
         try {
-          // Upload to mobile endpoint: POST /api/v1/mobile/upload-to/<code_or_token>
-          const mobileUploadUrl = `${API_BASE_URL}/api/v1/mobile/upload-to/${token}`;
-          
-          // Show initial progress
+          // Web endpoint (same as grabdocs.com) so uploads go to the same link
+          const uploadUrl = `${API_BASE_URL}/api/v1/web/upload-to/${token}`;
           newProgress[fileKey] = 10;
           setUploadProgress({ ...newProgress });
 
-          const mobileResponse = await fetch(mobileUploadUrl, {
+          const uploadResponse = await fetch(uploadUrl, {
             method: 'POST',
             body: formData,
           });
@@ -227,57 +233,21 @@ export default function UploadByLinkScreen() {
           newProgress[fileKey] = 50;
           setUploadProgress({ ...newProgress });
 
-          // Check if response is JSON before parsing
-          const contentType = mobileResponse.headers.get('content-type');
-          let mobileResponseData;
-          
+          const contentType = uploadResponse.headers.get('content-type');
+          let responseData: any;
           if (contentType && contentType.includes('application/json')) {
-            mobileResponseData = await mobileResponse.json();
+            responseData = await uploadResponse.json();
           } else {
-            // If not JSON, try to get text response for error details
-            const textResponse = await mobileResponse.text();
+            const textResponse = await uploadResponse.text();
             console.error('❌ Non-JSON response from server:', textResponse.substring(0, 200));
-            throw new Error(`Server returned non-JSON response. Status: ${mobileResponse.status}`);
+            throw new Error(`Server returned non-JSON response. Status: ${uploadResponse.status}`);
           }
 
-          if (mobileResponse.ok && mobileResponseData.success) {
-            // Also call web endpoint
-            try {
-              const webUploadUrl = `${API_BASE_URL}/api/upload-to/${token}`;
-              const webFormData = new FormData();
-              webFormData.append('files', {
-                uri: file.uri,
-                name: file.name,
-                type: file.type,
-              } as any);
-              
-              if (senderName.trim()) {
-                webFormData.append('sender_name', senderName.trim());
-              }
-              if (senderEmail.trim()) {
-                webFormData.append('sender_email', senderEmail.trim());
-              }
-              if (message.trim()) {
-                webFormData.append('message', message.trim());
-              }
-              if (actionCode.trim()) {
-                webFormData.append('action_code', actionCode.trim());
-              }
-
-              await fetch(webUploadUrl, {
-                method: 'POST',
-                body: webFormData,
-              });
-              
-              console.log('✅ Also submitted to web endpoint');
-            } catch (webError) {
-              console.warn('⚠️ Failed to submit to web endpoint (non-critical):', webError);
-            }
-
+          if (uploadResponse.ok && responseData.success) {
             newProgress[fileKey] = 100;
             setUploadProgress({ ...newProgress });
           } else {
-            throw new Error(mobileResponseData.message || 'Upload failed');
+            throw new Error(responseData.message || 'Upload failed');
           }
         } catch (fileError: any) {
           console.error(`❌ Failed to upload ${file.name}:`, fileError);

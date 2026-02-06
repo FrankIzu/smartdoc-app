@@ -153,11 +153,15 @@ const MOBILE_ENDPOINTS = {
   WORKSPACE_INVITATION_BY_ID: (workspaceId: number, invitationId: number) => `/api/v1/mobile/workspaces/${workspaceId}/invitations/${invitationId}`,
   WORKSPACE_USERS: '/api/v1/mobile/workspace-users',
   
-  // Upload Links
-  UPLOAD_LINKS: '/api/v1/mobile/upload-links',
-  UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/mobile/upload-links/${id}`,
-  UPLOAD_LINK_SHARE: (id: number) => `/api/v1/mobile/upload-links/${id}/share`,
+  // Upload Links (mobile - kept for getUploadLinkFiles if needed)
   UPLOAD_LINK_FILES: (id: number) => `/api/v1/mobile/upload-links/${id}/files`,
+  // Web Upload Links (same as web app - links reachable at grabdocs.com/upload-to/{link_token})
+  WEB_UPLOAD_LINKS: '/api/v1/web/upload-links',
+  WEB_UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/web/upload-links/${id}`,
+  WEB_UPLOAD_LINK_SEND_EMAIL: (id: number) => `/api/v1/web/upload-links/${id}/send-email`,
+  WEB_FILES_UPLOADED_VIA_LINKS: '/api/v1/web/files/uploaded-via-links',
+  WEB_UPLOAD_TO: (token: string) => `/api/v1/web/upload-to/${token}`,
+  WEB_UPLOAD_TO_BY_CODE: (code: string) => `/api/v1/web/upload-to/by-code/${code}`,
   
   // Meeting Assets & Webhooks (same endpoints as web)
   VIDEO_ASSET_CONTENT: '/api/v1/video/asset-content',
@@ -885,6 +889,19 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Delete failed');
+    }
+  }
+
+  /**
+   * Rename a file (web endpoint).
+   * PUT /api/v1/web/files/:id/rename with body { filename }.
+   */
+  async renameFile(fileId: number, filename: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(`/api/v1/web/files/${fileId}/rename`, { filename });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Rename failed');
     }
   }
 
@@ -3754,13 +3771,30 @@ class ApiService {
     }
   }
 
-  // ==================== MOBILE UPLOAD LINKS ====================
+  // ==================== UPLOAD LINKS (WEB ENDPOINTS) ====================
+  // Use web endpoints so file request links work at https://grabdocs.com/upload-to/{link_token}
+
+  /** Normalize web link object to mobile shape (url = upload-to/link_token). */
+  private normalizeWebUploadLink(link: any): any {
+    if (!link) return link;
+    const token = link.link_token ?? link.token;
+    return {
+      ...link,
+      id: link.id,
+      name: link.name ?? link.link_name,
+      token: token,
+      url: token ? `upload-to/${token}` : (link.url || ''),
+      upload_count: link.upload_count ?? link.current_uploads ?? 0,
+      uploaded_files: link.uploaded_files ?? [],
+    };
+  }
 
   async getUploadLinks(): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINKS);
-      return response.data;
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_LINKS);
+      const data = response.data;
+      const links = (data.upload_links || []).map((l: any) => this.normalizeWebUploadLink(l));
+      return { ...data, success: true, upload_links: links };
     } catch (error: any) {
       console.error('Get upload links error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload links');
@@ -3774,9 +3808,12 @@ class ApiService {
     max_uploads?: number;
   }): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_LINKS, data);
-      return response.data;
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINKS, data);
+      const res = response.data;
+      // Web returns { link } on create
+      const link = res.link ?? res.upload_link;
+      const upload_link = this.normalizeWebUploadLink(link);
+      return { success: true, upload_link, ...res };
     } catch (error: any) {
       console.error('Create upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to create upload link');
@@ -3785,9 +3822,10 @@ class ApiService {
 
   async getUploadLink(id: number): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id));
-      return response.data;
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_BY_ID(id));
+      const data = response.data;
+      const upload_link = this.normalizeWebUploadLink(data.upload_link ?? data.link);
+      return { ...data, success: true, upload_link };
     } catch (error: any) {
       console.error('Get upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload link');
@@ -3796,9 +3834,10 @@ class ApiService {
 
   async updateUploadLink(id: number, data: any): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.put(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id), data);
-      return response.data;
+      const response = await this.client.put(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_BY_ID(id), data);
+      const res = response.data;
+      const upload_link = this.normalizeWebUploadLink(res.upload_link ?? res.link);
+      return { ...res, success: true, upload_link };
     } catch (error: any) {
       console.error('Update upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to update upload link');
@@ -3807,8 +3846,7 @@ class ApiService {
 
   async deleteUploadLink(id: number): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.delete(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id));
+      const response = await this.client.delete(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_BY_ID(id));
       return response.data;
     } catch (error: any) {
       console.error('Delete upload link error:', error);
@@ -3821,11 +3859,36 @@ class ApiService {
     message?: string;
   }): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_LINK_SHARE(id), data);
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_SEND_EMAIL(id), {
+        emails: data.emails,
+        message: data.message,
+      });
       return response.data;
     } catch (error: any) {
       console.error('Share upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to share upload link');
+    }
+  }
+
+  /** Get public upload link info by link_token (for opening shared link grabdocs.com/upload-to/{token}). */
+  async getUploadLinkByToken(token: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_TO(token));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get upload link by token error:', error);
+      throw new Error(error.response?.data?.message || 'Invalid or expired upload link');
+    }
+  }
+
+  /** Resolve upload code to link_token (by-code endpoint). */
+  async getUploadLinkByCode(code: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_TO_BY_CODE(code));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get upload link by code error:', error);
+      throw new Error(error.response?.data?.message || 'Invalid upload code');
     }
   }
 
@@ -3853,10 +3916,16 @@ class ApiService {
 
   async getUploadLinkFiles(id: number, page = 1, perPage = 20): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_FILES(id), {
-        params: { page, perPage }
-      });
-      return response.data;
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_FILES_UPLOADED_VIA_LINKS);
+      const data = response.data;
+      const allFiles = data.files ?? data.uploaded_files ?? [];
+      const forLink = allFiles.filter((f: any) => (f.upload_link_id ?? f.upload_link?.id) === id);
+      return {
+        success: true,
+        files: forLink,
+        uploaded_files: forLink,
+        ...data,
+      };
     } catch (error: any) {
       console.error('Get upload link files error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload link files');
