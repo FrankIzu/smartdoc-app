@@ -717,15 +717,56 @@ try {
         
         # First, verify what GitHub sees on the remote main branch
         Write-Host "   Checking workflow on remote main branch..." -ForegroundColor Gray
+        
+        # Fetch latest from remote to ensure we have the latest main
+        Write-Host "   Fetching latest from origin/main..." -ForegroundColor Gray
+        git fetch origin main 2>&1 | Out-Null
+        
+        # Check what's actually in the remote main branch's workflow file
+        Write-Host "   Checking workflow file content on origin/main..." -ForegroundColor Gray
+        $remoteWorkflowContent = git show "origin/main:.github/workflows/$workflowFile" 2>&1
+        if ($LASTEXITCODE -eq 0 -and $remoteWorkflowContent) {
+            if ($remoteWorkflowContent -match 'workflow_dispatch') {
+                Write-Host "   ✅ Remote main branch HAS workflow_dispatch in workflow file" -ForegroundColor Green
+            } else {
+                Write-Host "   ❌ Remote main branch does NOT have workflow_dispatch in workflow file" -ForegroundColor Red
+                Write-Host "   This is the problem - the workflow file on main is outdated!" -ForegroundColor Red
+                Write-Host "   Attempting to fix by ensuring workflow file is on main..." -ForegroundColor Yellow
+                
+                # Switch to main and ensure workflow file is there
+                $currentBranch = git rev-parse --abbrev-ref HEAD
+                git checkout main 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    # Copy workflow file from francis if it exists there
+                    git checkout francis -- $workflowPath 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0 -and (Test-Path $workflowPath)) {
+                        git add $workflowPath 2>&1 | Out-Null
+                        git commit -m "Add workflow_dispatch to workflow file" 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "   ✅ Committed updated workflow file to main" -ForegroundColor Green
+                            git push origin main --force-with-lease 2>&1 | Out-Null
+                            if ($LASTEXITCODE -ne 0) {
+                                git push origin main --force 2>&1 | Out-Null
+                            }
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Host "   ✅ Pushed updated workflow file to main" -ForegroundColor Green
+                                Write-Host "   Waiting 10 seconds for GitHub to process..." -ForegroundColor Yellow
+                                Start-Sleep -Seconds 10
+                            }
+                        }
+                    }
+                    # Switch back to original branch
+                    git checkout $currentBranch 2>&1 | Out-Null
+                }
+            }
+        } else {
+            Write-Host "   ⚠️  Could not read workflow file from origin/main" -ForegroundColor Yellow
+        }
+        
+        # Also check via GitHub API
         $workflowInfo = gh workflow view $workflowFile --ref main 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "   ✅ Workflow exists on GitHub" -ForegroundColor Green
-            # Check if workflow_dispatch is mentioned in the workflow info
-            if ($workflowInfo -match 'workflow_dispatch' -or $workflowInfo -match 'Manual') {
-                Write-Host "   ✅ Workflow appears to have manual trigger" -ForegroundColor Green
-            } else {
-                Write-Host "   ⚠️  Warning: Workflow may not have workflow_dispatch trigger" -ForegroundColor Yellow
-            }
         } else {
             Write-Host "   ⚠️  Could not verify workflow on GitHub (may need sync time)" -ForegroundColor Yellow
         }
