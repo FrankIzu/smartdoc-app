@@ -5,6 +5,7 @@ import {
     Alert,
     Image,
     Modal,
+    Platform,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -1308,32 +1309,34 @@ function DashboardScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        style={dynamicStyles.fab}
-        onPress={() => {
-          Alert.alert(
-            'Quick Actions',
-            'Choose an action:',
-            [
-              {
-                text: 'Upload File',
-                onPress: () => setShowUploadOptions(true),
-              },
-              {
-                text: 'Scan Document',
-                onPress: () => router.push('/scanner'),
-              },
-              {
-                text: 'Cancel',
-                style: 'cancel',
-              },
-            ]
-          );
-        }}
-      >
-        <Ionicons name="add" size={26} color="#fff" />
-      </TouchableOpacity>
+      {/* Floating Action Button - hidden on Android */}
+      {Platform.OS !== 'android' && (
+        <TouchableOpacity
+          style={dynamicStyles.fab}
+          onPress={() => {
+            Alert.alert(
+              'Quick Actions',
+              'Choose an action:',
+              [
+                {
+                  text: 'Upload File',
+                  onPress: () => setShowUploadOptions(true),
+                },
+                {
+                  text: 'Scan Document',
+                  onPress: () => router.push('/scanner'),
+                },
+                {
+                  text: 'Cancel',
+                  style: 'cancel',
+                },
+              ]
+            );
+          }}
+        >
+          <Ionicons name="add" size={26} color="#fff" />
+        </TouchableOpacity>
+      )}
 
       {/* Upload Options Modal */}
       <Modal
