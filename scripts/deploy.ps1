@@ -576,33 +576,53 @@ try {
             $workflowFileCheck = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
             $workflowPathCheck = ".github/workflows/$workflowFileCheck"
             Write-Host "   Verifying workflow file exists in pushed commit..." -ForegroundColor Gray
-            if (Test-Path $workflowPathCheck) {
-                # Check if file exists in the current HEAD (main branch after reset)
-                $workflowInCommit = git ls-tree HEAD --name-only | Select-String -Pattern $workflowFileCheck
+            
+            # Get the current commit hash on main
+            $currentCommit = git rev-parse HEAD 2>&1
+            if ($LASTEXITCODE -eq 0 -and $currentCommit) {
+                $currentCommit = $currentCommit.Trim()
+                Write-Host "   Checking commit: $($currentCommit.Substring(0, 7))..." -ForegroundColor Gray
+                
+                # Check if workflow file exists in this commit (use full path pattern)
+                $workflowInCommit = git ls-tree HEAD --name-only | Select-String -Pattern "workflows.*$workflowFileCheck"
                 if ($workflowInCommit) {
                     Write-Host "   ✅ Workflow file confirmed in commit" -ForegroundColor Green
                 } else {
-                    Write-Host "   ⚠️  Warning: Workflow file exists locally but not in commit" -ForegroundColor Yellow
-                    Write-Host "   This may cause workflow_dispatch to fail. Ensuring workflow file is committed..." -ForegroundColor Yellow
-                    # Try to add and commit the workflow file if it's missing
-                    git add $workflowPathCheck 2>&1 | Out-Null
+                    # Also check if file exists at all in the commit tree
+                    $fileExists = git cat-file -e "HEAD:$workflowPathCheck" 2>&1
                     if ($LASTEXITCODE -eq 0) {
-                        git commit -m "Ensure workflow file is included for workflow_dispatch" --allow-empty 2>&1 | Out-Null
-                        if ($LASTEXITCODE -eq 0) {
-                            Write-Host "   ✅ Committed workflow file" -ForegroundColor Green
-                            Write-Host "   Pushing updated commit to main..." -ForegroundColor Yellow
-                            git push origin main --force-with-lease 2>&1 | Out-Null
-                            if ($LASTEXITCODE -ne 0) {
-                                git push origin main --force 2>&1 | Out-Null
-                            }
+                        Write-Host "   ✅ Workflow file confirmed in commit (via cat-file)" -ForegroundColor Green
+                    } else {
+                        Write-Host "   ⚠️  Warning: Workflow file not found in commit" -ForegroundColor Yellow
+                        Write-Host "   Ensuring workflow file is committed and pushed..." -ForegroundColor Yellow
+                        # The file exists locally, so add and commit it
+                        if (Test-Path $workflowPathCheck) {
+                            git add $workflowPathCheck 2>&1 | Out-Null
                             if ($LASTEXITCODE -eq 0) {
-                                Write-Host "   ✅ Pushed workflow file to main" -ForegroundColor Green
+                                # Check if there are actually changes to commit
+                                git diff --cached --quiet $workflowPathCheck 2>&1 | Out-Null
+                                if ($LASTEXITCODE -ne 0) {
+                                    git commit -m "Ensure workflow file is included for workflow_dispatch" 2>&1 | Out-Null
+                                    if ($LASTEXITCODE -eq 0) {
+                                        Write-Host "   ✅ Committed workflow file" -ForegroundColor Green
+                                        Write-Host "   Pushing updated commit to main..." -ForegroundColor Yellow
+                                        git push origin main --force-with-lease 2>&1 | Out-Null
+                                        if ($LASTEXITCODE -ne 0) {
+                                            git push origin main --force 2>&1 | Out-Null
+                                        }
+                                        if ($LASTEXITCODE -eq 0) {
+                                            Write-Host "   ✅ Pushed workflow file to main" -ForegroundColor Green
+                                        }
+                                    }
+                                } else {
+                                    Write-Host "   ℹ️  Workflow file already matches commit (no changes)" -ForegroundColor Gray
+                                }
                             }
                         }
                     }
                 }
             } else {
-                Write-Host "   ⚠️  Warning: Workflow file not found: $workflowPathCheck" -ForegroundColor Yellow
+                Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
             }
             
             # Switch back to francis branch for continued work
@@ -661,6 +681,15 @@ try {
     if ($useGitHubActions) {
         Write-Host "`n🚀 Triggering GitHub Actions workflow..." -ForegroundColor Cyan
         Set-Location "$PSScriptRoot\.."
+        
+        # Verify we're in the right repo
+        $remoteUrl = git remote get-url origin 2>&1
+        if ($remoteUrl -match 'github\.com[/:]([^/]+)/([^/\.]+)') {
+            $repoOwner = $matches[1]
+            $repoName = $matches[2] -replace '\.git$', ''
+            Write-Host "   Repository: $repoOwner/$repoName" -ForegroundColor Gray
+        }
+        
         # Use 'main' branch for workflow_dispatch (GitHub requires workflows on default branch)
         # The script already merged francis into main and pushed main earlier
         $workflowFile = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
@@ -686,6 +715,21 @@ try {
             }
         }
         
+        # First, verify what GitHub sees on the remote main branch
+        Write-Host "   Checking workflow on remote main branch..." -ForegroundColor Gray
+        $workflowInfo = gh workflow view $workflowFile --ref main 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "   ✅ Workflow exists on GitHub" -ForegroundColor Green
+            # Check if workflow_dispatch is mentioned in the workflow info
+            if ($workflowInfo -match 'workflow_dispatch' -or $workflowInfo -match 'Manual') {
+                Write-Host "   ✅ Workflow appears to have manual trigger" -ForegroundColor Green
+            } else {
+                Write-Host "   ⚠️  Warning: Workflow may not have workflow_dispatch trigger" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "   ⚠️  Could not verify workflow on GitHub (may need sync time)" -ForegroundColor Yellow
+        }
+        
         # Retry mechanism: GitHub may need time to sync workflow file updates
         $maxRetries = 3
         $retryDelay = 5
@@ -700,24 +744,56 @@ try {
                 Write-Host "Triggering $workflowFile for ref main (profile $profile)..." -ForegroundColor Cyan
             }
             
-            gh workflow run $workflowFile -f profile=$profile --ref main 2>&1 | Out-Null
+            $triggerOutput = gh workflow run $workflowFile -f profile=$profile --ref main 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "✅ Triggered $Platform build on main. See Actions tab for run." -ForegroundColor Green
                 $triggered = $true
                 break
+            } else {
+                # Show the actual error on first attempt
+                if ($retry -eq 1) {
+                    Write-Host "   Error: $triggerOutput" -ForegroundColor Red
+                }
             }
         }
         
         if (-not $triggered) {
             Write-Host "⚠️  Could not trigger workflow after $maxRetries attempts." -ForegroundColor Yellow
             Write-Host "`n   Troubleshooting:" -ForegroundColor Cyan
-            Write-Host "   GitHub may not have synced the workflow file yet, or the workflow on main doesn't have workflow_dispatch." -ForegroundColor Gray
+            
+            # Check what GitHub API sees
+            Write-Host "   Checking GitHub API for workflow..." -ForegroundColor Gray
+            $apiCheck = gh api "repos/:owner/:repo/actions/workflows/$workflowFile" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $hasDispatch = $apiCheck | ConvertFrom-Json | Select-Object -ExpandProperty state -ErrorAction SilentlyContinue
+                Write-Host "   Workflow state from API: $hasDispatch" -ForegroundColor Gray
+            }
+            
+            # Check remote file content
+            Write-Host "   Checking remote workflow file content..." -ForegroundColor Gray
+            $remoteContent = gh api "repos/:owner/:repo/contents/.github/workflows/$workflowFile?ref=main" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                try {
+                    $contentJson = $remoteContent | ConvertFrom-Json
+                    $decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($contentJson.content))
+                    if ($decoded -match 'workflow_dispatch') {
+                        Write-Host "   ✅ Remote file HAS workflow_dispatch" -ForegroundColor Green
+                        Write-Host "   ⚠️  GitHub may need more time to process the workflow file update" -ForegroundColor Yellow
+                    } else {
+                        Write-Host "   ❌ Remote file does NOT have workflow_dispatch" -ForegroundColor Red
+                        Write-Host "   The workflow file on main may be outdated" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Host "   Could not decode remote file content" -ForegroundColor Yellow
+                }
+            }
+            
             Write-Host "`n   Next steps:" -ForegroundColor Cyan
-            Write-Host "   1. Wait 30-60 seconds and try manually: gh workflow run $workflowFile -f profile=$profile --ref main" -ForegroundColor Gray
+            Write-Host "   1. Wait 60-120 seconds for GitHub to fully sync, then try: gh workflow run $workflowFile -f profile=$profile --ref main" -ForegroundColor Gray
             Write-Host "   2. Verify workflow on main: gh workflow view $workflowFile --ref main" -ForegroundColor Gray
-            Write-Host "   3. Check if push succeeded: git log origin/main --oneline -1" -ForegroundColor Gray
+            Write-Host "   3. Check latest commit on main: git log origin/main --oneline -1" -ForegroundColor Gray
             Write-Host "   4. Use GitHub UI: Actions → $workflowFile → Run workflow (select main branch)" -ForegroundColor Gray
-            Write-Host "   5. If workflow_dispatch is missing on main, merge francis → main again and push" -ForegroundColor Gray
+            Write-Host "   5. If still failing, check if workflow file path matches exactly: .github/workflows/$workflowFile" -ForegroundColor Gray
         }
         exit 0
     }
