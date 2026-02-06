@@ -548,6 +548,21 @@ try {
             }
             Write-Host "✅ Pushed main branch" -ForegroundColor Green
             
+            # Verify workflow file was included in the push (check before switching branches)
+            $workflowFileCheck = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
+            $workflowPathCheck = ".github/workflows/$workflowFileCheck"
+            Write-Host "   Verifying workflow file exists in pushed commit..." -ForegroundColor Gray
+            if (Test-Path $workflowPathCheck) {
+                $workflowInCommit = git ls-tree HEAD --name-only | Select-String -Pattern $workflowFileCheck
+                if ($workflowInCommit) {
+                    Write-Host "   ✅ Workflow file confirmed in commit" -ForegroundColor Green
+                } else {
+                    Write-Host "   ⚠️  Warning: Workflow file exists locally but not in commit" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "   ⚠️  Warning: Workflow file not found: $workflowPathCheck" -ForegroundColor Yellow
+            }
+            
             # Switch back to francis branch for continued work
             Write-Host "`n🔄 Switching back to francis branch..." -ForegroundColor Yellow
             git checkout francis 2>&1 | Out-Null
@@ -607,24 +622,60 @@ try {
         # Use 'main' branch for workflow_dispatch (GitHub requires workflows on default branch)
         # The script already merged francis into main and pushed main earlier
         $workflowFile = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
-        Write-Host "Triggering $workflowFile for ref main (profile $profile)..." -ForegroundColor Cyan
+        $workflowPath = ".github/workflows/$workflowFile"
+        
+        # Verify workflow file exists locally and has workflow_dispatch
+        if (-not (Test-Path $workflowPath)) {
+            Write-Host "❌ Workflow file not found: $workflowPath" -ForegroundColor Red
+            exit 1
+        }
+        $workflowContent = Get-Content $workflowPath -Raw
+        if ($workflowContent -notmatch 'workflow_dispatch') {
+            Write-Host "❌ Workflow file does not contain 'workflow_dispatch' trigger" -ForegroundColor Red
+            Write-Host "   Please add 'workflow_dispatch:' to the 'on:' section in $workflowPath" -ForegroundColor Yellow
+            exit 1
+        }
+        Write-Host "✅ Verified workflow file has workflow_dispatch trigger" -ForegroundColor Green
+        
         if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
             $ghPaths = @("$env:ProgramFiles\GitHub CLI\gh.exe", "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe", "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe")
             foreach ($p in $ghPaths) {
                 if (Test-Path $p) { $env:PATH = "$(Split-Path $p);$env:PATH"; break }
             }
         }
-        gh workflow run $workflowFile -f profile=$profile --ref main
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "⚠️  Could not trigger workflow." -ForegroundColor Yellow
-            Write-Host "   GitHub only allows workflow_dispatch for workflows on the default branch (main)." -ForegroundColor Gray
-            Write-Host "   The script already merged francis into main and pushed main." -ForegroundColor Gray
-            Write-Host "   Options:" -ForegroundColor Gray
-            Write-Host "   1. Verify main branch has the workflow file: gh workflow view $workflowFile --ref main" -ForegroundColor Gray
-            Write-Host "   2. Run manually: gh workflow run $workflowFile -f profile=$profile --ref main" -ForegroundColor Gray
-            Write-Host "   3. In GitHub: Actions → $workflowFile → Run workflow (select main branch)." -ForegroundColor Gray
-        } else {
-            Write-Host "✅ Triggered $Platform build on main. See Actions tab for run." -ForegroundColor Green
+        
+        # Retry mechanism: GitHub may need time to sync workflow file updates
+        $maxRetries = 3
+        $retryDelay = 5
+        $triggered = $false
+        
+        for ($retry = 1; $retry -le $maxRetries; $retry++) {
+            if ($retry -gt 1) {
+                Write-Host "   Retry attempt $retry of $maxRetries (waiting ${retryDelay}s for GitHub sync)..." -ForegroundColor Yellow
+                Start-Sleep -Seconds $retryDelay
+                $retryDelay = $retryDelay * 2  # Exponential backoff
+            } else {
+                Write-Host "Triggering $workflowFile for ref main (profile $profile)..." -ForegroundColor Cyan
+            }
+            
+            gh workflow run $workflowFile -f profile=$profile --ref main 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ Triggered $Platform build on main. See Actions tab for run." -ForegroundColor Green
+                $triggered = $true
+                break
+            }
+        }
+        
+        if (-not $triggered) {
+            Write-Host "⚠️  Could not trigger workflow after $maxRetries attempts." -ForegroundColor Yellow
+            Write-Host "`n   Troubleshooting:" -ForegroundColor Cyan
+            Write-Host "   GitHub may not have synced the workflow file yet, or the workflow on main doesn't have workflow_dispatch." -ForegroundColor Gray
+            Write-Host "`n   Next steps:" -ForegroundColor Cyan
+            Write-Host "   1. Wait 30-60 seconds and try manually: gh workflow run $workflowFile -f profile=$profile --ref main" -ForegroundColor Gray
+            Write-Host "   2. Verify workflow on main: gh workflow view $workflowFile --ref main" -ForegroundColor Gray
+            Write-Host "   3. Check if push succeeded: git log origin/main --oneline -1" -ForegroundColor Gray
+            Write-Host "   4. Use GitHub UI: Actions → $workflowFile → Run workflow (select main branch)" -ForegroundColor Gray
+            Write-Host "   5. If workflow_dispatch is missing on main, merge francis → main again and push" -ForegroundColor Gray
         }
         exit 0
     }
