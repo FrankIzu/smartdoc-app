@@ -494,13 +494,20 @@ try {
                     "Deploy $Platform to $normalizedEnv"
                 }
                 
-                Write-Host "   Committing changes..." -ForegroundColor Yellow
-                git commit -m $commitMessage 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Host "⚠️  Warning: git commit failed (maybe no changes to commit). Continuing..." -ForegroundColor Yellow
-                } else {
-                    Write-Host "✅ Committed changes: $commitMessage" -ForegroundColor Green
+                # Check if there are actually staged changes before committing
+                git diff --cached --quiet 2>&1 | Out-Null
+                $hasStagedChanges = $LASTEXITCODE -ne 0
+                
+                if ($hasStagedChanges) {
+                    Write-Host "   Committing changes..." -ForegroundColor Yellow
+                    git commit -m $commitMessage 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "✅ Committed changes: $commitMessage" -ForegroundColor Green
+                    } else {
+                        Write-Host "⚠️  Warning: git commit failed unexpectedly" -ForegroundColor Yellow
+                    }
                 }
+                # If no staged changes, silently continue (nothing to commit is normal)
             } else {
                 Write-Host "   No changes to commit" -ForegroundColor Gray
             }
