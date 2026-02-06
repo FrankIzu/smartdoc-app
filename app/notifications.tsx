@@ -13,6 +13,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiClient } from '../services/api';
+import { AnimatedHeaderContainer } from './components/AnimatedHeaderContainer';
+import { TapToToggleHeaderView } from './components/TapToToggleHeaderView';
 import { useAuth } from './context/auth';
 
 export interface AppNotification {
@@ -169,41 +171,48 @@ export default function NotificationsScreen() {
   if (!user) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-        <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle}>Notifications</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <TapToToggleHeaderView style={[styles.container, { backgroundColor: colors.background }]}>
+        <AnimatedHeaderContainer>
+          <View style={dynamicStyles.header}>
+            <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={dynamicStyles.headerTitle}>Notifications</Text>
+            <View style={{ width: 40 }} />
+          </View>
+        </AnimatedHeaderContainer>
         <View style={dynamicStyles.empty}>
           <Text style={dynamicStyles.emptyText}>Sign in to view notifications.</Text>
         </View>
+        </TapToToggleHeaderView>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle}>Notifications</Text>
-        <View style={{ flexDirection: 'row', gap: 16 }}>
-          {notifications.length > 0 && (
-            <TouchableOpacity onPress={clearAll}>
-              <Text style={[dynamicStyles.markAll, { color: '#FF3B30' }]}>Clear all</Text>
-            </TouchableOpacity>
-          )}
-          {unreadCount > 0 && (
-            <TouchableOpacity onPress={markAllAsRead}>
-              <Text style={dynamicStyles.markAll}>Mark all read</Text>
-            </TouchableOpacity>
-          )}
-          {notifications.length === 0 && unreadCount === 0 && <View style={{ width: 80 }} />}
+      <TapToToggleHeaderView style={[styles.container, { backgroundColor: colors.background }]}>
+      <AnimatedHeaderContainer>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={dynamicStyles.headerTitle}>Notifications</Text>
+          <View style={{ flexDirection: 'row', gap: 16 }}>
+            {notifications.length > 0 && (
+              <TouchableOpacity onPress={clearAll}>
+                <Text style={[dynamicStyles.markAll, { color: '#FF3B30' }]}>Clear all</Text>
+              </TouchableOpacity>
+            )}
+            {unreadCount > 0 && (
+              <TouchableOpacity onPress={markAllAsRead}>
+                <Text style={dynamicStyles.markAll}>Mark all read</Text>
+              </TouchableOpacity>
+            )}
+            {notifications.length === 0 && unreadCount === 0 && <View style={{ width: 80 }} />}
+          </View>
         </View>
-      </View>
+      </AnimatedHeaderContainer>
 
       {loading ? (
         <View style={styles.centered}>
@@ -278,6 +287,7 @@ export default function NotificationsScreen() {
           )}
         </ScrollView>
       )}
+      </TapToToggleHeaderView>
     </SafeAreaView>
   );
 }

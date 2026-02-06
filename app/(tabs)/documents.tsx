@@ -29,6 +29,8 @@ import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
 import { removeFileExtension } from '../../utils/fileUtils';
+import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
+import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 interface Document {
@@ -66,7 +68,7 @@ interface ApiDocument {
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
-type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'invoice' | 'meeting_notes' | 'meeting_chat' | 'meeting_summary' | 'spreadsheet' | 'picture' | 'pending' | 'unknown';
+type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'invoice' | 'meeting_notes' | 'meeting_chat' | 'meeting_summary' | 'draft' | 'spreadsheet' | 'picture' | 'pending' | 'unknown';
 
 export default function QuickFilesScreen() {
   const router = useRouter();
@@ -259,6 +261,9 @@ export default function QuickFilesScreen() {
         case 'meeting_summary':
         case 'ai_summary':
           return 'sparkles-outline'; // Sparkles icon for AI summaries
+        case 'draft':
+        case 'drafts':
+          return 'create-outline'; // Draft (document + pencil / edit) icon
         case 'spreadsheet':
         case 'spreadsheets':
           return 'grid-outline'; // Grid icon for spreadsheets
@@ -323,6 +328,9 @@ export default function QuickFilesScreen() {
         case 'meeting_summary':
         case 'ai_summary':
           return '#10b981'; // Green for AI summaries
+        case 'draft':
+        case 'drafts':
+          return '#34C759'; // Green for drafts
         case 'spreadsheet':
         case 'spreadsheets':
           return '#10b981'; // Green for spreadsheets
@@ -379,6 +387,9 @@ export default function QuickFilesScreen() {
       case 'meeting_summary':
       case 'ai_summary':
         return 'meeting_summary';
+      case 'draft':
+      case 'drafts':
+        return 'draft';
       case 'spreadsheet':
       case 'spreadsheets':
         return 'spreadsheet';
@@ -431,6 +442,7 @@ export default function QuickFilesScreen() {
       'transcripts',
       'meeting_notes',
       'meeting_chat',
+      'draft',
       'spreadsheet',
       'picture',
       'pending',
@@ -492,6 +504,8 @@ export default function QuickFilesScreen() {
             return fileTypeCategory === 'meeting_chat';
           case 'meeting_summary':
             return fileTypeCategory === 'meeting_summary';
+          case 'draft':
+            return fileTypeCategory === 'draft';
           case 'spreadsheet':
             return fileTypeCategory === 'spreadsheet';
           case 'picture':
@@ -1044,6 +1058,12 @@ export default function QuickFilesScreen() {
       });
     }
 
+    // If the document is a draft, open draft editor
+    if ((document.file_kind || '').toString().toLowerCase() === 'draft') {
+      (router.push as (path: string) => void)(`/drafts/edit/${document.id}`);
+      return;
+    }
+
     // If the document is a form (either by type or category), open quick form viewer
     if (
       document.type === 'form' ||
@@ -1087,6 +1107,11 @@ export default function QuickFilesScreen() {
 
   const handleViewDocument = () => {
     if (selectedDocumentForMenu) {
+      if ((selectedDocumentForMenu.file_kind || '').toString().toLowerCase() === 'draft') {
+        setShowKebabMenu(false);
+        (router.push as (path: string) => void)(`/drafts/edit/${selectedDocumentForMenu.id}`);
+        return;
+      }
       setSelectedDocument(selectedDocumentForMenu);
       setShowDocumentViewer(true);
       setShowKebabMenu(false);
@@ -2166,32 +2191,36 @@ export default function QuickFilesScreen() {
   if (loading && documents.length === 0) {
     return (
       <SafeAreaView style={dynamicStyles.container}>
-        <View style={dynamicStyles.header}>
-          <Text style={dynamicStyles.headerTitle}>Files</Text>
-          <View style={dynamicStyles.headerActions}>
-            <TouchableOpacity style={dynamicStyles.headerButton}>
-              <Ionicons name="cloud-upload" size={24} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.headerButton}>
-              <Ionicons name="camera" size={24} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.headerButton}>
-              <Ionicons name="images" size={24} color="#5856D6" />
-            </TouchableOpacity>
-          </View>
-        </View>
-        
+        <TapToToggleHeaderView style={dynamicStyles.container}>
+          <AnimatedHeaderContainer>
+            <View style={dynamicStyles.header}>
+              <Text style={dynamicStyles.headerTitle}>Files</Text>
+              <View style={dynamicStyles.headerActions}>
+                <TouchableOpacity style={dynamicStyles.headerButton}>
+                  <Ionicons name="cloud-upload" size={24} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity style={dynamicStyles.headerButton}>
+                  <Ionicons name="camera" size={24} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity style={dynamicStyles.headerButton}>
+                  <Ionicons name="images" size={24} color="#5856D6" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </AnimatedHeaderContainer>
         <View style={dynamicStyles.loadingContainer}>
           <LoadingDots size={12} color="#007AFF" duration={800} />
           <Text style={dynamicStyles.loadingText}>Loading your files...</Text>
           <Text style={dynamicStyles.loadingSubtext}>This will only take a moment</Text>
         </View>
+        </TapToToggleHeaderView>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={dynamicStyles.container}>
+      <TapToToggleHeaderView style={dynamicStyles.container}>
       {/* Error message display */}
       {error && (
         <View style={{ backgroundColor: '#fee2e2', padding: 12, margin: 12, borderRadius: 8 }}>
@@ -2200,56 +2229,58 @@ export default function QuickFilesScreen() {
       )}
       
       {/* Header */}
-      <View style={dynamicStyles.header}>
-        <TouchableOpacity 
-          style={dynamicStyles.backButton}
-          onPress={() => router.back()}
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={dynamicStyles.headerTitleContainer}>
-          <Text style={dynamicStyles.headerTitle}>
-            {workspaceId ? 'Workspace Files' : 'Files'}
-          </Text>
-          {isAutoRefreshing && (
-            <View style={dynamicStyles.autoRefreshIndicator}>
-              <Ionicons name="sync" size={16} color="#007AFF" />
-              <Text style={dynamicStyles.autoRefreshText}>Syncing...</Text>
-            </View>
-          )}
+      <AnimatedHeaderContainer>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity 
+            style={dynamicStyles.backButton}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <View style={dynamicStyles.headerTitleContainer}>
+            <Text style={dynamicStyles.headerTitle}>
+              {workspaceId ? 'Workspace Files' : 'Files'}
+            </Text>
+            {isAutoRefreshing && (
+              <View style={dynamicStyles.autoRefreshIndicator}>
+                <Ionicons name="sync" size={16} color="#007AFF" />
+                <Text style={dynamicStyles.autoRefreshText}>Syncing...</Text>
+              </View>
+            )}
+          </View>
+          <View style={dynamicStyles.headerActions}>
+            <TouchableOpacity 
+              style={dynamicStyles.headerButton}
+              onPress={handleUploadFromFiles}
+            >
+              <Ionicons name="document" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dynamicStyles.headerButton}
+              onPress={() => router.push('/scanner')}
+            >
+              <Ionicons name="camera" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dynamicStyles.headerButton}
+              onPress={handleGalleryUpload}
+            >
+              <Ionicons name="images" size={24} color="#5856D6" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
+              onPress={onRefresh}
+              disabled={refreshing}
+            >
+              <Ionicons 
+                name="refresh" 
+                size={24} 
+                color={refreshing ? "#999" : "#007AFF"} 
+              />
+            </TouchableOpacity>
+          </View>
         </View>
-        <View style={dynamicStyles.headerActions}>
-          <TouchableOpacity 
-            style={dynamicStyles.headerButton}
-            onPress={handleUploadFromFiles}
-          >
-            <Ionicons name="document" size={24} color="#007AFF" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={dynamicStyles.headerButton}
-            onPress={() => router.push('/scanner')}
-          >
-            <Ionicons name="camera" size={24} color="#007AFF" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={dynamicStyles.headerButton}
-            onPress={handleGalleryUpload}
-          >
-            <Ionicons name="images" size={24} color="#5856D6" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
-            onPress={onRefresh}
-            disabled={refreshing}
-          >
-            <Ionicons 
-              name="refresh" 
-              size={24} 
-              color={refreshing ? "#999" : "#007AFF"} 
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
+      </AnimatedHeaderContainer>
 
       {/* Search Bar */}
       <View style={dynamicStyles.searchContainer}>
@@ -2283,6 +2314,7 @@ export default function QuickFilesScreen() {
               'meeting_notes': 'Meeting Notes',
               'meeting_chat': 'Meeting Chat',
               'meeting_summary': 'AI Summary',
+              'draft': 'Draft',
               'spreadsheet': 'Spreadsheets',
               'picture': 'Pictures',
               'pending': 'Pending',
@@ -2455,7 +2487,7 @@ export default function QuickFilesScreen() {
               onPress={handleChatDocument}
             >
               <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
-              <Text style={dynamicStyles.kebabMenuText}>Chat</Text>
+              <Text style={dynamicStyles.kebabMenuText}>Ask ChatGD</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -2794,6 +2826,7 @@ export default function QuickFilesScreen() {
           </View>
         </View>
       </Modal>
+      </TapToToggleHeaderView>
     </SafeAreaView>
   );
 }

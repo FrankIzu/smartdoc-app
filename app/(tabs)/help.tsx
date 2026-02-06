@@ -14,6 +14,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
+import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 const FEEDBACK_CATEGORIES = [
@@ -190,31 +192,33 @@ export default function HelpScreen() {
 
   return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
-      {/* Header */}
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.border,
-        backgroundColor: colors.background
-      }}>
-        <TouchableOpacity 
-          onPress={() => router.back()}
-          style={{ marginRight: 12 }}
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={{
-          fontSize: 18,
-          fontWeight: '600',
-          color: colors.text,
-          flex: 1
+      <TapToToggleHeaderView style={dynamicStyles.container}>
+      <AnimatedHeaderContainer>
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.border,
+          backgroundColor: colors.background
         }}>
-          Help & Support
-        </Text>
-      </View>
+          <TouchableOpacity 
+            onPress={() => router.back()}
+            style={{ marginRight: 12 }}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={{
+            fontSize: 18,
+            fontWeight: '600',
+            color: colors.text,
+            flex: 1
+          }}>
+            Help & Support
+          </Text>
+        </View>
+      </AnimatedHeaderContainer>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
@@ -324,6 +328,7 @@ export default function HelpScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      </TapToToggleHeaderView>
     </SafeAreaView>
   );
 }

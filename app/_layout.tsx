@@ -26,6 +26,7 @@ import Toast from 'react-native-toast-message';
 import GlobalProgressBar from '../components/GlobalProgressBar';
 import NetworkIndicator from '../components/NetworkIndicator';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
+import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
@@ -86,6 +87,7 @@ function RootLayoutNav() {
         <NetworkIndicator compact persistent />
       </SafeAreaView>
       <View style={[styles.mainContainer, { backgroundColor: isDark ? '#151718' : '#fff' }]}>
+        <HeaderVisibilityProvider>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -93,6 +95,7 @@ function RootLayoutNav() {
           <Stack.Screen name="login-error" options={{ headerShown: false }} />
           <Stack.Screen name="analytics" options={{ headerShown: false }} />
           <Stack.Screen name="bookmarks" options={{ headerShown: false }} />
+          <Stack.Screen name="drafts" options={{ headerShown: false }} />
           <Stack.Screen name="documents" options={{ headerShown: false }} />
           <Stack.Screen name="forms" options={{ headerShown: false }} />
           <Stack.Screen name="quick-reach" options={{ headerShown: false }} />
@@ -102,6 +105,7 @@ function RootLayoutNav() {
           <Stack.Screen name="public-upload" options={{ headerShown: false }} />
           <Stack.Screen name="notifications" options={{ headerShown: false }} />
         </Stack>
+        </HeaderVisibilityProvider>
         <View style={styles.bottomNavContainer}>
           <PersistentBottomNavigation />
         </View>

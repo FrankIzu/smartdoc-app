@@ -50,6 +50,7 @@ function DashboardScreen() {
   const isAuthenticated = !!user;
   const [stats, setStats] = useState({
     totalDocuments: 0,
+    totalDrafts: 0,
     totalForms: 0,
     formResponses: 0,
     chatSessions: 0,
@@ -120,6 +121,7 @@ function DashboardScreen() {
       // Set default fallback data immediately to prevent crashes
       const defaultStats = {
         totalDocuments: 0,
+        totalDrafts: 0,
         totalForms: 0,
         formResponses: 0,
         chatSessions: 0,
@@ -151,6 +153,7 @@ function DashboardScreen() {
         // Set fallback data for development
         setStats({
           totalDocuments: 5,
+          totalDrafts: 0,
           totalForms: 2,
           formResponses: 3,
           chatSessions: 2,
@@ -197,6 +200,7 @@ function DashboardScreen() {
             
             const safeStats = {
               totalDocuments: Number(statsData.totalDocuments) || 0,
+              totalDrafts: Number(statsData.totalDrafts) || 0,
               totalForms: Number(statsData.totalForms) || 0,
               formResponses: Number(statsData.formResponses) || 0,
               chatSessions: Number(statsData.chatSessions) || 0,
@@ -361,6 +365,7 @@ function DashboardScreen() {
       // Ensure we always have safe defaults
       setStats({
         totalDocuments: 0,
+        totalDrafts: 0,
         totalForms: 0,
         formResponses: 0,
         chatSessions: 0,
@@ -1155,13 +1160,12 @@ function DashboardScreen() {
               onPress={() => router.push('/(tabs)/documents')}
             />
             <StatCard
-              key="stat-forms"
-              title="Forms"
-              value={stats.totalForms}
-              icon="clipboard-outline"
+              key="stat-draft"
+              title="Draft"
+              value={stats.totalDrafts}
+              icon="create-outline"
               color="#34C759"
-              onPress={() => router.push('/forms/create')}
-              badge={stats.formResponses}
+              onPress={() => router.push('/drafts')}
             />
           </View>
           <View style={dynamicStyles.statsRow}>
@@ -1236,6 +1240,14 @@ function DashboardScreen() {
               icon="bookmark"
               color="#FF9500"
               onPress={() => handleQuickAction('bookmarks')}
+            />
+            <QuickActionCard
+              key="action-forms"
+              title="Forms"
+              subtitle="Create and manage forms"
+              icon="clipboard-outline"
+              color="#34C759"
+              onPress={() => handleQuickAction('form')}
             />
           </View>
         </View>

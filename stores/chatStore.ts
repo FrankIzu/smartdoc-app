@@ -122,7 +122,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               }
             });
             
-            // Store persistent_context in the chat history for later use
+            // Store persistent_context and references in the chat history for later use
+            const references = (match as any).references ?? undefined;
             const chatHistory: ChatHistory = {
               id,
               title: (match as any).title || `Chat ${id}`,
@@ -130,6 +131,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               created_at: (match as any).created_at || new Date().toISOString(),
               updated_at: (match as any).updated_at || (match as any).last_message_at || new Date().toISOString(),
               persistent_context: persistentContext, // Store persistent context
+              references, // References keyed by message_id for citations on assistant messages
             };
             
             set({

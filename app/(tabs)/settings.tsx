@@ -20,6 +20,8 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import deviceSecurityService from '../../services/deviceSecurity';
+import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
+import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 interface UserProfile {
@@ -830,15 +832,18 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={dynamicStyles.container}>
-      <View style={dynamicStyles.header}>
-        <TouchableOpacity 
-          onPress={() => router.back()}
-          style={{ marginRight: 12 }}
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle}>Settings</Text>
-      </View>
+      <TapToToggleHeaderView style={dynamicStyles.container}>
+      <AnimatedHeaderContainer>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity 
+            onPress={() => router.back()}
+            style={{ marginRight: 12 }}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={dynamicStyles.headerTitle}>Settings</Text>
+        </View>
+      </AnimatedHeaderContainer>
 
       <ScrollView style={dynamicStyles.scrollView} showsVerticalScrollIndicator={false}>
 
@@ -1460,6 +1465,7 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </CollapsibleSection>
       </ScrollView>
+      </TapToToggleHeaderView>
     </SafeAreaView>
   );
 }

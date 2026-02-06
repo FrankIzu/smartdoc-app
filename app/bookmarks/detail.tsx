@@ -18,6 +18,8 @@ import DocumentViewer from '../../components/DocumentViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { formatTimestampToLocal } from '../../utils/timeFormatting';
+import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
+import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 interface Bookmark {
@@ -45,7 +47,7 @@ export default function BookmarkDetailScreen() {
   const { user } = useAuth();
   const themeColors = useThemeColors();
   const insets = useSafeAreaInsets();
-  
+
   const [bookmark, setBookmark] = useState<Bookmark | null>(null);
   const [files, setFiles] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -670,23 +672,26 @@ export default function BookmarkDetailScreen() {
 
   return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
-      <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
-        </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name}</Text>
-        <View style={dynamicStyles.headerActions}>
-          <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton}>
-            <Ionicons name="add" size={24} color="#007AFF" />
+      <TapToToggleHeaderView style={dynamicStyles.container}>
+      <AnimatedHeaderContainer>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowEditModal(true)} style={dynamicStyles.headerIconButton}>
-            <Ionicons name="create-outline" size={24} color="#007AFF" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleDeleteBookmark} style={dynamicStyles.headerIconButton}>
-            <Ionicons name="trash-outline" size={24} color="#FF3B30" />
-          </TouchableOpacity>
+          <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name}</Text>
+          <View style={dynamicStyles.headerActions}>
+            <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton}>
+              <Ionicons name="add" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowEditModal(true)} style={dynamicStyles.headerIconButton}>
+              <Ionicons name="create-outline" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleDeleteBookmark} style={dynamicStyles.headerIconButton}>
+              <Ionicons name="trash-outline" size={24} color="#FF3B30" />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </AnimatedHeaderContainer>
 
       <View style={dynamicStyles.bookmarkInfo}>
         <View style={[dynamicStyles.colorIndicator, { backgroundColor: bookmark.color }]} />
@@ -838,6 +843,7 @@ export default function BookmarkDetailScreen() {
           }}
         />
       )}
+      </TapToToggleHeaderView>
     </SafeAreaView>
   );
 }

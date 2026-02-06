@@ -160,11 +160,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Do NOT set loading=true here: it would unmount the entire app (AuthWrapper returns null)
       // and the sign-in screen would remount with lost state, so the user wouldn't see the error.
       // The sign-in screen uses its own loading state for the button.
-      
+      const trimmedEmail = (email ?? '').trim();
+      const trimmedPassword = (password ?? '').trim();
       // Use real API only - no fallback
-      const response = await apiService.login({ 
-        username: email, // API expects username, not email
-        password 
+      const response = await apiService.login({
+        username: trimmedEmail, // API expects username, not email
+        password: trimmedPassword,
       });
       
       console.log('🔍 Full API response in auth:', JSON.stringify(response, null, 2));
@@ -185,11 +186,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       if (response.success) {
-        // Store credentials if remember is enabled
+        // Store credentials if remember is enabled (store trimmed values)
         if (remember) {
           console.log('💾 Storing login credentials for remember functionality');
-          await secureStorage.setItem('remembered_email', email);
-          await secureStorage.setItem('remembered_password', password);
+          await secureStorage.setItem('remembered_email', trimmedEmail);
+          await secureStorage.setItem('remembered_password', trimmedPassword);
           await secureStorage.setItem('remember_enabled', 'true');
         } else {
           // Clear remembered credentials if remember is disabled

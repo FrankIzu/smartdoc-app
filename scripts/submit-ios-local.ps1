@@ -1,8 +1,10 @@
 # Submit iOS build to App Store locally
 # Usage: .\scripts\submit-ios-local.ps1 [path-to-ipa]
+#        .\scripts\submit-ios-local.ps1 -Latest   # submit latest EAS build using ASC key from .env.local (e.g. previous key 94J2FT265G)
 
 param(
-    [string]$IpaPath = ""
+    [string]$IpaPath = "",
+    [switch]$Latest  # Submit latest build from EAS (uses ASC_KEY_* from .env.local; ignores stored EAS key)
 )
 
 Write-Host "🍎 iOS App Store Submission (Local)" -ForegroundColor Cyan
@@ -63,19 +65,32 @@ if ($hasApiKeys) {
 
 Write-Host "✅ Environment variables are set" -ForegroundColor Green
 
-# Find IPA file if path not provided
-if ([string]::IsNullOrWhiteSpace($IpaPath)) {
+# Submit latest from EAS using local ASC key (e.g. previous key 94J2FT265G)
+if ($Latest) {
+    if (-not $hasApiKeys) {
+        Write-Host "`n❌ -Latest requires ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 in .env.local" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "`n📤 Will submit latest EAS build using local ASC key (Key ID: $env:ASC_KEY_ID)" -ForegroundColor Cyan
+    $SubmitLatest = $true
+} else {
+    $SubmitLatest = $false
+}
+
+# Find IPA file if path not provided (skip when -Latest)
+if (-not $SubmitLatest -and [string]::IsNullOrWhiteSpace($IpaPath)) {
     Write-Host "`n🔍 Looking for .ipa files..." -ForegroundColor Yellow
     $ipaFiles = Get-ChildItem -Path . -Filter "*.ipa" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($ipaFiles) {
         $IpaPath = $ipaFiles.FullName
         Write-Host "   Found: $IpaPath" -ForegroundColor Green
     } else {
-        Write-Host "❌ No .ipa file found. Please specify the path:" -ForegroundColor Red
+        Write-Host "❌ No .ipa file found. Use -Latest to submit latest EAS build, or specify path:" -ForegroundColor Red
+        Write-Host "   .\scripts\submit-ios-local.ps1 -Latest" -ForegroundColor Yellow
         Write-Host "   .\scripts\submit-ios-local.ps1 -IpaPath ./path/to/app.ipa" -ForegroundColor Yellow
         exit 1
     }
-} else {
+} elseif (-not $SubmitLatest) {
     if (-not (Test-Path $IpaPath)) {
         Write-Host "❌ Path not found: $IpaPath" -ForegroundColor Red
         exit 1
@@ -114,7 +129,11 @@ if ([string]::IsNullOrWhiteSpace($IpaPath)) {
 }
 
 Write-Host "`n🚀 Submitting to App Store..." -ForegroundColor Cyan
-Write-Host "   IPA: $IpaPath" -ForegroundColor Gray
+if ($SubmitLatest) {
+    Write-Host "   Source: latest EAS build" -ForegroundColor Gray
+} else {
+    Write-Host "   IPA: $IpaPath" -ForegroundColor Gray
+}
 Write-Host "   Profile: production" -ForegroundColor Gray
 Write-Host "   Apple ID: francis.onodueze@gmail.com" -ForegroundColor Gray
 
@@ -139,7 +158,8 @@ $tempP8Path = $null
 if ($hasApiKeys) {
     try {
         $tempP8Path = Join-Path $env:TEMP "asc-key-$([Guid]::NewGuid().ToString('n')).p8"
-        [System.Convert]::FromBase64String($env:ASC_KEY_P8_BASE64) | Set-Content -Path $tempP8Path -Encoding Byte
+        $p8Bytes = [System.Convert]::FromBase64String($env:ASC_KEY_P8_BASE64)
+        [System.IO.File]::WriteAllBytes($tempP8Path, $p8Bytes)
         if (-not (Test-Path $tempP8Path)) { throw "Failed to write .p8 file" }
         $tempP8Path = (Resolve-Path $tempP8Path).Path
 
@@ -168,7 +188,11 @@ try {
         Write-Host "   Auth: App-specific password" -ForegroundColor Gray
     }
 
-    npx eas-cli submit --platform ios --path $IpaPath --profile production --non-interactive
+    if ($SubmitLatest) {
+        npx eas-cli submit --platform ios --latest --profile production --non-interactive
+    } else {
+        npx eas-cli submit --platform ios --path $IpaPath --profile production --non-interactive
+    }
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`n✅ Submission completed successfully!" -ForegroundColor Green

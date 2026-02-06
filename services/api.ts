@@ -108,7 +108,9 @@ const MOBILE_ENDPOINTS = {
   CHAT_SMART_START: '/api/v1/mobile/chat/smart/start',
   CHAT_SMART_CHUNK: '/api/v1/mobile/chat/smart/chunk',
   CHAT_SMART_CANCEL: '/api/v1/mobile/chat/smart/cancel',
-  
+  /** Web chat feedback (thumbs up/down) - same as web */
+  CHAT_FEEDBACK: '/api/v1/web/chat/feedback',
+
   // Forms
   FORMS: '/api/v1/mobile/forms',
   FORM_BY_ID: (id: number) => `/api/v1/mobile/forms/${id}`,
@@ -377,9 +379,11 @@ class ApiService {
 
   async login(credentials: { username: string; password: string }): Promise<AuthResponse> {
     try {
-              console.log('🔄 Attempting mobile login with:', { username: credentials.username });
-      
-      const response = await this.client.post(MOBILE_ENDPOINTS.LOGIN, credentials);
+      const username = (credentials.username ?? '').trim();
+      const password = (credentials.password ?? '').trim();
+      console.log('🔄 Attempting mobile login with:', { username });
+      const payload = { username, password };
+      const response = await this.client.post(MOBILE_ENDPOINTS.LOGIN, payload);
       console.log('✅ Mobile login response:', response.status, response.data);
       
       const result = response.data;
@@ -903,6 +907,73 @@ class ApiService {
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Rename failed');
     }
+  }
+
+  // ==================== DRAFT API (web endpoints, Bearer auth) ====================
+
+  /**
+   * List drafts: get files and filter by file_kind === 'draft'. Uses existing getFiles.
+   */
+  async getDrafts(): Promise<ApiResponse> {
+    const res = await this.getFiles(1, 200);
+    const raw = res?.data?.files ?? res?.data?.data ?? res?.files ?? (Array.isArray(res?.data) ? res.data : []);
+    const list = Array.isArray(raw) ? raw : [];
+    const drafts = list.filter((f: any) => (f.file_kind || '').toString().toLowerCase() === 'draft');
+    return { ...res, success: res?.success !== false, data: { drafts }, drafts };
+  }
+
+  /**
+   * Create a draft. POST /api/v1/web/drafts/create. Body: {} or { source_file_id }.
+   */
+  async createDraft(sourceFileId?: number): Promise<ApiResponse> {
+    const response = await this.client.post('/api/v1/web/drafts/create', sourceFileId != null ? { source_file_id: sourceFileId } : {});
+    return response.data;
+  }
+
+  /**
+   * Get draft content. GET /api/v1/web/files/:id/draft-content.
+   */
+  async getDraftContent(draftId: number, token?: string): Promise<ApiResponse> {
+    const config = token ? { params: { token } } : {};
+    const response = await this.client.get(`/api/v1/web/files/${draftId}/draft-content`, config);
+    return response.data;
+  }
+
+  /**
+   * Save draft. PUT /api/v1/web/files/:id/edit with { content_html, content_text }.
+   */
+  async saveDraft(draftId: number, contentHtml: string, contentText: string, shareToken?: string): Promise<ApiResponse> {
+    const body: { content_html: string; content_text: string; token?: string } = { content_html: contentHtml, content_text: contentText };
+    if (shareToken) body.token = shareToken;
+    const response = await this.client.put(`/api/v1/web/files/${draftId}/edit`, body);
+    return response.data;
+  }
+
+  /**
+   * Delete draft. DELETE /api/v1/web/files/:id?confirmed=true.
+   */
+  async deleteDraft(draftId: number): Promise<ApiResponse> {
+    const response = await this.client.delete(`/api/v1/web/files/${draftId}?confirmed=true`);
+    return response.data;
+  }
+
+  /**
+   * Create share link for a file (draft or any file). POST /api/v1/web/files/:id/create-link.
+   */
+  async createFileShareLink(fileId: number, options?: { role?: 'viewer' | 'member' | 'admin'; expires_in_days?: number }): Promise<ApiResponse> {
+    const response = await this.client.post(`/api/v1/web/files/${fileId}/create-link`, options || {});
+    return response.data;
+  }
+
+  /**
+   * Send share link by email. POST /api/v1/web/files/:id/send-share-link.
+   */
+  async sendFileShareLinkEmail(
+    fileId: number,
+    params: { share_link: string; emails: string[]; message?: string; role?: string; expires_in_days?: number }
+  ): Promise<ApiResponse> {
+    const response = await this.client.post(`/api/v1/web/files/${fileId}/send-share-link`, params);
+    return response.data;
   }
 
   // ==================== CHUNKED UPLOAD METHODS ====================
@@ -2741,6 +2812,36 @@ class ApiService {
         (typeof error.response?.data === 'string' ? error.response.data : null);
       const suffix = status != null ? ` (${status})` : '';
       throw new Error(msg ? `${msg}${suffix}` : `Failed to fetch chat history${suffix}`);
+    }
+  }
+
+  /**
+   * Submit feedback for a chat assistant response (thumbs up/down).
+   * Calls the same web endpoint used by the web app.
+   */
+  async submitChatFeedback(params: {
+    chat_history_id?: number;
+    message_pair_index?: number;
+    query_text?: string;
+    response_text?: string;
+    feedback_score: number; // 1 = helpful, -1 = needs improvement, 0 = undo
+    workspace_id?: number | null;
+    conversation_id?: number | null;
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_FEEDBACK, {
+        chat_history_id: params.chat_history_id ?? null,
+        message_pair_index: params.message_pair_index ?? null,
+        query_text: params.query_text ?? null,
+        response_text: params.response_text ?? null,
+        feedback_score: params.feedback_score,
+        workspace_id: params.workspace_id ?? null,
+        conversation_id: params.conversation_id ?? null,
+      });
+      return response.data;
+    } catch (error: any) {
+      const msg = error.response?.data?.message ?? error.response?.data?.error ?? error.message;
+      throw new Error(msg || 'Failed to submit feedback');
     }
   }
 

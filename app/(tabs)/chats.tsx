@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -32,7 +33,10 @@ import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { secureStorage } from '../../utils/storage';
+import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
+import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
+import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 
 interface ChatParticipant {
   id: number;
@@ -63,6 +67,8 @@ interface ChatMessage {
   created_at: string;
   /** When true, message is preview/streaming placeholder - show in grey to indicate not final */
   is_preview?: boolean;
+  /** Sources/citations used for this response (assistant messages) */
+  citations?: Array<{ source_type?: string; source_name?: string; filename?: string; excerpt?: string; chunk_content?: string; document_id?: number; source_id?: string }> | null;
   document_context?: {
     id: number;
     name: string;
@@ -250,6 +256,7 @@ export default function ChatsScreen() {
   const isStreamingRef = useRef<boolean>(false);
   const isFakeStreamingRef = useRef<boolean>(false); // Track if we're in fake streaming mode
   const isStreamCompleteRef = useRef<boolean>(false); // Track if stream is complete (no more chunks will arrive)
+  const citationsFromStreamRef = useRef<ChatMessage['citations']>(null); // Citations from stream complete event
   const lastStreamedMessageIndexRef = useRef<number | null>(null); // Track which message index was last streamed
   const lastStreamCompleteTimeRef = useRef<number>(0); // Track when streaming last completed
   
@@ -272,6 +279,8 @@ export default function ChatsScreen() {
   
   // Keyboard height tracking for mention dropdown positioning
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  /** Keyboard top (screenY) when visible - used to position input just above keyboard */
+  const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
   const inputContainerRef = useRef<View>(null);
   const [inputContainerY, setInputContainerY] = useState(0);
   
@@ -1115,20 +1124,18 @@ export default function ChatsScreen() {
     }
   }, [userProfile]); // Removed selectedChat - handle room joining separately
 
-      // Track keyboard height for mention dropdown positioning
+      // Track keyboard for mention dropdown and so input sits just above keyboard
       useEffect(() => {
-        const keyboardWillShowListener = Keyboard.addListener(
-          Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-          (e) => {
-            setKeyboardHeight(e.endCoordinates.height);
-          }
-        );
-        const keyboardWillHideListener = Keyboard.addListener(
-          Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-          () => {
-            setKeyboardHeight(0);
-          }
-        );
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+        const keyboardWillShowListener = Keyboard.addListener(showEvent, (e) => {
+          setKeyboardHeight(e.endCoordinates.height);
+          setKeyboardTop(e.endCoordinates.screenY);
+        });
+        const keyboardWillHideListener = Keyboard.addListener(hideEvent, () => {
+          setKeyboardHeight(0);
+          setKeyboardTop(null);
+        });
 
         return () => {
           keyboardWillShowListener.remove();
@@ -2865,18 +2872,25 @@ export default function ChatsScreen() {
                 const fallbackHistoryMatches = fallbackHistoryId !== null && !isNaN(fallbackHistoryId) && !isNaN(fallbackTargetId) && fallbackHistoryId === fallbackTargetId;
                 
                 if (fallbackHistory && fallbackHistory.messages.length > 0 && fallbackHistoryMatches) {
+                  const refs = (fallbackHistory as any).references;
                   const convertedMessages: ChatMessage[] = fallbackHistory.messages.map((msg, index) => {
                     const backendMsg = msg as any;
                     let timestamp = backendMsg.created_at || backendMsg.timestamp;
                     // Use backend message ID if available, otherwise generate unique ID
                     const backendMessageId = backendMsg.message_id || backendMsg.id;
                     const messageId = backendMessageId ? backendMessageId : generateUniqueMessageId();
+                    const key = backendMessageId != null ? String(backendMessageId) : null;
+                    const citations =
+                      backendMsg.role === 'assistant' && key && refs && refs[key]
+                        ? (refs[key].citations ?? null)
+                        : undefined;
                     return {
                       id: typeof messageId === 'number' ? messageId : generateUniqueMessageId(),
                       content: msg.content || '',
                       sender: msg.role === 'user' ? null : { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
                       is_own_message: msg.role === 'user',
                       created_at: timestamp || new Date().toISOString(),
+                      citations: citations ?? undefined,
                     };
                   });
                   // Deduplicate messages before setting to prevent duplicate key errors
@@ -2983,7 +2997,8 @@ export default function ChatsScreen() {
       const historyMatches = historyId !== null && !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
       
       if (storeHistory && storeHistory.messages.length > 0 && historyMatches) {
-        // Convert chat store messages to the expected format
+        // Convert chat store messages to the expected format; merge references into assistant messages
+        const refs = storeHistory.references;
         const convertedMessages: ChatMessage[] = storeHistory.messages.map((msg, index) => {
           // Use actual message timestamp from backend - the backend provides 'created_at' field
           // Use type assertion to access backend response fields
@@ -3004,6 +3019,11 @@ export default function ChatsScreen() {
           // Backend messages may have message_id field
           const backendMessageId = backendMsg.message_id || backendMsg.id;
           const messageId = backendMessageId ? backendMessageId : generateUniqueMessageId();
+          const key = backendMessageId != null ? String(backendMessageId) : null;
+          const citations =
+            backendMsg.role === 'assistant' && key && refs && refs[key]
+              ? (refs[key].citations ?? undefined)
+              : undefined;
           
           return {
             id: typeof messageId === 'number' ? messageId : generateUniqueMessageId(),
@@ -3011,6 +3031,7 @@ export default function ChatsScreen() {
             sender: msg.role === 'user' ? null : { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
             is_own_message: msg.role === 'user',
             created_at: timestamp || new Date().toISOString(),
+            citations,
           };
         });
         
@@ -3283,7 +3304,9 @@ export default function ChatsScreen() {
             ...newMessages[assistantMsgIndex],
             content: keepContent,
             is_preview: false, // Final text - show in normal color
+            citations: citationsFromStreamRef.current ?? undefined,
           };
+          citationsFromStreamRef.current = null;
           console.log(`✅ Updated message ${assistantMsgIndex} with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
         } else {
           const assistantMessage: ChatMessage = {
@@ -3293,7 +3316,9 @@ export default function ChatsScreen() {
             is_own_message: false,
             created_at: new Date().toISOString(),
             is_preview: false,
+            citations: citationsFromStreamRef.current ?? undefined,
           };
+          citationsFromStreamRef.current = null;
           newMessages.push(assistantMessage);
           console.log(`✅ Created new assistant message with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
         }
@@ -3361,6 +3386,7 @@ export default function ChatsScreen() {
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = false;
       isStreamCompleteRef.current = false;
+      citationsFromStreamRef.current = null;
       isFakeStreamingRef.current = false;
       lastStreamedMessageIndexRef.current = null;
       lastStreamCompleteTimeRef.current = 0;
@@ -3971,6 +3997,7 @@ export default function ChatsScreen() {
                 // Complete event - finalize (like web)
                 // Mark stream as complete so interval knows to stop when all content is displayed
                 isStreamCompleteRef.current = true;
+                citationsFromStreamRef.current = (data.citations && data.citations.length > 0) ? data.citations : null;
                 
                 // Buffer already has full content from chunks, just ensure phase is correct
                 if (data.response != null && String(data.response).length > 0) {
@@ -6028,7 +6055,7 @@ export default function ChatsScreen() {
     );
   };
 
-  const renderMessageItem = ({ item }: { item: ChatMessage }) => {
+  const renderMessageItem = ({ item, index }: { item: ChatMessage; index: number }) => {
     // Determine if assistant responses should use bubbles based on chat type
     // User messages always have bubbles, but assistant responses don't need bubbles in document/bookmark chats
     const isDocumentOrBookmarkChat = selectedChat && (
@@ -6075,39 +6102,70 @@ export default function ChatsScreen() {
       
       if (isDocumentOrBookmarkChat) {
         // No bubbles (ChatGPT style). Fake streaming runs IN THIS SAME SLOT (above the time), then preview/refinement replace it.
+        // Footer (copy, thumbs, timestamp) shows only after streaming is done, below the response.
+        const messagePairIndex = Math.floor(index / 2);
+        const queryText = index > 0 ? messages[index - 1]?.content : undefined;
+        const showFooter = hasContent && !isStreamingActive && !item.is_preview;
         return (
           <View style={[
             dynamicStyles.messageContainerNoBubble,
             dynamicStyles.otherMessageNoBubble
           ]}>
-            {(isFakeStreamingActive && !hasContent)
-              ? (
-                  <ProcessingMessageDisplay
-                    isProcessing={true}
-                    hasRealData={!!item.content}
-                    processingType="general"
-                    onComplete={() => {}}
-                  />
-                )
-              : hasContent
-                ? renderMessageContent(item.content, item.is_own_message, item.is_preview)
-                : null}
+            <View style={{ flexDirection: 'column', width: '100%' }}>
+              {(isFakeStreamingActive && !hasContent)
+                ? (
+                    <ProcessingMessageDisplay
+                      isProcessing={true}
+                      hasRealData={!!item.content}
+                      processingType="general"
+                      onComplete={() => {}}
+                    />
+                  )
+                : hasContent
+                  ? renderMessageContent(item.content, item.is_own_message, item.is_preview)
+                  : null}
+              {showFooter && (
+                <ChatMessageFooter
+                  chatHistoryId={selectedChat?.id}
+                  messagePairIndex={messagePairIndex}
+                  queryText={queryText}
+                  responseText={item.content}
+                  createdAt={item.created_at}
+                  citations={item.citations}
+                />
+              )}
+            </View>
           </View>
         );
       } else {
-        // User/workspace: we never add an empty assistant message, but guard anyway
+        // User/workspace: we never add an empty assistant message, but guard anyway.
+        // Footer shows only after streaming is done, below the bubble.
         if (!hasContent) return null;
-        
+        const messagePairIndex = Math.floor(index / 2);
+        const queryText = index > 0 ? messages[index - 1]?.content : undefined;
+        const showFooter = !isStreamingActive && !item.is_preview;
         return (
           <View style={[
             dynamicStyles.messageContainer,
             dynamicStyles.otherMessage
           ]}>
-            <View style={[
-              dynamicStyles.messageBubble,
-              dynamicStyles.otherBubble
-            ]}>
-              {renderMessageContent(item.content, item.is_own_message, item.is_preview)}
+            <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+              <View style={[
+                dynamicStyles.messageBubble,
+                dynamicStyles.otherBubble
+              ]}>
+                {renderMessageContent(item.content, item.is_own_message, item.is_preview)}
+              </View>
+              {showFooter && (
+                <ChatMessageFooter
+                  chatHistoryId={selectedChat?.id}
+                  messagePairIndex={messagePairIndex}
+                  queryText={queryText}
+                  responseText={item.content}
+                  createdAt={item.created_at}
+                  citations={item.citations}
+                />
+              )}
             </View>
           </View>
         );
@@ -6118,31 +6176,34 @@ export default function ChatsScreen() {
   const renderChatsList = () => {
     return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
-      <View style={dynamicStyles.header}>
-        <TouchableOpacity 
-          style={dynamicStyles.backButton} 
-          onPress={() => router.back()}
-        >
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
-        </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+      <TapToToggleHeaderView style={dynamicStyles.container}>
+      <AnimatedHeaderContainer>
+        <View style={dynamicStyles.header}>
           <TouchableOpacity 
-            style={dynamicStyles.newChatButton} 
-            onPress={onRefresh}
-            disabled={refreshing}
+            style={dynamicStyles.backButton} 
+            onPress={() => router.back()}
           >
-            <Ionicons 
-              name="refresh" 
-              size={20} 
-              color={refreshing ? "#999" : "#007AFF"} 
-            />
+            <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
-            <Ionicons name="add" size={20} color="#007AFF" />
-          </TouchableOpacity>
+          <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity 
+              style={dynamicStyles.newChatButton} 
+              onPress={onRefresh}
+              disabled={refreshing}
+            >
+              <Ionicons 
+                name="refresh" 
+                size={20} 
+                color={refreshing ? "#999" : "#007AFF"} 
+              />
+            </TouchableOpacity>
+            <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
+              <Ionicons name="add" size={20} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </AnimatedHeaderContainer>
 
       {/* Search Box with Chat Types */}
       <View style={dynamicStyles.searchInputContainer}>
@@ -6182,14 +6243,17 @@ export default function ChatsScreen() {
           onTouchStart={() => setShowQuickChatTypes(false)}
         />
       )}
+      </TapToToggleHeaderView>
     </SafeAreaView>
     );
   };
 
   const renderChatMessages = () => (
     <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom']}>
+      <TapToToggleHeaderView style={dynamicStyles.container}>
       {/* Chat Header */}
-      <View style={dynamicStyles.chatHeader}>
+      <AnimatedHeaderContainer height={56}>
+        <View style={dynamicStyles.chatHeader}>
         <TouchableOpacity 
           style={dynamicStyles.backButton} 
           onPress={() => {
@@ -6255,11 +6319,12 @@ export default function ChatsScreen() {
           )}
         </View>
       </View>
+      </AnimatedHeaderContainer>
 
       <KeyboardAvoidingView 
         style={dynamicStyles.chatContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        behavior={undefined}
+        keyboardVerticalOffset={0}
       >
         {messagesLoading ? (
           <View style={dynamicStyles.loadingContainer}>
@@ -6406,7 +6471,15 @@ export default function ChatsScreen() {
 
         <View 
           ref={inputContainerRef}
-          style={dynamicStyles.inputContainer}
+          style={[
+            dynamicStyles.inputContainer,
+            {
+              paddingBottom: 8,
+              marginBottom: keyboardTop != null
+                ? Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop)
+                : 0,
+            },
+          ]}
           onLayout={(event) => {
             const { y } = event.nativeEvent.layout;
             setInputContainerY(y);
@@ -6449,6 +6522,7 @@ export default function ChatsScreen() {
           </Animated.View>
         </View>
       </KeyboardAvoidingView>
+      </TapToToggleHeaderView>
     </SafeAreaView>
   );
 
