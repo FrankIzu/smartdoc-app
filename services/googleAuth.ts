@@ -368,11 +368,11 @@ class GoogleAuthService {
 
       // Step 3: Enhanced Authentication
       if (requiredAuthMethod === 'BIOMETRIC_ONLY') {
-        const biometricSuccess = await deviceSecurityService.authenticateWithBiometrics(
+        const biometricResult = await deviceSecurityService.authenticateWithBiometrics(
           'Verify your identity to complete Google sign-in'
         );
 
-        if (!biometricSuccess) {
+        if (!biometricResult.success) {
           return {
             success: false,
             message: 'Biometric authentication required',

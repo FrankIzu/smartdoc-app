@@ -21,6 +21,16 @@ on:
           - production
           - preview
           - development
+      play_track:
+        description: 'Google Play release track (only for profile=production). App not in prod yet — use internal or alpha (closed testing).'
+        required: false
+        default: 'alpha'
+        type: choice
+        options:
+          - internal
+          - alpha
+          - beta
+          - production
 
 jobs:
   build:
@@ -45,15 +55,24 @@ jobs:
       - name: Remove manager-francis submodule entry so git commands do not touch it
         run: |
           set +e
-          # Remove submodule references
-          git config -f .gitmodules --remove-section submodule.manager-francis 2>/dev/null || true
+          # Remove submodule references so post-job cleanup (git submodule foreach) does not fail with "No url found for submodule path 'manager-francis'"
+          if [ -f .gitmodules ]; then
+            git config -f .gitmodules --remove-section submodule.manager-francis 2>/dev/null || true
+            # If .gitmodules is empty or only has whitespace, remove it so git does not see any submodules
+            if [ -f .gitmodules ] && [ ! -s .gitmodules ]; then
+              rm -f .gitmodules
+            fi
+            # Remove [submodule "manager-francis"] block by sed if section removal left a broken file
+            if [ -f .gitmodules ] && grep -q 'manager-francis' .gitmodules 2>/dev/null; then
+              sed -i '/\[submodule "manager-francis"\]/,/^$/d' .gitmodules 2>/dev/null || true
+              [ ! -s .gitmodules ] && rm -f .gitmodules || true
+            fi
+          fi
+          git config --remove-section submodule.manager-francis 2>/dev/null || true
           git submodule deinit -f manager-francis 2>/dev/null || true
           git rm --cached manager-francis 2>/dev/null || true
           rm -rf .git/modules/manager-francis manager-francis 2>/dev/null || true
-          # Ensure git is in a clean state
           git reset --hard HEAD 2>/dev/null || true
-          git clean -fd 2>/dev/null || true
-          # Verify git is working
           git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
         continue-on-error: true
 
@@ -226,8 +245,10 @@ jobs:
             fs.writeFileSync('eas.json', JSON.stringify(easJson, null, 2) + '\n');
           "
           
-          # Submit using eas.json configuration
-          npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive
+          # Submit using eas.json configuration (default alpha = closed testing; app not in prod yet)
+          PLAY_TRACK="${{ github.event.inputs.play_track || 'alpha' }}"
+          echo "Submitting to Google Play track: $PLAY_TRACK"
+          npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive --track "$PLAY_TRACK"
           
           # Restore original eas.json
           mv eas.json.backup eas.json

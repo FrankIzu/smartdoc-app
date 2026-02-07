@@ -2,14 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -63,6 +64,7 @@ export default function DraftsListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadDrafts = useCallback(async () => {
     if (!user) return;
@@ -90,10 +92,22 @@ export default function DraftsListScreen() {
     loadDrafts();
   };
 
+  const filteredDrafts = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return drafts;
+    }
+    const query = searchQuery.toLowerCase().trim();
+    return drafts.filter(draft => {
+      const filename = (draft.original_filename || '').toLowerCase();
+      const createdFrom = (draft.json_data?.created_from || '').toLowerCase();
+      return filename.includes(query) || createdFrom.includes(query);
+    });
+  }, [drafts, searchQuery]);
+
   const grouped = useMemo(() => {
     const map = new Map<SectionKey, DraftItem[]>();
     SECTION_ORDER.forEach(k => map.set(k, []));
-    drafts.forEach(d => {
+    filteredDrafts.forEach(d => {
       const raw = d.updated_at || d.created_at;
       const date = raw ? new Date(raw) : new Date();
       const key = getSectionKey(date);
@@ -102,7 +116,7 @@ export default function DraftsListScreen() {
     return SECTION_ORDER.map(key => ({ key, label: SECTION_LABELS[key], items: map.get(key)! })).filter(
       g => g.items.length > 0
     );
-  }, [drafts]);
+  }, [filteredDrafts]);
 
   const handleNewDraft = async () => {
     if (creating) return;
@@ -142,6 +156,7 @@ export default function DraftsListScreen() {
       backgroundColor: colors.card,
     },
     backBtn: { padding: 8, marginRight: 4 },
+    headerBtn: { padding: 8, marginRight: 4 },
     headerTitleWrap: { flex: 1, minWidth: 0 },
     headerTitle: { fontSize: 22, fontWeight: '700', color: colors.text },
     headerSubtitle: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
@@ -183,6 +198,33 @@ export default function DraftsListScreen() {
     emptyIcon: { marginBottom: 12 },
     emptyTitle: { fontSize: 17, fontWeight: '600', color: colors.text, marginBottom: 6 },
     emptySubtitle: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', marginBottom: 16 },
+    searchContainer: {
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    searchInputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface || colors.background,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    searchIcon: {
+      marginRight: 8,
+    },
+    searchInput: {
+      flex: 1,
+      paddingVertical: 4,
+      fontSize: 14,
+      color: colors.text,
+    },
+    searchClearBtn: {
+      padding: 4,
+    },
   }), [colors]);
 
   return (
@@ -197,6 +239,13 @@ export default function DraftsListScreen() {
             <Text style={dynamicStyles.headerTitle}>Drafts</Text>
             <Text style={dynamicStyles.headerSubtitle}>Notes | Invite other to edit | ChatGD</Text>
           </View>
+          <TouchableOpacity style={dynamicStyles.headerBtn} onPress={onRefresh} disabled={refreshing}>
+            {refreshing ? (
+              <ActivityIndicator size="small" color={colors.primary || '#007AFF'} />
+            ) : (
+              <Ionicons name="refresh-outline" size={24} color={colors.text} />
+            )}
+          </TouchableOpacity>
           <TouchableOpacity style={dynamicStyles.newButton} onPress={handleNewDraft} disabled={creating}>
             {creating ? (
               <ActivityIndicator size="small" color="#fff" />
@@ -207,11 +256,31 @@ export default function DraftsListScreen() {
         </View>
       </AnimatedHeaderContainer>
 
+      {!loading && drafts.length > 0 && (
+        <View style={dynamicStyles.searchContainer}>
+          <View style={dynamicStyles.searchInputContainer}>
+            <Ionicons name="search" size={20} color={colors.textSecondary} style={dynamicStyles.searchIcon} />
+            <TextInput
+              style={dynamicStyles.searchInput}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search drafts..."
+              placeholderTextColor={colors.textSecondary}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} style={dynamicStyles.searchClearBtn}>
+                <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
         </View>
-      ) : drafts.length === 0 ? (
+      ) : filteredDrafts.length === 0 && drafts.length === 0 ? (
         <ScrollView
           contentContainerStyle={dynamicStyles.empty}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -226,6 +295,15 @@ export default function DraftsListScreen() {
               <Ionicons name="add" size={18} color="#fff" />
             )}
           </TouchableOpacity>
+        </ScrollView>
+      ) : filteredDrafts.length === 0 && searchQuery.trim() ? (
+        <ScrollView
+          contentContainerStyle={dynamicStyles.empty}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          <Ionicons name="search-outline" size={56} color={colors.textSecondary} style={dynamicStyles.emptyIcon} />
+          <Text style={dynamicStyles.emptyTitle}>No drafts found</Text>
+          <Text style={dynamicStyles.emptySubtitle}>No drafts match "{searchQuery}"</Text>
         </ScrollView>
       ) : (
         <ScrollView

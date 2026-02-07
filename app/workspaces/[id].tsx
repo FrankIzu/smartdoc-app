@@ -469,6 +469,7 @@ export default function WorkspaceDetailsScreen() {
     membersList: { backgroundColor: colors.card, borderRadius: 12, overflow: 'hidden' },
     memberItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
     memberAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+    memberAvatarText: { fontSize: 16, fontWeight: '700', color: colors.tint },
     memberInfo: { flex: 1 },
     memberName: { fontSize: 16, fontWeight: '600', color: colors.text, marginBottom: 2 },
     memberRole: { fontSize: 14, color: colors.textSecondary, textTransform: 'capitalize' },
@@ -815,7 +816,15 @@ export default function WorkspaceDetailsScreen() {
                 {members.map((member) => (
                   <View key={member.id} style={dynamicStyles.memberItem}>
                     <View style={dynamicStyles.memberAvatar}>
-                      <Ionicons name="person" size={20} color={colors.textSecondary} />
+                      {(() => {
+                        const first = (member.user?.first_name || '').trim();
+                        const last = (member.user?.last_name || '').trim();
+                        const initials = (first.charAt(0) + last.charAt(0)).toUpperCase();
+                        if (initials) {
+                          return <Text style={dynamicStyles.memberAvatarText}>{initials}</Text>;
+                        }
+                        return <Ionicons name="person" size={20} color={colors.textSecondary} />;
+                      })()}
                     </View>
                     <View style={dynamicStyles.memberInfo}>
                       <Text style={dynamicStyles.memberName}>

@@ -1,6 +1,7 @@
 // Import polyfills for mobile compatibility
 import React, { useEffect, useRef } from 'react';
-import { LogBox, StyleSheet } from 'react-native';
+import { Alert, AppState, LogBox, StyleSheet } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
 
@@ -25,11 +26,14 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import GlobalProgressBar from '../components/GlobalProgressBar';
 import NetworkIndicator from '../components/NetworkIndicator';
+import { AppLockProvider, useAppLock } from '../contexts/AppLockContext';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
 import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
+import { DisplayScaleProvider } from '../contexts/DisplayScaleContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
+import AppLockScreen from './components/AppLockScreen';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
 import { AuthProvider, useAuth } from './context/auth';
 import { initializePushNotifications, pushNotificationService } from './services/pushNotifications';
@@ -41,8 +45,12 @@ function RootLayoutNav() {
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
   const { isDark } = useTheme();
   const { user } = useAuth();
+  const { isLocked, appLockEnabled, hasPinSet, checkHasPinSet } = useAppLock();
   const router = useRouter();
   const pushListenerRef = useRef<{ remove: () => void } | null>(null);
+
+  const APP_LOCK_REMINDER_KEY = '@grabdocs_app_lock_reminder_last_shown';
+  const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   // Register for push and send token to backend when user is logged in
   useEffect(() => {
@@ -55,6 +63,46 @@ function RootLayoutNav() {
     });
     return () => { mounted = false; };
   }, [user]);
+
+  // Remind user to set app lock PIN periodically until they do
+  useEffect(() => {
+    if (!user || hasPinSet) return;
+
+    const maybeShowReminder = async () => {
+      const pinSet = await checkHasPinSet();
+      if (pinSet) return;
+
+      try {
+        const lastStr = await AsyncStorage.getItem(APP_LOCK_REMINDER_KEY);
+        const lastShown = lastStr ? parseInt(lastStr, 10) : 0;
+        if (lastShown && Date.now() - lastShown < REMINDER_INTERVAL_MS) return;
+
+        Alert.alert(
+          'Set up app lock',
+          'For better security, set a PIN so your app locks 5 minutes after you leave it. You can unlock with Face ID, Touch ID, or your PIN.\n\nGo to Settings → App lock → Set PIN to get started.',
+          [
+            { text: 'Later' },
+            {
+              text: 'Open Settings',
+              onPress: () => router.push('/(tabs)/settings'),
+            },
+          ]
+        );
+        await AsyncStorage.setItem(APP_LOCK_REMINDER_KEY, String(Date.now()));
+      } catch {
+        // ignore storage/alert errors
+      }
+    };
+
+    const sub = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') maybeShowReminder();
+    });
+
+    // Show once on mount if they're logged in and no PIN (e.g. first open)
+    maybeShowReminder();
+
+    return () => sub.remove();
+  }, [user, hasPinSet, checkHasPinSet, router]);
 
   // When user taps a push notification, open notifications screen or deep link
   useEffect(() => {
@@ -79,8 +127,11 @@ function RootLayoutNav() {
     };
   }, [router]);
 
+  const showLock = !!user && appLockEnabled && isLocked;
+
   return (
     <>
+      {showLock && <AppLockScreen />}
       <StatusBar style={isDark ? "light" : "dark"} />
       {/* Persistent Network Indicator */}
       <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
@@ -225,11 +276,15 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <AuthProvider>
-            <Enhanced2FAAuthProvider>
-              <AuthWrapper />
-            </Enhanced2FAAuthProvider>
-          </AuthProvider>
+          <DisplayScaleProvider>
+            <AuthProvider>
+              <Enhanced2FAAuthProvider>
+                <AppLockProvider>
+                  <AuthWrapper />
+                </AppLockProvider>
+              </Enhanced2FAAuthProvider>
+            </AuthProvider>
+          </DisplayScaleProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

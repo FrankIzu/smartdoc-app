@@ -976,6 +976,30 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Get all external shares for a file
+   */
+  async getFileExternalShares(fileId: number): Promise<ApiResponse> {
+    const response = await this.client.get(`/api/v1/web/files/${fileId}/external-shares`);
+    return response.data;
+  }
+
+  /**
+   * Revoke an external file share
+   */
+  async revokeFileShare(fileId: number, shareId: number): Promise<ApiResponse> {
+    const response = await this.client.delete(`/api/v1/web/files/${fileId}/external-shares/${shareId}`);
+    return response.data;
+  }
+
+  /**
+   * Permanently delete a revoked external file share
+   */
+  async deleteFileShare(fileId: number, shareId: number): Promise<ApiResponse> {
+    const response = await this.client.delete(`/api/v1/web/files/${fileId}/external-shares/${shareId}?permanent=true`);
+    return response.data;
+  }
+
   // ==================== CHUNKED UPLOAD METHODS ====================
   // Resilient file upload with chunking, resume, and retry support
 

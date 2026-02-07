@@ -88,8 +88,8 @@ So: add the secrets for the store(s) you want, and the next build run will submi
 ## 4. What the workflow does
 
 - **Android:** After “Upload Android artifact”, it writes the secret to a temp JSON file and runs:
-  `eas submit --platform android --path <path-to-.aab> --non-interactive`
-  with the service account key path set to that file. Your **eas.json** has `track: production`; that is used.
+  `eas submit --platform android --path <path-to-.aab> --non-interactive --track <play_track>`
+  with the service account key path set to that file. The **Play track** workflow input (default **production**) chooses the release track; use **internal** if production fails with "Precondition check failed".
 - **iOS:** After “Upload iOS artifact”, it either:
   - Writes the base64-decoded `.p8` to a temp file and runs submit with `--asc-api-key-path`, **or**
   - Uses `EXPO_APPLE_APP_SPECIFIC_PASSWORD` and the existing **eas.json** Apple ID config.
@@ -98,7 +98,26 @@ The built file path is whatever EAS local leaves in the workspace (e.g. `*.ipa` 
 
 ---
 
-## 5. Security
+## 5. Android: "Precondition check failed" (Google Play)
+
+If the workflow fails with **`Google Api Error: Invalid request - Precondition check failed`** when submitting to the **production** track, try:
+
+1. **Submit to internal testing first**  
+   When running the **Build Android** workflow, set the input **Play track** to **`internal`** instead of **`production`**. After the build succeeds and is on the internal track, you can promote it to production from Play Console, or switch back to **`production`** for the next run.
+
+2. **Check service account permissions**  
+   In Play Console → **Users and permissions** → **API access** → your service account: ensure it has at least **Release to production** (or **Release apps to production**). For internal-only use, **Release to testing** is enough.
+
+3. **Check app and track setup**  
+   - The app must exist in Play Console and have completed required setup (e.g. store listing, content rating, privacy policy if required).  
+   - If this is the first release, the production track may not be ready until you’ve done at least one release (e.g. to internal), so prefer **Play track: internal** for the first submission.
+
+4. **Confirm package name**  
+   The **package** in your app (e.g. `com.grabdocs.mobile`) must match the app created in Play Console.
+
+---
+
+## 6. Security
 
 - Never commit the Android JSON key or the `.p8` file.
 - Use the minimum Play Console permissions needed for the service account.

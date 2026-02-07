@@ -629,7 +629,7 @@ try {
                     }
                 }
             } else {
-                Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
+r                Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
             }
             
             # Switch back to francis branch for continued work

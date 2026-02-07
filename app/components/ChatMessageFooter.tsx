@@ -1,11 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import React, { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
-import { apiClient } from '../../services/api';
 import { useThemeColors } from '../../hooks/useThemeColors';
+import { apiClient } from '../../services/api';
 
 export interface CitationItem {
   source_type?: string;

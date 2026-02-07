@@ -208,7 +208,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
             'Verify your identity to sign in'
           );
 
-          if (!biometricResult && requiredAuthMethod === 'BIOMETRIC_ONLY') {
+          if (!biometricResult.success && requiredAuthMethod === 'BIOMETRIC_ONLY') {
             console.log('❌ Biometric pre-auth failed');
             setAuthState(prev => ({ ...prev, isLoading: false }));
             return {
@@ -392,7 +392,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         'Sign in with biometric authentication'
       );
 
-      if (!biometricResult) {
+      if (!biometricResult.success) {
         setAuthState(prev => ({ ...prev, isLoading: false }));
         return {
           success: false,

@@ -25,6 +25,7 @@ import ExternalFilePicker from '../../components/ExternalFilePicker';
 import LoadingDots from '../../components/LoadingDots';
 import QuickFormViewer from '../../components/QuickFormViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
+import { scaleStyleObject } from '../../utils/styleUtils';
 import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
@@ -49,6 +50,7 @@ interface Document {
   is_global?: boolean; // File is global (available across workspaces)
   json_data?: Record<string, unknown> | null; // Store json_data to check if store name is populated
   original_filename?: string; // Store original filename for matching optimistic files
+  user_id?: number; // File owner's user ID
 }
 
 interface ApiDocument {
@@ -65,10 +67,25 @@ interface ApiDocument {
   json_data?: Record<string, unknown> | null;
   processing_status?: 'pending' | 'processing' | 'processed' | 'error';
   is_global?: boolean;
+  user_id?: number; // File owner's user ID
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
 type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'invoice' | 'meeting_notes' | 'meeting_chat' | 'meeting_summary' | 'draft' | 'spreadsheet' | 'picture' | 'pending' | 'unknown';
+
+// Helper to check if a file is editable as Draft (text-like formats)
+function isEditableTextFormat(file: Document | { original_filename?: string; filename?: string; file_kind?: string }): boolean {
+  const name = file?.original_filename || (file as any)?.filename || '';
+  const ext = name.toLowerCase().substring(name.lastIndexOf('.'));
+  const excluded = ['.pdf', '.zip', '.exe', '.dll', '.bin'];
+  const editable = ['.txt', '.doc', '.docx', '.md', '.log', '.csv', '.json'];
+  if (excluded.includes(ext)) return false;
+  if (editable.includes(ext)) return true;
+  // Also check file_kind - Draft files are editable
+  const fk = (file as any)?.file_kind?.toLowerCase();
+  if (fk === 'draft') return true;
+  return false;
+}
 
 export default function QuickFilesScreen() {
   const router = useRouter();
@@ -617,6 +634,7 @@ export default function QuickFilesScreen() {
           file_kind: 'pending',
           json_data: null, // Optimistic files don't have json_data yet
           original_filename: optFile.name, // Store original filename for matching
+          user_id: user?.id ? Number(user.id) : undefined, // Optimistic files belong to current user
         };
       });
       
@@ -771,6 +789,7 @@ export default function QuickFilesScreen() {
               is_global: doc.is_global,
               json_data: doc.json_data, // Store json_data to check if store name is populated
               original_filename: doc.original_filename || doc.filename, // Store original filename for matching
+              user_id: doc.user_id, // Store owner's user ID
             };
           });
           
@@ -830,6 +849,7 @@ export default function QuickFilesScreen() {
                 file_kind: 'pending',
                 json_data: null, // Optimistic files don't have json_data yet
                 original_filename: optFile.name, // Store original filename for matching
+                user_id: user?.id ? Number(user.id) : undefined, // Optimistic files belong to current user
               };
             });
           
@@ -1478,6 +1498,42 @@ export default function QuickFilesScreen() {
     setShowKebabMenu(false);
   };
 
+  const handleEditAsDraft = async () => {
+    const doc = selectedDocumentForMenu;
+    if (!doc) return;
+    setShowKebabMenu(false);
+    
+    // If it's already a Draft, navigate to edit
+    if (doc.file_kind?.toLowerCase() === 'draft') {
+      router.push(`/drafts/edit/${doc.id}`);
+      return;
+    }
+    
+    // Check if file is editable
+    if (!isEditableTextFormat(doc)) {
+      Alert.alert('Not Editable', 'This file format cannot be edited as Draft. Supported formats: .txt, .doc, .docx, .md, .log, .csv, .json');
+      return;
+    }
+    
+    // Check processing status
+    if (doc.status === 'processing' || doc.status === 'pending') {
+      Alert.alert('File Processing', 'Please wait for the file to finish processing before editing as Draft.');
+      return;
+    }
+    
+    try {
+      const res = await apiClient.createDraft(Number(doc.id));
+      if ((res as any)?.success && (res as any)?.draft?.id) {
+        const draftId = (res as any).draft.id;
+        router.push(`/drafts/edit/${draftId}`);
+      } else {
+        Alert.alert('Error', (res as any)?.message || 'Failed to create Draft');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.message || e?.message || 'Failed to create Draft');
+    }
+  };
+
   const handleShowMakeGlobalModal = async () => {
     const doc = selectedDocumentForMenu;
     if (!doc) return;
@@ -1701,7 +1757,8 @@ export default function QuickFilesScreen() {
     </TouchableOpacity>
   );
 
-  const dynamicStyles = useMemo(() => StyleSheet.create({
+  const dynamicStyles = useMemo(() => {
+    const scaledStyles = scaleStyleObject({
     container: {
       flex: 1,
       backgroundColor: colors.background,
@@ -2185,7 +2242,9 @@ export default function QuickFilesScreen() {
       justifyContent: 'center',
       alignItems: 'center',
     },
-  }), [colors]);
+    }, colors.scale);
+    return StyleSheet.create(scaledStyles);
+  }, [colors, colors.scale]);
 
   // Loading state with bouncing dots
   if (loading && documents.length === 0) {
@@ -2498,13 +2557,43 @@ export default function QuickFilesScreen() {
               <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
-              onPress={handleShowMakeGlobalModal}
-            >
-              <Ionicons name="globe-outline" size={20} color="#0EA5E9" />
-              <Text style={dynamicStyles.kebabMenuText}>{selectedDocumentForMenu?.is_global ? 'Change Global' : 'Make Global'}</Text>
-            </TouchableOpacity>
+            {/* Edit as Draft: for editable text files (not Forms, not PDFs) */}
+            {(() => {
+              const doc = selectedDocumentForMenu;
+              if (!doc) return false;
+              // Must be editable format
+              if (!isEditableTextFormat(doc)) return false;
+              // Not a Form
+              const fk = doc.file_kind?.toLowerCase();
+              if (fk === 'form') return false;
+              // Must be processed (not pending/processing)
+              if (doc.status === 'processing' || doc.status === 'pending') return false;
+              // User must be owner or have edit access (if user_id matches, they're owner)
+              if (doc.user_id && user?.id && Number(doc.user_id) === Number(user.id)) return true;
+              // For shared files, we could check can_edit but for now only show for owner
+              return false;
+            })() && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleEditAsDraft}
+              >
+                <Ionicons name="document-text-outline" size={20} color="#007AFF" />
+                <Text style={dynamicStyles.kebabMenuText}>
+                  {selectedDocumentForMenu?.file_kind?.toLowerCase() === 'draft' ? 'Edit Draft' : 'Edit as Draft'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Make Global / Change Global: only for file owner */}
+            {selectedDocumentForMenu?.user_id && user?.id && Number(selectedDocumentForMenu.user_id) === Number(user.id) && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleShowMakeGlobalModal}
+              >
+                <Ionicons name="globe-outline" size={20} color="#0EA5E9" />
+                <Text style={dynamicStyles.kebabMenuText}>{selectedDocumentForMenu?.is_global ? 'Change Global' : 'Make Global'}</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Rename: only for files that are not receipt or invoice */}
             {(() => {

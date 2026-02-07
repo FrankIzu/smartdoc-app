@@ -1,10 +1,19 @@
-import { useTheme } from '../contexts/ThemeContext';
 import { Colors } from '../constants/Colors';
+import { useTheme } from '../contexts/ThemeContext';
+import { useDisplayScale } from '../contexts/DisplayScaleContext';
 
 export function useThemeColors() {
   const { resolvedTheme } = useTheme();
+  const { scale } = useDisplayScale();
   const isDark = resolvedTheme === 'dark';
   const themeColors = Colors[resolvedTheme];
+  
+  /**
+   * Helper function to scale font sizes based on user preference
+   */
+  const scaledFontSize = (fontSize: number): number => {
+    return Math.round(fontSize * scale);
+  };
   
   return {
     ...themeColors,
@@ -24,6 +33,9 @@ export function useThemeColors() {
     away: Colors.away,
     busy: Colors.busy,
     isDark,
+    // Display scale helpers
+    scale,
+    scaledFontSize,
   };
 }
 

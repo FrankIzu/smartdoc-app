@@ -6,18 +6,22 @@ import {
     ActivityIndicator,
     Alert,
     Linking,
+    Modal,
     Platform,
     ScrollView,
     StyleSheet,
     Switch,
     Text,
+    TextInput,
     TouchableOpacity,
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAppLock } from '../../contexts/AppLockContext';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
+import { useDisplayScale, MIN_SCALE, MAX_SCALE } from '../../contexts/DisplayScaleContext';
 import { apiService as api } from '../../services/api';
 import deviceSecurityService from '../../services/deviceSecurity';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
@@ -80,12 +84,31 @@ interface PreferencesResponse {
   preferences: UserPreferences;
 }
 
+interface DeviceFingerprint {
+  deviceId: string;
+  deviceName: string;
+  platform: string;
+  osVersion: string;
+  appVersion: string;
+  installationId: string;
+  createdAt: string;
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
   const { user, logout } = useEnhanced2FAAuth();
   const { theme, setTheme } = useTheme();
   const colors = useThemeColors();
+  const { scale, setScale } = useDisplayScale();
+  const {
+    appLockEnabled,
+    setAppLockEnabled,
+    hasPinSet,
+    setPin,
+    checkHasPinSet,
+    lockAfterMinutes,
+  } = useAppLock();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,17 +117,21 @@ export default function SettingsScreen() {
   const [deviceTrustEnabled, setDeviceTrustEnabled] = useState(true);
   const [remember2FA, setRemember2FA] = useState(true);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
-  const [deviceInfo, setDeviceInfo] = useState(null);
+  const [deviceInfo, setDeviceInfo] = useState<DeviceFingerprint | null>(null);
+  const [showSetPinModal, setShowSetPinModal] = useState(false);
+  const [pinValue, setPinValue] = useState('');
+  const [pinConfirm, setPinConfirm] = useState('');
+  const [pinError, setPinError] = useState('');
 
   // Collapsible sections state - only About expanded by default
   const [expandedSections, setExpandedSections] = useState({
     notifications: false,
     security: false,
+    appLock: false,
     fileManagement: false,
     uploadSettings: false,
     display: false,
     privacy: false,
-    analytics: false,
     about: true,
     account: false,
   });
@@ -125,11 +152,11 @@ export default function SettingsScreen() {
       const newState: typeof expandedSections = {
         notifications: false,
         security: false,
+        appLock: false,
         fileManagement: false,
         uploadSettings: false,
         display: false,
         privacy: false,
-        analytics: false,
         about: false,
         account: false,
       };
@@ -148,11 +175,11 @@ export default function SettingsScreen() {
       setExpandedSections({
         notifications: false,
         security: false,
+        appLock: false,
         fileManagement: false,
         uploadSettings: false,
         display: false,
         privacy: false,
-        analytics: false,
         about: true, // Always expand About section on focus
         account: false,
       });
@@ -231,6 +258,7 @@ export default function SettingsScreen() {
       setDeviceTrustEnabled(userPrefs.rememberDevice);
       setRemember2FA(userPrefs.rememberDevice);
 
+      await checkHasPinSet();
     } catch (error) {
       console.error('Failed to load settings:', error);
       Alert.alert('Error', 'Failed to load settings');
@@ -413,6 +441,7 @@ export default function SettingsScreen() {
       'security.biometric',
       'security.remember_device',
       'security.remember_2fa',
+      'security.app_lock',
     ];
 
     const partialFeatures = [
@@ -505,6 +534,8 @@ export default function SettingsScreen() {
   );
   };
 
+  const { scaledFontSize } = useThemeColors();
+  
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
@@ -520,7 +551,7 @@ export default function SettingsScreen() {
       borderBottomColor: colors.border,
     },
     headerTitle: {
-      fontSize: 24,
+      fontSize: scaledFontSize(24),
       fontWeight: 'bold',
       color: colors.text,
     },
@@ -532,7 +563,7 @@ export default function SettingsScreen() {
       marginTop: 12,
     },
     sectionTitle: {
-      fontSize: 16,
+      fontSize: scaledFontSize(16),
       fontWeight: '600',
       color: colors.text,
       flex: 1,
@@ -556,17 +587,22 @@ export default function SettingsScreen() {
       alignItems: 'center',
       marginRight: 16,
     },
+    profileInitials: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: '#fff',
+    },
     profileInfo: {
       flex: 1,
     },
     profileName: {
-      fontSize: 18,
+      fontSize: scaledFontSize(18),
       fontWeight: '600',
       color: colors.text,
       marginBottom: 4,
     },
     profileEmail: {
-      fontSize: 14,
+      fontSize: scaledFontSize(14),
       color: colors.textSecondary,
       marginBottom: 8,
     },
@@ -625,15 +661,15 @@ export default function SettingsScreen() {
       flex: 1,
     },
     settingTitle: {
-      fontSize: 16,
+      fontSize: scaledFontSize(16),
       fontWeight: '500',
       color: colors.text,
       marginBottom: 2,
     },
     settingSubtitle: {
-      fontSize: 12,
+      fontSize: scaledFontSize(12),
       color: colors.textSecondary,
-      lineHeight: 16,
+      lineHeight: scaledFontSize(16),
     },
     settingValue: {
       fontSize: 14,
@@ -817,7 +853,88 @@ export default function SettingsScreen() {
       color: '#007AFF',
       fontWeight: '600',
     },
-  }), [colors]);
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 24,
+    },
+    modalCard: {
+      width: '100%',
+      maxWidth: 340,
+      padding: 24,
+      borderRadius: 16,
+    },
+    pinInput: {
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      borderWidth: 1,
+      fontSize: 18,
+    },
+    primaryButton: {
+      paddingVertical: 12,
+      borderRadius: 10,
+      backgroundColor: colors.tint,
+      alignItems: 'center',
+    },
+    primaryButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#fff',
+    },
+    secondaryButton: {
+      paddingVertical: 12,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+    },
+    secondaryButtonText: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.text,
+    },
+    scaleSliderContainer: {
+      paddingHorizontal: 16,
+      paddingBottom: 16,
+    },
+    scaleLabels: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+    },
+    scaleLabel: {
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    scaleButtons: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 4,
+    },
+    scaleButton: {
+      flex: 1,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    scaleButtonActive: {
+      backgroundColor: '#e3f2fd',
+      borderColor: '#007AFF',
+    },
+    scaleButtonDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+  }), [colors, scaledFontSize]);
 
   if (loading) {
     return (
@@ -883,8 +1000,8 @@ export default function SettingsScreen() {
               
               if (value) {
                 try {
-                  const success = await deviceSecurityService.authenticateWithBiometrics('Enable biometric authentication');
-                  if (success) {
+                  const result = await deviceSecurityService.authenticateWithBiometrics('Enable biometric authentication');
+                  if (result.success) {
                     setBiometricEnabled(true);
                     const userPrefs = await deviceSecurityService.getUserPreferences();
                     await deviceSecurityService.setUserPreferences({
@@ -956,8 +1073,8 @@ export default function SettingsScreen() {
               style={dynamicStyles.testButton} 
               onPress={async () => {
                 try {
-                  const success = await deviceSecurityService.authenticateWithBiometrics('Test biometric authentication');
-                  if (success) {
+                  const result = await deviceSecurityService.authenticateWithBiometrics('Test biometric authentication');
+                  if (result.success) {
                     Alert.alert('Success', 'Biometric authentication successful!');
                   }
                 } catch (error) {
@@ -1068,9 +1185,9 @@ export default function SettingsScreen() {
                         
                         // Also clear from backend
                         try {
-                          const response = await api.revokeAllDevices();
+                          const response = await api.revokeAllDevices() as any;
                           if (response.success) {
-                            const count = response.count || response.revokedCount || 0;
+                            const count = response.count || response.revokedCount || response.data?.count || 0;
                             Alert.alert('Success', `Device trust cleared for ${count} device${count !== 1 ? 's' : ''}`);
                           } else {
                             Alert.alert('Success', 'Local device trust cleared');
@@ -1105,6 +1222,49 @@ export default function SettingsScreen() {
               <Text style={dynamicStyles.deviceInfoText}>App Version: {deviceInfo.appVersion}</Text>
             </View>
           )}
+        </CollapsibleSection>
+
+        {/* App Lock Section */}
+        <CollapsibleSection
+          title="App lock"
+          isExpanded={expandedSections.appLock}
+          onToggle={() => toggleSection('appLock')}
+        >
+          <EnhancedSettingItem
+            icon="lock-closed"
+            title="Enable app lock"
+            subtitle={`Lock app ${lockAfterMinutes} min after background. Unlock with Face ID, Touch ID, or PIN. App lock is automatically enabled when you set a PIN.`}
+            value={appLockEnabled}
+            onToggle={async (value) => {
+              if (value && !hasPinSet) {
+                Alert.alert(
+                  'Set PIN first',
+                  'Set a 4–6 digit PIN below. App lock will be automatically enabled when you save your PIN.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+              try {
+                await setAppLockEnabled(value);
+              } catch (e: any) {
+                Alert.alert('Error', e?.message || 'Failed to update app lock');
+              }
+            }}
+            feature="security.app_lock"
+          />
+          <TouchableOpacity
+            style={[dynamicStyles.settingItem, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 }]}
+            onPress={() => { setPinValue(''); setPinConfirm(''); setPinError(''); setShowSetPinModal(true); }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Ionicons name="key" size={22} color={colors.tint} />
+              <View>
+                <Text style={dynamicStyles.settingTitle}>{hasPinSet ? 'Change PIN' : 'Set PIN'}</Text>
+                <Text style={dynamicStyles.settingSubtitle}>4–6 digit PIN to unlock app</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
         </CollapsibleSection>
 
         {/* File Management Section - HIDDEN */}
@@ -1204,6 +1364,59 @@ export default function SettingsScreen() {
                 {theme === 'system' && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
               </TouchableOpacity>
             </View>
+            
+            {/* Display Scale Control */}
+            <View style={dynamicStyles.settingItem}>
+              <View style={dynamicStyles.settingIcon}>
+                <Ionicons name="text-outline" size={20} color={colors.textSecondary} />
+              </View>
+              <View style={dynamicStyles.settingContent}>
+                <Text style={dynamicStyles.settingTitle}>Display Size</Text>
+                <Text style={dynamicStyles.settingSubtitle}>
+                  {scale === 1.0 ? 'Default' : scale < 1.0 ? 'Smaller' : 'Larger'} ({Math.round(scale * 100)}%)
+                </Text>
+              </View>
+            </View>
+            <View style={dynamicStyles.scaleSliderContainer}>
+              <View style={dynamicStyles.scaleLabels}>
+                <Text style={dynamicStyles.scaleLabel}>Smaller</Text>
+                <Text style={dynamicStyles.scaleLabel}>Default</Text>
+                <Text style={dynamicStyles.scaleLabel}>Larger</Text>
+              </View>
+              <View style={dynamicStyles.scaleButtons}>
+                <TouchableOpacity
+                  style={[dynamicStyles.scaleButton, scale === MIN_SCALE && dynamicStyles.scaleButtonActive]}
+                  onPress={() => setScale(MIN_SCALE)}
+                >
+                  <Ionicons name="remove-outline" size={18} color={scale === MIN_SCALE ? '#007AFF' : colors.textSecondary} />
+                </TouchableOpacity>
+                {[0.9, 1.0, 1.1, 1.2, 1.3, 1.4, MAX_SCALE].map((value) => (
+                  <TouchableOpacity
+                    key={value}
+                    style={[
+                      dynamicStyles.scaleButton,
+                      scale === value && dynamicStyles.scaleButtonActive,
+                      Math.abs(scale - value) < 0.05 && dynamicStyles.scaleButtonActive
+                    ]}
+                    onPress={() => setScale(value)}
+                  >
+                    <View style={[
+                      dynamicStyles.scaleButtonDot,
+                      scale === value || Math.abs(scale - value) < 0.05
+                        ? { backgroundColor: '#007AFF' }
+                        : { backgroundColor: colors.border }
+                    ]} />
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={[dynamicStyles.scaleButton, scale === MAX_SCALE && dynamicStyles.scaleButtonActive]}
+                  onPress={() => setScale(MAX_SCALE)}
+                >
+                  <Ionicons name="add-outline" size={18} color={scale === MAX_SCALE ? '#007AFF' : colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            
             <EnhancedSettingItem
               icon="resize-outline"
               title="Show File Sizes"
@@ -1272,29 +1485,6 @@ export default function SettingsScreen() {
             />
           </CollapsibleSection>
         )}
-
-        {/* Analytics Section - Admin Only */}
-        <CollapsibleSection
-          title="Analytics & Insights"
-          isExpanded={expandedSections.analytics}
-          onToggle={() => toggleSection('analytics')}
-          adminOnly={true}
-        >
-          <InfoItem
-            icon="analytics-outline"
-            title="View Analytics Dashboard"
-            value="Detailed usage statistics and insights"
-            onPress={() => router.push('/analytics/dashboard')}
-            adminOnly={true}
-          />
-          <InfoItem
-            icon="stats-chart-outline"
-            title="Export Data"
-            value="Download your usage data"
-            onPress={() => Alert.alert('Export Data', 'Export your data in various formats:\n\n• CSV for spreadsheet analysis\n• JSON for technical integration\n• PDF reports for sharing\n\nYour data export will include document metadata, upload history, and usage statistics while respecting your privacy settings.')}
-            adminOnly={true}
-          />
-        </CollapsibleSection>
 
         {/* About Section */}
         <CollapsibleSection
@@ -1390,7 +1580,15 @@ export default function SettingsScreen() {
                 )}
               >
                 <View style={dynamicStyles.profileIcon}>
-                  <Ionicons name="person" size={32} color="#fff" />
+                  {(() => {
+                    const first = (profile.first_name || '').trim();
+                    const last = (profile.last_name || '').trim();
+                    const initials = (first.charAt(0) + last.charAt(0)).toUpperCase();
+                    if (initials) {
+                      return <Text style={dynamicStyles.profileInitials}>{initials}</Text>;
+                    }
+                    return <Ionicons name="person" size={32} color="#fff" />;
+                  })()}
                 </View>
                 <View style={dynamicStyles.profileInfo}>
                   <Text style={dynamicStyles.profileName}>
@@ -1465,6 +1663,77 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </CollapsibleSection>
       </ScrollView>
+
+      {/* Set / Change PIN modal */}
+      <Modal visible={showSetPinModal} transparent animationType="fade">
+        <TouchableOpacity
+          activeOpacity={1}
+          style={dynamicStyles.modalOverlay}
+          onPress={() => setShowSetPinModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[dynamicStyles.modalCard, { backgroundColor: colors.card }]}>
+            <Text style={[dynamicStyles.settingTitle, { marginBottom: 8 }]}>{hasPinSet ? 'Change PIN' : 'Set PIN'}</Text>
+            <Text style={[dynamicStyles.settingSubtitle, { marginBottom: 16 }]}>4–6 digit PIN to unlock app</Text>
+            {pinError ? <Text style={{ color: colors.error || '#ef4444', marginBottom: 8, fontSize: 14 }}>{pinError}</Text> : null}
+            <TextInput
+              style={[dynamicStyles.pinInput, { backgroundColor: colors.inputBackground, borderColor: colors.border, color: colors.text }]}
+              value={pinValue}
+              onChangeText={(t) => { setPinError(''); setPinValue(t.replace(/\D/g, '').slice(0, 6)); }}
+              placeholder="PIN"
+              placeholderTextColor={colors.textLight}
+              keyboardType="number-pad"
+              maxLength={6}
+              secureTextEntry
+            />
+            <TextInput
+              style={[dynamicStyles.pinInput, { backgroundColor: colors.inputBackground, borderColor: colors.border, color: colors.text, marginTop: 12 }]}
+              value={pinConfirm}
+              onChangeText={(t) => { setPinError(''); setPinConfirm(t.replace(/\D/g, '').slice(0, 6)); }}
+              placeholder="Confirm PIN"
+              placeholderTextColor={colors.textLight}
+              keyboardType="number-pad"
+              maxLength={6}
+              secureTextEntry
+            />
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
+              <TouchableOpacity style={[dynamicStyles.secondaryButton, { flex: 1 }]} onPress={() => setShowSetPinModal(false)}>
+                <Text style={dynamicStyles.secondaryButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.primaryButton, { flex: 1 }]}
+                onPress={async () => {
+                  const p = pinValue.replace(/\D/g, '');
+                  const c = pinConfirm.replace(/\D/g, '');
+                  if (p.length < 4 || p.length > 6) {
+                    setPinError('PIN must be 4–6 digits');
+                    return;
+                  }
+                  if (p !== c) {
+                    setPinError('PINs do not match');
+                    return;
+                  }
+                  setPinError('');
+                  try {
+                    await setPin(p);
+                    await checkHasPinSet();
+                    // Auto-enable app lock when PIN is set
+                    await setAppLockEnabled(true);
+                    setPinValue('');
+                    setPinConfirm('');
+                    setShowSetPinModal(false);
+                    Alert.alert('Done', 'PIN saved. App lock is now enabled.');
+                  } catch (e: any) {
+                    setPinError(e?.message || 'Failed to save PIN');
+                  }
+                }}
+              >
+                <Text style={dynamicStyles.primaryButtonText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       </TapToToggleHeaderView>
     </SafeAreaView>
   );
