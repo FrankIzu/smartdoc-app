@@ -131,10 +131,10 @@ export default function WorkspaceDetailsScreen() {
             }
           }
 
-          // Load workspace files for recent activity
+          // Load workspace files for recent activity (only current user's activity in this workspace)
           try {
-            console.log('📁 Loading workspace files for recent activity, workspaceId:', id);
-            const filesResponse = await apiService.getDocuments(1, 20, undefined, undefined, Number(id));
+            console.log('📁 Loading workspace recent activity (own files only), workspaceId:', id);
+            const filesResponse = await apiService.getDocuments(1, 20, undefined, undefined, Number(id), true);
             let files: any[] = [];
             
             if (filesResponse && filesResponse.success) {

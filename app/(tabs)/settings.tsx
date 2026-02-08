@@ -3,25 +3,25 @@ import Constants from 'expo-constants';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Linking,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppLock } from '../../contexts/AppLockContext';
+import { MAX_SCALE, MIN_SCALE, useDisplayScale } from '../../contexts/DisplayScaleContext';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
-import { useDisplayScale, MIN_SCALE, MAX_SCALE } from '../../contexts/DisplayScaleContext';
 import { apiService as api } from '../../services/api';
 import deviceSecurityService from '../../services/deviceSecurity';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';

@@ -219,23 +219,21 @@ function DashboardScreen() {
           }
         } catch (error) {
           console.warn('📊 Dashboard stats failed, using defaults:', error);
-          // Try to get data from files endpoint as fallback
+          // Fallback: use files endpoint with minimal request (page 1, 1 item) and use pagination.total for count
           try {
-            // console.log('📊 Trying files endpoint as fallback...');
-            const filesResponse = await apiClient.getFiles();
-            if (filesResponse && filesResponse.success && filesResponse.data) {
-              const fileCount = Array.isArray(filesResponse.data) ? filesResponse.data.length : 0;
-              // console.log('📊 Found files count:', fileCount);
+            const filesResponse = await apiClient.getFiles(1, 1);
+            if (filesResponse && filesResponse.success) {
+              const pagination = (filesResponse as any).pagination;
+              const fileCount = typeof pagination?.total === 'number' ? pagination.total : 0;
               const fallbackStats = {
                 ...defaultStats,
                 totalDocuments: fileCount,
               };
               setStats(fallbackStats);
               return fallbackStats;
-            } else {
-              setStats(defaultStats);
-              return defaultStats;
             }
+            setStats(defaultStats);
+            return defaultStats;
           } catch (filesError) {
             console.warn('📊 Files fallback also failed:', filesError);
             setStats(defaultStats);

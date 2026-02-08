@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { TextStyle, ViewStyle, ImageStyle } from 'react-native';
+import { ImageStyle, TextStyle, ViewStyle } from 'react-native';
 import { useDisplayScale } from '../contexts/DisplayScaleContext';
 
 type Style = TextStyle | ViewStyle | ImageStyle;

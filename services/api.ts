@@ -912,10 +912,11 @@ class ApiService {
   // ==================== DRAFT API (web endpoints, Bearer auth) ====================
 
   /**
-   * List drafts: get files and filter by file_kind === 'draft'. Uses existing getFiles.
+   * List drafts: get files with category=Draft (server-side filter when supported).
+   * Falls back to client filter if backend does not return only drafts.
    */
   async getDrafts(): Promise<ApiResponse> {
-    const res = await this.getFiles(1, 200);
+    const res = await this.getFiles(1, 100, undefined, 'Draft');
     const raw = res?.data?.files ?? res?.data?.data ?? res?.files ?? (Array.isArray(res?.data) ? res.data : []);
     const list = Array.isArray(raw) ? raw : [];
     const drafts = list.filter((f: any) => (f.file_kind || '').toString().toLowerCase() === 'draft');
@@ -2839,6 +2840,23 @@ class ApiService {
     }
   }
 
+  /** Get full conversation for a single chat (full messages). Use when opening a chat. */
+  async getChatConversation(historyId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.CHAT_HISTORY}/${historyId}`);
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        (typeof error.response?.data === 'string' ? error.response.data : null);
+      const suffix = status != null ? ` (${status})` : '';
+      throw new Error(msg ? `${msg}${suffix}` : `Failed to fetch chat conversation${suffix}`);
+    }
+  }
+
   /**
    * Submit feedback for a chat assistant response (thumbs up/down).
    * Calls the same web endpoint used by the web app.
@@ -3352,16 +3370,17 @@ class ApiService {
 
   // ==================== MOBILE DOCUMENTS ====================
 
-  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number): Promise<ApiResponse> {
+  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number, onlyOwn = false): Promise<ApiResponse> {
     try {
       // Mobile app should use mobile endpoints, not web endpoints
-      // Use the mobile files endpoint which supports workspace_id parameter
+      // Use the mobile files endpoint which supports workspace_id and only_own parameters
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('perPage', perPage.toString());
       if (search) params.append('search', search);
       if (category) params.append('category', category);
-      if (workspaceId) params.append('workspace_id', workspaceId.toString());
+      if (workspaceId != null) params.append('workspace_id', workspaceId.toString());
+      if (onlyOwn) params.append('only_own', '1');
       
       const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
       console.log('📁 API: Requesting files from mobile endpoint:', url);

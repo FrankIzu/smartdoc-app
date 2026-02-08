@@ -82,20 +82,13 @@ export default function ProcessScanScreen() {
       console.warn('HEIC conversion failed, continuing with original:', conversionError);
     }
     
-    // STEP 1: Add optimistic pending file immediately (shows up instantly on Files screen)
-    const optimisticId = fileStore.addOptimisticPendingFile(fileToUpload);
-    console.log('✅ Added optimistic pending file:', optimisticId);
-    
-    // STEP 2: Navigate to Files tab immediately (user sees pending file right away)
+    // Navigate to Files tab (user will see file when it appears from API)
     router.replace('/(tabs)/documents');
     
-    // STEP 3: Upload in background (non-blocking)
+    // Upload in background (non-blocking)
     (async () => {
       try {
         console.log('📤 Starting background upload for:', fileToUpload.name);
-        
-        // Update optimistic file status to uploading
-        fileStore.updateOptimisticPendingFile(optimisticId, { status: 'uploading' });
         
         // Create FormData for file upload
         const formData = new FormData();
@@ -118,9 +111,6 @@ export default function ProcessScanScreen() {
         // Mark upload time so Files screen knows to refresh
         fileStore.setLastUploadTime(Date.now());
         
-        // Remove optimistic file (real file will appear from API)
-        fileStore.removeOptimisticPendingFile(optimisticId);
-        
         // Trigger refresh of files list to show the real file
         setTimeout(() => {
           fileStore.fetchFiles(1);
@@ -128,20 +118,7 @@ export default function ProcessScanScreen() {
         
       } catch (error) {
         console.error('❌ Error uploading document:', error);
-        
-        // Update optimistic file to show error
-        fileStore.updateOptimisticPendingFile(optimisticId, {
-          status: 'error',
-          error: error instanceof Error ? error.message : 'Failed to upload document',
-        });
-        
-        // Show error alert
         Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
-        
-        // Remove optimistic file after showing error for a bit
-        setTimeout(() => {
-          fileStore.removeOptimisticPendingFile(optimisticId);
-        }, 5000);
       }
     })();
     

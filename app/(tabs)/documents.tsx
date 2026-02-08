@@ -25,11 +25,11 @@ import ExternalFilePicker from '../../components/ExternalFilePicker';
 import LoadingDots from '../../components/LoadingDots';
 import QuickFormViewer from '../../components/QuickFormViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
-import { scaleStyleObject } from '../../utils/styleUtils';
 import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
 import { removeFileExtension } from '../../utils/fileUtils';
+import { scaleStyleObject } from '../../utils/styleUtils';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -49,7 +49,7 @@ interface Document {
   totalAmount?: number; // For receipt/invoice: from json_data
   is_global?: boolean; // File is global (available across workspaces)
   json_data?: Record<string, unknown> | null; // Store json_data to check if store name is populated
-  original_filename?: string; // Store original filename for matching optimistic files
+  original_filename?: string;
   user_id?: number; // File owner's user ID
 }
 
@@ -92,7 +92,7 @@ export default function QuickFilesScreen() {
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
-  const { uploadFromGallery, lastUploadTime, optimisticPendingFiles } = useFileStore();
+  const { uploadFromGallery, lastUploadTime } = useFileStore();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadTime, setLastLoadTime] = useState<number>(0);
@@ -540,7 +540,7 @@ export default function QuickFilesScreen() {
     // Apply sorting
     // Optimistic files (pending status) should always appear first, then sort by selected criteria
     filtered.sort((a, b) => {
-        // Always put optimistic/pending files first
+        // Always put pending files first
         const aIsPending = a.status === 'pending' || a.file_kind === 'pending';
         const bIsPending = b.status === 'pending' || b.file_kind === 'pending';
         
@@ -577,81 +577,7 @@ export default function QuickFilesScreen() {
         apiCache.filterBy === filterBy &&
         apiCache.workspaceId === workspaceId) {
       console.log('📁 Using cached documents for workspaceId:', workspaceId);
-      
-      // Track which optimistic files match API files for removal
-      const matchedOptimisticIds: string[] = [];
-      const matchedOptimisticIdsSet = new Set<string>(); // For fast lookup
-      
-      // First pass: Find all matches between optimistic and API files (before creating optimistic docs)
-      // Match by comparing original filenames from optimisticPendingFiles directly with API docs
-      apiCache.data.forEach((apiDoc) => {
-        const matchingOptimistic = optimisticPendingFiles.find((optFile) => {
-          const timeDiff = Math.abs(apiDoc.uploadDate.getTime() - optFile.uploadStartTime);
-          const apiOriginalName = apiDoc.original_filename || apiDoc.name || '';
-          const optOriginalName = optFile.name || '';
-          // More flexible matching: check if filenames match (ignoring extension differences)
-          const apiBaseName = apiOriginalName.replace(/\.[^/.]+$/, '').toLowerCase();
-          const optBaseName = optOriginalName.replace(/\.[^/.]+$/, '').toLowerCase();
-          // Match if base names are similar and within 2 minutes (more lenient)
-          return (apiBaseName === optBaseName || apiBaseName.includes(optBaseName) || optBaseName.includes(apiBaseName)) 
-                 && timeDiff < 120000; // Within 2 minutes
-        });
-        
-        if (matchingOptimistic) {
-          matchedOptimisticIds.push(matchingOptimistic.optimisticId);
-          matchedOptimisticIdsSet.add(matchingOptimistic.optimisticId);
-          console.log(`✅ Matched optimistic file ${matchingOptimistic.optimisticId} with API file ${apiDoc.id}, removing optimistic`);
-        }
-      });
-      
-      // Remove matched optimistic files from store IMMEDIATELY
-      if (matchedOptimisticIds.length > 0) {
-        matchedOptimisticIds.forEach(optId => {
-          useFileStore.getState().removeOptimisticPendingFile(optId);
-        });
-      }
-      
-      // Re-read optimisticPendingFiles after removal to get updated list
-      const currentOptimisticFiles = useFileStore.getState().optimisticPendingFiles;
-      
-      // Now create optimistic docs from remaining optimistic files (after removal)
-      const optimisticDocs: Document[] = currentOptimisticFiles.map((optFile) => {
-        const ext = optFile.name.toLowerCase().split('.').pop() || '';
-        let fileType = 'other';
-        if (ext === 'pdf') fileType = 'pdf';
-        else if (['doc', 'docx'].includes(ext)) fileType = 'docx';
-        else if (['xls', 'xlsx'].includes(ext)) fileType = 'xlsx';
-        else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(ext)) fileType = 'image';
-        
-        return {
-          id: optFile.optimisticId,
-          name: optFile.name,
-          type: fileType,
-          size: optFile.size ? formatFileSize(optFile.size) : 'Unknown',
-          uploadDate: new Date(optFile.uploadStartTime),
-          status: optFile.status === 'error' ? 'error' as const : 'pending' as const,
-          tags: [],
-          file_kind: 'pending',
-          json_data: null, // Optimistic files don't have json_data yet
-          original_filename: optFile.name, // Store original filename for matching
-          user_id: user?.id ? Number(user.id) : undefined, // Optimistic files belong to current user
-        };
-      });
-      
-      // Build combined list: Optimistic files FIRST (so they appear at top), then API docs
-      const combinedDocs: Document[] = [];
-      
-      // Add optimistic docs FIRST (so they appear at top when sorted by date)
-      optimisticDocs.forEach((optDoc) => {
-        combinedDocs.push(optDoc);
-      });
-      
-      // Then add all API docs (they replace optimistic files)
-      apiCache.data.forEach((apiDoc) => {
-        combinedDocs.push(apiDoc);
-      });
-      
-      setDocuments(combinedDocs);
+      setDocuments(apiCache.data);
       setLoading(false);
       return;
     }
@@ -721,7 +647,6 @@ export default function QuickFilesScreen() {
             };
           });
           
-          // For forms, we don't merge optimistic files (forms are different)
           setDocuments(mappedForms);
           setLastLoadTime(now);
           
@@ -788,88 +713,15 @@ export default function QuickFilesScreen() {
               totalAmount,
               is_global: doc.is_global,
               json_data: doc.json_data, // Store json_data to check if store name is populated
-              original_filename: doc.original_filename || doc.filename, // Store original filename for matching
+              original_filename: doc.original_filename || doc.filename,
               user_id: doc.user_id, // Store owner's user ID
             };
           });
           
-          // Track which optimistic files match API files for removal
-          const matchedOptimisticIds: string[] = [];
-          const matchedOptimisticIdsSet = new Set<string>(); // For fast lookup
-          
-          // First pass: Find all matches between optimistic and API files (before creating optimistic docs)
-          // Match by comparing original filenames from optimisticPendingFiles directly with API docs
-          mappedDocs.forEach((apiDoc) => {
-            const matchingOptimistic = optimisticPendingFiles.find((optFile) => {
-              const timeDiff = Math.abs(apiDoc.uploadDate.getTime() - optFile.uploadStartTime);
-              const apiOriginalName = apiDoc.original_filename || apiDoc.name || '';
-              const optOriginalName = optFile.name || '';
-              // More flexible matching: check if filenames match (ignoring extension differences)
-              const apiBaseName = apiOriginalName.replace(/\.[^/.]+$/, '').toLowerCase();
-              const optBaseName = optOriginalName.replace(/\.[^/.]+$/, '').toLowerCase();
-              // Match if base names are similar and within 2 minutes (more lenient)
-              return (apiBaseName === optBaseName || apiBaseName.includes(optBaseName) || optBaseName.includes(apiBaseName)) 
-                     && timeDiff < 120000; // Within 2 minutes
-            });
-            
-            if (matchingOptimistic) {
-              matchedOptimisticIds.push(matchingOptimistic.optimisticId);
-              matchedOptimisticIdsSet.add(matchingOptimistic.optimisticId);
-              console.log(`✅ Matched optimistic file ${matchingOptimistic.optimisticId} with API file ${apiDoc.id}, removing optimistic`);
-            }
-          });
-          
-          // Remove matched optimistic files from store IMMEDIATELY
-          if (matchedOptimisticIds.length > 0) {
-            matchedOptimisticIds.forEach(optId => {
-              useFileStore.getState().removeOptimisticPendingFile(optId);
-            });
-          }
-          
-          // Re-read optimisticPendingFiles after removal to get updated list
-          const currentOptimisticFiles = useFileStore.getState().optimisticPendingFiles;
-          
-          // Now create optimistic docs from remaining optimistic files (after removal)
-          const optimisticDocs: Document[] = currentOptimisticFiles.map((optFile) => {
-              const ext = optFile.name.toLowerCase().split('.').pop() || '';
-              let fileType = 'other';
-              if (ext === 'pdf') fileType = 'pdf';
-              else if (['doc', 'docx'].includes(ext)) fileType = 'docx';
-              else if (['xls', 'xlsx'].includes(ext)) fileType = 'xlsx';
-              else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(ext)) fileType = 'image';
-              
-              return {
-                id: optFile.optimisticId,
-                name: optFile.name,
-                type: fileType,
-                size: optFile.size ? formatFileSize(optFile.size) : 'Unknown',
-                uploadDate: new Date(optFile.uploadStartTime),
-                status: optFile.status === 'error' ? 'error' as const : 'pending' as const,
-                tags: [],
-                file_kind: 'pending',
-                json_data: null, // Optimistic files don't have json_data yet
-                original_filename: optFile.name, // Store original filename for matching
-                user_id: user?.id ? Number(user.id) : undefined, // Optimistic files belong to current user
-              };
-            });
-          
-          // Build combined list: Optimistic files FIRST (so they appear at top), then API docs
-          const combinedDocs: Document[] = [];
-          
-          // Add optimistic docs FIRST (so they appear at top when sorted by date)
-          optimisticDocs.forEach((optDoc) => {
-            combinedDocs.push(optDoc);
-          });
-          
-          // Then add all API docs (they replace optimistic files)
-          mappedDocs.forEach((apiDoc) => {
-            combinedDocs.push(apiDoc);
-          });
-          
-          setDocuments(combinedDocs);
+          setDocuments(mappedDocs);
           setLastLoadTime(now);
           
-          // Update cache (cache only API docs, not optimistic)
+          // Update cache
           setApiCache({
             data: mappedDocs,
             timestamp: now,

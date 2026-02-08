@@ -590,7 +590,8 @@ export default function AnalyticsDashboard() {
           // Fallback: try mobile files endpoint if analytics didn't return receipts
           try {
             console.log('📊 Fallback: Fetching receipts from mobile files endpoint...');
-            const filesResponse = await apiClient.getDocuments(1, 10000, undefined, 'receipts');
+            // Use reasonable limit (backend caps per_page at 100); paginate if more needed
+            const filesResponse = await apiClient.getDocuments(1, 100, undefined, 'receipts');
             if (filesResponse && filesResponse.success) {
               const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
               const receiptFiles = allFiles
@@ -659,7 +660,8 @@ export default function AnalyticsDashboard() {
           // Need to fetch invoice records to get invoice IDs
           try {
             console.log('📊 Fetching invoices from files endpoint to get invoice IDs...');
-            const invoicesResponse = await apiClient.getDocuments(1, 10000, undefined, 'invoices');
+            // Use reasonable limit (backend caps per_page at 100)
+            const invoicesResponse = await apiClient.getDocuments(1, 100, undefined, 'invoices');
             console.log('📊 Invoices response:', {
               success: invoicesResponse?.success,
               count: invoicesResponse?.files?.length || invoicesResponse?.data?.files?.length || 0

@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 
 interface DisplayScaleContextType {
   scale: number;
@@ -62,4 +62,5 @@ export function useDisplayScale() {
   return context;
 }
 
-export { MIN_SCALE, MAX_SCALE, DEFAULT_SCALE };
+export { DEFAULT_SCALE, MAX_SCALE, MIN_SCALE };
+

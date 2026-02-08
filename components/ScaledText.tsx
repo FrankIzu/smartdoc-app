@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, TextProps, StyleSheet } from 'react-native';
+import { StyleSheet, Text, TextProps } from 'react-native';
 import { useDisplayScale } from '../contexts/DisplayScaleContext';
 
 interface ScaledTextProps extends TextProps {

@@ -1,7 +1,7 @@
 // Import polyfills for mobile compatibility
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef } from 'react';
 import { Alert, AppState, LogBox, StyleSheet } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
 
@@ -27,10 +27,10 @@ import Toast from 'react-native-toast-message';
 import GlobalProgressBar from '../components/GlobalProgressBar';
 import NetworkIndicator from '../components/NetworkIndicator';
 import { AppLockProvider, useAppLock } from '../contexts/AppLockContext';
+import { DisplayScaleProvider } from '../contexts/DisplayScaleContext';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
 import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
-import { DisplayScaleProvider } from '../contexts/DisplayScaleContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
 import AppLockScreen from './components/AppLockScreen';

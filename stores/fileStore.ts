@@ -11,24 +11,11 @@ import { convertHeicToPng, isHeicFile } from '../utils/imageConversion';
 // Check if running in Expo Go (which doesn't support custom native modules/plugins)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
 
-// Optimistic pending file item (shown before API confirms upload)
-export interface OptimisticPendingFile {
-  optimisticId: string; // Temporary ID like "optimistic_1234567890"
-  uri: string;
-  name: string;
-  type: string;
-  size?: number;
-  uploadStartTime: number;
-  status: 'pending' | 'uploading' | 'error';
-  error?: string;
-}
-
 interface FileStore extends FileState {
   // Global state
   isDocumentPickerOpen: boolean;
   isImagePickerOpen: boolean;
   lastUploadTime: number; // Track when upload happened for immediate refresh
-  optimisticPendingFiles: OptimisticPendingFile[]; // Files shown immediately before API confirms
   
   // Actions
   fetchFiles: (page?: number, search?: string, category?: string) => Promise<void>;
@@ -49,9 +36,6 @@ interface FileStore extends FileState {
   setImagePickerOpen: (isOpen: boolean) => void;
   resetImagePicker: () => void;
   setLastUploadTime: (timestamp: number) => void;
-  addOptimisticPendingFile: (file: FileUpload) => string; // Returns optimisticId
-  removeOptimisticPendingFile: (optimisticId: string) => void;
-  updateOptimisticPendingFile: (optimisticId: string, updates: Partial<OptimisticPendingFile>) => void;
 }
 
 export const useFileStore = create<FileStore>((set, get) => ({
@@ -63,7 +47,6 @@ export const useFileStore = create<FileStore>((set, get) => ({
   isDocumentPickerOpen: false,
   isImagePickerOpen: false,
   lastUploadTime: 0, // Track when upload happened for immediate refresh
-  optimisticPendingFiles: [], // Files shown immediately before API confirms
 
   // Actions
   fetchFiles: async (page = 1, search?, category?) => {
@@ -689,42 +672,5 @@ export const useFileStore = create<FileStore>((set, get) => ({
   
   setLastUploadTime: (timestamp: number) => {
     set({ lastUploadTime: timestamp });
-  },
-  
-  addOptimisticPendingFile: (file: FileUpload) => {
-    const optimisticId = `optimistic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const optimisticFile: OptimisticPendingFile = {
-      optimisticId,
-      uri: file.uri,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      uploadStartTime: Date.now(),
-      status: 'pending',
-    };
-    
-    set((state) => ({
-      optimisticPendingFiles: [...state.optimisticPendingFiles, optimisticFile],
-    }));
-    
-    console.log('✅ Added optimistic pending file:', optimisticId, file.name);
-    return optimisticId;
-  },
-  
-  removeOptimisticPendingFile: (optimisticId: string) => {
-    set((state) => ({
-      optimisticPendingFiles: state.optimisticPendingFiles.filter(
-        (f) => f.optimisticId !== optimisticId
-      ),
-    }));
-    console.log('🗑️ Removed optimistic pending file:', optimisticId);
-  },
-  
-  updateOptimisticPendingFile: (optimisticId: string, updates: Partial<OptimisticPendingFile>) => {
-    set((state) => ({
-      optimisticPendingFiles: state.optimisticPendingFiles.map((f) =>
-        f.optimisticId === optimisticId ? { ...f, ...updates } : f
-      ),
-    }));
   },
 })); 

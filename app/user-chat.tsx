@@ -8,7 +8,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     FlatList,
+    Keyboard,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -87,6 +89,10 @@ export default function UserChatScreen() {
   const [selectedRecipient, setSelectedRecipient] = useState<{ type: 'user' | 'workspace'; data: any } | null>(null);
   const messageInputRef = useRef<TextInput>(null);
   const [textInputHeight, setTextInputHeight] = useState(40);
+  
+  // Keyboard tracking for Android
+  const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
+  const inputContainerRef = useRef<View>(null);
 
   // Swipe and menu state
   const [favoriteChatIds, setFavoriteChatIds] = useState<Set<number>>(new Set());
@@ -100,6 +106,25 @@ export default function UserChatScreen() {
   const [isConnected, setIsConnected] = useState(false);
   const [otherUserOnline, setOtherUserOnline] = useState(false);
   const [typingUsers, setTypingUsers] = useState<{ [userId: number]: string }>({}); // userId -> username
+
+  // Track keyboard for Android input positioning
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const showEvent = 'keyboardDidShow';
+      const hideEvent = 'keyboardDidHide';
+      const keyboardShowListener = Keyboard.addListener(showEvent, (e) => {
+        setKeyboardTop(e.endCoordinates.screenY);
+      });
+      const keyboardHideListener = Keyboard.addListener(hideEvent, () => {
+        setKeyboardTop(null);
+      });
+
+      return () => {
+        keyboardShowListener.remove();
+        keyboardHideListener.remove();
+      };
+    }
+  }, []);
 
   // Initialize socket connection
   useEffect(() => {
@@ -1683,125 +1708,256 @@ export default function UserChatScreen() {
           {isNewChat && <View style={{ width: 40 }} />}
         </View>
 
-        <View style={{ flex: 1 }}>
-          {isNewChat ? (
-            <View style={dynamicStyles.emptyContainer}>
-              <Ionicons name="chatbubbles-outline" size={64} color={colors.textSecondary} />
-              <Text style={dynamicStyles.emptyText}>
-                {selectedRecipient 
-                  ? `Chat with ${selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}`
-                  : 'Type @ to search for a user or workspace'}
-              </Text>
-            </View>
-          ) : messagesLoading ? (
-            <View style={dynamicStyles.emptyContainer}>
-              <ActivityIndicator size="large" color="#007AFF" />
-            </View>
-          ) : (
-            <FlatList
-              ref={messagesListRef}
-              data={messages}
-              renderItem={({ item }) => (
-                <View style={[dynamicStyles.messageItem, item.is_own_message ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
-                  <View style={{ maxWidth: '75%' }}>
-                    {!item.is_own_message && item.sender && (
-                      <Text style={dynamicStyles.senderName}>{item.sender.username}</Text>
-                    )}
-                    <View style={[dynamicStyles.messageBubble, item.is_own_message ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
-                      <Text style={[dynamicStyles.messageText, item.is_own_message ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
-                        {item.content}
-                      </Text>
-                      <Text style={[dynamicStyles.messageTime, item.is_own_message ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
-                        {formatMessageTime(item.created_at)}
-                      </Text>
+        {Platform.OS === 'ios' ? (
+          <KeyboardAvoidingView 
+            style={{ flex: 1 }}
+            behavior="padding"
+            keyboardVerticalOffset={0}
+          >
+            <View style={{ flex: 1 }}>
+              {isNewChat ? (
+                <View style={dynamicStyles.emptyContainer}>
+                  <Ionicons name="chatbubbles-outline" size={64} color={colors.textSecondary} />
+                  <Text style={dynamicStyles.emptyText}>
+                    {selectedRecipient 
+                      ? `Chat with ${selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}`
+                      : 'Type @ to search for a user or workspace'}
+                  </Text>
+                </View>
+              ) : messagesLoading ? (
+                <View style={dynamicStyles.emptyContainer}>
+                  <ActivityIndicator size="large" color="#007AFF" />
+                </View>
+              ) : (
+                <FlatList
+                  ref={messagesListRef}
+                  data={messages}
+                  renderItem={({ item }) => (
+                    <View style={[dynamicStyles.messageItem, item.is_own_message ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
+                      <View style={{ maxWidth: '75%' }}>
+                        {!item.is_own_message && item.sender && (
+                          <Text style={dynamicStyles.senderName}>{item.sender.username}</Text>
+                        )}
+                        <View style={[dynamicStyles.messageBubble, item.is_own_message ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
+                          <Text style={[dynamicStyles.messageText, item.is_own_message ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
+                            {item.content}
+                          </Text>
+                          <Text style={[dynamicStyles.messageTime, item.is_own_message ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
+                            {formatMessageTime(item.created_at)}
+                          </Text>
+                        </View>
+                      </View>
                     </View>
-                  </View>
+                  )}
+                  keyExtractor={(item) => item.id.toString()}
+                  style={dynamicStyles.messagesList}
+                  contentContainerStyle={{ paddingBottom: 10 }}
+                  refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
+                  onContentSizeChange={() => scrollToBottom()}
+                  onLayout={() => scrollToBottom()}
+                />
+              )}
+              
+              {/* Typing Indicator */}
+              {!isNewChat && Object.keys(typingUsers).length > 0 && (
+                <View style={dynamicStyles.typingIndicator}>
+                  <Text style={dynamicStyles.typingText}>
+                    {Object.values(typingUsers).join(', ')} {Object.keys(typingUsers).length === 1 ? 'is' : 'are'} typing...
+                  </Text>
                 </View>
               )}
-              keyExtractor={(item) => item.id.toString()}
-              style={dynamicStyles.messagesList}
-              contentContainerStyle={{ paddingBottom: 10 }}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
-              onContentSizeChange={() => scrollToBottom()}
-              onLayout={() => scrollToBottom()}
-            />
-          )}
-          
-          {/* Typing Indicator */}
-          {!isNewChat && Object.keys(typingUsers).length > 0 && (
-            <View style={dynamicStyles.typingIndicator}>
-              <Text style={dynamicStyles.typingText}>
-                {Object.values(typingUsers).join(', ')} {Object.keys(typingUsers).length === 1 ? 'is' : 'are'} typing...
-              </Text>
             </View>
-          )}
-        </View>
 
-        {/* Mention Results - Show above input */}
-        {showMentionResults && mentionResults.length > 0 && (
-          <View style={dynamicStyles.mentionResultsContainer}>
-            <FlatList
-              data={mentionResults}
-              keyExtractor={(item, index) => `${item.type}-${item.data.id}-${index}`}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={dynamicStyles.mentionItem}
-                  onPress={() => handleSelectRecipient(item)}
-                >
-                  <View style={dynamicStyles.mentionAvatar}>
-                    <Ionicons
-                      name={item.type === 'workspace' ? 'people' : 'person'}
-                      size={20}
-                      color="#007AFF"
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={dynamicStyles.mentionName}>
-                      {item.type === 'user' ? item.data.username : item.data.name}
-                    </Text>
-                    {item.type === 'user' && item.data.email && (
-                      <Text style={dynamicStyles.mentionEmail}>{item.data.email}</Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              )}
-              style={{ maxHeight: 200 }}
-            />
-          </View>
-        )}
+            {/* Mention Results - Show above input */}
+            {showMentionResults && mentionResults.length > 0 && (
+              <View style={dynamicStyles.mentionResultsContainer}>
+                <FlatList
+                  data={mentionResults}
+                  keyExtractor={(item, index) => `${item.type}-${item.data.id}-${index}`}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={dynamicStyles.mentionItem}
+                      onPress={() => handleSelectRecipient(item)}
+                    >
+                      <View style={dynamicStyles.mentionAvatar}>
+                        <Ionicons
+                          name={item.type === 'workspace' ? 'people' : 'person'}
+                          size={20}
+                          color="#007AFF"
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={dynamicStyles.mentionName}>
+                          {item.type === 'user' ? item.data.username : item.data.name}
+                        </Text>
+                        {item.type === 'user' && item.data.email && (
+                          <Text style={dynamicStyles.mentionEmail}>{item.data.email}</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  style={{ maxHeight: 200 }}
+                />
+              </View>
+            )}
 
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
-        >
-          <View style={dynamicStyles.inputContainer}>
-            <TextInput
-              ref={messageInputRef}
-              style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
-              placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
-              placeholderTextColor={colors.textSecondary}
-              value={newMessage}
-              onChangeText={handleTyping}
-              multiline
-              maxLength={4000}
-              onContentSizeChange={(event) => {
-                const { height } = event.nativeEvent.contentSize;
-                setTextInputHeight(height);
-              }}
-            />
-            <TouchableOpacity 
-              style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
-              onPress={handleSendMessage} 
-              disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
+            <View 
+              ref={inputContainerRef}
+              style={dynamicStyles.inputContainer}
             >
-              {sendingMessage ? (
-                <ActivityIndicator size="small" color="#fff" />
+              <TextInput
+                ref={messageInputRef}
+                style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
+                placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
+                placeholderTextColor={colors.textSecondary}
+                value={newMessage}
+                onChangeText={handleTyping}
+                multiline
+                maxLength={4000}
+                onContentSizeChange={(event) => {
+                  const { height } = event.nativeEvent.contentSize;
+                  setTextInputHeight(height);
+                }}
+              />
+              <TouchableOpacity 
+                style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
+                onPress={handleSendMessage} 
+                disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
+              >
+                {sendingMessage ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="send" size={20} color="#fff" />
+                )}
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        ) : (
+          <>
+            <View style={{ flex: 1 }}>
+              {isNewChat ? (
+                <View style={dynamicStyles.emptyContainer}>
+                  <Ionicons name="chatbubbles-outline" size={64} color={colors.textSecondary} />
+                  <Text style={dynamicStyles.emptyText}>
+                    {selectedRecipient 
+                      ? `Chat with ${selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}`
+                      : 'Type @ to search for a user or workspace'}
+                  </Text>
+                </View>
+              ) : messagesLoading ? (
+                <View style={dynamicStyles.emptyContainer}>
+                  <ActivityIndicator size="large" color="#007AFF" />
+                </View>
               ) : (
-                <Ionicons name="send" size={20} color="#fff" />
+                <FlatList
+                  ref={messagesListRef}
+                  data={messages}
+                  renderItem={({ item }) => (
+                    <View style={[dynamicStyles.messageItem, item.is_own_message ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
+                      <View style={{ maxWidth: '75%' }}>
+                        {!item.is_own_message && item.sender && (
+                          <Text style={dynamicStyles.senderName}>{item.sender.username}</Text>
+                        )}
+                        <View style={[dynamicStyles.messageBubble, item.is_own_message ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
+                          <Text style={[dynamicStyles.messageText, item.is_own_message ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
+                            {item.content}
+                          </Text>
+                          <Text style={[dynamicStyles.messageTime, item.is_own_message ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
+                            {formatMessageTime(item.created_at)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+                  keyExtractor={(item) => item.id.toString()}
+                  style={dynamicStyles.messagesList}
+                  contentContainerStyle={{ paddingBottom: 10 }}
+                  refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
+                  onContentSizeChange={() => scrollToBottom()}
+                  onLayout={() => scrollToBottom()}
+                />
               )}
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
+              
+              {/* Typing Indicator */}
+              {!isNewChat && Object.keys(typingUsers).length > 0 && (
+                <View style={dynamicStyles.typingIndicator}>
+                  <Text style={dynamicStyles.typingText}>
+                    {Object.values(typingUsers).join(', ')} {Object.keys(typingUsers).length === 1 ? 'is' : 'are'} typing...
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Mention Results - Show above input */}
+            {showMentionResults && mentionResults.length > 0 && (
+              <View style={dynamicStyles.mentionResultsContainer}>
+                <FlatList
+                  data={mentionResults}
+                  keyExtractor={(item, index) => `${item.type}-${item.data.id}-${index}`}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={dynamicStyles.mentionItem}
+                      onPress={() => handleSelectRecipient(item)}
+                    >
+                      <View style={dynamicStyles.mentionAvatar}>
+                        <Ionicons
+                          name={item.type === 'workspace' ? 'people' : 'person'}
+                          size={20}
+                          color="#007AFF"
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={dynamicStyles.mentionName}>
+                          {item.type === 'user' ? item.data.username : item.data.name}
+                        </Text>
+                        {item.type === 'user' && item.data.email && (
+                          <Text style={dynamicStyles.mentionEmail}>{item.data.email}</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  style={{ maxHeight: 200 }}
+                />
+              </View>
+            )}
+
+            <View 
+              ref={inputContainerRef}
+              style={[
+                dynamicStyles.inputContainer,
+                Platform.OS === 'android' && keyboardTop != null && {
+                  marginBottom: Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop),
+                },
+              ]}
+            >
+              <TextInput
+                ref={messageInputRef}
+                style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
+                placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
+                placeholderTextColor={colors.textSecondary}
+                value={newMessage}
+                onChangeText={handleTyping}
+                multiline
+                maxLength={4000}
+                onContentSizeChange={(event) => {
+                  const { height } = event.nativeEvent.contentSize;
+                  setTextInputHeight(height);
+                }}
+              />
+              <TouchableOpacity 
+                style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
+                onPress={handleSendMessage} 
+                disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
+              >
+                {sendingMessage ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="send" size={20} color="#fff" />
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
       </SafeAreaView>
     );
   }

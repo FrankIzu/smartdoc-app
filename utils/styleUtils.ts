@@ -1,4 +1,4 @@
-import { TextStyle, ViewStyle, ImageStyle } from 'react-native';
+import { ImageStyle, TextStyle, ViewStyle } from 'react-native';
 
 type Style = TextStyle | ViewStyle | ImageStyle;
 

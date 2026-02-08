@@ -1,6 +1,6 @@
 import { Colors } from '../constants/Colors';
-import { useTheme } from '../contexts/ThemeContext';
 import { useDisplayScale } from '../contexts/DisplayScaleContext';
+import { useTheme } from '../contexts/ThemeContext';
 
 export function useThemeColors() {
   const { resolvedTheme } = useTheme();

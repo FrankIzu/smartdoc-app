@@ -532,8 +532,8 @@ export default deviceSecurityService;
 
 // Export types for use in other files
 export type {
-  BiometricConfig, DeviceFingerprint,
-  DeviceTrust, RiskContext,
-  User2FAPreferences
+    BiometricConfig, DeviceFingerprint,
+    DeviceTrust, RiskContext,
+    User2FAPreferences
 };
 
