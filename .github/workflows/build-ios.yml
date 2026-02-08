@@ -104,20 +104,8 @@ jobs:
               jq '.submit.production.ios.ascApiKeyPath = "/tmp/asc-key.p8" | .submit.production.ios.ascApiKeyId = "'"$ASC_KEY_ID"'" | .submit.production.ios.ascApiKeyIssuerId = "'"$ASC_ISSUER_ID"'"' eas.json > eas.json.tmp && mv eas.json.tmp eas.json
             else
               # Fallback: use Python to update JSON
-              python3 -c "
-              import json
-              import os
-              
-              with open('eas.json', 'r') as f:
-                  config = json.load(f)
-              
-              config['submit']['production']['ios']['ascApiKeyPath'] = '/tmp/asc-key.p8'
-              config['submit']['production']['ios']['ascApiKeyId'] = os.environ['ASC_KEY_ID']
-              config['submit']['production']['ios']['ascApiKeyIssuerId'] = os.environ['ASC_ISSUER_ID']
-              
-              with open('eas.json', 'w') as f:
-                  json.dump(config, f, indent=2)
-              "
+              printf 'import json\nimport os\n\nwith open("eas.json", "r") as f:\n    config = json.load(f)\n\nconfig["submit"]["production"]["ios"]["ascApiKeyPath"] = "/tmp/asc-key.p8"\nconfig["submit"]["production"]["ios"]["ascApiKeyId"] = os.environ["ASC_KEY_ID"]\nconfig["submit"]["production"]["ios"]["ascApiKeyIssuerId"] = os.environ["ASC_ISSUER_ID"]\n\nwith open("eas.json", "w") as f:\n    json.dump(config, f, indent=2)\n' > /tmp/update_eas.py
+              python3 /tmp/update_eas.py
             fi
             # Submit using the profile (credentials are read from eas.json)
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
