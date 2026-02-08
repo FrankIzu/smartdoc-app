@@ -4,7 +4,6 @@
 # Auto-submit: Automatically submits to App Store Connect after successful production builds.
 #   Requires: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (or EXPO_APPLE_APP_SPECIFIC_PASSWORD) in GitHub Secrets.
 # Runs on macOS (uses GitHub-hosted macOS runner).
-#
 
 name: Build iOS (EAS local)
 
