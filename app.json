@@ -20,6 +20,9 @@
       "bundleIdentifier": "com.grabdocs.mobile",
       "buildNumber": "3",
       "usesAppleSignIn": true,
+      "associatedDomains": [
+        "applinks:api.grabdocs.com"
+      ],
       "splash": {
         "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
         "resizeMode": "contain",
@@ -83,6 +86,26 @@
               "scheme": "https",
               "host": "api.grabdocs.com",
               "pathPrefix": "/auth"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "api.grabdocs.com",
+              "pathPrefix": "/join-meeting"
+            },
+            {
+              "scheme": "https",
+              "host": "api.grabdocs.com",
+              "pathPrefix": "/meeting"
             }
           ],
           "category": [
