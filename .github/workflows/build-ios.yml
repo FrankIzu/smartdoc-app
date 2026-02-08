@@ -105,19 +105,19 @@ jobs:
             else
               # Fallback: use Python to update JSON
               python3 -c "
-import json
-import os
-
-with open('eas.json', 'r') as f:
-    config = json.load(f)
-
-config['submit']['production']['ios']['ascApiKeyPath'] = '/tmp/asc-key.p8'
-config['submit']['production']['ios']['ascApiKeyId'] = os.environ['ASC_KEY_ID']
-config['submit']['production']['ios']['ascApiKeyIssuerId'] = os.environ['ASC_ISSUER_ID']
-
-with open('eas.json', 'w') as f:
-    json.dump(config, f, indent=2)
-"
+              import json
+              import os
+              
+              with open('eas.json', 'r') as f:
+                  config = json.load(f)
+              
+              config['submit']['production']['ios']['ascApiKeyPath'] = '/tmp/asc-key.p8'
+              config['submit']['production']['ios']['ascApiKeyId'] = os.environ['ASC_KEY_ID']
+              config['submit']['production']['ios']['ascApiKeyIssuerId'] = os.environ['ASC_ISSUER_ID']
+              
+              with open('eas.json', 'w') as f:
+                  json.dump(config, f, indent=2)
+              "
             fi
             # Submit using the profile (credentials are read from eas.json)
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
