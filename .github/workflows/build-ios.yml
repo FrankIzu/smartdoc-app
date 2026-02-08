@@ -104,9 +104,8 @@ jobs:
               jq '.submit.production.ios.ascApiKeyPath = "/tmp/asc-key.p8" | .submit.production.ios.ascApiKeyId = "'"$ASC_KEY_ID"'" | .submit.production.ios.ascApiKeyIssuerId = "'"$ASC_ISSUER_ID"'"' eas.json > eas.json.tmp && mv eas.json.tmp eas.json
             else
               # Fallback: use Python to update JSON
-              cat > /tmp/update_eas.py << 'PYEOF'
+              python3 -c "
 import json
-import sys
 import os
 
 with open('eas.json', 'r') as f:
@@ -118,8 +117,7 @@ config['submit']['production']['ios']['ascApiKeyIssuerId'] = os.environ['ASC_ISS
 
 with open('eas.json', 'w') as f:
     json.dump(config, f, indent=2)
-PYEOF
-              python3 /tmp/update_eas.py
+"
             fi
             # Submit using the profile (credentials are read from eas.json)
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
