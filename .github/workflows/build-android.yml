@@ -234,21 +234,22 @@ jobs:
           SERVICE_ACCOUNT_PATH="/tmp/play-service-account.json"
           echo "$ANDROID_SERVICE_ACCOUNT_JSON" > "$SERVICE_ACCOUNT_PATH"
           
-          # Temporarily update eas.json to use the temp file
+          # Temporarily update eas.json to use the temp file and track
           # Backup original eas.json
           cp eas.json eas.json.backup
-          # Update serviceAccountKeyPath using Node.js
+          # Update serviceAccountKeyPath and track using Node.js
+          PLAY_TRACK="${{ github.event.inputs.play_track || 'alpha' }}"
+          echo "Submitting to Google Play track: $PLAY_TRACK"
           node -e "
             const fs = require('fs');
             const easJson = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
             easJson.submit.production.android.serviceAccountKeyPath = '$SERVICE_ACCOUNT_PATH';
+            easJson.submit.production.android.track = '$PLAY_TRACK';
             fs.writeFileSync('eas.json', JSON.stringify(easJson, null, 2) + '\n');
           "
           
-          # Submit using eas.json configuration (default alpha = closed testing; app not in prod yet)
-          PLAY_TRACK="${{ github.event.inputs.play_track || 'alpha' }}"
-          echo "Submitting to Google Play track: $PLAY_TRACK"
-          npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive --track "$PLAY_TRACK"
+          # Submit using eas.json configuration (track is set in eas.json above)
+          npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive
           
           # Restore original eas.json
           mv eas.json.backup eas.json
