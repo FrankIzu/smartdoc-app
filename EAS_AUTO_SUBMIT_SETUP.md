@@ -117,7 +117,34 @@ If the workflow fails with **`Google Api Error: Invalid request - Precondition c
 
 ---
 
-## 6. Security
+## 6. iOS: "Provisioning profile doesn't support Associated Domains"
+
+If the iOS build fails with:
+
+- **Provisioning profile doesn't support the Associated Domains capability**
+- **Provisioning profile doesn't include the com.apple.developer.associated-domains entitlement**
+
+the app uses **Associated Domains** (e.g. `applinks:api.grabdocs.com` in `app.json`) for Universal Links, but the provisioning profile was created without that capability.
+
+**Fix:**
+
+1. **Apple Developer Portal**
+   - Go to [developer.apple.com](https://developer.apple.com) → **Certificates, Identifiers & Profiles** → **Identifiers**.
+   - Select **App IDs** and open **com.grabdocs.mobile**.
+   - Under **Capabilities**, enable **Associated Domains**. Save.
+   - Go to **Profiles** → find the **App Store** (or Distribution) profile for this app → **Edit** → ensure the profile is regenerated (e.g. re-select the same App ID and generate again). **Download** the new profile if you manage profiles manually.
+
+2. **EAS / Expo credentials**
+   - If EAS manages your credentials, regenerate the iOS provisioning profile so it picks up the new capability:
+     - Locally: `eas credentials --platform ios` → choose **Build credentials** → **Provisioning Profile** → **Set up a new provisioning profile** (or **Sync** / **Regenerate** if available).
+   - Then trigger a new iOS build (e.g. re-run the GitHub Actions workflow). EAS will use a profile that includes Associated Domains.
+
+3. **CI (GitHub Actions)**
+   - No workflow change is required. After updating the App ID and profile (and, if needed, refreshing EAS credentials), the next iOS build should succeed.
+
+---
+
+## 7. Security
 
 - Never commit the Android JSON key or the `.p8` file.
 - Use the minimum Play Console permissions needed for the service account.
