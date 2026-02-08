@@ -2,20 +2,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-    Alert,
-    Clipboard,
-    FlatList,
-    Modal,
-    Platform,
-    RefreshControl,
-    Share,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  Clipboard,
+  FlatList,
+  Modal,
+  Platform,
+  RefreshControl,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import { FRONTEND_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -54,6 +54,7 @@ export default function UploadLinkDetailsScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
   const [uploadLink, setUploadLink] = useState<UploadLink | null>(null);
   const [loading, setLoading] = useState(true);
@@ -805,8 +806,8 @@ export default function UploadLinkDetailsScreen() {
         presentationStyle="fullScreen"
         onRequestClose={() => setShareModalVisible(false)}
       >
-        <SafeAreaView style={dynamicStyles.modalContainer}>
-          <View style={dynamicStyles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={() => setShareModalVisible(false)}>
               <Text style={dynamicStyles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>

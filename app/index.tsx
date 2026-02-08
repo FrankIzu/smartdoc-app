@@ -15,7 +15,7 @@ export default function Page() {
   if (user && user.id) {
     return <Redirect href="/(tabs)" />;
   } else {
-    return <Redirect href="/(auth)" />;
+    return <Redirect href="/(auth)/sign-in" />;
   }
 }
 

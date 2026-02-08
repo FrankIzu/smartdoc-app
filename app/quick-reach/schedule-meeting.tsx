@@ -16,8 +16,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
+import { useThemeColors } from '../../hooks/useThemeColors';
+import { useMemo } from 'react';
 
 export default function ScheduleMeetingScreen() {
+  const colors = useThemeColors();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [startDateTime, setStartDateTime] = useState(new Date());
@@ -303,48 +306,280 @@ export default function ScheduleMeetingScreen() {
     }));
   };
 
+  const dynamicStyles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    keyboardView: {
+      flex: 1,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: colors.card,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    backButton: {
+      padding: 4,
+      marginRight: 12,
+    },
+    headerTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+      flex: 1,
+    },
+    scheduleButton: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 8,
+      backgroundColor: '#007AFF',
+    },
+    scheduleButtonDisabled: {
+      backgroundColor: '#c6c6c6',
+    },
+    scheduleButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#fff',
+    },
+    content: {
+      flex: 1,
+      paddingHorizontal: 20,
+    },
+    section: {
+      backgroundColor: colors.card,
+      marginTop: 16,
+      borderRadius: 12,
+      padding: 16,
+    },
+    sectionTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    inputGroup: {
+      marginBottom: 16,
+    },
+    label: {
+      fontSize: 14,
+      fontWeight: '500',
+      color: colors.textSecondary,
+      marginBottom: 8,
+    },
+    textInput: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: colors.text,
+      backgroundColor: colors.inputBackground || colors.card,
+    },
+    textArea: {
+      height: 80,
+      textAlignVertical: 'top',
+    },
+    featureRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    featureInfo: {
+      flex: 1,
+    },
+    featureTitle: {
+      fontSize: 16,
+      color: colors.text,
+    },
+    checkbox: {
+      width: 24,
+      height: 24,
+      borderRadius: 4,
+      borderWidth: 2,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkboxChecked: {
+      backgroundColor: '#007AFF',
+      borderColor: '#007AFF',
+    },
+    participantInput: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    participantTextInput: {
+      flex: 1,
+      marginRight: 12,
+    },
+    addButton: {
+      padding: 8,
+    },
+    participantsList: {
+      marginTop: 8,
+    },
+    participantItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      backgroundColor: colors.surface || colors.background,
+      borderRadius: 8,
+      marginBottom: 8,
+    },
+    participantEmail: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      flex: 1,
+    },
+    datePickerContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      backgroundColor: colors.inputBackground || colors.card,
+    },
+    datePickerLabel: {
+      fontSize: 16,
+      color: colors.text,
+    },
+    datePickerHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      marginBottom: 8,
+    },
+    datePickerTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    datePicker: {
+      backgroundColor: colors.card,
+      borderRadius: 8,
+      marginTop: 8,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    modalContainer: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      marginHorizontal: 20,
+      maxHeight: '80%',
+      width: '90%',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 5,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    modalCancelButton: {
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    doneButton: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#007AFF',
+    },
+    modalContent: {
+      paddingHorizontal: 20,
+      paddingVertical: 20,
+      alignItems: 'center',
+    },
+    modalDatePicker: {
+      width: '100%',
+      height: 200,
+    },
+  }), [colors]);
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={dynamicStyles.container}>
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
+        style={dynamicStyles.keyboardView}
       >
         {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={dynamicStyles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Schedule Meeting</Text>
+          <Text style={dynamicStyles.headerTitle}>Schedule Meeting</Text>
           <TouchableOpacity 
-            style={[styles.scheduleButton, loading && styles.scheduleButtonDisabled]}
+            style={[dynamicStyles.scheduleButton, loading && dynamicStyles.scheduleButtonDisabled]}
             onPress={createMeeting}
             disabled={loading}
           >
-            <Text style={styles.scheduleButtonText}>
+            <Text style={dynamicStyles.scheduleButtonText}>
               {loading ? 'Scheduling...' : 'Schedule'}
             </Text>
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView style={dynamicStyles.content} showsVerticalScrollIndicator={false}>
           {/* Meeting Details */}
-          <View style={styles.section}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Meeting Name *</Text>
+          <View style={dynamicStyles.section}>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Meeting Name *</Text>
               <TextInput
-                style={styles.textInput}
+                style={dynamicStyles.textInput}
                 placeholder="Enter meeting name"
+                placeholderTextColor={colors.textSecondary}
                 value={meetingData.title}
                 onChangeText={(text) => setMeetingData(prev => ({ ...prev, title: text }))}
                 maxLength={100}
               />
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Description (Optional)</Text>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Description (Optional)</Text>
               <TextInput
-                style={[styles.textInput, styles.textArea]}
+                style={[dynamicStyles.textInput, dynamicStyles.textArea]}
                 placeholder="Enter meeting description"
+                placeholderTextColor={colors.textSecondary}
                 value={meetingData.description}
                 onChangeText={(text) => setMeetingData(prev => ({ ...prev, description: text }))}
                 multiline
@@ -354,16 +589,16 @@ export default function ScheduleMeetingScreen() {
             </View>
 
             {/* Start Date/Time */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Start Date & Time *</Text>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Start Date & Time *</Text>
               <TouchableOpacity 
-                style={styles.datePickerContainer}
+                style={dynamicStyles.datePickerContainer}
                 onPress={() => {
                   setShowStartDatePicker(true);
                   setShowEndDatePicker(false);
                 }}
               >
-                <Text style={styles.datePickerLabel}>
+                <Text style={dynamicStyles.datePickerLabel}>
                   {startDateTime.toLocaleString([], { 
                     month: 'short', 
                     day: 'numeric', 
@@ -377,16 +612,16 @@ export default function ScheduleMeetingScreen() {
             </View>
 
             {/* End Date/Time */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>End Date & Time *</Text>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>End Date & Time *</Text>
               <TouchableOpacity 
-                style={styles.datePickerContainer}
+                style={dynamicStyles.datePickerContainer}
                 onPress={() => {
                   setShowEndDatePicker(true);
                   setShowStartDatePicker(false);
                 }}
               >
-                <Text style={styles.datePickerLabel}>
+                <Text style={dynamicStyles.datePickerLabel}>
                   {endDateTime.toLocaleString([], { 
                     month: 'short', 
                     day: 'numeric', 
@@ -401,13 +636,13 @@ export default function ScheduleMeetingScreen() {
           </View>
 
           {/* Features - Collapsible */}
-          <View style={styles.section}>
+          <View style={dynamicStyles.section}>
             <TouchableOpacity 
-              style={styles.sectionHeader}
+              style={dynamicStyles.sectionHeader}
               onPress={() => setFeaturesExpanded(!featuresExpanded)}
               activeOpacity={0.7}
             >
-              <Text style={styles.sectionTitle}>Features</Text>
+              <Text style={dynamicStyles.sectionTitle}>Features</Text>
               <Ionicons 
                 name={featuresExpanded ? "chevron-up" : "chevron-down"} 
                 size={20} 
@@ -418,47 +653,48 @@ export default function ScheduleMeetingScreen() {
             {featuresExpanded && (
               <>
                 <TouchableOpacity 
-                  style={styles.featureRow}
+                  style={dynamicStyles.featureRow}
                   onPress={() => toggleFeature('enableRecording')}
                 >
-                  <View style={styles.featureInfo}>
-                    <Text style={styles.featureTitle}>Enable Recording</Text>
+                  <View style={dynamicStyles.featureInfo}>
+                    <Text style={dynamicStyles.featureTitle}>Enable Recording</Text>
                   </View>
-                  <View style={[styles.checkbox, meetingData.enableRecording && styles.checkboxChecked]}>
+                  <View style={[dynamicStyles.checkbox, meetingData.enableRecording && dynamicStyles.checkboxChecked]}>
                     {meetingData.enableRecording && <Ionicons name="checkmark" size={16} color="#fff" />}
                   </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={styles.featureRow}
+                  style={dynamicStyles.featureRow}
                   onPress={() => toggleFeature('enableTranscription')}
                 >
-                  <View style={styles.featureInfo}>
-                    <Text style={styles.featureTitle}>Enable Transcription</Text>
+                  <View style={dynamicStyles.featureInfo}>
+                    <Text style={dynamicStyles.featureTitle}>Enable Transcription</Text>
                   </View>
-                  <View style={[styles.checkbox, meetingData.enableTranscription && styles.checkboxChecked]}>
+                  <View style={[dynamicStyles.checkbox, meetingData.enableTranscription && dynamicStyles.checkboxChecked]}>
                     {meetingData.enableTranscription && <Ionicons name="checkmark" size={16} color="#fff" />}
                   </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={styles.featureRow}
+                  style={dynamicStyles.featureRow}
                   onPress={() => toggleFeature('isPrivate')}
                 >
-                  <View style={styles.featureInfo}>
-                    <Text style={styles.featureTitle}>Private Meeting (Requires Passcode)</Text>
+                  <View style={dynamicStyles.featureInfo}>
+                    <Text style={dynamicStyles.featureTitle}>Private Meeting (Requires Passcode)</Text>
                   </View>
-                  <View style={[styles.checkbox, meetingData.isPrivate && styles.checkboxChecked]}>
+                  <View style={[dynamicStyles.checkbox, meetingData.isPrivate && dynamicStyles.checkboxChecked]}>
                     {meetingData.isPrivate && <Ionicons name="checkmark" size={16} color="#fff" />}
                   </View>
                 </TouchableOpacity>
 
                 {meetingData.isPrivate && (
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Passcode *</Text>
+                  <View style={dynamicStyles.inputGroup}>
+                    <Text style={dynamicStyles.label}>Passcode *</Text>
                     <TextInput
-                      style={styles.textInput}
+                      style={dynamicStyles.textInput}
                       placeholder="Enter passcode"
+                      placeholderTextColor={colors.textSecondary}
                       value={meetingData.passcode}
                       onChangeText={(text) => setMeetingData(prev => ({ ...prev, passcode: text }))}
                       secureTextEntry
@@ -471,28 +707,29 @@ export default function ScheduleMeetingScreen() {
           </View>
 
           {/* Participants */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Participants (Optional)</Text>
+          <View style={dynamicStyles.section}>
+            <Text style={dynamicStyles.sectionTitle}>Participants (Optional)</Text>
             
-            <View style={styles.participantInput}>
+            <View style={dynamicStyles.participantInput}>
               <TextInput
-                style={[styles.textInput, styles.participantTextInput]}
+                style={[dynamicStyles.textInput, dynamicStyles.participantTextInput]}
                 placeholder="Enter email address"
+                placeholderTextColor={colors.textSecondary}
                 value={newParticipant}
                 onChangeText={setNewParticipant}
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
-              <TouchableOpacity style={styles.addButton} onPress={addParticipant}>
+              <TouchableOpacity style={dynamicStyles.addButton} onPress={addParticipant}>
                 <Ionicons name="add" size={20} color="#007AFF" />
               </TouchableOpacity>
             </View>
 
             {meetingData.participants.length > 0 && (
-              <View style={styles.participantsList}>
+              <View style={dynamicStyles.participantsList}>
                 {meetingData.participants.map((email, index) => (
-                  <View key={index} style={styles.participantItem}>
-                    <Text style={styles.participantEmail}>{email}</Text>
+                  <View key={index} style={dynamicStyles.participantItem}>
+                    <Text style={dynamicStyles.participantEmail}>{email}</Text>
                     <TouchableOpacity onPress={() => removeParticipant(email)}>
                       <Ionicons name="close-circle" size={20} color="#FF3B30" />
                     </TouchableOpacity>
@@ -512,33 +749,33 @@ export default function ScheduleMeetingScreen() {
         onRequestClose={() => setShowStartDatePicker(false)}
       >
         <TouchableOpacity 
-          style={styles.modalOverlay}
+          style={dynamicStyles.modalOverlay}
           activeOpacity={1}
           onPress={() => setShowStartDatePicker(false)}
         >
           <TouchableOpacity 
-            style={styles.modalContainer}
+            style={dynamicStyles.modalContainer}
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
           >
-            <View style={styles.modalHeader}>
+            <View style={dynamicStyles.modalHeader}>
               <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
-                <Text style={styles.modalCancelButton}>Cancel</Text>
+                <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>Select Start Date & Time</Text>
+              <Text style={dynamicStyles.modalTitle}>Select Start Date & Time</Text>
               <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
-                <Text style={styles.doneButton}>Done</Text>
+                <Text style={dynamicStyles.doneButton}>Done</Text>
               </TouchableOpacity>
             </View>
             
-            <View style={styles.modalContent}>
+            <View style={dynamicStyles.modalContent}>
             <DateTimePicker
               value={getValidDate(startDateTime)}
               mode="datetime"
               display="spinner"
               onChange={onStartDateChange}
-              style={styles.modalDatePicker}
-              textColor="#000000"
+              style={dynamicStyles.modalDatePicker}
+              textColor={colors.text}
               accentColor="#007AFF"
               minimumDate={getValidDate(new Date())}
             />
@@ -555,33 +792,33 @@ export default function ScheduleMeetingScreen() {
         onRequestClose={() => setShowEndDatePicker(false)}
       >
         <TouchableOpacity 
-          style={styles.modalOverlay}
+          style={dynamicStyles.modalOverlay}
           activeOpacity={1}
           onPress={() => setShowEndDatePicker(false)}
         >
           <TouchableOpacity 
-            style={styles.modalContainer}
+            style={dynamicStyles.modalContainer}
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
           >
-            <View style={styles.modalHeader}>
+            <View style={dynamicStyles.modalHeader}>
               <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
-                <Text style={styles.modalCancelButton}>Cancel</Text>
+                <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>Select End Date & Time</Text>
+              <Text style={dynamicStyles.modalTitle}>Select End Date & Time</Text>
               <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
-                <Text style={styles.doneButton}>Done</Text>
+                <Text style={dynamicStyles.doneButton}>Done</Text>
               </TouchableOpacity>
             </View>
             
-            <View style={styles.modalContent}>
+            <View style={dynamicStyles.modalContent}>
             <DateTimePicker
               value={getValidDate(endDateTime)}
               mode="datetime"
               display="spinner"
               onChange={onEndDateChange}
-              style={styles.modalDatePicker}
-              textColor="#000000"
+              style={dynamicStyles.modalDatePicker}
+              textColor={colors.text}
               accentColor="#007AFF"
               minimumDate={getValidDate(startDateTime)}
             />
@@ -592,233 +829,3 @@ export default function ScheduleMeetingScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-  },
-  backButton: {
-    padding: 4,
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#212529',
-    flex: 1,
-  },
-  scheduleButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#007AFF',
-  },
-  scheduleButtonDisabled: {
-    backgroundColor: '#c6c6c6',
-  },
-  scheduleButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  section: {
-    backgroundColor: '#fff',
-    marginTop: 16,
-    borderRadius: 12,
-    padding: 16,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212529',
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#495057',
-    marginBottom: 8,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#212529',
-    backgroundColor: '#fff',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  featureRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f8f9fa',
-  },
-  featureInfo: {
-    flex: 1,
-  },
-  featureTitle: {
-    fontSize: 16,
-    color: '#212529',
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: '#e9ecef',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  participantInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  participantTextInput: {
-    flex: 1,
-    marginRight: 12,
-  },
-  addButton: {
-    padding: 8,
-  },
-  participantsList: {
-    marginTop: 8,
-  },
-  participantItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  participantEmail: {
-    fontSize: 14,
-    color: '#495057',
-    flex: 1,
-  },
-  datePickerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-  },
-  datePickerLabel: {
-    fontSize: 16,
-    color: '#212529',
-  },
-  datePickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-    marginBottom: 8,
-  },
-  datePickerTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212529',
-  },
-  datePicker: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginHorizontal: 20,
-    maxHeight: '80%',
-    width: '90%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#212529',
-  },
-  modalCancelButton: {
-    fontSize: 16,
-    color: '#6c757d',
-  },
-  doneButton: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  modalContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    alignItems: 'center',
-  },
-  modalDatePicker: {
-    width: '100%',
-    height: 200,
-  },
-});

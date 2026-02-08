@@ -1,0 +1,187 @@
+# Build iOS app with EAS local (no EAS cloud charge).
+# Trigger: manual (workflow_dispatch) only. Deploy script triggers the selected platform (iOS or Android) via gh workflow run after push.
+# Requires: GitHub secret EXPO_TOKEN (Expo access token).
+# Auto-submit: Automatically submits to App Store Connect after successful production builds.
+#   Requires: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (or EXPO_APPLE_APP_SPECIFIC_PASSWORD) in GitHub Secrets.
+# Runs on macOS (uses GitHub-hosted macOS runner).
+
+name: Build iOS (EAS local)
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'EAS profile'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+          - development
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout (exclude manager-francis; app build does not use it)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          sparse-checkout: |
+            /*
+            !manager-francis
+          sparse-checkout-cone-mode: false
+
+      - name: Remove manager-francis submodule entry so git cleanup does not fail
+        run: |
+          set +e
+          # Remove submodule references
+          git config -f .gitmodules --remove-section submodule.manager-francis 2>/dev/null || true
+          git submodule deinit -f manager-francis 2>/dev/null || true
+          git rm --cached manager-francis 2>/dev/null || true
+          rm -rf .git/modules/manager-francis manager-francis 2>/dev/null || true
+          # Ensure git is in a clean state
+          git reset --hard HEAD 2>/dev/null || true
+          git clean -fd 2>/dev/null || true
+          # Verify git is working
+          git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
+        continue-on-error: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: EAS Build (local)
+        run: |
+          PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          eas build --platform ios --profile "$PROFILE" --local --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: |
+            *.ipa
+          if-no-files-found: ignore
+
+      - name: Submit to App Store
+        if: success() && github.event.inputs.profile == 'production'
+        run: |
+          HAS_ASC=$([ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; echo $?)
+          HAS_PASSWORD=$([ -n "$EXPO_APPLE_APP_SPECIFIC_PASSWORD" ]; echo $?)
+          if [ "$HAS_ASC" -ne 0 ] && [ "$HAS_PASSWORD" -ne 0 ]; then
+            echo "::error::No Apple credentials set. Add ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 or EXPO_APPLE_APP_SPECIFIC_PASSWORD to GitHub Secrets."
+            exit 1
+          fi
+          IPA=$(find . -maxdepth 3 -name "*.ipa" -type f 2>/dev/null | head -1)
+          if [ -z "$IPA" ]; then 
+            echo "::error::No .ipa file found after build"
+            exit 1
+          fi
+          echo "Submitting iOS app to App Store Connect..."
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
+            echo "Using App Store Connect API keys"
+            # Write the API key to a temporary file
+            echo "$ASC_KEY_P8_BASE64" | base64 -d > /tmp/asc-key.p8
+            chmod 600 /tmp/asc-key.p8
+            # Update eas.json to include ASC API key configuration (newer EAS CLI reads from eas.json)
+            # Use jq if available, otherwise use sed/python
+            if command -v jq &> /dev/null; then
+              jq '.submit.production.ios.ascApiKeyPath = "/tmp/asc-key.p8" | .submit.production.ios.ascApiKeyId = "'"$ASC_KEY_ID"'" | .submit.production.ios.ascApiKeyIssuerId = "'"$ASC_ISSUER_ID"'"' eas.json > eas.json.tmp && mv eas.json.tmp eas.json
+            else
+              # Fallback: use Python to update JSON
+              python3 << 'EOF'
+import json
+import sys
+import os
+
+with open('eas.json', 'r') as f:
+    config = json.load(f)
+
+config['submit']['production']['ios']['ascApiKeyPath'] = '/tmp/asc-key.p8'
+config['submit']['production']['ios']['ascApiKeyId'] = os.environ['ASC_KEY_ID']
+config['submit']['production']['ios']['ascApiKeyIssuerId'] = os.environ['ASC_ISSUER_ID']
+
+with open('eas.json', 'w') as f:
+    json.dump(config, f, indent=2)
+EOF
+            fi
+            # Submit using the profile (credentials are read from eas.json)
+            npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
+          else
+            echo "Using app-specific password"
+            npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
+          fi
+          echo "✅ Successfully submitted to App Store Connect!"
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.EXPO_APPLE_APP_SPECIFIC_PASSWORD }}
+
+      - name: Send success email
+        if: success() && github.event.inputs.profile == 'production'
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '✅ iOS Build & Deploy Successful - GrabDocs'
+          to: dev@grabdocs.com
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            iOS build and deployment completed successfully!
+            
+            Platform: iOS
+            Profile: ${{ github.event.inputs.profile }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Actor: ${{ github.actor }}
+            
+            View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Send failure email
+        if: failure() && github.event.inputs.profile == 'production'
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '❌ iOS Build & Deploy Failed - GrabDocs'
+          to: dev@grabdocs.com
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            iOS build or deployment failed!
+            
+            Platform: iOS
+            Profile: ${{ github.event.inputs.profile }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Actor: ${{ github.actor }}
+            
+            View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            Please check the workflow logs for details.

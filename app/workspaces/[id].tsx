@@ -12,7 +12,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
@@ -57,6 +57,7 @@ export default function WorkspaceDetailsScreen() {
   const { id } = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,10 +131,10 @@ export default function WorkspaceDetailsScreen() {
             }
           }
 
-          // Load workspace files for recent activity
+          // Load workspace files for recent activity (only current user's activity in this workspace)
           try {
-            console.log('📁 Loading workspace files for recent activity, workspaceId:', id);
-            const filesResponse = await apiService.getDocuments(1, 20, undefined, undefined, Number(id));
+            console.log('📁 Loading workspace recent activity (own files only), workspaceId:', id);
+            const filesResponse = await apiService.getDocuments(1, 20, undefined, undefined, Number(id), true);
             let files: any[] = [];
             
             if (filesResponse && filesResponse.success) {
@@ -468,6 +469,7 @@ export default function WorkspaceDetailsScreen() {
     membersList: { backgroundColor: colors.card, borderRadius: 12, overflow: 'hidden' },
     memberItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
     memberAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+    memberAvatarText: { fontSize: 16, fontWeight: '700', color: colors.tint },
     memberInfo: { flex: 1 },
     memberName: { fontSize: 16, fontWeight: '600', color: colors.text, marginBottom: 2 },
     memberRole: { fontSize: 14, color: colors.textSecondary, textTransform: 'capitalize' },
@@ -814,7 +816,15 @@ export default function WorkspaceDetailsScreen() {
                 {members.map((member) => (
                   <View key={member.id} style={dynamicStyles.memberItem}>
                     <View style={dynamicStyles.memberAvatar}>
-                      <Ionicons name="person" size={20} color={colors.textSecondary} />
+                      {(() => {
+                        const first = (member.user?.first_name || '').trim();
+                        const last = (member.user?.last_name || '').trim();
+                        const initials = (first.charAt(0) + last.charAt(0)).toUpperCase();
+                        if (initials) {
+                          return <Text style={dynamicStyles.memberAvatarText}>{initials}</Text>;
+                        }
+                        return <Ionicons name="person" size={20} color={colors.textSecondary} />;
+                      })()}
                     </View>
                     <View style={dynamicStyles.memberInfo}>
                       <Text style={dynamicStyles.memberName}>
@@ -1072,8 +1082,8 @@ export default function WorkspaceDetailsScreen() {
         presentationStyle="fullScreen"
         onRequestClose={() => setInviteModalVisible(false)}
       >
-        <SafeAreaView style={dynamicStyles.modalContainer}>
-          <View style={dynamicStyles.modalHeader}>
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={() => setInviteModalVisible(false)}>
               <Text style={dynamicStyles.modalCancel}>Cancel</Text>
             </TouchableOpacity>

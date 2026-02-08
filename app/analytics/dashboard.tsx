@@ -3,7 +3,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -351,7 +351,10 @@ export default function AnalyticsDashboard() {
 
   console.log('📊 AnalyticsDashboard component loaded', { isAuthenticated, user: user?.username, authLoading });
 
-  const loadAnalytics = async (days = timePeriod) => {
+  // Track previous authLoading state to detect transition from true to false
+  const prevAuthLoadingRef = useRef(authLoading);
+
+  const loadAnalytics = useCallback(async (days = timePeriod) => {
     try {
       setLoading(true);
       console.log('🔍 Loading analytics for', days, 'days');
@@ -587,7 +590,8 @@ export default function AnalyticsDashboard() {
           // Fallback: try mobile files endpoint if analytics didn't return receipts
           try {
             console.log('📊 Fallback: Fetching receipts from mobile files endpoint...');
-            const filesResponse = await apiClient.getDocuments(1, 10000, undefined, 'receipts');
+            // Use reasonable limit (backend caps per_page at 100); paginate if more needed
+            const filesResponse = await apiClient.getDocuments(1, 100, undefined, 'receipts');
             if (filesResponse && filesResponse.success) {
               const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
               const receiptFiles = allFiles
@@ -656,7 +660,8 @@ export default function AnalyticsDashboard() {
           // Need to fetch invoice records to get invoice IDs
           try {
             console.log('📊 Fetching invoices from files endpoint to get invoice IDs...');
-            const invoicesResponse = await apiClient.getDocuments(1, 10000, undefined, 'invoices');
+            // Use reasonable limit (backend caps per_page at 100)
+            const invoicesResponse = await apiClient.getDocuments(1, 100, undefined, 'invoices');
             console.log('📊 Invoices response:', {
               success: invoicesResponse?.success,
               count: invoicesResponse?.files?.length || invoicesResponse?.data?.files?.length || 0
@@ -813,7 +818,19 @@ export default function AnalyticsDashboard() {
       console.log('🔚 Finally block - setting loading to false');
       setLoading(false);
     }
-  };
+  }, [
+    timePeriod,
+    selectedCategory,
+    selectedInvoiceCategory,
+    useCustomFilters,
+    customDateFrom,
+    customDateTo,
+    storeVendorName,
+    amountMin,
+    amountMax,
+    isAuthenticated,
+    authLoading,
+  ]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -1333,6 +1350,18 @@ export default function AnalyticsDashboard() {
     }
   };
 
+  // Watch for authLoading transition from true to false and trigger load
+  useEffect(() => {
+    const prevAuthLoading = prevAuthLoadingRef.current;
+    prevAuthLoadingRef.current = authLoading;
+    
+    // If auth just finished loading (transitioned from true to false), load analytics
+    if (prevAuthLoading && !authLoading) {
+      console.log('📊 Auth finished loading, triggering loadAnalytics');
+      loadAnalytics();
+    }
+  }, [authLoading, loadAnalytics]);
+
   // Use useFocusEffect instead of useEffect to ensure data reloads when screen comes into focus
   // This is critical for Android where useEffect may not re-run when navigating to the screen
   useFocusEffect(
@@ -1345,7 +1374,7 @@ export default function AnalyticsDashboard() {
       }
       // Once auth has finished loading, load analytics (whether authenticated or not)
       loadAnalytics();
-    }, [isAuthenticated, authLoading, user?.id, user?.username])
+    }, [isAuthenticated, authLoading, user?.id, user?.username, loadAnalytics])
   );
 
   const formatCurrency = (amount: number) => {

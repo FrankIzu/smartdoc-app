@@ -48,7 +48,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
           const userData = { id: String(u.id), email: u.email || '', name };
           await secureStorage.setItem('user', JSON.stringify(userData));
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+          
+          // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
+          // The backend now returns a JWT token for mobile requests in the 'token' field
+          const authToken = (result as any).token || 'session_token';
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken);
+          
+          if (authToken && authToken !== 'session_token') {
+            console.log('✅ Google OAuth deep link: JWT token stored');
+          } else {
+            console.warn('⚠️ Google OAuth deep link: No JWT token received, using session_token fallback');
+          }
+          
           setUser(userData);
           console.log('✅ Google OAuth deep link: session established');
         }
@@ -146,12 +157,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string, remember: boolean = false) => {
     try {
-      setLoading(true);
-      
+      // Do NOT set loading=true here: it would unmount the entire app (AuthWrapper returns null)
+      // and the sign-in screen would remount with lost state, so the user wouldn't see the error.
+      // The sign-in screen uses its own loading state for the button.
+      const trimmedEmail = (email ?? '').trim();
+      const trimmedPassword = (password ?? '').trim();
       // Use real API only - no fallback
-      const response = await apiService.login({ 
-        username: email, // API expects username, not email
-        password 
+      const response = await apiService.login({
+        username: trimmedEmail, // API expects username, not email
+        password: trimmedPassword,
       });
       
       console.log('🔍 Full API response in auth:', JSON.stringify(response, null, 2));
@@ -172,11 +186,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       if (response.success) {
-        // Store credentials if remember is enabled
+        // Store credentials if remember is enabled (store trimmed values)
         if (remember) {
           console.log('💾 Storing login credentials for remember functionality');
-          await secureStorage.setItem('remembered_email', email);
-          await secureStorage.setItem('remembered_password', password);
+          await secureStorage.setItem('remembered_email', trimmedEmail);
+          await secureStorage.setItem('remembered_password', trimmedPassword);
           await secureStorage.setItem('remember_enabled', 'true');
         } else {
           // Clear remembered credentials if remember is disabled
@@ -235,10 +249,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (error) {
       console.error('❌ Sign in failed:', error);
-      // Ensure user state is cleared on any error
+      // Ensure user state is cleared on any error so we never redirect to home
       setUser(null);
       throw error;
     } finally {
+      // Only clear loading if we had set it (we no longer set it for signIn to avoid unmounting)
       setLoading(false);
     }
   };

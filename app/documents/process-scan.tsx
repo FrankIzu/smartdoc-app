@@ -1,7 +1,8 @@
 import { MaterialIcons } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function ProcessScanScreen() {
@@ -61,58 +62,68 @@ export default function ProcessScanScreen() {
     if (processing) return;
     
     setProcessing(true);
+    
+    // Import fileStore immediately
+    const { useFileStore } = await import('../../stores/fileStore');
+    const fileStore = useFileStore.getState();
+    
+    // Prepare file info for optimistic pending
+    let fileToUpload = {
+      uri: currentImage as string,
+      name: `scanned_document_${Date.now()}.jpg`,
+      type: 'image/jpeg',
+    };
+
+    // Convert HEIC to PNG before upload if needed (do this first)
     try {
-      console.log('Saving document with image:', currentImage);
-      
-      // Convert HEIC to PNG before upload if needed
-      let fileToUpload = {
-        uri: currentImage as string,
-        name: `scanned_document_${Date.now()}.jpg`,
-        type: 'image/jpeg',
-      };
-
-      try {
-        const { convertHeicToPng } = await import('../../utils/imageConversion');
-        fileToUpload = await convertHeicToPng(fileToUpload);
-      } catch (conversionError) {
-        console.warn('HEIC conversion failed, continuing with original:', conversionError);
-      }
-      
-      // Create FormData for file upload
-      const formData = new FormData();
-      
-      // Add file to form data
-      formData.append('file', {
-        uri: fileToUpload.uri,
-        type: fileToUpload.type,
-        name: fileToUpload.name,
-      } as any);
-
-      // Import API client and upload the file
-      const { apiClient } = await import('../../services/api');
-      
-      console.log('Uploading scanned document...');
-      const uploadResult = await apiClient.uploadFile(formData, (progress) => {
-        console.log('Upload progress:', progress);
-      });
-
-      console.log('Scanned document upload successful:', uploadResult);
-      
-      // Mark upload time so Files screen knows to refresh immediately
-      const { useFileStore } = await import('../../stores/fileStore');
-      useFileStore.getState().setLastUploadTime(Date.now());
-      
-      // Small delay to ensure backend has created the file record
-      setTimeout(() => {
-        Alert.alert('Success', 'Document saved successfully!', [
-          { text: 'OK', onPress: () => router.replace('/(tabs)/documents') }
-        ]);
-      }, 300);
-    } catch (error) {
-      console.error('Error saving document:', error);
-      Alert.alert('Error', 'Failed to save document. Please try again.');
-      setProcessing(false);
+      const { convertHeicToPng } = await import('../../utils/imageConversion');
+      fileToUpload = await convertHeicToPng(fileToUpload);
+    } catch (conversionError) {
+      console.warn('HEIC conversion failed, continuing with original:', conversionError);
     }
+    
+    // Navigate to Files tab (user will see file when it appears from API)
+    router.replace('/(tabs)/documents');
+    
+    // Upload in background (non-blocking)
+    (async () => {
+      try {
+        console.log('📤 Starting background upload for:', fileToUpload.name);
+        
+        // Create FormData for file upload
+        const formData = new FormData();
+        formData.append('file', {
+          uri: fileToUpload.uri,
+          type: fileToUpload.type,
+          name: fileToUpload.name,
+        } as any);
+
+        // Import API client and upload the file
+        const { apiClient } = await import('../../services/api');
+        
+        console.log('📤 Uploading scanned document in background...');
+        const uploadResult = await apiClient.uploadFile(formData, (progress) => {
+          console.log('📤 Upload progress:', progress);
+        });
+
+        console.log('✅ Scanned document upload successful:', uploadResult);
+        
+        // Mark upload time so Files screen knows to refresh
+        fileStore.setLastUploadTime(Date.now());
+        
+        // Trigger refresh of files list to show the real file
+        setTimeout(() => {
+          fileStore.fetchFiles(1);
+        }, 500);
+        
+      } catch (error) {
+        console.error('❌ Error uploading document:', error);
+        Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
+      }
+    })();
+    
+    // Reset processing state (upload is now in background)
+    setProcessing(false);
   };
 
   return (
@@ -142,12 +153,12 @@ export default function ProcessScanScreen() {
             <Text style={styles.processingText}>Processing...</Text>
           </View>
         ) : null}
-        <Image
+        <ExpoImage
           source={{ uri: currentImage as string }}
           style={styles.image}
-          resizeMode="contain"
+          contentFit="contain"
           onError={(error) => {
-            console.error('Image load error:', error.nativeEvent?.error || error);
+            console.error('Image load error:', error);
             Alert.alert(
               'Error', 
               'Failed to load image. Please try scanning again.',

@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     Image,
     Modal,
+    Platform,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -18,6 +19,7 @@ import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
 import { useAuth } from '../context/auth';
+import { pushNotificationService } from '../services/pushNotifications';
 
 // Debug functions removed for production build
 
@@ -48,6 +50,7 @@ function DashboardScreen() {
   const isAuthenticated = !!user;
   const [stats, setStats] = useState({
     totalDocuments: 0,
+    totalDrafts: 0,
     totalForms: 0,
     formResponses: 0,
     chatSessions: 0,
@@ -65,6 +68,15 @@ function DashboardScreen() {
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
+
+  // When not signed in, stay on login screen (redirect to sign-in)
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) {
+        router.replace('/(auth)/sign-in');
+      }
+    }, [user, router])
+  );
 
   // Helper function to safely set upload state with timeout
   const setUploadStateWithTimeout = (uploading: boolean) => {
@@ -109,6 +121,7 @@ function DashboardScreen() {
       // Set default fallback data immediately to prevent crashes
       const defaultStats = {
         totalDocuments: 0,
+        totalDrafts: 0,
         totalForms: 0,
         formResponses: 0,
         chatSessions: 0,
@@ -140,6 +153,7 @@ function DashboardScreen() {
         // Set fallback data for development
         setStats({
           totalDocuments: 5,
+          totalDrafts: 0,
           totalForms: 2,
           formResponses: 3,
           chatSessions: 2,
@@ -186,6 +200,7 @@ function DashboardScreen() {
             
             const safeStats = {
               totalDocuments: Number(statsData.totalDocuments) || 0,
+              totalDrafts: Number(statsData.totalDrafts) || 0,
               totalForms: Number(statsData.totalForms) || 0,
               formResponses: Number(statsData.formResponses) || 0,
               chatSessions: Number(statsData.chatSessions) || 0,
@@ -204,23 +219,21 @@ function DashboardScreen() {
           }
         } catch (error) {
           console.warn('📊 Dashboard stats failed, using defaults:', error);
-          // Try to get data from files endpoint as fallback
+          // Fallback: use files endpoint with minimal request (page 1, 1 item) and use pagination.total for count
           try {
-            // console.log('📊 Trying files endpoint as fallback...');
-            const filesResponse = await apiClient.getFiles();
-            if (filesResponse && filesResponse.success && filesResponse.data) {
-              const fileCount = Array.isArray(filesResponse.data) ? filesResponse.data.length : 0;
-              // console.log('📊 Found files count:', fileCount);
+            const filesResponse = await apiClient.getFiles(1, 1);
+            if (filesResponse && filesResponse.success) {
+              const pagination = (filesResponse as any).pagination;
+              const fileCount = typeof pagination?.total === 'number' ? pagination.total : 0;
               const fallbackStats = {
                 ...defaultStats,
                 totalDocuments: fileCount,
               };
               setStats(fallbackStats);
               return fallbackStats;
-            } else {
-              setStats(defaultStats);
-              return defaultStats;
             }
+            setStats(defaultStats);
+            return defaultStats;
           } catch (filesError) {
             console.warn('📊 Files fallback also failed:', filesError);
             setStats(defaultStats);
@@ -350,6 +363,7 @@ function DashboardScreen() {
       // Ensure we always have safe defaults
       setStats({
         totalDocuments: 0,
+        totalDrafts: 0,
         totalForms: 0,
         formResponses: 0,
         chatSessions: 0,
@@ -375,6 +389,20 @@ function DashboardScreen() {
     // This allows the app to show data even if auth check fails
     loadDashboardData();
   }, [loadDashboardData]);
+
+  // Refetch when screen gains focus (e.g. returning from notifications screen) so badge count updates
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthenticated && user) loadDashboardData();
+    }, [isAuthenticated, user, loadDashboardData])
+  );
+
+  // Keep app icon badge in sync with unread notification count
+  useEffect(() => {
+    if (user && typeof stats.unreadNotifications === 'number') {
+      pushNotificationService.setBadgeCount(stats.unreadNotifications);
+    }
+  }, [user, stats.unreadNotifications]);
 
   // Auto-refresh dashboard periodically when user is authenticated
   useEffect(() => {
@@ -626,19 +654,7 @@ function DashboardScreen() {
   };
 
   const handleNotificationPress = () => {
-    Alert.alert(
-      'Notifications',
-      `You have ${stats.unreadNotifications || 0} unread notifications`,
-      [
-        { 
-          text: 'View All', 
-          onPress: () => {
-            Alert.alert('Coming Soon', 'Notifications panel will be available in the next update!');
-          }
-        },
-        { text: 'Dismiss', style: 'cancel' },
-      ]
-    );
+    router.push('/notifications');
   };
 
   const handleTestProgress = () => {
@@ -941,47 +957,6 @@ function DashboardScreen() {
     shadowRadius: 6,
     elevation: 6,
   },
-  welcomeContainer: {
-    padding: 16,
-      backgroundColor: colors.card,
-    borderRadius: 8,
-    margin: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  welcomeCard: {
-    alignItems: 'center',
-    padding: 20,
-  },
-  welcomeTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-      color: colors.text,
-    marginTop: 15,
-    textAlign: 'center',
-  },
-  welcomeSubtitle: {
-    fontSize: 15,
-      color: colors.textSecondary,
-    marginTop: 5,
-    textAlign: 'center',
-  },
-  welcomeButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 8,
-    marginTop: 20,
-  },
-  welcomeButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
   badge: {
     position: 'absolute',
     top: -5,
@@ -1113,25 +1088,6 @@ function DashboardScreen() {
           </Text>
         </View>
       )}
-      
-      {/* Welcome Message for Non-Authenticated Users */}
-      {!user && (
-        <View style={dynamicStyles.welcomeContainer}>
-          <View style={dynamicStyles.welcomeCard}>
-            <Ionicons name="person-circle-outline" size={52} color="#007AFF" />
-            <Text style={dynamicStyles.welcomeTitle}>Welcome to GrabDocs</Text>
-            <Text style={dynamicStyles.welcomeSubtitle}>
-              Sign in to access your documents and see your personalized dashboard
-            </Text>
-            <TouchableOpacity
-              style={dynamicStyles.welcomeButton}
-              onPress={() => router.push('/(auth)')}
-            >
-              <Text style={dynamicStyles.welcomeButtonText}>Sign In</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
 
       <ScrollView
         style={dynamicStyles.scrollView}
@@ -1202,13 +1158,12 @@ function DashboardScreen() {
               onPress={() => router.push('/(tabs)/documents')}
             />
             <StatCard
-              key="stat-forms"
-              title="Forms"
-              value={stats.totalForms}
-              icon="clipboard-outline"
+              key="stat-draft"
+              title="Draft"
+              value={stats.totalDrafts}
+              icon="create-outline"
               color="#34C759"
-              onPress={() => router.push('/forms/create')}
-              badge={stats.formResponses}
+              onPress={() => router.push('/drafts')}
             />
           </View>
           <View style={dynamicStyles.statsRow}>
@@ -1245,7 +1200,7 @@ function DashboardScreen() {
             />
             <QuickActionCard
               key="action-chat"
-              title="Chat"
+              title="Chat with someone"
               subtitle="Message your team members"
               icon="chatbubbles"
               color="#FF2D55"
@@ -1283,6 +1238,14 @@ function DashboardScreen() {
               icon="bookmark"
               color="#FF9500"
               onPress={() => handleQuickAction('bookmarks')}
+            />
+            <QuickActionCard
+              key="action-forms"
+              title="Forms"
+              subtitle="Create and manage forms"
+              icon="clipboard-outline"
+              color="#34C759"
+              onPress={() => handleQuickAction('form')}
             />
           </View>
         </View>
@@ -1356,32 +1319,34 @@ function DashboardScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        style={dynamicStyles.fab}
-        onPress={() => {
-          Alert.alert(
-            'Quick Actions',
-            'Choose an action:',
-            [
-              {
-                text: 'Upload File',
-                onPress: () => setShowUploadOptions(true),
-              },
-              {
-                text: 'Scan Document',
-                onPress: () => router.push('/scanner'),
-              },
-              {
-                text: 'Cancel',
-                style: 'cancel',
-              },
-            ]
-          );
-        }}
-      >
-        <Ionicons name="add" size={26} color="#fff" />
-      </TouchableOpacity>
+      {/* Floating Action Button - hidden on Android */}
+      {Platform.OS !== 'android' && (
+        <TouchableOpacity
+          style={dynamicStyles.fab}
+          onPress={() => {
+            Alert.alert(
+              'Quick Actions',
+              'Choose an action:',
+              [
+                {
+                  text: 'Upload File',
+                  onPress: () => setShowUploadOptions(true),
+                },
+                {
+                  text: 'Scan Document',
+                  onPress: () => router.push('/scanner'),
+                },
+                {
+                  text: 'Cancel',
+                  style: 'cancel',
+                },
+              ]
+            );
+          }}
+        >
+          <Ionicons name="add" size={26} color="#fff" />
+        </TouchableOpacity>
+      )}
 
       {/* Upload Options Modal */}
       <Modal

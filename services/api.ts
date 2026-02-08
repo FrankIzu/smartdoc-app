@@ -99,6 +99,7 @@ const MOBILE_ENDPOINTS = {
   FILE_DELETE: (id: number) => `/api/v1/mobile/file/${id}`,
   FILE_CATEGORIZE: (id: number) => `/api/v1/mobile/file/${id}/categorize`,
   FILE_AUTO_CATEGORIZE: (id: number) => `/api/v1/mobile/file/${id}/auto-categorize`,
+  FILE_WORKSPACE_VISIBILITY: (id: number) => `/api/v1/mobile/file/${id}/workspace-visibility`,
   
   // Chat
   CHAT_HISTORY: '/api/v1/mobile/chat/history',
@@ -107,7 +108,9 @@ const MOBILE_ENDPOINTS = {
   CHAT_SMART_START: '/api/v1/mobile/chat/smart/start',
   CHAT_SMART_CHUNK: '/api/v1/mobile/chat/smart/chunk',
   CHAT_SMART_CANCEL: '/api/v1/mobile/chat/smart/cancel',
-  
+  /** Web chat feedback (thumbs up/down) - same as web */
+  CHAT_FEEDBACK: '/api/v1/web/chat/feedback',
+
   // Forms
   FORMS: '/api/v1/mobile/forms',
   FORM_BY_ID: (id: number) => `/api/v1/mobile/forms/${id}`,
@@ -152,11 +155,15 @@ const MOBILE_ENDPOINTS = {
   WORKSPACE_INVITATION_BY_ID: (workspaceId: number, invitationId: number) => `/api/v1/mobile/workspaces/${workspaceId}/invitations/${invitationId}`,
   WORKSPACE_USERS: '/api/v1/mobile/workspace-users',
   
-  // Upload Links
-  UPLOAD_LINKS: '/api/v1/mobile/upload-links',
-  UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/mobile/upload-links/${id}`,
-  UPLOAD_LINK_SHARE: (id: number) => `/api/v1/mobile/upload-links/${id}/share`,
+  // Upload Links (mobile - kept for getUploadLinkFiles if needed)
   UPLOAD_LINK_FILES: (id: number) => `/api/v1/mobile/upload-links/${id}/files`,
+  // Web Upload Links (same as web app - links reachable at grabdocs.com/upload-to/{link_token})
+  WEB_UPLOAD_LINKS: '/api/v1/web/upload-links',
+  WEB_UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/web/upload-links/${id}`,
+  WEB_UPLOAD_LINK_SEND_EMAIL: (id: number) => `/api/v1/web/upload-links/${id}/send-email`,
+  WEB_FILES_UPLOADED_VIA_LINKS: '/api/v1/web/files/uploaded-via-links',
+  WEB_UPLOAD_TO: (token: string) => `/api/v1/web/upload-to/${token}`,
+  WEB_UPLOAD_TO_BY_CODE: (code: string) => `/api/v1/web/upload-to/by-code/${code}`,
   
   // Meeting Assets & Webhooks (same endpoints as web)
   VIDEO_ASSET_CONTENT: '/api/v1/video/asset-content',
@@ -176,6 +183,15 @@ const MOBILE_ENDPOINTS = {
   // Error Logging
   ERROR_LOG: '/api/v1/mobile/error-log',
   ERROR_LOGS: '/api/v1/mobile/error-logs', // GET endpoint to view error logs
+  
+  // Notifications (same data as web)
+  NOTIFICATIONS: '/api/v1/mobile/notifications',
+  NOTIFICATION_MARK_READ: (id: number) => `/api/v1/mobile/notifications/${id}/read`,
+  NOTIFICATION_MARK_ALL_READ: '/api/v1/mobile/notifications/mark-all-read',
+  NOTIFICATION_CLEAR_ALL: '/api/v1/mobile/notifications/clear-all',
+  
+  // Push notifications (for when user is not in app)
+  PUSH_TOKEN: '/api/v1/mobile/push-token',
   
   // Configuration
   // CONFIG: '/api/v1/mobile/config', // Not available on backend
@@ -363,9 +379,11 @@ class ApiService {
 
   async login(credentials: { username: string; password: string }): Promise<AuthResponse> {
     try {
-              console.log('🔄 Attempting mobile login with:', { username: credentials.username });
-      
-      const response = await this.client.post(MOBILE_ENDPOINTS.LOGIN, credentials);
+      const username = (credentials.username ?? '').trim();
+      const password = (credentials.password ?? '').trim();
+      console.log('🔄 Attempting mobile login with:', { username });
+      const payload = { username, password };
+      const response = await this.client.post(MOBILE_ENDPOINTS.LOGIN, payload);
       console.log('✅ Mobile login response:', response.status, response.data);
       
       const result = response.data;
@@ -468,12 +486,16 @@ class ApiService {
   /**
    * Exchange a temporary Google OAuth token (from backend redirect flow) for a session.
    * Used when the app is opened via grabdocs://login-success?token=...
+   * Returns JWT token for mobile requests.
    */
-  async exchangeGoogleOAuthToken(loginToken: string): Promise<{ success: boolean; user?: { id: number; username: string; email: string; firstName?: string; lastName?: string } }> {
+  async exchangeGoogleOAuthToken(loginToken: string): Promise<{ success: boolean; user?: { id: number; username: string; email: string; firstName?: string; lastName?: string }; token?: string }> {
     const response = await this.client.post('/api/v1/web/oauth/exchange-token', {
       login_token: loginToken,
     }, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Platform': 'mobile', // Indicate this is a mobile request to get JWT token
+      },
       withCredentials: true,
     });
     return response.data;
@@ -872,6 +894,111 @@ class ApiService {
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Delete failed');
     }
+  }
+
+  /**
+   * Rename a file (web endpoint).
+   * PUT /api/v1/web/files/:id/rename with body { filename }.
+   */
+  async renameFile(fileId: number, filename: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(`/api/v1/web/files/${fileId}/rename`, { filename });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Rename failed');
+    }
+  }
+
+  // ==================== DRAFT API (web endpoints, Bearer auth) ====================
+
+  /**
+   * List drafts: get files with category=Draft (server-side filter when supported).
+   * Falls back to client filter if backend does not return only drafts.
+   */
+  async getDrafts(): Promise<ApiResponse> {
+    const res = await this.getFiles(1, 100, undefined, 'Draft');
+    const raw = res?.data?.files ?? res?.data?.data ?? res?.files ?? (Array.isArray(res?.data) ? res.data : []);
+    const list = Array.isArray(raw) ? raw : [];
+    const drafts = list.filter((f: any) => (f.file_kind || '').toString().toLowerCase() === 'draft');
+    return { ...res, success: res?.success !== false, data: { drafts }, drafts };
+  }
+
+  /**
+   * Create a draft. POST /api/v1/web/drafts/create. Body: {} or { source_file_id }.
+   */
+  async createDraft(sourceFileId?: number): Promise<ApiResponse> {
+    const response = await this.client.post('/api/v1/web/drafts/create', sourceFileId != null ? { source_file_id: sourceFileId } : {});
+    return response.data;
+  }
+
+  /**
+   * Get draft content. GET /api/v1/web/files/:id/draft-content.
+   */
+  async getDraftContent(draftId: number, token?: string): Promise<ApiResponse> {
+    const config = token ? { params: { token } } : {};
+    const response = await this.client.get(`/api/v1/web/files/${draftId}/draft-content`, config);
+    return response.data;
+  }
+
+  /**
+   * Save draft. PUT /api/v1/web/files/:id/edit with { content_html, content_text }.
+   */
+  async saveDraft(draftId: number, contentHtml: string, contentText: string, shareToken?: string): Promise<ApiResponse> {
+    const body: { content_html: string; content_text: string; token?: string } = { content_html: contentHtml, content_text: contentText };
+    if (shareToken) body.token = shareToken;
+    const response = await this.client.put(`/api/v1/web/files/${draftId}/edit`, body);
+    return response.data;
+  }
+
+  /**
+   * Delete draft. DELETE /api/v1/web/files/:id?confirmed=true.
+   */
+  async deleteDraft(draftId: number): Promise<ApiResponse> {
+    const response = await this.client.delete(`/api/v1/web/files/${draftId}?confirmed=true`);
+    return response.data;
+  }
+
+  /**
+   * Create share link for a file (draft or any file). POST /api/v1/web/files/:id/create-link.
+   */
+  async createFileShareLink(fileId: number, options?: { role?: 'viewer' | 'member' | 'admin'; expires_in_days?: number }): Promise<ApiResponse> {
+    const response = await this.client.post(`/api/v1/web/files/${fileId}/create-link`, options || {});
+    return response.data;
+  }
+
+  /**
+   * Send share link by email. POST /api/v1/web/files/:id/send-share-link.
+   */
+  async sendFileShareLinkEmail(
+    fileId: number,
+    params: { share_link: string; emails: string[]; message?: string; role?: string; expires_in_days?: number }
+  ): Promise<ApiResponse> {
+    const response = await this.client.post(`/api/v1/web/files/${fileId}/send-share-link`, params);
+    return response.data;
+  }
+
+  /**
+   * Get all external shares for a file
+   */
+  async getFileExternalShares(fileId: number): Promise<ApiResponse> {
+    const response = await this.client.get(`/api/v1/web/files/${fileId}/external-shares`);
+    return response.data;
+  }
+
+  /**
+   * Revoke an external file share
+   */
+  async revokeFileShare(fileId: number, shareId: number): Promise<ApiResponse> {
+    const response = await this.client.delete(`/api/v1/web/files/${fileId}/external-shares/${shareId}`);
+    return response.data;
+  }
+
+  /**
+   * Permanently delete a revoked external file share
+   */
+  async deleteFileShare(fileId: number, shareId: number): Promise<ApiResponse> {
+    const response = await this.client.delete(`/api/v1/web/files/${fileId}/external-shares/${shareId}?permanent=true`);
+    return response.data;
   }
 
   // ==================== CHUNKED UPLOAD METHODS ====================
@@ -2263,7 +2390,9 @@ class ApiService {
     signal?: AbortSignal,
     onChunk?: (type: string, data: any) => void
   ): Promise<void> {
-    
+    // Declare in outer scope so catch block can cancel the job if start succeeded but later code threw
+    let currentJobId: string | null = null;
+
     try {
       console.log('💬 [POLLING] Starting chat message via polling');
       
@@ -2299,6 +2428,7 @@ class ApiService {
       }
 
       const jobId: string = startResponse.job_id;
+      currentJobId = jobId; // set for catch-block cleanup
       let cursor = 0;
       let isDone = false;
       let accumulatedContent = ''; // Track accumulated content for streaming-like display
@@ -2311,9 +2441,6 @@ class ApiService {
       const maxPollTime = 300000; // Max 5 minutes
       const startTime = Date.now();
       let pollCount = 0; // Track number of polls
-      
-      // Store jobId in outer scope for error handling
-      const currentJobId = jobId;
       
       // Network resilience: Track failures and implement exponential backoff
       let consecutiveFailures = 0; // Track consecutive failures
@@ -2713,6 +2840,53 @@ class ApiService {
     }
   }
 
+  /** Get full conversation for a single chat (full messages). Use when opening a chat. */
+  async getChatConversation(historyId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.CHAT_HISTORY}/${historyId}`);
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        (typeof error.response?.data === 'string' ? error.response.data : null);
+      const suffix = status != null ? ` (${status})` : '';
+      throw new Error(msg ? `${msg}${suffix}` : `Failed to fetch chat conversation${suffix}`);
+    }
+  }
+
+  /**
+   * Submit feedback for a chat assistant response (thumbs up/down).
+   * Calls the same web endpoint used by the web app.
+   */
+  async submitChatFeedback(params: {
+    chat_history_id?: number;
+    message_pair_index?: number;
+    query_text?: string;
+    response_text?: string;
+    feedback_score: number; // 1 = helpful, -1 = needs improvement, 0 = undo
+    workspace_id?: number | null;
+    conversation_id?: number | null;
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_FEEDBACK, {
+        chat_history_id: params.chat_history_id ?? null,
+        message_pair_index: params.message_pair_index ?? null,
+        query_text: params.query_text ?? null,
+        response_text: params.response_text ?? null,
+        feedback_score: params.feedback_score,
+        workspace_id: params.workspace_id ?? null,
+        conversation_id: params.conversation_id ?? null,
+      });
+      return response.data;
+    } catch (error: any) {
+      const msg = error.response?.data?.message ?? error.response?.data?.error ?? error.message;
+      throw new Error(msg || 'Failed to submit feedback');
+    }
+  }
+
   async deleteChatHistory(id: number): Promise<ApiResponse> {
     try {
       // Use mobile endpoint for deleting chat history: /api/v1/mobile/chat/history/{id}
@@ -2861,6 +3035,61 @@ class ApiService {
     } catch (error: any) {
       // console.error('❌ Failed to get comprehensive analytics:', error);
       throw new Error(error.response?.data?.message || 'Failed to get comprehensive analytics');
+    }
+  }
+
+  // ==================== NOTIFICATIONS ====================
+
+  async getNotifications(): Promise<ApiResponse & { data?: { notifications: any[]; unreadCount: number } }> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.NOTIFICATIONS);
+      return response.data;
+    } catch (error: any) {
+      return {
+        success: false,
+        data: { notifications: [], unreadCount: 0 },
+        message: error.response?.data?.message || 'Failed to get notifications',
+      };
+    }
+  }
+
+  async markNotificationRead(notificationId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.NOTIFICATION_MARK_READ(notificationId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to mark notification as read');
+    }
+  }
+
+  async markAllNotificationsRead(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.NOTIFICATION_MARK_ALL_READ);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to mark all as read');
+    }
+  }
+
+  async clearAllNotifications(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(MOBILE_ENDPOINTS.NOTIFICATION_CLEAR_ALL);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to clear all notifications');
+    }
+  }
+
+  async registerPushToken(expoPushToken: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.PUSH_TOKEN, {
+        token: expoPushToken,
+        expo_push_token: expoPushToken,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.warn('Register push token failed:', error.response?.data?.message || error.message);
+      return { success: false, message: error.response?.data?.message || 'Failed to register push token' };
     }
   }
 
@@ -3141,16 +3370,17 @@ class ApiService {
 
   // ==================== MOBILE DOCUMENTS ====================
 
-  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number): Promise<ApiResponse> {
+  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number, onlyOwn = false): Promise<ApiResponse> {
     try {
       // Mobile app should use mobile endpoints, not web endpoints
-      // Use the mobile files endpoint which supports workspace_id parameter
+      // Use the mobile files endpoint which supports workspace_id and only_own parameters
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('perPage', perPage.toString());
       if (search) params.append('search', search);
       if (category) params.append('category', category);
-      if (workspaceId) params.append('workspace_id', workspaceId.toString());
+      if (workspaceId != null) params.append('workspace_id', workspaceId.toString());
+      if (onlyOwn) params.append('only_own', '1');
       
       const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
       console.log('📁 API: Requesting files from mobile endpoint:', url);
@@ -3469,6 +3699,18 @@ class ApiService {
   }
 
   // ==================== MOBILE WORKSPACES ====================
+
+  /** Get workspaces where a file is visible (Make Global / workspace sharing). */
+  async getFileWorkspaceVisibility(fileId: number): Promise<ApiResponse & { visible_workspaces?: { id: number; name?: string }[] }> {
+    const response = await this.client.get(MOBILE_ENDPOINTS.FILE_WORKSPACE_VISIBILITY(fileId));
+    return response.data;
+  }
+
+  /** Set which workspaces can see a file (Make Global). Reuses web logic via mobile route. */
+  async setFileWorkspaceVisibility(fileId: number, workspaceIds: number[]): Promise<ApiResponse> {
+    const response = await this.client.put(MOBILE_ENDPOINTS.FILE_WORKSPACE_VISIBILITY(fileId), { workspace_ids: workspaceIds });
+    return response.data;
+  }
   
   async getMobileWorkspaces(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {
@@ -3673,13 +3915,30 @@ class ApiService {
     }
   }
 
-  // ==================== MOBILE UPLOAD LINKS ====================
+  // ==================== UPLOAD LINKS (WEB ENDPOINTS) ====================
+  // Use web endpoints so file request links work at https://grabdocs.com/upload-to/{link_token}
+
+  /** Normalize web link object to mobile shape (url = upload-to/link_token). */
+  private normalizeWebUploadLink(link: any): any {
+    if (!link) return link;
+    const token = link.link_token ?? link.token;
+    return {
+      ...link,
+      id: link.id,
+      name: link.name ?? link.link_name,
+      token: token,
+      url: token ? `upload-to/${token}` : (link.url || ''),
+      upload_count: link.upload_count ?? link.current_uploads ?? 0,
+      uploaded_files: link.uploaded_files ?? [],
+    };
+  }
 
   async getUploadLinks(): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINKS);
-      return response.data;
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_LINKS);
+      const data = response.data;
+      const links = (data.upload_links || []).map((l: any) => this.normalizeWebUploadLink(l));
+      return { ...data, success: true, upload_links: links };
     } catch (error: any) {
       console.error('Get upload links error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload links');
@@ -3693,9 +3952,12 @@ class ApiService {
     max_uploads?: number;
   }): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_LINKS, data);
-      return response.data;
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINKS, data);
+      const res = response.data;
+      // Web returns { link } on create
+      const link = res.link ?? res.upload_link;
+      const upload_link = this.normalizeWebUploadLink(link);
+      return { success: true, upload_link, ...res };
     } catch (error: any) {
       console.error('Create upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to create upload link');
@@ -3704,9 +3966,10 @@ class ApiService {
 
   async getUploadLink(id: number): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id));
-      return response.data;
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_BY_ID(id));
+      const data = response.data;
+      const upload_link = this.normalizeWebUploadLink(data.upload_link ?? data.link);
+      return { ...data, success: true, upload_link };
     } catch (error: any) {
       console.error('Get upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload link');
@@ -3715,9 +3978,10 @@ class ApiService {
 
   async updateUploadLink(id: number, data: any): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.put(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id), data);
-      return response.data;
+      const response = await this.client.put(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_BY_ID(id), data);
+      const res = response.data;
+      const upload_link = this.normalizeWebUploadLink(res.upload_link ?? res.link);
+      return { ...res, success: true, upload_link };
     } catch (error: any) {
       console.error('Update upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to update upload link');
@@ -3726,8 +3990,7 @@ class ApiService {
 
   async deleteUploadLink(id: number): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.delete(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id));
+      const response = await this.client.delete(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_BY_ID(id));
       return response.data;
     } catch (error: any) {
       console.error('Delete upload link error:', error);
@@ -3740,11 +4003,36 @@ class ApiService {
     message?: string;
   }): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(MOBILE_ENDPOINTS.UPLOAD_LINK_SHARE(id), data);
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_SEND_EMAIL(id), {
+        emails: data.emails,
+        message: data.message,
+      });
       return response.data;
     } catch (error: any) {
       console.error('Share upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to share upload link');
+    }
+  }
+
+  /** Get public upload link info by link_token (for opening shared link grabdocs.com/upload-to/{token}). */
+  async getUploadLinkByToken(token: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_TO(token));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get upload link by token error:', error);
+      throw new Error(error.response?.data?.message || 'Invalid or expired upload link');
+    }
+  }
+
+  /** Resolve upload code to link_token (by-code endpoint). */
+  async getUploadLinkByCode(code: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_TO_BY_CODE(code));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get upload link by code error:', error);
+      throw new Error(error.response?.data?.message || 'Invalid upload code');
     }
   }
 
@@ -3772,10 +4060,16 @@ class ApiService {
 
   async getUploadLinkFiles(id: number, page = 1, perPage = 20): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_FILES(id), {
-        params: { page, perPage }
-      });
-      return response.data;
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_FILES_UPLOADED_VIA_LINKS);
+      const data = response.data;
+      const allFiles = data.files ?? data.uploaded_files ?? [];
+      const forLink = allFiles.filter((f: any) => (f.upload_link_id ?? f.upload_link?.id) === id);
+      return {
+        success: true,
+        files: forLink,
+        uploaded_files: forLink,
+        ...data,
+      };
     } catch (error: any) {
       console.error('Get upload link files error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload link files');
@@ -4113,6 +4407,43 @@ class ApiService {
     } catch (error: any) {
       console.error('Download meeting asset failed:', error);
       throw new Error(error.response?.data?.message || 'Failed to download meeting asset');
+    }
+  }
+
+  // ==================== ERROR LOGGING ====================
+  /**
+   * Log error to database for debugging
+   */
+  async logError(error: {
+    errorType: string;
+    errorMessage: string;
+    errorTraceback?: string;
+    severity?: 'critical' | 'error' | 'warning';
+    screenName?: string;
+    userAction?: string;
+    platform?: string;
+    appVersion?: string;
+    deviceInfo?: any;
+  }): Promise<void> {
+    try {
+      const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
+      await this.client.post(MOBILE_ENDPOINTS.ERROR_LOG, {
+        errorType: error.errorType,
+        errorMessage: error.errorMessage,
+        errorTraceback: error.errorTraceback,
+        severity: error.severity || 'error',
+        screenName: error.screenName || 'DocumentViewer',
+        userAction: error.userAction || 'view_file',
+        platform: error.platform || platform,
+        appVersion: Constants.expoConfig?.version || 'unknown',
+        deviceInfo: error.deviceInfo || {
+          platform: Platform.OS,
+          version: Platform.Version
+        }
+      });
+    } catch (logError: any) {
+      // Don't throw - error logging should be non-blocking
+      console.warn('Failed to log error to backend:', logError);
     }
   }
 

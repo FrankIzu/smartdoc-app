@@ -1,10 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useAuth } from '../app/context/auth';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
+import { apiClient } from '../services/api';
 import { deviceSecurityService } from '../services/deviceSecurity';
 import { googleAuthService } from '../services/googleAuth';
 import { secureStorage } from '../utils/storage';
-import { apiClient } from '../services/api';
 
 // Import types from the real service
 type DeviceFingerprint = any;
@@ -208,7 +208,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
             'Verify your identity to sign in'
           );
 
-          if (!biometricResult && requiredAuthMethod === 'BIOMETRIC_ONLY') {
+          if (!biometricResult.success && requiredAuthMethod === 'BIOMETRIC_ONLY') {
             console.log('❌ Biometric pre-auth failed');
             setAuthState(prev => ({ ...prev, isLoading: false }));
             return {
@@ -392,7 +392,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         'Sign in with biometric authentication'
       );
 
-      if (!biometricResult) {
+      if (!biometricResult.success) {
         setAuthState(prev => ({ ...prev, isLoading: false }));
         return {
           success: false,
@@ -678,58 +678,127 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
   }, []);
 
   // ==================== SIGNUP ====================
+  // Uses web signup endpoint (/api/v1/web/signup), then mobile login to get token/user
 
   const signup = useCallback(async (data: { username: string; email: string; password: string; firstName?: string; lastName?: string }) => {
     try {
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
-      const response = await fetch(`${API_BASE_URL}/api/v1/mobile/signup`, {
+      const signupBody = {
+        username: data.username,
+        email: data.email,
+        password: data.password,
+        firstName: (data.firstName && data.firstName.trim()) ? data.firstName.trim() : 'Mobile',
+        lastName: (data.lastName && data.lastName.trim()) ? data.lastName.trim() : 'User',
+      };
+
+      const signupRes = await fetch(`${API_BASE_URL}/api/v1/web/signup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Platform': 'mobile',
         },
         credentials: 'include',
-        body: JSON.stringify(data),
+        body: JSON.stringify(signupBody),
       });
 
-      const result = await response.json();
+      let signupResult: { success?: boolean; message?: string };
+      const contentType = signupRes.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        signupResult = await signupRes.json();
+      } else {
+        const text = await signupRes.text();
+        console.error('Signup response was not JSON:', text?.slice(0, 200));
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return {
+          success: false,
+          message: signupRes.ok ? 'Invalid server response' : `Signup failed (${signupRes.status})`,
+        };
+      }
 
-      if (result.success) {
-        // Store authentication token and user data
-        if (result.token) {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
+      if (!signupRes.ok || !signupResult.success) {
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return {
+          success: false,
+          message: signupResult.message || 'Signup failed',
+        };
+      }
+
+      // Account created; log in via mobile endpoint to get token and user
+      const loginRes = await fetch(`${API_BASE_URL}/api/v1/mobile/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Platform': 'mobile',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          username: data.username,
+          password: data.password,
+        }),
+      });
+
+      if (!loginRes.ok) {
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return {
+          success: true,
+          message: 'Account created. Please sign in.',
+        };
+      }
+
+      const loginContentType = loginRes.headers.get('content-type');
+      if (!loginContentType || !loginContentType.includes('application/json')) {
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return {
+          success: true,
+          message: 'Account created. Please sign in.',
+        };
+      }
+
+      const loginResult = await loginRes.json();
+      if (loginResult.requires2FA) {
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return {
+          success: true,
+          message: 'Account created. Please complete sign-in with the verification code sent to you.',
+        };
+      }
+
+      if (loginResult.success && (loginResult.token || loginResult.user)) {
+        if (loginResult.token) {
+          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, loginResult.token);
           console.log('💾 Stored authentication token (signup)');
         } else {
-          // Fallback to session_token for development
           await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
           console.log('💾 Stored fallback session_token (signup)');
         }
-
-        if (result.user) {
-          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+        if (loginResult.user) {
+          const u = loginResult.user;
+          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(u));
+          const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
+          await secureStorage.setItem('user', JSON.stringify({ id: String(u.id), email: u.email || '', name }));
           console.log('💾 Stored user data (signup)');
+          try {
+            await authContext.refreshSession();
+          } catch (_) {}
         }
-
         setAuthState(prev => ({
           ...prev,
           isAuthenticated: true,
-          user: result.user,
+          user: loginResult.user ?? undefined,
           isLoading: false,
         }));
-
         return {
           success: true,
           message: 'Account created successfully',
         };
-      } else {
-        setAuthState(prev => ({ ...prev, isLoading: false }));
-        return {
-          success: false,
-          message: result.message || 'Signup failed',
-        };
       }
 
+      setAuthState(prev => ({ ...prev, isLoading: false }));
+      return {
+        success: true,
+        message: 'Account created. Please sign in.',
+      };
     } catch (error) {
       console.error('Signup error:', error);
       setAuthState(prev => ({ ...prev, isLoading: false }));

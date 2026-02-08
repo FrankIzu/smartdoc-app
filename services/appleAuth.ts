@@ -65,6 +65,7 @@ interface MobileAppleLoginResponse {
   success: boolean;
   message: string;
   user?: any;
+  token?: string; // JWT token for mobile authentication
   requires2FA?: boolean;
   deviceTrusted?: boolean;
   deviceName?: string;
@@ -273,6 +274,7 @@ class AppleAuthService {
   async signInWithAppleEnhanced(): Promise<{
     success: boolean;
     user?: any;
+    token?: string; // JWT token for mobile authentication
     requires2FA?: boolean;
     authMethod?: string;
     message?: string;
@@ -300,6 +302,7 @@ class AppleAuthService {
         return {
           success: true,
           user: backendResult.user,
+          token: backendResult.token, // Include JWT token from backend
           message: 'Apple sign-in successful',
         };
       }

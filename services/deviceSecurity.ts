@@ -254,11 +254,12 @@ class DeviceSecurityService {
     }
   }
 
-  async authenticateWithBiometrics(reason: string = 'Authenticate to access your account'): Promise<boolean> {
+  /** Returns success and optional error code so UI can distinguish "cancelled" from "failed". */
+  async authenticateWithBiometrics(reason: string = 'Authenticate to access your account'): Promise<{ success: boolean; error?: string }> {
     // Biometrics not available on web
     if (Platform.OS === 'web') {
       console.log('❌ Biometric authentication not available on web');
-      return false;
+      return { success: false, error: 'not_available' };
     }
 
     try {
@@ -267,7 +268,7 @@ class DeviceSecurityService {
       
       if (!config.enabled) {
         console.log('❌ Biometric authentication not enabled');
-        return false;
+        return { success: false, error: 'not_enrolled' };
       }
 
       console.log('🔐 Starting biometric authentication with config:', {
@@ -285,10 +286,11 @@ class DeviceSecurityService {
       });
 
       console.log('🔐 Biometric authentication result:', result);
-      return result.success;
+      if (result.success) return { success: true };
+      return { success: false, error: result.error ?? 'unknown' };
     } catch (error) {
       console.error('Biometric authentication failed:', error);
-      return false;
+      return { success: false, error: 'unknown' };
     }
   }
 
@@ -530,8 +532,8 @@ export default deviceSecurityService;
 
 // Export types for use in other files
 export type {
-  BiometricConfig, DeviceFingerprint,
-  DeviceTrust, RiskContext,
-  User2FAPreferences
+    BiometricConfig, DeviceFingerprint,
+    DeviceTrust, RiskContext,
+    User2FAPreferences
 };
 

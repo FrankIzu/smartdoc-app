@@ -5,12 +5,18 @@
 #   Interactive mode: .\scripts\deploy.ps1
 #   Direct parameters (Android): .\scripts\deploy.ps1 -Platform android -Environment prod -BuildNumber 11 -Version 1.0.3
 #   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 2 -Version 1.0.3
+#   Local build (no EAS cloud): .\scripts\deploy.ps1 -Platform android -Environment prod -Local
+#   Local build (iOS, requires macOS): .\scripts\deploy.ps1 -Platform ios -Environment prod -Local
+#
+#   In interactive mode you can choose: (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions.
+#   Option 3 commits version/build and pushes; iOS runs on push to main, Android runs on push to main or tag.
 
 param(
     [string]$Platform,
     [string]$Environment,
     [string]$BuildNumber,
-    [string]$Version
+    [string]$Version,
+    [switch]$Local
 )
 
 Write-Host "🚀 GrabDocs Deployment Script" -ForegroundColor Cyan
@@ -65,6 +71,9 @@ function Get-CurrentBuildNumber {
         [string]$Platform
     )
 
+    # Normalize platform to lowercase to avoid case-sensitivity issues
+    $Platform = $Platform.ToLower()
+
     try {
         if ($Platform -eq "ios") {
             # Get iOS buildNumber from app.json
@@ -75,12 +84,12 @@ function Get-CurrentBuildNumber {
             }
         }
         elseif ($Platform -eq "android") {
-            # Get Android versionCode from build.gradle
-            $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
-            if (Test-Path $buildGradlePath) {
-                $content = Get-Content $buildGradlePath -Raw
-                if ($content -match 'versionCode\s+(\d+)') {
-                    return $matches[1]
+            # Get Android versionCode from app.json (EAS reads from here)
+            $appJsonPath = "$PSScriptRoot\..\app.json"
+            if (Test-Path $appJsonPath) {
+                $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+                if ($appJson.expo.android -and $appJson.expo.android.versionCode) {
+                    return $appJson.expo.android.versionCode.ToString()
                 }
             }
         }
@@ -120,6 +129,9 @@ function Update-BuildNumber {
         [string]$BuildNumber
     )
 
+    # Normalize platform to lowercase to avoid case-sensitivity issues
+    $Platform = $Platform.ToLower()
+
     Write-Host "📝 Updating build number to $BuildNumber for $Platform..." -ForegroundColor Yellow
 
     try {
@@ -138,7 +150,43 @@ function Update-BuildNumber {
             Write-Host "✅ Updated iOS buildNumber in app.json" -ForegroundColor Green
         }
         elseif ($Platform -eq "android") {
-            # Update Android versionCode in build.gradle
+            # Update Android versionCode in app.json (EAS reads from here)
+            $appJsonPath = "$PSScriptRoot\..\app.json"
+            if (-not (Test-Path $appJsonPath)) {
+                throw "app.json not found at $appJsonPath"
+            }
+            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+            if (-not $appJson.expo.android) {
+                throw "expo.android section not found in app.json"
+            }
+            # Ensure android section exists
+            if (-not $appJson.expo.android) {
+                $appJson.expo | Add-Member -MemberType NoteProperty -Name "android" -Value @{} -Force
+            }
+            
+            # Convert BuildNumber to int for app.json (it should be a number, not string)
+            $appJson.expo.android.versionCode = [int]$BuildNumber
+            
+            # Write to temp file first, then move to ensure atomic write
+            $tempPath = "$appJsonPath.tmp"
+            $appJson | ConvertTo-Json -Depth 10 | Set-Content $tempPath -Encoding UTF8
+            Move-Item -Path $tempPath -Destination $appJsonPath -Force
+            
+            # Verify the update was successful
+            Start-Sleep -Milliseconds 100  # Brief pause to ensure file is written
+            $verifyJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+            if (-not $verifyJson.expo.android -or -not $verifyJson.expo.android.versionCode) {
+                throw "Failed to verify versionCode was written to app.json"
+            }
+            $actualVersionCode = $verifyJson.expo.android.versionCode
+            if ([int]$actualVersionCode -eq [int]$BuildNumber) {
+                Write-Host "✅ Updated Android versionCode in app.json to $actualVersionCode" -ForegroundColor Green
+            } else {
+                throw "Expected versionCode $BuildNumber but found $actualVersionCode in app.json"
+            }
+            
+            # Also update Android versionCode in build.gradle (for local builds)
+            # Note: For EAS Build, Expo prebuild will sync from app.json, so this is mainly for local builds
             $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
             if (-not (Test-Path $buildGradlePath)) {
                 throw "build.gradle not found at $buildGradlePath"
@@ -147,9 +195,27 @@ function Update-BuildNumber {
             if ($content -notmatch 'versionCode') {
                 throw "versionCode not found in build.gradle"
             }
-            $content = $content -replace '(?<=versionCode\s+)\d+', $BuildNumber
-            Set-Content $buildGradlePath $content -Encoding UTF8
-            Write-Host "✅ Updated Android versionCode in build.gradle" -ForegroundColor Green
+            # More robust regex: match versionCode followed by whitespace and digits, replace the digits
+            # This handles: versionCode 25, versionCode=25, versionCode  25, etc.
+            if ($content -match '(?m)(^\s*versionCode\s+)(\d+)') {
+                $oldValue = $matches[2]
+                $content = $content -replace '(?m)(^\s*versionCode\s+)(\d+)', "`${1}$BuildNumber"
+                Set-Content $buildGradlePath $content -Encoding UTF8
+                
+                # Verify the update was successful
+                $verifyContent = Get-Content $buildGradlePath -Raw
+                if ($verifyContent -match '(?m)^\s*versionCode\s+(\d+)') {
+                    $actualValue = $matches[1]
+                    if ([int]$actualValue -eq [int]$BuildNumber) {
+                        Write-Host "✅ Updated Android versionCode in build.gradle from $oldValue to $actualValue" -ForegroundColor Green
+                    } else {
+                        Write-Host "⚠️  Warning: Expected versionCode $BuildNumber but found $actualValue in build.gradle" -ForegroundColor Yellow
+                    }
+                }
+            } else {
+                Write-Host "⚠️  Could not find versionCode pattern in build.gradle to update" -ForegroundColor Yellow
+                Write-Host "   EAS Build will use versionCode from app.json during prebuild" -ForegroundColor Gray
+            }
         } else {
             throw "Invalid platform: $Platform"
         }
@@ -163,13 +229,19 @@ function Update-BuildNumber {
 function Run-EasBuild {
     param(
         [string]$Platform,
-        [string]$Profile
+        [string]$Profile,
+        [switch]$Local
     )
 
-    Write-Host "🏗️  Running EAS build for $Platform ($Profile)..." -ForegroundColor Yellow
+    $buildType = if ($Local) { "EAS local" } else { "EAS cloud" }
+    Write-Host "🏗️  Running $buildType build for $Platform ($Profile)..." -ForegroundColor Yellow
 
     # Use npx to run eas command (works even if eas is not globally installed)
     $command = "npx eas-cli build --platform $Platform --profile $Profile --non-interactive"
+    if ($Local) {
+        $command += " --local"
+        Write-Host "ℹ️  Local build: runs on this machine (no EAS cloud charge). EAS local requires macOS or Linux (Windows not supported)." -ForegroundColor Cyan
+    }
 
     Write-Host "Executing: $command" -ForegroundColor Gray
 
@@ -200,6 +272,9 @@ try {
     if (-not $Platform) {
         $Platform = Prompt-WithValidation "Select platform (ios/android)" @("ios", "android")
     }
+
+    # Normalize platform to lowercase to avoid case-sensitivity issues
+    $Platform = $Platform.ToLower()
 
     # Validate platform
     if ($Platform -notin @("ios", "android")) {
@@ -336,15 +411,454 @@ try {
         }
     }
 
+    # Auto commit, push to francis, merge to main, and push main
+    Write-Host "`n📦 Git Operations:" -ForegroundColor Cyan
+    Set-Location "$PSScriptRoot\.."
+    
+    # Check if we're in a git repository
+    $gitRoot = git rev-parse --show-toplevel 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "⚠️  Not a git repository. Skipping git operations." -ForegroundColor Yellow
+    } else {
+        $currentBranch = git rev-parse --abbrev-ref HEAD 2>&1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentBranch)) {
+            Write-Host "⚠️  Could not determine current branch. Skipping git operations." -ForegroundColor Yellow
+        } else {
+            $currentBranch = $currentBranch.Trim()
+            Write-Host "   Current branch: $currentBranch" -ForegroundColor Gray
+            
+            # Ensure we're on francis branch first
+            if ($currentBranch -ne "francis") {
+                Write-Host "`n🔄 Switching to francis branch..." -ForegroundColor Yellow
+                git checkout francis 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "❌ Failed to switch to francis branch" -ForegroundColor Red
+                    Write-Host "   Please ensure the francis branch exists: git checkout -b francis" -ForegroundColor Yellow
+                    exit 1
+                }
+                Write-Host "✅ Switched to francis branch" -ForegroundColor Green
+                $currentBranch = "francis"
+            }
+            
+            # Ensure workflow files are tracked and committed
+            $workflowFiles = @(".github/workflows/build-ios.yml", ".github/workflows/build-android.yml")
+            $workflowNeedsCommit = $false
+            foreach ($wf in $workflowFiles) {
+                if (Test-Path $wf) {
+                    # Check if file is tracked and has changes, or is untracked
+                    $status = git status --porcelain $wf 2>&1
+                    if ($status -match '^\?\?' -or $status -match '^ M' -or $status -match '^A ' -or $status -match '^AM') {
+                        $workflowNeedsCommit = $true
+                        Write-Host "   Found workflow file that needs to be committed: $wf" -ForegroundColor Gray
+                    }
+                }
+            }
+            
+            # Check if there are changes to commit
+            git diff --quiet --exit-code 2>&1 | Out-Null
+            $hasUncommittedChanges = $LASTEXITCODE -ne 0
+            
+            git diff --cached --quiet --exit-code 2>&1 | Out-Null
+            $hasStagedChanges = $LASTEXITCODE -ne 0
+            
+            $untrackedFiles = git ls-files --others --exclude-standard 2>&1
+            $hasUntrackedFiles = $untrackedFiles.Count -gt 0
+            
+            if ($hasUncommittedChanges -or $hasStagedChanges -or $hasUntrackedFiles -or $workflowNeedsCommit) {
+                Write-Host "`n📝 Staging changes..." -ForegroundColor Yellow
+                
+                # Explicitly add workflow files to ensure they're included
+                foreach ($wf in $workflowFiles) {
+                    if (Test-Path $wf) {
+                        git add $wf 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "   Staged workflow file: $wf" -ForegroundColor Gray
+                        }
+                    }
+                }
+                
+                # Stage all other changes including untracked files
+                git add -A 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "⚠️  Warning: git add failed. Continuing anyway..." -ForegroundColor Yellow
+                }
+                
+                # Create commit message
+                $commitMessage = if ($normalizedEnv -eq "production") {
+                    if ($Platform -eq "android") {
+                        "Deploy Android v$Version (versionCode $BuildNumber) to production"
+                    } else {
+                        "Deploy iOS v$Version (buildNumber $BuildNumber) to production"
+                    }
+                } else {
+                    "Deploy $Platform to $normalizedEnv"
+                }
+                
+                # Check if there are actually staged changes before committing
+                git diff --cached --quiet 2>&1 | Out-Null
+                $hasStagedChanges = $LASTEXITCODE -ne 0
+                
+                if ($hasStagedChanges) {
+                    Write-Host "   Committing changes..." -ForegroundColor Yellow
+                    git commit -m $commitMessage 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "✅ Committed changes: $commitMessage" -ForegroundColor Green
+                    } else {
+                        Write-Host "⚠️  Warning: git commit failed unexpectedly" -ForegroundColor Yellow
+                    }
+                }
+                # If no staged changes, silently continue (nothing to commit is normal)
+            } else {
+                Write-Host "   No changes to commit" -ForegroundColor Gray
+            }
+            
+            # Push to francis branch
+            Write-Host "`n⬆️  Pushing to francis branch..." -ForegroundColor Yellow
+            git push origin francis 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "❌ Failed to push to francis branch" -ForegroundColor Red
+                Write-Host "   Error: git push origin francis failed" -ForegroundColor Red
+                Write-Host "   Please check your git credentials and remote configuration" -ForegroundColor Yellow
+                exit 1
+            }
+            Write-Host "✅ Pushed to francis branch" -ForegroundColor Green
+            
+            # Merge francis into main
+            Write-Host "`n🔀 Merging francis into main..." -ForegroundColor Yellow
+            
+            # Check if main branch exists locally
+            $mainExists = git show-ref --verify --quiet refs/heads/main 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                # Try to checkout main from remote
+                Write-Host "   Main branch doesn't exist locally. Checking out from remote..." -ForegroundColor Gray
+                git checkout -b main origin/main 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "⚠️  Warning: Could not checkout main branch from remote." -ForegroundColor Yellow
+                    Write-Host "   Creating main branch..." -ForegroundColor Gray
+                    git checkout -b main 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "❌ Failed to create main branch" -ForegroundColor Red
+                        exit 1
+                    }
+                }
+            } else {
+                git checkout main 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "❌ Failed to switch to main branch" -ForegroundColor Red
+                    exit 1
+                }
+            }
+            
+            # Simplest approach: Reset main to match francis exactly, then force push
+            # This avoids merge conflicts and ensures main always matches francis
+            Write-Host "   Resetting main to match francis exactly..." -ForegroundColor Gray
+            git reset --hard francis 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "❌ Failed to reset main to francis" -ForegroundColor Red
+                Write-Host "   Switching back to francis branch..." -ForegroundColor Yellow
+                git checkout francis 2>&1 | Out-Null
+                Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
+                exit 1
+            }
+            Write-Host "✅ Reset main to match francis exactly" -ForegroundColor Green
+            
+            # Force push main (required since we reset main's history)
+            Write-Host "`n⬆️  Pushing main branch (force-with-lease)..." -ForegroundColor Yellow
+            git push origin main --force-with-lease 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "   Force-with-lease failed, trying regular force push..." -ForegroundColor Yellow
+                git push origin main --force 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "❌ Failed to push main branch" -ForegroundColor Red
+                    Write-Host "   Switching back to francis branch..." -ForegroundColor Yellow
+                    git checkout francis 2>&1 | Out-Null
+                    Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
+                    Write-Host "   Push manually: git checkout main && git push origin main --force" -ForegroundColor Gray
+                    exit 1
+                }
+            }
+            Write-Host "✅ Pushed main branch" -ForegroundColor Green
+            
+            # Verify workflow file was included in the push (check on main branch before switching)
+            $workflowFileCheck = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
+            $workflowPathCheck = ".github/workflows/$workflowFileCheck"
+            Write-Host "   Verifying workflow file exists in pushed commit..." -ForegroundColor Gray
+            
+            # Get the current commit hash on main
+            $currentCommit = git rev-parse HEAD 2>&1
+            if ($LASTEXITCODE -eq 0 -and $currentCommit) {
+                $currentCommit = $currentCommit.Trim()
+                Write-Host "   Checking commit: $($currentCommit.Substring(0, 7))..." -ForegroundColor Gray
+                
+                # Check if workflow file exists in this commit (use full path pattern)
+                $workflowInCommit = git ls-tree HEAD --name-only | Select-String -Pattern "workflows.*$workflowFileCheck"
+                if ($workflowInCommit) {
+                    Write-Host "   ✅ Workflow file confirmed in commit" -ForegroundColor Green
+                } else {
+                    # Also check if file exists at all in the commit tree
+                    $fileExists = git cat-file -e "HEAD:$workflowPathCheck" 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "   ✅ Workflow file confirmed in commit (via cat-file)" -ForegroundColor Green
+                    } else {
+                        Write-Host "   ⚠️  Warning: Workflow file not found in commit" -ForegroundColor Yellow
+                        Write-Host "   Ensuring workflow file is committed and pushed..." -ForegroundColor Yellow
+                        # The file exists locally, so add and commit it
+                        if (Test-Path $workflowPathCheck) {
+                            git add $workflowPathCheck 2>&1 | Out-Null
+                            if ($LASTEXITCODE -eq 0) {
+                                # Check if there are actually changes to commit
+                                git diff --cached --quiet $workflowPathCheck 2>&1 | Out-Null
+                                if ($LASTEXITCODE -ne 0) {
+                                    git commit -m "Ensure workflow file is included for workflow_dispatch" 2>&1 | Out-Null
+                                    if ($LASTEXITCODE -eq 0) {
+                                        Write-Host "   ✅ Committed workflow file" -ForegroundColor Green
+                                        Write-Host "   Pushing updated commit to main..." -ForegroundColor Yellow
+                                        git push origin main --force-with-lease 2>&1 | Out-Null
+                                        if ($LASTEXITCODE -ne 0) {
+                                            git push origin main --force 2>&1 | Out-Null
+                                        }
+                                        if ($LASTEXITCODE -eq 0) {
+                                            Write-Host "   ✅ Pushed workflow file to main" -ForegroundColor Green
+                                        }
+                                    }
+                                } else {
+                                    Write-Host "   ℹ️  Workflow file already matches commit (no changes)" -ForegroundColor Gray
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+r                Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
+            }
+            
+            # Switch back to francis branch for continued work
+            Write-Host "`n🔄 Switching back to francis branch..." -ForegroundColor Yellow
+            git checkout francis 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "⚠️  Warning: Could not switch back to francis branch" -ForegroundColor Yellow
+            } else {
+                Write-Host "✅ Switched back to francis branch" -ForegroundColor Green
+            }
+        }
+    }
+
     # Confirm before proceeding
     Write-Host "`n📋 Deployment Summary:" -ForegroundColor Cyan
     Write-Host "   Platform: $Platform" -ForegroundColor White
     Write-Host "   Environment: $normalizedEnv" -ForegroundColor White
     Write-Host "   Profile: $profile" -ForegroundColor White
+    if ($Local) {
+        Write-Host "   Build: Local (--local)" -ForegroundColor White
+    }
     if ($normalizedEnv -eq "production") {
         Write-Host "   Version name: $Version" -ForegroundColor White
         $buildLabel = if ($Platform -eq "ios") { "Build number" } else { "Version code" }
         Write-Host "   ${buildLabel}: $BuildNumber" -ForegroundColor White
+        
+        # Verify values in app.json match what we expect
+        Write-Host "`n🔍 Verifying app.json values:" -ForegroundColor Cyan
+        $appJsonPath = "$PSScriptRoot\..\app.json"
+        $verifyJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+        if ($Platform -eq "android") {
+            $actualVersionCode = $verifyJson.expo.android.versionCode
+            Write-Host "   Android versionCode in app.json: $actualVersionCode" -ForegroundColor $(if ([int]$actualVersionCode -eq [int]$BuildNumber) { "Green" } else { "Red" })
+            if ([int]$actualVersionCode -ne [int]$BuildNumber) {
+                Write-Host "   ⚠️  WARNING: Mismatch! Expected $BuildNumber but found $actualVersionCode" -ForegroundColor Red
+            }
+        } else {
+            $actualBuildNumber = $verifyJson.expo.ios.buildNumber
+            Write-Host "   iOS buildNumber in app.json: $actualBuildNumber" -ForegroundColor $(if ($actualBuildNumber -eq $BuildNumber) { "Green" } else { "Red" })
+            if ($actualBuildNumber -ne $BuildNumber) {
+                Write-Host "   ⚠️  WARNING: Mismatch! Expected $BuildNumber but found $actualBuildNumber" -ForegroundColor Red
+            }
+        }
+    }
+
+    # If -Local was not passed, prompt: local / cloud / GitHub Actions
+    $useGitHubActions = $false
+    if (-not $PSBoundParameters.ContainsKey('Local')) {
+        $where = Prompt-WithValidation "Where to build? (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions" @("1", "2", "3") "2"
+        if ($where -eq "1") { $Local = $true }
+        elseif ($where -eq "3") { $useGitHubActions = $true }
+        else { $Local = $false }
+    }
+
+    # GitHub Actions: trigger workflow (branch already pushed earlier)
+    if ($useGitHubActions) {
+        Write-Host "`n🚀 Triggering GitHub Actions workflow..." -ForegroundColor Cyan
+        Set-Location "$PSScriptRoot\.."
+        
+        # Verify we're in the right repo
+        $remoteUrl = git remote get-url origin 2>&1
+        if ($remoteUrl -match 'github\.com[/:]([^/]+)/([^/\.]+)') {
+            $repoOwner = $matches[1]
+            $repoName = $matches[2] -replace '\.git$', ''
+            Write-Host "   Repository: $repoOwner/$repoName" -ForegroundColor Gray
+        }
+        
+        # Use 'main' branch for workflow_dispatch (GitHub requires workflows on default branch)
+        # The script already merged francis into main and pushed main earlier
+        $workflowFile = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
+        $workflowPath = ".github/workflows/$workflowFile"
+        
+        # Verify workflow file exists locally and has workflow_dispatch
+        if (-not (Test-Path $workflowPath)) {
+            Write-Host "❌ Workflow file not found: $workflowPath" -ForegroundColor Red
+            exit 1
+        }
+        $workflowContent = Get-Content $workflowPath -Raw
+        if ($workflowContent -notmatch 'workflow_dispatch') {
+            Write-Host "❌ Workflow file does not contain 'workflow_dispatch' trigger" -ForegroundColor Red
+            Write-Host "   Please add 'workflow_dispatch:' to the 'on:' section in $workflowPath" -ForegroundColor Yellow
+            exit 1
+        }
+        Write-Host "✅ Verified workflow file has workflow_dispatch trigger" -ForegroundColor Green
+        
+        if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+            $ghPaths = @("$env:ProgramFiles\GitHub CLI\gh.exe", "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe", "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe")
+            foreach ($p in $ghPaths) {
+                if (Test-Path $p) { $env:PATH = "$(Split-Path $p);$env:PATH"; break }
+            }
+        }
+        
+        # First, verify what GitHub sees on the remote main branch
+        Write-Host "   Checking workflow on remote main branch..." -ForegroundColor Gray
+        
+        # Fetch latest from remote to ensure we have the latest main
+        Write-Host "   Fetching latest from origin/main..." -ForegroundColor Gray
+        git fetch origin main 2>&1 | Out-Null
+        
+        # Check what's actually in the remote main branch's workflow file
+        Write-Host "   Checking workflow file content on origin/main..." -ForegroundColor Gray
+        $remoteWorkflowContent = git show "origin/main:.github/workflows/$workflowFile" 2>&1
+        if ($LASTEXITCODE -eq 0 -and $remoteWorkflowContent) {
+            if ($remoteWorkflowContent -match 'workflow_dispatch') {
+                Write-Host "   ✅ Remote main branch HAS workflow_dispatch in workflow file" -ForegroundColor Green
+            } else {
+                Write-Host "   ❌ Remote main branch does NOT have workflow_dispatch in workflow file" -ForegroundColor Red
+                Write-Host "   This is the problem - the workflow file on main is outdated!" -ForegroundColor Red
+                Write-Host "   Attempting to fix by ensuring workflow file is on main..." -ForegroundColor Yellow
+                
+                # Switch to main and ensure workflow file is there
+                $currentBranch = git rev-parse --abbrev-ref HEAD
+                git checkout main 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    # Copy workflow file from francis if it exists there
+                    git checkout francis -- $workflowPath 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0 -and (Test-Path $workflowPath)) {
+                        git add $workflowPath 2>&1 | Out-Null
+                        git commit -m "Add workflow_dispatch to workflow file" 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "   ✅ Committed updated workflow file to main" -ForegroundColor Green
+                            git push origin main --force-with-lease 2>&1 | Out-Null
+                            if ($LASTEXITCODE -ne 0) {
+                                git push origin main --force 2>&1 | Out-Null
+                            }
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Host "   ✅ Pushed updated workflow file to main" -ForegroundColor Green
+                                Write-Host "   Waiting 10 seconds for GitHub to process..." -ForegroundColor Yellow
+                                Start-Sleep -Seconds 10
+                            }
+                        }
+                    }
+                    # Switch back to original branch
+                    git checkout $currentBranch 2>&1 | Out-Null
+                }
+            }
+        } else {
+            Write-Host "   ⚠️  Could not read workflow file from origin/main" -ForegroundColor Yellow
+        }
+        
+        # Also check via GitHub API
+        $workflowInfo = gh workflow view $workflowFile --ref main 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "   ✅ Workflow exists on GitHub" -ForegroundColor Green
+        } else {
+            Write-Host "   ⚠️  Could not verify workflow on GitHub (may need sync time)" -ForegroundColor Yellow
+        }
+        
+        # Retry mechanism: GitHub may need time to sync workflow file updates
+        $maxRetries = 3
+        $retryDelay = 5
+        $triggered = $false
+        
+        for ($retry = 1; $retry -le $maxRetries; $retry++) {
+            if ($retry -gt 1) {
+                Write-Host "   Retry attempt $retry of $maxRetries (waiting ${retryDelay}s for GitHub sync)..." -ForegroundColor Yellow
+                Start-Sleep -Seconds $retryDelay
+                $retryDelay = $retryDelay * 2  # Exponential backoff
+            } else {
+                Write-Host "Triggering $workflowFile for ref main (profile $profile)..." -ForegroundColor Cyan
+            }
+            
+            $triggerOutput = gh workflow run $workflowFile -f profile=$profile --ref main 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✅ Triggered $Platform build on main. See Actions tab for run." -ForegroundColor Green
+                $triggered = $true
+                break
+            } else {
+                # Show the actual error on first attempt
+                if ($retry -eq 1) {
+                    Write-Host "   Error: $triggerOutput" -ForegroundColor Red
+                }
+            }
+        }
+        
+        if (-not $triggered) {
+            Write-Host "⚠️  Could not trigger workflow after $maxRetries attempts." -ForegroundColor Yellow
+            Write-Host "`n   Troubleshooting:" -ForegroundColor Cyan
+            
+            # Check what GitHub API sees
+            Write-Host "   Checking GitHub API for workflow..." -ForegroundColor Gray
+            $apiCheck = gh api "repos/:owner/:repo/actions/workflows/$workflowFile" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $hasDispatch = $apiCheck | ConvertFrom-Json | Select-Object -ExpandProperty state -ErrorAction SilentlyContinue
+                Write-Host "   Workflow state from API: $hasDispatch" -ForegroundColor Gray
+            }
+            
+            # Check remote file content
+            Write-Host "   Checking remote workflow file content..." -ForegroundColor Gray
+            $remoteContent = gh api "repos/:owner/:repo/contents/.github/workflows/$workflowFile?ref=main" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                try {
+                    $contentJson = $remoteContent | ConvertFrom-Json
+                    $decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($contentJson.content))
+                    if ($decoded -match 'workflow_dispatch') {
+                        Write-Host "   ✅ Remote file HAS workflow_dispatch" -ForegroundColor Green
+                        Write-Host "   ⚠️  GitHub may need more time to process the workflow file update" -ForegroundColor Yellow
+                    } else {
+                        Write-Host "   ❌ Remote file does NOT have workflow_dispatch" -ForegroundColor Red
+                        Write-Host "   The workflow file on main may be outdated" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Host "   Could not decode remote file content" -ForegroundColor Yellow
+                }
+            }
+            
+            Write-Host "`n   Next steps:" -ForegroundColor Cyan
+            Write-Host "   1. Wait 60-120 seconds for GitHub to fully sync, then try: gh workflow run $workflowFile -f profile=$profile --ref main" -ForegroundColor Gray
+            Write-Host "   2. Verify workflow on main: gh workflow view $workflowFile --ref main" -ForegroundColor Gray
+            Write-Host "   3. Check latest commit on main: git log origin/main --oneline -1" -ForegroundColor Gray
+            Write-Host "   4. Use GitHub UI: Actions → $workflowFile → Run workflow (select main branch)" -ForegroundColor Gray
+            Write-Host "   5. If still failing, check if workflow file path matches exactly: .github/workflows/$workflowFile" -ForegroundColor Gray
+        }
+        exit 0
+    }
+
+    # EAS local does not support Windows (macOS or Linux only). Warn and exit for local + Windows.
+    if ($Local -and $Platform -eq "android" -and $env:OS -eq "Windows_NT") {
+        Write-Host "❌ EAS local build for Android is not supported on Windows (Expo requires macOS or Linux)." -ForegroundColor Red
+        Write-Host "   Options:" -ForegroundColor Yellow
+        Write-Host "   1. Use GitHub Actions: push to main or run 'gh workflow run build-android.yml' (builds on Linux)." -ForegroundColor White
+        Write-Host "   2. Use EAS cloud (this script without -Local): run again and choose 'n' for build locally." -ForegroundColor White
+        Write-Host "   3. Use WSL: run this script from inside WSL (Linux) on your PC." -ForegroundColor White
+        exit 1
+    }
+    if ($Local -and $Platform -eq "ios" -and $env:OS -eq "Windows_NT") {
+        Write-Host "❌ EAS local build for iOS requires macOS (Xcode). Windows cannot build iOS." -ForegroundColor Red
+        Write-Host "   Use GitHub Actions: 'gh workflow run build-ios.yml' or push to main." -ForegroundColor Yellow
+        exit 1
     }
 
     $confirm = Prompt-WithValidation "`nProceed with deployment? (y/n)" @("y", "n")
@@ -354,7 +868,7 @@ try {
     }
 
     # Run the build
-    Run-EasBuild -Platform $Platform -Profile $profile
+    Run-EasBuild -Platform $Platform -Profile $profile -Local:$Local
 
 } catch {
     Write-Host "❌ Script error: $($_.Exception.Message)" -ForegroundColor Red

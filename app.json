@@ -2,7 +2,7 @@
   "expo": {
     "name": "GrabDocs",
     "slug": "grabdocs",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light.png",
     "userInterfaceStyle": "automatic",
@@ -18,8 +18,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.grabdocs.mobile",
-      "buildNumber": "1",
+      "buildNumber": "3",
       "usesAppleSignIn": true,
+      "associatedDomains": [
+        "applinks:api.grabdocs.com"
+      ],
       "splash": {
         "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
         "resizeMode": "contain",
@@ -50,7 +53,7 @@
     },
     "android": {
       "package": "com.grabdocs.mobile",
-      "versionCode": 10,
+      "versionCode": 31,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
         "backgroundColor": "#ffffff",
@@ -83,6 +86,26 @@
               "scheme": "https",
               "host": "api.grabdocs.com",
               "pathPrefix": "/auth"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "api.grabdocs.com",
+              "pathPrefix": "/join-meeting"
+            },
+            {
+              "scheme": "https",
+              "host": "api.grabdocs.com",
+              "pathPrefix": "/meeting"
             }
           ],
           "category": [

@@ -3,12 +3,16 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import { Link, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GoogleLogo } from '../../components/GoogleLogo';
 import { Colors } from '../../constants/Colors';
 import { STORAGE_KEYS } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
+
+const isAndroid = Platform.OS === 'android';
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -25,6 +29,7 @@ export default function SignUpScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
+  const insets = useSafeAreaInsets();
 
   // Check Apple Sign In availability on mount
   React.useEffect(() => {
@@ -158,7 +163,16 @@ export default function SignUpScreen() {
         }
         
         await secureStorage.setItem('user', JSON.stringify(userData));
-        await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
+        
+        // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
+        const authToken = result.token || 'session_token';
+        await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken);
+        
+        if (authToken && authToken !== 'session_token') {
+          console.log('✅ Apple Sign-Up: JWT token stored');
+        } else {
+          console.warn('⚠️ Apple Sign-Up: No JWT token received, using session_token fallback');
+        }
         
         Alert.alert('Success', 'Account created with Apple successfully!');
         
@@ -197,9 +211,23 @@ export default function SignUpScreen() {
     WebBrowser.openBrowserAsync('https://yourdomain.com/privacy');
   };
 
+  // Ensure content clears status bar (time, battery). Use insets; on Android fallback if insets are 0.
+  const statusBarHeight = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
+  const topPadding = Math.max(insets.top, statusBarHeight) + (isAndroid ? 8 : 12);
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.content}>
+    <KeyboardAvoidingView
+      style={styles.keyboardAvoid}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+    >
+      <ScrollView
+        contentContainerStyle={[styles.container, { paddingTop: topPadding }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.content}>
         <Text style={styles.title}>Create Account</Text>
         
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -375,26 +403,41 @@ export default function SignUpScreen() {
           <View style={styles.dividerLine} />
         </View>
 
-        <TouchableOpacity
-          style={[styles.googleButton, isLoading && styles.buttonDisabled]}
-          onPress={handleGoogleSignUp}
-          disabled={isLoading}
-        >
-          <Text style={styles.googleButtonText}>
-            {isLoading ? 'Signing up...' : '🔍 Continue with Google'}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Apple Sign In - iOS only when available */}
-        {Platform.OS === 'ios' && appleSignInAvailable && (
-          <AppleAuthentication.AppleAuthenticationButton
-            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
-            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-            cornerRadius={12}
-            style={styles.appleButton}
-            onPress={handleAppleSignUp}
-          />
-        )}
+        <View style={styles.socialSection}>
+          {Platform.OS === 'android' ? (
+            <TouchableOpacity
+              style={[styles.socialButtonFull, styles.googleButton, isLoading && styles.buttonDisabled]}
+              onPress={handleGoogleSignUp}
+              disabled={isLoading}
+            >
+              <GoogleLogo size={20} />
+              <Text style={styles.socialButtonFullText}>Sign up with Google</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <Text style={styles.socialLabel}>Sign up with</Text>
+              <View style={styles.socialRow}>
+                <TouchableOpacity
+                  style={[styles.socialButtonSquare, styles.googleButton, isLoading && styles.buttonDisabled]}
+                  onPress={handleGoogleSignUp}
+                  disabled={isLoading}
+                >
+                  <GoogleLogo size={24} />
+                </TouchableOpacity>
+                {appleSignInAvailable && (
+                  <TouchableOpacity
+                    style={[styles.socialButtonSquare, styles.appleButtonSquare, isLoading && styles.buttonDisabled]}
+                    onPress={handleAppleSignUp}
+                    disabled={isLoading}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="logo-apple" size={24} color="#fff" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          )}
+        </View>
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>Already have an account? </Text>
@@ -404,32 +447,38 @@ export default function SignUpScreen() {
         </View>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardAvoid: {
+    flex: 1,
+  },
   container: {
     flexGrow: 1,
     backgroundColor: '#fff',
+    paddingBottom: isAndroid ? 16 : 24,
+    // paddingTop set dynamically with insets.top so content stays below status bar
   },
   content: {
-    padding: 20,
+    paddingHorizontal: isAndroid ? 16 : 20,
+    paddingBottom: isAndroid ? 16 : 24,
     alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '100%',
+    width: '100%',
   },
   title: {
-    fontSize: 24,
+    fontSize: isAndroid ? 20 : 24,
     fontWeight: 'bold',
-    marginBottom: 30,
+    marginBottom: isAndroid ? 12 : 18,
     color: Colors.text,
   },
   inputContainer: {
     width: '100%',
-    marginBottom: 15,
+    marginBottom: 18,
   },
   inputLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
     color: '#333',
     marginBottom: 5,
@@ -439,24 +488,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 48,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
   inputIcon: {
-    marginRight: 12,
+    marginRight: 10,
   },
   input: {
     flex: 1,
     fontSize: 16,
     color: '#333',
+    minHeight: 24,
+    paddingVertical: 4,
   },
   nameContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginBottom: 15,
+    marginBottom: isAndroid ? 8 : 15,
   },
   nameInputContainer: {
     width: '48%',
@@ -467,8 +519,8 @@ const styles = StyleSheet.create({
   termsContainer: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 20,
-    paddingHorizontal: 10,
+    marginBottom: isAndroid ? 12 : 20,
+    paddingHorizontal: isAndroid ? 4 : 10,
   },
   checkbox: {
     width: 20,
@@ -491,8 +543,8 @@ const styles = StyleSheet.create({
   },
   termsText: {
     flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: isAndroid ? 13 : 14,
+    lineHeight: isAndroid ? 18 : 20,
     color: Colors.text,
   },
   link: {
@@ -501,24 +553,24 @@ const styles = StyleSheet.create({
   },
   button: {
     width: '100%',
-    height: 50,
+    height: isAndroid ? 44 : 50,
     backgroundColor: Colors.primary,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: isAndroid ? 6 : 10,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: isAndroid ? 15 : 16,
     fontWeight: 'bold',
   },
   footer: {
     flexDirection: 'row',
-    marginTop: 20,
+    marginTop: isAndroid ? 12 : 20,
     alignItems: 'center',
   },
   footerText: {
@@ -532,13 +584,14 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: 'red',
-    marginBottom: 15,
+    marginBottom: isAndroid ? 8 : 15,
     textAlign: 'center',
+    fontSize: 13,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: isAndroid ? 8 : 12,
     width: '100%',
   },
   dividerLine: {
@@ -547,29 +600,54 @@ const styles = StyleSheet.create({
     backgroundColor: '#ddd',
   },
   dividerText: {
-    marginHorizontal: 15,
+    marginHorizontal: isAndroid ? 8 : 10,
     color: '#666',
     fontSize: 14,
   },
-  appleButton: {
+  socialSection: {
     width: '100%',
-    height: 50,
-    marginBottom: 16,
-  },
-  googleButton: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#4285f4',
-    borderRadius: 8,
-    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: isAndroid ? 8 : 10,
   },
-  googleButtonText: {
-    color: '#4285f4',
+  socialLabel: {
+    color: '#666',
     fontSize: 16,
     fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  socialRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  socialButtonFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 10,
+  },
+  socialButtonFullText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#333',
+  },
+  socialButtonSquare: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  appleButtonSquare: {
+    backgroundColor: '#000',
   },
 }); 

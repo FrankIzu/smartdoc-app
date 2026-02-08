@@ -63,90 +63,87 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       let messages: any[] | null = null;
 
-      // Primary: use the existing chat history endpoint
-      // CRITICAL: This function is only called for AI assistant chats from /api/v1/mobile/chat/history
-      // DO NOT use getChatMessages fallback as it calls the user-chat endpoint which will return 404 for AI chats
+      // Primary: use single-chat endpoint (full conversation_data for one chat only - avoids loading all histories)
+      try {
+        const singleResponse = await apiService.getChatConversation(id);
+        if (singleResponse && (singleResponse as any).success && (singleResponse as any).data) {
+          const match = (singleResponse as any).data;
+          let rawMessages = (match as any).messages ||
+                           (match as any).conversation_data ||
+                           (match as any).data?.messages ||
+                           (match as any).data?.conversation_data ||
+                           null;
+          if (typeof rawMessages === 'string' && rawMessages.trim().startsWith('[')) {
+            try {
+              rawMessages = JSON.parse(rawMessages);
+            } catch (e) {
+              console.warn('⚠️ Failed to parse conversation_data as JSON:', e);
+            }
+          }
+          messages = Array.isArray(rawMessages) ? rawMessages : [];
+          const persistentContext = (match as any).persistent_context || (match as any).persistentContext || null;
+          const references = (match as any).references ?? undefined;
+          const chatHistory: ChatHistory = {
+            id,
+            title: (match as any).title || `Chat ${id}`,
+            messages: messages || [],
+            created_at: (match as any).created_at || new Date().toISOString(),
+            updated_at: (match as any).updated_at || (match as any).last_message_at || new Date().toISOString(),
+            persistent_context: persistentContext,
+            references,
+          };
+          set({
+            currentHistory: chatHistory,
+            isLoading: false,
+            error: null,
+          });
+          return;
+        }
+      } catch (e) {
+        console.warn('⚠️ getChatConversation failed, falling back to full history:', e);
+      }
+
+      // Fallback: load full history list and find match (e.g. if backend does not support GET by id yet)
       try {
         const historyResponse = await apiService.getChatHistory();
-        console.log('📜 Chat history response loaded');
         if (historyResponse && (historyResponse as any).success) {
           const histories = (historyResponse as any).data || [];
-          console.log(`📋 Total histories loaded: ${histories.length}`);
-          
           const match = histories.find((h: any) => {
-            // Compare IDs robustly to handle string/number mismatches
             const historyId = typeof h.id === 'string' ? parseInt(String(h.id), 10) : Number(h.id);
             const targetId = typeof id === 'string' ? parseInt(String(id), 10) : Number(id);
             return !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
           });
-          
           if (match) {
-            // Handle both new format (messages array) and existing format (conversation_data)
-            // Also check for nested data structures
-            let rawMessages = (match as any).messages || 
-                             (match as any).conversation_data || 
-                             (match as any).data?.messages ||
-                             (match as any).data?.conversation_data ||
-                             null;
-            
-            // If conversation_data is a string, try to parse it as JSON
+            let rawMessages = (match as any).messages || (match as any).conversation_data || null;
             if (typeof rawMessages === 'string' && rawMessages.trim().startsWith('[')) {
               try {
                 rawMessages = JSON.parse(rawMessages);
-              } catch (e) {
-                console.warn('⚠️ Failed to parse conversation_data as JSON:', e);
+              } catch (parseErr) {
+                console.warn('⚠️ Failed to parse conversation_data as JSON:', parseErr);
               }
             }
-            
             messages = Array.isArray(rawMessages) ? rawMessages : [];
-            
-            // Extract persistent_context from backend (context that persists across sessions)
             const persistentContext = (match as any).persistent_context || (match as any).persistentContext || null;
-            
-            console.log(`✅ Found chat ${id} in history:`, {
-              hasMessages: !!(match as any).messages,
-              hasConversationData: !!(match as any).conversation_data,
-              hasDataMessages: !!(match as any).data?.messages,
-              rawMessagesType: typeof rawMessages,
-              rawMessagesIsArray: Array.isArray(rawMessages),
-              messagesCount: messages.length,
-              hasPersistentContext: !!persistentContext,
-              persistentContextKeys: persistentContext ? Object.keys(persistentContext) : [],
-              matchKeys: Object.keys(match),
-              sampleMatch: {
-                id: match.id,
-                title: (match as any).title,
-                hasMessages: !!(match as any).messages,
-                messagesLength: Array.isArray((match as any).messages) ? (match as any).messages.length : 'not array',
-                conversationDataType: typeof (match as any).conversation_data
-              }
-            });
-            
-            // Store persistent_context in the chat history for later use
+            const references = (match as any).references ?? undefined;
             const chatHistory: ChatHistory = {
               id,
               title: (match as any).title || `Chat ${id}`,
               messages: messages || [],
               created_at: (match as any).created_at || new Date().toISOString(),
               updated_at: (match as any).updated_at || (match as any).last_message_at || new Date().toISOString(),
-              persistent_context: persistentContext, // Store persistent context
+              persistent_context: persistentContext,
+              references,
             };
-            
             set({
               currentHistory: chatHistory,
               isLoading: false,
               error: null,
             });
-            return; // Exit early since we found the match
-          } else {
-            console.log(`⚠️ Chat ${id} not found in history response. Available IDs:`, histories.slice(0, 10).map((h: any) => h.id));
+            return;
           }
-        } else {
-          console.error('❌ Chat history response invalid:', historyResponse);
         }
       } catch (e) {
         console.error('❌ getChatHistory failed:', e);
-        // Don't use user-chat endpoint fallback - this is an AI chat
       }
 
       console.log('💬 Messages found:', Array.isArray(messages) ? messages.length : 0);

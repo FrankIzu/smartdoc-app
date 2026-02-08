@@ -16,10 +16,12 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
+import { GoogleLogo } from '../../components/GoogleLogo';
 import { useAuth } from '../context/auth';
 
 export default function SignInScreen() {
@@ -33,9 +35,13 @@ export default function SignInScreen() {
   const [biometricType, setBiometricType] = useState('Biometric');
   const [needsOtp, setNeedsOtp] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const insets = useSafeAreaInsets();
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
-  const { signIn, loading, refreshSession } = useAuth();
+  // Note: We use local isSubmitting for the button so the screen doesn't unmount on login (auth loading would hide entire app)
+  const { signIn, loading: authLoading, refreshSession } = useAuth();
+  const loading = authLoading || isSubmitting;
   const { loginWithBiometric } = useEnhanced2FAAuth();
 
   // Check biometric availability on component mount
@@ -105,11 +111,13 @@ export default function SignInScreen() {
         return;
       }
 
+      setIsSubmitting(true);
+
       // Step 1: Try regular login first
       try {
         await signIn(username, password, rememberDevice);
-        // If successful without OTP, navigation handled by auth context
-        // Only navigate if login was actually successful (user is set)
+        // Success: we're on sign-in screen so we must navigate to home (index only redirects when it's the active route)
+        router.replace('/(tabs)');
         return;
       } catch (loginError: any) {
         // IMPORTANT: On login failure, stay on login screen and show error
@@ -128,6 +136,7 @@ export default function SignInScreen() {
           const email = userData?.email || '';
           const phoneNumber = userData?.phone_number || userData?.phoneNumber || '';
           
+          setIsSubmitting(false);
           // Navigate to OTP verification screen with user info
           // Note: We pass password temporarily so we can complete login after OTP verification
           // This is stored in memory only and cleared after use
@@ -159,22 +168,20 @@ export default function SignInScreen() {
           // Request OTP - this will navigate to OTP screen on success
           await requestOtpForUser(username);
         } else {
-          // If no OTP needed, show the login error and STAY on login screen
+          // If no OTP needed, show the login error and STAY on login screen (do not redirect)
           const errorMessage = loginError.message || 'Invalid username or password';
           console.log('❌ Login failed - showing error on login screen:', errorMessage);
           setError(errorMessage);
-          // Explicitly ensure we stay on login screen - no navigation
           return;
         }
       }
-
     } catch (error: any) {
       console.error('Enhanced login error:', error);
-      // On any error, show error message and stay on login screen
+      // On any error, show error on login screen and stay here (do not redirect to home)
       const errorMessage = error.message || 'Login failed. Please try again.';
       setError(errorMessage);
-      // Explicitly prevent navigation - stay on login screen
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -319,7 +326,16 @@ export default function SignInScreen() {
         
         console.log('💾 Storing Apple sign-in user data:', userData);
         await secureStorage.setItem('user', JSON.stringify(userData));
-        await secureStorage.setItem('auth_token', 'session_token');
+        
+        // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
+        const authToken = result.token || 'session_token';
+        await secureStorage.setItem('auth_token', authToken);
+        
+        if (authToken && authToken !== 'session_token') {
+          console.log('✅ Apple Sign-In: JWT token stored');
+        } else {
+          console.warn('⚠️ Apple Sign-In: No JWT token received, using session_token fallback');
+        }
         
         // Refresh the auth context to pick up the new user
         await refreshSession();
@@ -352,16 +368,17 @@ export default function SignInScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <View style={styles.content}>
-
-
-        {/* Profile Section */}
-        <View style={styles.profileSection}>
-          <Text style={styles.welcomeText}>GrabDocs</Text>
-        </View>
-        
-        {/* Form */}
-        <View style={styles.form}>
+      <View style={[styles.content, { paddingTop: insets.top + (Platform.OS === 'android' ? 20 : 28) }]}>
+        <View style={styles.centeredBlock}>
+          {/* Top spacer */}
+          <View style={styles.topSpacer} />
+          {/* Profile Section */}
+          <View style={styles.profileSection}>
+            <Text style={styles.welcomeText}>GrabDocs</Text>
+          </View>
+          
+          {/* Form */}
+          <View style={styles.form}>
           {/* Username Input */}
           <View style={styles.inputContainer}>
             <View style={styles.inputWrapper}>
@@ -476,25 +493,28 @@ export default function SignInScreen() {
             <View style={styles.dividerLine} />
           </View>
 
-          {/* Google Sign In */}
-          <TouchableOpacity
-            style={[styles.googleButton, loading && styles.buttonDisabled]}
-            onPress={handleGoogleSignIn}
-            disabled={loading}
-          >
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
-          </TouchableOpacity>
-
-          {/* Apple Sign In - iOS only when available */}
-          {Platform.OS === 'ios' && appleSignInAvailable && (
-            <AppleAuthentication.AppleAuthenticationButton
-              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-              cornerRadius={12}
-              style={styles.appleButton}
-              onPress={handleAppleSignIn}
-            />
-          )}
+          {/* Social sign-in: regular full-width buttons with "Sign in with Google" / "Sign in with Apple" */}
+          <View style={styles.socialContainer}>
+            <TouchableOpacity
+              style={[styles.socialButton, styles.googleButton, loading && styles.buttonDisabled]}
+              onPress={handleGoogleSignIn}
+              disabled={loading}
+            >
+              <GoogleLogo size={20} />
+              <Text style={styles.socialButtonText}>Sign in with Google</Text>
+            </TouchableOpacity>
+            {Platform.OS === 'ios' && appleSignInAvailable && (
+              <TouchableOpacity
+                style={[styles.socialButton, styles.appleButton, loading && styles.buttonDisabled]}
+                onPress={handleAppleSignIn}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="logo-apple" size={20} color="#fff" />
+                <Text style={[styles.socialButtonText, styles.appleButtonText]}>Sign in with Apple</Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
           {/* Sign Up Link */}
           <View style={styles.signUpContainer}>
@@ -506,10 +526,13 @@ export default function SignInScreen() {
             </Link>
           </View>
         </View>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
 }
+
+const isAndroid = Platform.OS === 'android';
 
 const styles = StyleSheet.create({
   container: {
@@ -518,15 +541,21 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 100,
+    paddingHorizontal: isAndroid ? 20 : 24,
+    // paddingTop set dynamically with insets.top so content stays below status bar
+  },
+  centeredBlock: {
+    flex: 1,
+  },
+  topSpacer: {
+    minHeight: 32,
   },
   profileSection: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: isAndroid ? 16 : 40,
   },
   welcomeText: {
-    fontSize: 32,
+    fontSize: isAndroid ? 26 : 32,
     fontWeight: '700',
     color: '#333',
   },
@@ -534,31 +563,34 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   inputContainer: {
-    marginBottom: 16,
+    marginBottom: 18,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 48,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
   inputIcon: {
-    marginRight: 12,
+    marginRight: 10,
   },
   input: {
     flex: 1,
     fontSize: 16,
     color: '#333',
+    minHeight: 24,
+    paddingVertical: 4,
   },
   optionsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: isAndroid ? 14 : 24,
   },
   rememberMeContainer: {
     flexDirection: 'row',
@@ -568,7 +600,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   rememberMeLabel: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#333',
   },
   faceIdContainer: {
@@ -576,16 +608,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   faceIdText: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#007AFF',
     marginLeft: 6,
     fontWeight: '500',
   },
   errorContainer: {
     backgroundColor: '#ffebee',
-    padding: 12,
+    padding: isAndroid ? 8 : 12,
     borderRadius: 8,
-    marginBottom: 16,
+    marginBottom: isAndroid ? 10 : 16,
     borderLeftWidth: 4,
     borderLeftColor: '#f44336',
   },
@@ -595,34 +627,34 @@ const styles = StyleSheet.create({
   },
   signInButton: {
     backgroundColor: '#007AFF',
-    paddingVertical: 16,
-    borderRadius: 12,
+    paddingVertical: isAndroid ? 12 : 16,
+    borderRadius: isAndroid ? 8 : 12,
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: isAndroid ? 14 : 24,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   signInButtonText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: isAndroid ? 16 : 18,
     fontWeight: '600',
   },
   forgotPasswordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 32,
+    marginBottom: isAndroid ? 10 : 16,
   },
   forgotPasswordText: {
     color: '#007AFF',
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     marginRight: 6,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: isAndroid ? 8 : 12,
   },
   dividerLine: {
     flex: 1,
@@ -630,41 +662,51 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0e0e0',
   },
   dividerText: {
-    marginHorizontal: 16,
+    marginHorizontal: isAndroid ? 8 : 10,
     color: '#666',
     fontSize: 14,
+  },
+  socialContainer: {
+    width: '100%',
+    marginBottom: isAndroid ? 16 : 24,
+    gap: 12,
+  },
+  socialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 10,
   },
   googleButton: {
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e0e0e0',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  googleButtonText: {
-    color: '#333',
-    fontSize: 16,
-    fontWeight: '500',
   },
   appleButton: {
-    width: '100%',
-    height: 50,
-    marginBottom: 32,
+    backgroundColor: '#000',
+  },
+  socialButtonText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#333',
+  },
+  appleButtonText: {
+    color: '#fff',
   },
   signUpContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 40,
+    paddingBottom: isAndroid ? 20 : 40,
   },
   signUpText: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#666',
   },
   signUpLink: {
-    fontSize: 16,
+    fontSize: isAndroid ? 14 : 16,
     color: '#007AFF',
     fontWeight: '500',
   },

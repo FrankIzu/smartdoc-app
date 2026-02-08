@@ -29,6 +29,9 @@ import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
 import { removeFileExtension } from '../../utils/fileUtils';
+import { scaleStyleObject } from '../../utils/styleUtils';
+import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
+import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 interface Document {
@@ -44,6 +47,10 @@ interface Document {
   formData?: any; // Store original form data for form-specific actions
   responseCount?: number; // Number of responses for forms
   totalAmount?: number; // For receipt/invoice: from json_data
+  is_global?: boolean; // File is global (available across workspaces)
+  json_data?: Record<string, unknown> | null; // Store json_data to check if store name is populated
+  original_filename?: string;
+  user_id?: number; // File owner's user ID
 }
 
 interface ApiDocument {
@@ -59,10 +66,26 @@ interface ApiDocument {
   file_kind?: string;
   json_data?: Record<string, unknown> | null;
   processing_status?: 'pending' | 'processing' | 'processed' | 'error';
+  is_global?: boolean;
+  user_id?: number; // File owner's user ID
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
-type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'invoice' | 'meeting_notes' | 'meeting_chat' | 'meeting_summary' | 'spreadsheet' | 'picture' | 'pending' | 'unknown';
+type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'invoice' | 'meeting_notes' | 'meeting_chat' | 'meeting_summary' | 'draft' | 'spreadsheet' | 'picture' | 'pending' | 'unknown';
+
+// Helper to check if a file is editable as Draft (text-like formats)
+function isEditableTextFormat(file: Document | { original_filename?: string; filename?: string; file_kind?: string }): boolean {
+  const name = file?.original_filename || (file as any)?.filename || '';
+  const ext = name.toLowerCase().substring(name.lastIndexOf('.'));
+  const excluded = ['.pdf', '.zip', '.exe', '.dll', '.bin'];
+  const editable = ['.txt', '.doc', '.docx', '.md', '.log', '.csv', '.json'];
+  if (excluded.includes(ext)) return false;
+  if (editable.includes(ext)) return true;
+  // Also check file_kind - Draft files are editable
+  const fk = (file as any)?.file_kind?.toLowerCase();
+  if (fk === 'draft') return true;
+  return false;
+}
 
 export default function QuickFilesScreen() {
   const router = useRouter();
@@ -107,6 +130,11 @@ export default function QuickFilesScreen() {
   const [showPaymentStatusModal, setShowPaymentStatusModal] = useState(false);
   const [updatingPaymentStatus, setUpdatingPaymentStatus] = useState(false);
   
+  // Rename modal state
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameInputValue, setRenameInputValue] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  
   // Receipt categories (must match backend validation)
   const receiptCategories = [
     'Uncategorized',
@@ -137,6 +165,19 @@ export default function QuickFilesScreen() {
   const [bookmarks, setBookmarks] = useState<any[]>([]);
   const [showBookmarkModal, setShowBookmarkModal] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<any>(null);
+  // Create new bookmark (from Add to Bookmark modal)
+  const [newBookmarkName, setNewBookmarkName] = useState('');
+  const [newBookmarkColor, setNewBookmarkColor] = useState('#007AFF');
+  const [creatingBookmark, setCreatingBookmark] = useState(false);
+  const bookmarkColors = ['#007AFF', '#34C759', '#FF9500', '#FF3B30', '#AF52DE', '#5856D6', '#8E44AD', '#E74C3C'];
+
+  // Make Global (workspace visibility) state
+  const [showMakeGlobalModal, setShowMakeGlobalModal] = useState(false);
+  const [makeGlobalDocument, setMakeGlobalDocument] = useState<Document | null>(null);
+  const [makeGlobalWorkspaces, setMakeGlobalWorkspaces] = useState<{ id: number; name?: string }[]>([]);
+  const [makeGlobalSelectedIds, setMakeGlobalSelectedIds] = useState<number[]>([]);
+  const [makeGlobalLoading, setMakeGlobalLoading] = useState(false);
+  const [makeGlobalSaving, setMakeGlobalSaving] = useState(false);
 
   // Status indicator state for recently completed files
   const [recentlyCompletedFiles, setRecentlyCompletedFiles] = useState<Set<string>>(new Set());
@@ -237,6 +278,9 @@ export default function QuickFilesScreen() {
         case 'meeting_summary':
         case 'ai_summary':
           return 'sparkles-outline'; // Sparkles icon for AI summaries
+        case 'draft':
+        case 'drafts':
+          return 'create-outline'; // Draft (document + pencil / edit) icon
         case 'spreadsheet':
         case 'spreadsheets':
           return 'grid-outline'; // Grid icon for spreadsheets
@@ -301,6 +345,9 @@ export default function QuickFilesScreen() {
         case 'meeting_summary':
         case 'ai_summary':
           return '#10b981'; // Green for AI summaries
+        case 'draft':
+        case 'drafts':
+          return '#34C759'; // Green for drafts
         case 'spreadsheet':
         case 'spreadsheets':
           return '#10b981'; // Green for spreadsheets
@@ -357,6 +404,9 @@ export default function QuickFilesScreen() {
       case 'meeting_summary':
       case 'ai_summary':
         return 'meeting_summary';
+      case 'draft':
+      case 'drafts':
+        return 'draft';
       case 'spreadsheet':
       case 'spreadsheets':
         return 'spreadsheet';
@@ -409,6 +459,7 @@ export default function QuickFilesScreen() {
       'transcripts',
       'meeting_notes',
       'meeting_chat',
+      'draft',
       'spreadsheet',
       'picture',
       'pending',
@@ -470,6 +521,8 @@ export default function QuickFilesScreen() {
             return fileTypeCategory === 'meeting_chat';
           case 'meeting_summary':
             return fileTypeCategory === 'meeting_summary';
+          case 'draft':
+            return fileTypeCategory === 'draft';
           case 'spreadsheet':
             return fileTypeCategory === 'spreadsheet';
           case 'picture':
@@ -485,7 +538,16 @@ export default function QuickFilesScreen() {
     }
         
     // Apply sorting
+    // Optimistic files (pending status) should always appear first, then sort by selected criteria
     filtered.sort((a, b) => {
+        // Always put pending files first
+        const aIsPending = a.status === 'pending' || a.file_kind === 'pending';
+        const bIsPending = b.status === 'pending' || b.file_kind === 'pending';
+        
+        if (aIsPending && !bIsPending) return -1; // a comes first
+        if (!aIsPending && bIsPending) return 1;  // b comes first
+        
+        // Both are pending or both are not pending - apply normal sort
         switch (sortBy) {
           case 'name':
             return (a.name || '').localeCompare(b.name || '');
@@ -649,6 +711,10 @@ export default function QuickFilesScreen() {
               category: doc.receipt_category || undefined, // Use receipt_category for the actual category (Supplies, Rent, etc.)
               file_kind: doc.file_kind, // Store raw file_kind to check for receipts
               totalAmount,
+              is_global: doc.is_global,
+              json_data: doc.json_data, // Store json_data to check if store name is populated
+              original_filename: doc.original_filename || doc.filename,
+              user_id: doc.user_id, // Store owner's user ID
             };
           });
           
@@ -780,26 +846,45 @@ export default function QuickFilesScreen() {
   }, [user, loadDocuments]);
 
   // Polling for pending files (classification polling)
+  // Also continues polling for receipts/invoices until json_data is populated (for store name display)
   useEffect(() => {
-    // Check if there are any pending files
-    const hasPendingFiles = documents.some(doc => doc.status === 'pending');
+    // Check if there are any pending files OR receipts/invoices without json_data
+    const hasPendingFiles = documents.some(doc => {
+      const isPending = doc.status === 'pending';
+      // Also check if receipt/invoice doesn't have json_data yet (needs store name for display)
+      const isReceiptOrInvoice = doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
+      const needsJsonData = isReceiptOrInvoice && (!doc.json_data || 
+        (typeof doc.json_data === 'object' && 
+         !doc.json_data.store_name && !doc.json_data.vendor_name && 
+         !doc.json_data.business_name && !doc.json_data.merchant_name));
+      return isPending || needsJsonData;
+    });
     
     if (hasPendingFiles) {
       // Start polling for file updates
       if (!classificationPollingIntervalRef.current) {
-        console.log('🔄 Starting classification polling for pending files...');
+        console.log('🔄 Starting classification polling for pending files and receipts/invoices without json_data...');
         classificationPollingIntervalRef.current = setInterval(async () => {
           try {
-            // Reload files to check for updated file_kind
+            // Reload files to check for updated file_kind and json_data
             await loadDocuments(true); // Force refresh
             
             // Check current documents state after reload
             setDocuments(currentDocs => {
-              const stillPending = currentDocs.some(doc => doc.status === 'pending');
+              const stillPending = currentDocs.some(doc => {
+                const isPending = doc.status === 'pending';
+                // Check if receipt/invoice still needs json_data
+                const isReceiptOrInvoice = doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
+                const needsJsonData = isReceiptOrInvoice && (!doc.json_data || 
+                  (typeof doc.json_data === 'object' && 
+                   !doc.json_data.store_name && !doc.json_data.vendor_name && 
+                   !doc.json_data.business_name && !doc.json_data.merchant_name));
+                return isPending || needsJsonData;
+              });
               
               if (!stillPending) {
-                // No more pending files, stop polling
-                console.log('✅ All files processed, stopping classification polling');
+                // No more pending files and all receipts/invoices have json_data, stop polling
+                console.log('✅ All files processed and json_data populated, stopping classification polling');
                 if (classificationPollingIntervalRef.current) {
                   clearInterval(classificationPollingIntervalRef.current);
                   classificationPollingIntervalRef.current = null;
@@ -845,6 +930,12 @@ export default function QuickFilesScreen() {
       });
     }
 
+    // If the document is a draft, open draft editor
+    if ((document.file_kind || '').toString().toLowerCase() === 'draft') {
+      (router.push as (path: string) => void)(`/drafts/edit/${document.id}`);
+      return;
+    }
+
     // If the document is a form (either by type or category), open quick form viewer
     if (
       document.type === 'form' ||
@@ -888,6 +979,11 @@ export default function QuickFilesScreen() {
 
   const handleViewDocument = () => {
     if (selectedDocumentForMenu) {
+      if ((selectedDocumentForMenu.file_kind || '').toString().toLowerCase() === 'draft') {
+        setShowKebabMenu(false);
+        (router.push as (path: string) => void)(`/drafts/edit/${selectedDocumentForMenu.id}`);
+        return;
+      }
       setSelectedDocument(selectedDocumentForMenu);
       setShowDocumentViewer(true);
       setShowKebabMenu(false);
@@ -1041,6 +1137,44 @@ export default function QuickFilesScreen() {
     setSelectedDocumentForMenu(null);
   };
 
+  const handleRenameDocument = () => {
+    if (!selectedDocumentForMenu) return;
+    const name = selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename || '';
+    const nameWithoutExt = name.replace(/\.[^/.]+$/, '');
+    setRenameInputValue(nameWithoutExt);
+    setShowKebabMenu(false);
+    setShowRenameModal(true);
+  };
+
+  const handleSubmitRename = async () => {
+    if (!selectedDocumentForMenu || !renameInputValue.trim()) return;
+    const name = selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename || '';
+    const ext = name.match(/\.[^/.]+$/)?.[0] || '';
+    const finalFilename = renameInputValue.trim() + ext;
+    if (finalFilename === name) {
+      setShowRenameModal(false);
+      return;
+    }
+    setRenaming(true);
+    try {
+      const response = await apiClient.renameFile(parseInt(selectedDocumentForMenu.id), finalFilename);
+      if (response.success) {
+        setDocuments(prev => prev.map(doc =>
+          doc.id === selectedDocumentForMenu.id ? { ...doc, name: finalFilename } : doc
+        ));
+        setShowRenameModal(false);
+        setSelectedDocumentForMenu(null);
+        Alert.alert('Success', 'File renamed successfully.');
+      } else {
+        Alert.alert('Error', (response as any).message || 'Failed to rename file');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to rename file');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
   const handleViewFormResponses = () => {
     if (!selectedDocumentForMenu) return;
     
@@ -1159,10 +1293,151 @@ export default function QuickFilesScreen() {
     }
   };
 
+  const handleCreateNewBookmarkAndAddFile = async () => {
+    if (!selectedDocumentForMenu) return;
+    const name = newBookmarkName.trim();
+    if (!name) {
+      Alert.alert('Error', 'Please enter a bookmark name');
+      return;
+    }
+    setCreatingBookmark(true);
+    try {
+      const createResponse = await apiClient.createBookmark({
+        name,
+        color: newBookmarkColor,
+      });
+      if (!createResponse.success) {
+        Alert.alert('Error', createResponse.message || 'Failed to create bookmark');
+        setCreatingBookmark(false);
+        return;
+      }
+      const newBookmark = (createResponse as any).data ?? (createResponse as any).bookmark;
+      const newId = newBookmark?.id ?? newBookmark?.bookmark_id;
+      if (newId == null) {
+        Alert.alert('Error', 'Bookmark created but could not add file. Please add it from the bookmark.');
+        setShowBookmarkModal(false);
+        setNewBookmarkName('');
+        setCreatingBookmark(false);
+        loadBookmarks();
+        return;
+      }
+      const addResponse = await apiClient.addFileToBookmark(newId, parseInt(selectedDocumentForMenu.id));
+      if (addResponse.success) {
+        Alert.alert('Success', `"${selectedDocumentForMenu.name}" added to new bookmark "${name}"`);
+        setShowBookmarkModal(false);
+        setShowKebabMenu(false);
+        setNewBookmarkName('');
+        setNewBookmarkColor('#007AFF');
+        loadBookmarks();
+      } else {
+        Alert.alert('Success', `Bookmark "${name}" created. Could not add file: ${addResponse.message || 'Please add it from the bookmark.'}`);
+        setShowBookmarkModal(false);
+        setNewBookmarkName('');
+        loadBookmarks();
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to create bookmark');
+    } finally {
+      setCreatingBookmark(false);
+    }
+  };
+
   const handleShowBookmarkModal = () => {
     loadBookmarks();
+    setNewBookmarkName('');
+    setNewBookmarkColor('#007AFF');
     setShowBookmarkModal(true);
     setShowKebabMenu(false);
+  };
+
+  const handleEditAsDraft = async () => {
+    const doc = selectedDocumentForMenu;
+    if (!doc) return;
+    setShowKebabMenu(false);
+    
+    // If it's already a Draft, navigate to edit
+    if (doc.file_kind?.toLowerCase() === 'draft') {
+      router.push(`/drafts/edit/${doc.id}`);
+      return;
+    }
+    
+    // Check if file is editable
+    if (!isEditableTextFormat(doc)) {
+      Alert.alert('Not Editable', 'This file format cannot be edited as Draft. Supported formats: .txt, .doc, .docx, .md, .log, .csv, .json');
+      return;
+    }
+    
+    // Check processing status
+    if (doc.status === 'processing' || doc.status === 'pending') {
+      Alert.alert('File Processing', 'Please wait for the file to finish processing before editing as Draft.');
+      return;
+    }
+    
+    try {
+      const res = await apiClient.createDraft(Number(doc.id));
+      if ((res as any)?.success && (res as any)?.draft?.id) {
+        const draftId = (res as any).draft.id;
+        router.push(`/drafts/edit/${draftId}`);
+      } else {
+        Alert.alert('Error', (res as any)?.message || 'Failed to create Draft');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.message || e?.message || 'Failed to create Draft');
+    }
+  };
+
+  const handleShowMakeGlobalModal = async () => {
+    const doc = selectedDocumentForMenu;
+    if (!doc) return;
+    setShowKebabMenu(false);
+    setMakeGlobalDocument(doc);
+    setMakeGlobalWorkspaces([]);
+    setMakeGlobalSelectedIds([]);
+    setShowMakeGlobalModal(true);
+    setMakeGlobalLoading(true);
+    try {
+      const [workspacesRes, visibilityRes] = await Promise.all([
+        apiClient.getMobileWorkspaces(100, 0),
+        apiClient.getFileWorkspaceVisibility(Number(doc.id)).catch(() => ({ success: false, visible_workspaces: [] })),
+      ]);
+      const list = (workspacesRes as any)?.data ?? (workspacesRes as any)?.workspaces ?? (Array.isArray(workspacesRes) ? workspacesRes : []);
+      setMakeGlobalWorkspaces(Array.isArray(list) ? list : []);
+      const visible = (visibilityRes as any)?.visible_workspaces ?? [];
+      const ids = Array.isArray(visible) ? visible.map((w: { id: number }) => w.id) : [];
+      setMakeGlobalSelectedIds(ids);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to load workspaces');
+      setShowMakeGlobalModal(false);
+    } finally {
+      setMakeGlobalLoading(false);
+    }
+  };
+
+  const handleMakeGlobalToggleWorkspace = (workspaceId: number) => {
+    setMakeGlobalSelectedIds((prev) =>
+      prev.includes(workspaceId) ? prev.filter((id) => id !== workspaceId) : [...prev, workspaceId]
+    );
+  };
+
+  const handleMakeGlobalSave = async () => {
+    const doc = makeGlobalDocument;
+    if (!doc) return;
+    setMakeGlobalSaving(true);
+    try {
+      const res = await apiClient.setFileWorkspaceVisibility(Number(doc.id), makeGlobalSelectedIds);
+      if ((res as any)?.success) {
+        Alert.alert('Success', 'Workspace visibility updated. This file is now shared with the selected workspaces.');
+        setShowMakeGlobalModal(false);
+        setMakeGlobalDocument(null);
+        loadDocuments(true);
+      } else {
+        Alert.alert('Error', (res as any)?.message || 'Failed to update workspace visibility');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to update workspace visibility');
+    } finally {
+      setMakeGlobalSaving(false);
+    }
   };
 
   const handleExternalFileImport = (file: ExternalFile) => {
@@ -1291,10 +1566,17 @@ export default function QuickFilesScreen() {
             {item.name}
           </Text>
         <View style={dynamicStyles.documentMetaRow}>
-          <Text style={dynamicStyles.documentMeta}>
-            {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
-            {item.category && ` • ${item.category}`}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', flex: 1 }}>
+            <Text style={dynamicStyles.documentMeta}>
+              {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
+            </Text>
+            {item.is_global && (
+              <Ionicons name="globe-outline" size={12} color={colors.tint} style={{ marginLeft: 4 }} />
+            )}
+            {item.category && (
+              <Text style={dynamicStyles.documentMeta}> • {item.category}</Text>
+            )}
+          </View>
           {item.totalAmount != null && !Number.isNaN(item.totalAmount) && (
             <Text style={dynamicStyles.documentMetaAmount}>
               {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(item.totalAmount)}
@@ -1327,7 +1609,8 @@ export default function QuickFilesScreen() {
     </TouchableOpacity>
   );
 
-  const dynamicStyles = useMemo(() => StyleSheet.create({
+  const dynamicStyles = useMemo(() => {
+    const scaledStyles = scaleStyleObject({
     container: {
       flex: 1,
       backgroundColor: colors.background,
@@ -1591,6 +1874,64 @@ export default function QuickFilesScreen() {
       marginLeft: 12,
       fontWeight: '500',
     },
+    renameModalContent: {
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      padding: 20,
+      width: '90%',
+      maxWidth: 360,
+    },
+    renameModalTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 8,
+    },
+    renameModalCurrentLabel: {
+      fontSize: 13,
+      color: colors.textLight,
+      marginBottom: 12,
+    },
+    renameModalInput: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: colors.text,
+      marginBottom: 16,
+    },
+    renameModalButtons: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 12,
+    },
+    renameModalCancelBtn: {
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+    },
+    renameModalCancelText: {
+      fontSize: 16,
+      color: colors.textLight,
+      fontWeight: '500',
+    },
+    renameModalRenameBtn: {
+      backgroundColor: '#007AFF',
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      borderRadius: 10,
+      minWidth: 88,
+      alignItems: 'center',
+    },
+    renameModalRenameText: {
+      fontSize: 16,
+      color: '#fff',
+      fontWeight: '600',
+    },
+    renameModalBtnDisabled: {
+      opacity: 0.6,
+    },
     bookmarkModalContainer: {
       backgroundColor: colors.card,
       borderRadius: 20,
@@ -1637,6 +1978,62 @@ export default function QuickFilesScreen() {
       fontSize: 16,
       fontWeight: '500',
       color: colors.text,
+    },
+    bookmarkCreateSection: {
+      paddingVertical: 12,
+    },
+    bookmarkSectionLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      marginBottom: 8,
+      textTransform: 'uppercase',
+    },
+    bookmarkInputRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 12,
+    },
+    bookmarkNameInput: {
+      flex: 1,
+      minWidth: 0,
+      borderWidth: 1,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+    },
+    bookmarkCreateButtonIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 10,
+      backgroundColor: '#007AFF',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    bookmarkColorRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 12,
+    },
+    bookmarkColorChip: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+    },
+    bookmarkColorChipSelected: {
+      borderWidth: 3,
+      borderColor: '#fff',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.3,
+      shadowRadius: 2,
+      elevation: 2,
+    },
+    bookmarkDivider: {
+      height: 1,
+      marginVertical: 16,
     },
     bookmarkItemText: {
       fontSize: 16,
@@ -1697,38 +2094,44 @@ export default function QuickFilesScreen() {
       justifyContent: 'center',
       alignItems: 'center',
     },
-  }), [colors]);
+    }, colors.scale);
+    return StyleSheet.create(scaledStyles);
+  }, [colors, colors.scale]);
 
   // Loading state with bouncing dots
   if (loading && documents.length === 0) {
     return (
       <SafeAreaView style={dynamicStyles.container}>
-        <View style={dynamicStyles.header}>
-          <Text style={dynamicStyles.headerTitle}>Files</Text>
-          <View style={dynamicStyles.headerActions}>
-            <TouchableOpacity style={dynamicStyles.headerButton}>
-              <Ionicons name="cloud-upload" size={24} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.headerButton}>
-              <Ionicons name="camera" size={24} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.headerButton}>
-              <Ionicons name="images" size={24} color="#5856D6" />
-            </TouchableOpacity>
-          </View>
-        </View>
-        
+        <TapToToggleHeaderView style={dynamicStyles.container}>
+          <AnimatedHeaderContainer>
+            <View style={dynamicStyles.header}>
+              <Text style={dynamicStyles.headerTitle}>Files</Text>
+              <View style={dynamicStyles.headerActions}>
+                <TouchableOpacity style={dynamicStyles.headerButton}>
+                  <Ionicons name="cloud-upload" size={24} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity style={dynamicStyles.headerButton}>
+                  <Ionicons name="camera" size={24} color="#007AFF" />
+                </TouchableOpacity>
+                <TouchableOpacity style={dynamicStyles.headerButton}>
+                  <Ionicons name="images" size={24} color="#5856D6" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </AnimatedHeaderContainer>
         <View style={dynamicStyles.loadingContainer}>
           <LoadingDots size={12} color="#007AFF" duration={800} />
           <Text style={dynamicStyles.loadingText}>Loading your files...</Text>
           <Text style={dynamicStyles.loadingSubtext}>This will only take a moment</Text>
         </View>
+        </TapToToggleHeaderView>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={dynamicStyles.container}>
+      <TapToToggleHeaderView style={dynamicStyles.container}>
       {/* Error message display */}
       {error && (
         <View style={{ backgroundColor: '#fee2e2', padding: 12, margin: 12, borderRadius: 8 }}>
@@ -1737,56 +2140,58 @@ export default function QuickFilesScreen() {
       )}
       
       {/* Header */}
-      <View style={dynamicStyles.header}>
-        <TouchableOpacity 
-          style={dynamicStyles.backButton}
-          onPress={() => router.back()}
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={dynamicStyles.headerTitleContainer}>
-          <Text style={dynamicStyles.headerTitle}>
-            {workspaceId ? 'Workspace Files' : 'Files'}
-          </Text>
-          {isAutoRefreshing && (
-            <View style={dynamicStyles.autoRefreshIndicator}>
-              <Ionicons name="sync" size={16} color="#007AFF" />
-              <Text style={dynamicStyles.autoRefreshText}>Syncing...</Text>
-            </View>
-          )}
+      <AnimatedHeaderContainer>
+        <View style={dynamicStyles.header}>
+          <TouchableOpacity 
+            style={dynamicStyles.backButton}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <View style={dynamicStyles.headerTitleContainer}>
+            <Text style={dynamicStyles.headerTitle}>
+              {workspaceId ? 'Workspace Files' : 'Files'}
+            </Text>
+            {isAutoRefreshing && (
+              <View style={dynamicStyles.autoRefreshIndicator}>
+                <Ionicons name="sync" size={16} color="#007AFF" />
+                <Text style={dynamicStyles.autoRefreshText}>Syncing...</Text>
+              </View>
+            )}
+          </View>
+          <View style={dynamicStyles.headerActions}>
+            <TouchableOpacity 
+              style={dynamicStyles.headerButton}
+              onPress={handleUploadFromFiles}
+            >
+              <Ionicons name="document" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dynamicStyles.headerButton}
+              onPress={() => router.push('/scanner')}
+            >
+              <Ionicons name="camera" size={24} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dynamicStyles.headerButton}
+              onPress={handleGalleryUpload}
+            >
+              <Ionicons name="images" size={24} color="#5856D6" />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
+              onPress={onRefresh}
+              disabled={refreshing}
+            >
+              <Ionicons 
+                name="refresh" 
+                size={24} 
+                color={refreshing ? "#999" : "#007AFF"} 
+              />
+            </TouchableOpacity>
+          </View>
         </View>
-        <View style={dynamicStyles.headerActions}>
-          <TouchableOpacity 
-            style={dynamicStyles.headerButton}
-            onPress={handleUploadFromFiles}
-          >
-            <Ionicons name="document" size={24} color="#007AFF" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={dynamicStyles.headerButton}
-            onPress={() => router.push('/scanner')}
-          >
-            <Ionicons name="camera" size={24} color="#007AFF" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={dynamicStyles.headerButton}
-            onPress={handleGalleryUpload}
-          >
-            <Ionicons name="images" size={24} color="#5856D6" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
-            onPress={onRefresh}
-            disabled={refreshing}
-          >
-            <Ionicons 
-              name="refresh" 
-              size={24} 
-              color={refreshing ? "#999" : "#007AFF"} 
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
+      </AnimatedHeaderContainer>
 
       {/* Search Bar */}
       <View style={dynamicStyles.searchContainer}>
@@ -1820,6 +2225,7 @@ export default function QuickFilesScreen() {
               'meeting_notes': 'Meeting Notes',
               'meeting_chat': 'Meeting Chat',
               'meeting_summary': 'AI Summary',
+              'draft': 'Draft',
               'spreadsheet': 'Spreadsheets',
               'picture': 'Pictures',
               'pending': 'Pending',
@@ -1986,7 +2392,76 @@ export default function QuickFilesScreen() {
               <Ionicons name="share-outline" size={20} color="#10B981" />
               <Text style={dynamicStyles.kebabMenuText}>Share</Text>
             </TouchableOpacity>
-            
+
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={handleChatDocument}
+            >
+              <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
+              <Text style={dynamicStyles.kebabMenuText}>Ask ChatGD</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={handleShowBookmarkModal}
+            >
+              <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
+              <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
+            </TouchableOpacity>
+
+            {/* Edit as Draft: for editable text files (not Forms, not PDFs) */}
+            {(() => {
+              const doc = selectedDocumentForMenu;
+              if (!doc) return false;
+              // Must be editable format
+              if (!isEditableTextFormat(doc)) return false;
+              // Not a Form
+              const fk = doc.file_kind?.toLowerCase();
+              if (fk === 'form') return false;
+              // Must be processed (not pending/processing)
+              if (doc.status === 'processing' || doc.status === 'pending') return false;
+              // User must be owner or have edit access (if user_id matches, they're owner)
+              if (doc.user_id && user?.id && Number(doc.user_id) === Number(user.id)) return true;
+              // For shared files, we could check can_edit but for now only show for owner
+              return false;
+            })() && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleEditAsDraft}
+              >
+                <Ionicons name="document-text-outline" size={20} color="#007AFF" />
+                <Text style={dynamicStyles.kebabMenuText}>
+                  {selectedDocumentForMenu?.file_kind?.toLowerCase() === 'draft' ? 'Edit Draft' : 'Edit as Draft'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Make Global / Change Global: only for file owner */}
+            {selectedDocumentForMenu?.user_id && user?.id && Number(selectedDocumentForMenu.user_id) === Number(user.id) && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleShowMakeGlobalModal}
+              >
+                <Ionicons name="globe-outline" size={20} color="#0EA5E9" />
+                <Text style={dynamicStyles.kebabMenuText}>{selectedDocumentForMenu?.is_global ? 'Change Global' : 'Make Global'}</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Rename: only for files that are not receipt or invoice */}
+            {(() => {
+              const fk = selectedDocumentForMenu?.file_kind?.toLowerCase();
+              const isReceiptOrInvoice = fk === 'receipt' || fk === 'receipts' || fk === 'invoice' || fk === 'invoices';
+              return !isReceiptOrInvoice;
+            })() && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleRenameDocument}
+              >
+                <Ionicons name="pencil-outline" size={20} color="#6B7280" />
+                <Text style={dynamicStyles.kebabMenuText}>Rename</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={dynamicStyles.kebabMenuItem}
               onPress={() => {
@@ -1997,22 +2472,56 @@ export default function QuickFilesScreen() {
               <Ionicons name="trash-outline" size={20} color="#EF4444" />
               <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
             </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
-              onPress={handleChatDocument}
-            >
-              <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
-              <Text style={dynamicStyles.kebabMenuText}>Chat</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
-              onPress={handleShowBookmarkModal}
-            >
-              <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
-              <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
-            </TouchableOpacity>
+      {/* Rename File Modal */}
+      <Modal
+        visible={showRenameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !renaming && setShowRenameModal(false)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !renaming && setShowRenameModal(false)}
+        >
+          <View style={dynamicStyles.renameModalContent} onStartShouldSetResponder={() => true}>
+            <Text style={dynamicStyles.renameModalTitle}>Rename File</Text>
+            {selectedDocumentForMenu ? (
+              <Text style={dynamicStyles.renameModalCurrentLabel}>Current: {selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename}</Text>
+            ) : null}
+            <TextInput
+              style={dynamicStyles.renameModalInput}
+              value={renameInputValue}
+              onChangeText={setRenameInputValue}
+              placeholder="New filename (no extension)"
+              placeholderTextColor="#999"
+              editable={!renaming}
+              autoCapitalize="none"
+            />
+            <View style={dynamicStyles.renameModalButtons}>
+              <TouchableOpacity
+                style={dynamicStyles.renameModalCancelBtn}
+                onPress={() => !renaming && setShowRenameModal(false)}
+                disabled={renaming}
+              >
+                <Text style={dynamicStyles.renameModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.renameModalRenameBtn, (!renameInputValue.trim() || renaming) && dynamicStyles.renameModalBtnDisabled]}
+                onPress={handleSubmitRename}
+                disabled={!renameInputValue.trim() || renaming}
+              >
+                {renaming ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={dynamicStyles.renameModalRenameText}>Rename</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -2029,7 +2538,7 @@ export default function QuickFilesScreen() {
           activeOpacity={1}
           onPress={() => setShowBookmarkModal(false)}
         >
-          <View style={dynamicStyles.bookmarkModalContainer}>
+          <View style={dynamicStyles.bookmarkModalContainer} onStartShouldSetResponder={() => true}>
             <View style={dynamicStyles.bookmarkModalHeader}>
               <Text style={dynamicStyles.bookmarkModalTitle}>Add to Bookmark</Text>
               <TouchableOpacity
@@ -2039,19 +2548,141 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             </View>
             
-            <View style={dynamicStyles.bookmarkList}>
+            <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={dynamicStyles.bookmarkList} keyboardShouldPersistTaps="handled">
+              {/* Create new bookmark section */}
+              <View style={dynamicStyles.bookmarkCreateSection}>
+                <Text style={[dynamicStyles.bookmarkSectionLabel, { color: colors.textSecondary }]}>Create new bookmark</Text>
+                <View style={dynamicStyles.bookmarkInputRow}>
+                  <TextInput
+                    style={[dynamicStyles.bookmarkNameInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                    placeholder="Bookmark name"
+                    placeholderTextColor={colors.textSecondary}
+                    value={newBookmarkName}
+                    onChangeText={setNewBookmarkName}
+                    editable={!creatingBookmark}
+                  />
+                  <TouchableOpacity
+                    style={[dynamicStyles.bookmarkCreateButtonIcon, { opacity: creatingBookmark || !newBookmarkName.trim() ? 0.5 : 1 }]}
+                    onPress={handleCreateNewBookmarkAndAddFile}
+                    disabled={creatingBookmark || !newBookmarkName.trim()}
+                  >
+                    {creatingBookmark ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Ionicons name="add-circle" size={28} color="#fff" />
+                    )}
+                  </TouchableOpacity>
+                </View>
+                <View style={dynamicStyles.bookmarkColorRow}>
+                  {bookmarkColors.map((color) => (
+                    <TouchableOpacity
+                      key={color}
+                      style={[
+                        dynamicStyles.bookmarkColorChip,
+                        { backgroundColor: color },
+                        newBookmarkColor === color && dynamicStyles.bookmarkColorChipSelected,
+                      ]}
+                      onPress={() => setNewBookmarkColor(color)}
+                    />
+                  ))}
+                </View>
+              </View>
+
+              <View style={[dynamicStyles.bookmarkDivider, { backgroundColor: colors.border }]} />
+              <Text style={[dynamicStyles.bookmarkSectionLabel, { color: colors.textSecondary }]}>Existing bookmarks</Text>
+              
               {bookmarks.map((bookmark) => (
                 <TouchableOpacity
                   key={bookmark.id}
                   style={dynamicStyles.bookmarkItem}
                   onPress={() => handleAddToBookmark(bookmark)}
                 >
-                  <View style={[dynamicStyles.bookmarkColor, { backgroundColor: bookmark.color }]} />
+                  <View style={[dynamicStyles.bookmarkColor, { backgroundColor: bookmark.color || '#007AFF' }]} />
                   <Text style={dynamicStyles.bookmarkName}>{bookmark.name}</Text>
                   <Ionicons name="chevron-forward" size={20} color="#ccc" />
                 </TouchableOpacity>
               ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Make Global (workspace visibility) Modal */}
+      <Modal
+        visible={showMakeGlobalModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !makeGlobalSaving && setShowMakeGlobalModal(false)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !makeGlobalSaving && setShowMakeGlobalModal(false)}
+        >
+          <View style={[dynamicStyles.bookmarkModalContainer, { maxWidth: 360 }]} onStartShouldSetResponder={() => true}>
+            <View style={dynamicStyles.bookmarkModalHeader}>
+              <Text style={dynamicStyles.bookmarkModalTitle}>{makeGlobalDocument?.is_global ? 'Change Global' : 'Make Global'}</Text>
+              <TouchableOpacity
+                onPress={() => !makeGlobalSaving && setShowMakeGlobalModal(false)}
+                disabled={makeGlobalSaving}
+              >
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
             </View>
+            {makeGlobalDocument && (
+              <Text style={[dynamicStyles.bookmarkSectionLabel, { color: colors.textSecondary, marginBottom: 8 }]} numberOfLines={1}>
+                Share &quot;{makeGlobalDocument.name}&quot; with workspaces
+              </Text>
+            )}
+            {makeGlobalLoading ? (
+              <View style={{ padding: 24, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#007AFF" />
+                <Text style={{ marginTop: 8, color: colors.textSecondary }}>Loading workspaces…</Text>
+              </View>
+            ) : (
+              <>
+                <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={dynamicStyles.bookmarkList} keyboardShouldPersistTaps="handled">
+                  {makeGlobalWorkspaces.length === 0 && !makeGlobalLoading && (
+                    <Text style={{ color: colors.textSecondary, padding: 16 }}>No workspaces. Create one in Workspaces.</Text>
+                  )}
+                  {makeGlobalWorkspaces.map((ws) => (
+                    <TouchableOpacity
+                      key={ws.id}
+                      style={dynamicStyles.bookmarkItem}
+                      onPress={() => handleMakeGlobalToggleWorkspace(ws.id)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={makeGlobalSelectedIds.includes(ws.id) ? 'checkbox' : 'square-outline'}
+                        size={24}
+                        color={makeGlobalSelectedIds.includes(ws.id) ? '#007AFF' : colors.textSecondary}
+                      />
+                      <Text style={[dynamicStyles.bookmarkName, { flex: 1 }]} numberOfLines={1}>{ws.name ?? `Workspace ${ws.id}`}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <View style={{ flexDirection: 'row', padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
+                  <TouchableOpacity
+                    style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: colors.border, alignItems: 'center' }}
+                    onPress={() => setShowMakeGlobalModal(false)}
+                    disabled={makeGlobalSaving}
+                  >
+                    <Text style={{ color: colors.text }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#007AFF', alignItems: 'center' }}
+                    onPress={handleMakeGlobalSave}
+                    disabled={makeGlobalSaving}
+                  >
+                    {makeGlobalSaving ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         </TouchableOpacity>
       </Modal>
@@ -2136,6 +2767,7 @@ export default function QuickFilesScreen() {
           </View>
         </View>
       </Modal>
+      </TapToToggleHeaderView>
     </SafeAreaView>
   );
 }

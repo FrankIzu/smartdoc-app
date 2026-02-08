@@ -1,6 +1,7 @@
 // Import polyfills for mobile compatibility
-import React, { useEffect } from 'react';
-import { LogBox, StyleSheet } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useEffect, useRef } from 'react';
+import { Alert, AppState, LogBox, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
 
@@ -17,7 +18,7 @@ LogBox.ignoreLogs([
   '@100mslive/react-native-hms', // HMS module errors
 ]);
 
-import { SplashScreen, Stack } from 'expo-router';
+import { SplashScreen, Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -25,11 +26,17 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import GlobalProgressBar from '../components/GlobalProgressBar';
 import NetworkIndicator from '../components/NetworkIndicator';
+import { AppLockProvider, useAppLock } from '../contexts/AppLockContext';
+import { DisplayScaleProvider } from '../contexts/DisplayScaleContext';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
+import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
+import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
+import AppLockScreen from './components/AppLockScreen';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
 import { AuthProvider, useAuth } from './context/auth';
+import { initializePushNotifications, pushNotificationService } from './services/pushNotifications';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -37,15 +44,101 @@ SplashScreen.preventAutoHideAsync();
 function RootLayoutNav() {
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
   const { isDark } = useTheme();
+  const { user } = useAuth();
+  const { isLocked, appLockEnabled, hasPinSet, checkHasPinSet } = useAppLock();
+  const router = useRouter();
+  const pushListenerRef = useRef<{ remove: () => void } | null>(null);
+
+  const APP_LOCK_REMINDER_KEY = '@grabdocs_app_lock_reminder_last_shown';
+  const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  // Register for push and send token to backend when user is logged in
+  useEffect(() => {
+    if (!user) return;
+    let mounted = true;
+    initializePushNotifications().then((token) => {
+      if (mounted && token) {
+        apiClient.registerPushToken(token).catch(() => {});
+      }
+    });
+    return () => { mounted = false; };
+  }, [user]);
+
+  // Remind user to set app lock PIN periodically until they do
+  useEffect(() => {
+    if (!user || hasPinSet) return;
+
+    const maybeShowReminder = async () => {
+      const pinSet = await checkHasPinSet();
+      if (pinSet) return;
+
+      try {
+        const lastStr = await AsyncStorage.getItem(APP_LOCK_REMINDER_KEY);
+        const lastShown = lastStr ? parseInt(lastStr, 10) : 0;
+        if (lastShown && Date.now() - lastShown < REMINDER_INTERVAL_MS) return;
+
+        Alert.alert(
+          'Set up app lock',
+          'For better security, set a PIN so your app locks 5 minutes after you leave it. You can unlock with Face ID, Touch ID, or your PIN.\n\nGo to Settings → App lock → Set PIN to get started.',
+          [
+            { text: 'Later' },
+            {
+              text: 'Open Settings',
+              onPress: () => router.push('/(tabs)/settings'),
+            },
+          ]
+        );
+        await AsyncStorage.setItem(APP_LOCK_REMINDER_KEY, String(Date.now()));
+      } catch {
+        // ignore storage/alert errors
+      }
+    };
+
+    const sub = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') maybeShowReminder();
+    });
+
+    // Show once on mount if they're logged in and no PIN (e.g. first open)
+    maybeShowReminder();
+
+    return () => sub.remove();
+  }, [user, hasPinSet, checkHasPinSet, router]);
+
+  // When user taps a push notification, open notifications screen or deep link
+  useEffect(() => {
+    pushNotificationService.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.screen === 'notifications' || data?.type === 'workspace_invite') {
+        router.push('/notifications');
+      } else if (data?.screen) {
+        try {
+          router.push(data.screen as any);
+        } catch {
+          router.push('/notifications');
+        }
+      } else {
+        router.push('/notifications');
+      }
+    }).then((subscription) => {
+      pushListenerRef.current = subscription;
+    });
+    return () => {
+      pushListenerRef.current?.remove();
+    };
+  }, [router]);
+
+  const showLock = !!user && appLockEnabled && isLocked;
 
   return (
     <>
+      {showLock && <AppLockScreen />}
       <StatusBar style={isDark ? "light" : "dark"} />
       {/* Persistent Network Indicator */}
       <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
         <NetworkIndicator compact persistent />
       </SafeAreaView>
       <View style={[styles.mainContainer, { backgroundColor: isDark ? '#151718' : '#fff' }]}>
+        <HeaderVisibilityProvider>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -53,6 +146,7 @@ function RootLayoutNav() {
           <Stack.Screen name="login-error" options={{ headerShown: false }} />
           <Stack.Screen name="analytics" options={{ headerShown: false }} />
           <Stack.Screen name="bookmarks" options={{ headerShown: false }} />
+          <Stack.Screen name="drafts" options={{ headerShown: false }} />
           <Stack.Screen name="documents" options={{ headerShown: false }} />
           <Stack.Screen name="forms" options={{ headerShown: false }} />
           <Stack.Screen name="quick-reach" options={{ headerShown: false }} />
@@ -60,7 +154,9 @@ function RootLayoutNav() {
           <Stack.Screen name="workspaces" options={{ headerShown: false }} />
           <Stack.Screen name="scanner" options={{ headerShown: false }} />
           <Stack.Screen name="public-upload" options={{ headerShown: false }} />
+          <Stack.Screen name="notifications" options={{ headerShown: false }} />
         </Stack>
+        </HeaderVisibilityProvider>
         <View style={styles.bottomNavContainer}>
           <PersistentBottomNavigation />
         </View>
@@ -180,11 +276,15 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <AuthProvider>
-            <Enhanced2FAAuthProvider>
-              <AuthWrapper />
-            </Enhanced2FAAuthProvider>
-          </AuthProvider>
+          <DisplayScaleProvider>
+            <AuthProvider>
+              <Enhanced2FAAuthProvider>
+                <AppLockProvider>
+                  <AuthWrapper />
+                </AppLockProvider>
+              </Enhanced2FAAuthProvider>
+            </AuthProvider>
+          </DisplayScaleProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

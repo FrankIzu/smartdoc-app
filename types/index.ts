@@ -71,12 +71,25 @@ export interface ChatMessage {
   file_references?: number[];
 }
 
+/** Citation/source item for assistant message references */
+export interface ChatCitation {
+  source_type?: string;
+  source_name?: string;
+  filename?: string;
+  excerpt?: string;
+  chunk_content?: string;
+  document_id?: number;
+  source_id?: string;
+}
+
 export interface ChatHistory {
   id: number;
   title: string;
   created_at: string;
   updated_at: string;
   messages: ChatMessage[];
+  /** References keyed by message_id (string). Merged into assistant messages for display. */
+  references?: Record<string, { citations?: ChatCitation[]; metadata?: any; timestamp?: string }>;
   persistent_context?: {
     context_file_ids?: number[];
     context_bookmark_ids?: number[];
