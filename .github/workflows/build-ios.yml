@@ -152,16 +152,17 @@ jobs:
           echo "Found IPA: $IPA"
           echo "Submitting iOS app to App Store Connect..."
           
-          # Backup app.json and create a minimal version without plugins for submission
-          # (Plugins are only needed for builds, not submission)
-          APP_JSON_BACKUP=$(cat app.json)
-          echo "Creating minimal app.json without plugins for submission..."
-          if command -v jq &> /dev/null; then
-            jq 'del(.expo.plugins)' app.json > app.json.tmp && mv app.json.tmp app.json
-            echo "✓ Removed plugins from app.json temporarily"
-          else
-            echo "⚠️ jq not available, skipping app.json modification"
-          fi
+          # EAS submit runs "npx expo config" which resolves plugins; that fails in CI.
+          # Use app.config.js (takes precedence over app.json) that exports config WITHOUT plugins.
+          echo "Creating app.config.js without plugins so EAS config resolution succeeds..."
+          node -e "
+            const fs = require('fs');
+            const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+            const expo = { ...app.expo };
+            delete expo.plugins;
+            fs.writeFileSync('app.config.js', 'module.exports = { expo: ' + JSON.stringify(expo, null, 2) + ' };');
+          "
+          echo "✓ app.config.js created (no plugins)"
           
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
@@ -183,17 +184,15 @@ jobs:
             SUBMIT_EXIT_CODE=$?
           fi
           
-          # Restore app.json
-          echo "$APP_JSON_BACKUP" > app.json
-          echo "✓ Restored original app.json"
+          # Remove temporary app.config.js so it is not committed
+          rm -f app.config.js
+          echo "✓ Removed temporary app.config.js"
           
           if [ $SUBMIT_EXIT_CODE -eq 0 ]; then
             echo "✅ Successfully submitted to App Store Connect!"
           else
             echo "❌ Submission failed with exit code $SUBMIT_EXIT_CODE"
             exit $SUBMIT_EXIT_CODE
-          fi
-          else
           fi
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
