@@ -119,6 +119,11 @@ jobs:
             echo "::error::No .ipa file found in artifact"
             exit 1
           fi
+          # Swap to plugin-free config so EAS submit doesn't resolve expo-dev-client
+          # (avoids "Failed to resolve plugin for module expo-dev-client")
+          cp app.config.js app.config.js.bak
+          cp app.config.submit.js app.config.js
+          trap 'mv -f app.config.js.bak app.config.js' EXIT
           echo "Submitting iOS app to App Store Connect..."
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
