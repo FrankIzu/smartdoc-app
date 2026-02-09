@@ -101,10 +101,18 @@ jobs:
 
       - name: Submit to App Store
         run: |
+          # Trim secrets (GitHub Secrets can have trailing newlines/spaces)
+          ASC_KEY_ID=$(printf '%s' "$ASC_KEY_ID" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          ASC_ISSUER_ID=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          ASC_KEY_P8_BASE64=$(printf '%s' "$ASC_KEY_P8_BASE64" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
           HAS_ASC=$([ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; echo $?)
           HAS_PASSWORD=$([ -n "$EXPO_APPLE_APP_SPECIFIC_PASSWORD" ]; echo $?)
           if [ "$HAS_ASC" -ne 0 ] && [ "$HAS_PASSWORD" -ne 0 ]; then
             echo "::error::No Apple credentials set. Add ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 or EXPO_APPLE_APP_SPECIFIC_PASSWORD to GitHub Secrets."
+            exit 1
+          fi
+          if [ -n "$ASC_ISSUER_ID" ] && [ "${#ASC_ISSUER_ID}" -lt 36 ]; then
+            echo "::error::ASC_ISSUER_ID must be a valid UUID (36 chars). Got length ${#ASC_ISSUER_ID}. Check repo Settings → Secrets → ASC_ISSUER_ID has no extra spaces/newlines."
             exit 1
           fi
           IPA=$(find . -maxdepth 5 -name "*.ipa" -type f 2>/dev/null | head -1)
