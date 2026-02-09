@@ -137,6 +137,7 @@ jobs:
           fi
           echo "✅ Successfully submitted to App Store Connect!"
         env:
+          CI: "true"
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
