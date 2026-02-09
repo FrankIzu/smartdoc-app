@@ -85,32 +85,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            eas.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Checking for package.json..."
-          ls -la package.json || echo "package.json not found!"
-          echo "Checking for app.json..."
-          ls -la app.json || echo "app.json not found!"
-          echo "Installing dependencies..."
-          npm ci
-          echo "Explicitly installing expo-dev-client to ensure it's available..."
-          npm install expo-dev-client@~6.0.20 --save-exact
-          echo "Installing @expo/config-plugins (required for plugin resolution)..."
-          npm install @expo/config-plugins@latest
-          echo "Installing @expo/config (required for expo config command)..."
-          npm install @expo/config@latest
-          echo "Verifying installations..."
-          npm list expo-dev-client @expo/config-plugins @expo/config || echo "Some packages may show warnings"
-          echo "Testing expo config with full output to diagnose issues..."
-          npx expo config --type public 2>&1 | head -50 || echo "expo config failed - will try to work around"
 
       - name: Download iOS artifact
         uses: actions/download-artifact@v4
@@ -119,29 +101,10 @@ jobs:
 
       - name: Submit to App Store
         run: |
-          echo "Working directory: $(pwd)"
-          echo "Project root contents:"
-          ls -la | head -20
-          echo ""
-          echo "Checking project files..."
-          [ -f "package.json" ] && echo "✓ package.json exists" || echo "✗ package.json missing"
-          [ -f "app.json" ] && echo "✓ app.json exists" || echo "✗ app.json missing"
-          [ -f "eas.json" ] && echo "✓ eas.json exists" || echo "✗ eas.json missing"
-          [ -d "node_modules" ] && echo "✓ node_modules exists" || echo "✗ node_modules missing"
-          [ -d "node_modules/expo-dev-client" ] && echo "✓ expo-dev-client installed" || echo "✗ expo-dev-client not found"
-          echo ""
-          # Trim secrets (GitHub Secrets can have trailing newlines/spaces)
-          ASC_KEY_ID=$(printf '%s' "$ASC_KEY_ID" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-          ASC_ISSUER_ID=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-          ASC_KEY_P8_BASE64=$(printf '%s' "$ASC_KEY_P8_BASE64" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
           HAS_ASC=$([ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; echo $?)
           HAS_PASSWORD=$([ -n "$EXPO_APPLE_APP_SPECIFIC_PASSWORD" ]; echo $?)
           if [ "$HAS_ASC" -ne 0 ] && [ "$HAS_PASSWORD" -ne 0 ]; then
             echo "::error::No Apple credentials set. Add ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 or EXPO_APPLE_APP_SPECIFIC_PASSWORD to GitHub Secrets."
-            exit 1
-          fi
-          if [ -n "$ASC_ISSUER_ID" ] && [ "${#ASC_ISSUER_ID}" -lt 36 ]; then
-            echo "::error::ASC_ISSUER_ID must be a valid UUID (36 chars). Got length ${#ASC_ISSUER_ID}. Check repo Settings → Secrets → ASC_ISSUER_ID has no extra spaces/newlines."
             exit 1
           fi
           IPA=$(find . -maxdepth 5 -name "*.ipa" -type f 2>/dev/null | head -1)
@@ -149,27 +112,7 @@ jobs:
             echo "::error::No .ipa file found in artifact"
             exit 1
           fi
-          echo "Found IPA: $IPA"
           echo "Submitting iOS app to App Store Connect..."
-          
-          # EAS submit runs "npx expo config" which resolves plugins; that fails in CI.
-          # Use app.config.js (takes precedence over app.json) that exports config WITHOUT plugins.
-          echo "Creating app.config.js without plugins so EAS config resolution succeeds..."
-          cat > /tmp/create-config.js << 'EOFJS'
-const fs = require('fs');
-const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-const expo = { ...app.expo };
-delete expo.plugins;
-const code = 'module.exports = ' + JSON.stringify({ expo }, null, 2) + ';';
-fs.writeFileSync('app.config.js', code);
-console.log('✓ app.config.js created (no plugins)');
-EOFJS
-          node /tmp/create-config.js
-          echo "Verifying app.config.js was created..."
-          ls -la app.config.js
-          echo "Testing that expo config can now load without plugin errors..."
-          npx expo config --type public 2>&1 | head -20 || echo "expo config test completed (may have warnings)"
-          
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
             echo "$ASC_KEY_P8_BASE64" | base64 -d > /tmp/asc-key.p8
@@ -180,26 +123,12 @@ EOFJS
               printf 'import json\nimport os\n\nwith open("eas.json", "r") as f:\n    config = json.load(f)\n\nconfig["submit"]["production"]["ios"]["ascApiKeyPath"] = "/tmp/asc-key.p8"\nconfig["submit"]["production"]["ios"]["ascApiKeyId"] = os.environ["ASC_KEY_ID"]\nconfig["submit"]["production"]["ios"]["ascApiKeyIssuerId"] = os.environ["ASC_ISSUER_ID"]\n\nwith open("eas.json", "w") as f:\n    json.dump(config, f, indent=2)\n' > /tmp/update_eas.py
               python3 /tmp/update_eas.py
             fi
-            echo "Running: npx eas-cli submit --platform ios --path \"$IPA\" --profile production --non-interactive"
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
-            SUBMIT_EXIT_CODE=$?
           else
             echo "Using app-specific password"
-            echo "Running: npx eas-cli submit --platform ios --path \"$IPA\" --profile production --non-interactive"
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
-            SUBMIT_EXIT_CODE=$?
           fi
-          
-          # Remove temporary app.config.js so it is not committed
-          rm -f app.config.js
-          echo "✓ Removed temporary app.config.js"
-          
-          if [ $SUBMIT_EXIT_CODE -eq 0 ]; then
-            echo "✅ Successfully submitted to App Store Connect!"
-          else
-            echo "❌ Submission failed with exit code $SUBMIT_EXIT_CODE"
-            exit $SUBMIT_EXIT_CODE
-          fi
+          echo "✅ Successfully submitted to App Store Connect!"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}

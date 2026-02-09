@@ -219,30 +219,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            eas.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Checking for package.json..."
-          ls -la package.json || echo "package.json not found!"
-          echo "Checking for app.json..."
-          ls -la app.json || echo "app.json not found!"
-          echo "Installing dependencies..."
-          npm ci
-          echo "Ensuring @expo/config-plugins is available (required for plugin resolution)..."
-          npm list @expo/config-plugins || npm install @expo/config-plugins@latest
-          echo "Verifying plugin packages are installed..."
-          npm list expo-dev-client expo-router expo-web-browser expo-build-properties || echo "Some plugins may be missing (will check during submit)"
-          echo "Verifying expo-dev-client installation..."
-          ls -la node_modules/expo-dev-client || echo "expo-dev-client not found in node_modules!"
-          echo "Testing expo config to ensure plugins can be resolved..."
-          npx expo config --type public > /dev/null 2>&1 && echo "✓ expo config works" || echo "⚠ expo config had issues (may still work for submit)"
 
       - name: Download Android artifact
         uses: actions/download-artifact@v4
@@ -251,17 +235,6 @@ jobs:
 
       - name: Submit to Google Play
         run: |
-          echo "Working directory: $(pwd)"
-          echo "Project root contents:"
-          ls -la | head -20
-          echo ""
-          echo "Checking project files..."
-          [ -f "package.json" ] && echo "✓ package.json exists" || echo "✗ package.json missing"
-          [ -f "app.json" ] && echo "✓ app.json exists" || echo "✗ app.json missing"
-          [ -f "eas.json" ] && echo "✓ eas.json exists" || echo "✗ eas.json missing"
-          [ -d "node_modules" ] && echo "✓ node_modules exists" || echo "✗ node_modules missing"
-          [ -d "node_modules/expo-dev-client" ] && echo "✓ expo-dev-client installed" || echo "✗ expo-dev-client not found"
-          echo ""
           if [ -z "$ANDROID_SERVICE_ACCOUNT_JSON" ]; then
             echo "::error::ANDROID_SERVICE_ACCOUNT_JSON not set. Add it to GitHub Secrets to enable auto-submit."
             exit 1
@@ -271,7 +244,6 @@ jobs:
             echo "::error::No .aab file found in artifact"
             exit 1
           fi
-          echo "Found AAB: $AAB"
           echo "Submitting Android app to Google Play Store..."
           SERVICE_ACCOUNT_PATH="/tmp/play-service-account.json"
           echo "$ANDROID_SERVICE_ACCOUNT_JSON" > "$SERVICE_ACCOUNT_PATH"
@@ -284,7 +256,6 @@ jobs:
             easJson.submit.production.android.track = '$PLAY_TRACK';
             fs.writeFileSync('eas.json', JSON.stringify(easJson, null, 2) + '\n');
           "
-          echo "Running: npx eas-cli submit --platform android --path \"$AAB\" --profile production --non-interactive"
           npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive
           echo "✅ Successfully submitted to Google Play Store!"
         env:
