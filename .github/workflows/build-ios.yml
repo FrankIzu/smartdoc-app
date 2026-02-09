@@ -85,11 +85,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            /*
-            !manager-francis
-          sparse-checkout-cone-mode: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -98,7 +93,22 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Checking for package.json..."
+          ls -la package.json || echo "package.json not found!"
+          echo "Checking for app.json..."
+          ls -la app.json || echo "app.json not found!"
+          echo "Installing dependencies..."
+          npm ci
+          echo "Ensuring @expo/config-plugins is available (required for plugin resolution)..."
+          npm list @expo/config-plugins || npm install @expo/config-plugins@latest
+          echo "Verifying plugin packages are installed..."
+          npm list expo-dev-client expo-router expo-web-browser expo-build-properties || echo "Some plugins may be missing (will check during submit)"
+          echo "Verifying expo-dev-client installation..."
+          ls -la node_modules/expo-dev-client || echo "expo-dev-client not found in node_modules!"
+          echo "Testing expo config to ensure plugins can be resolved..."
+          npx expo config --type public > /dev/null 2>&1 && echo "✓ expo config works" || echo "⚠ expo config had issues (may still work for submit)"
 
       - name: Download iOS artifact
         uses: actions/download-artifact@v4
@@ -107,6 +117,17 @@ jobs:
 
       - name: Submit to App Store
         run: |
+          echo "Working directory: $(pwd)"
+          echo "Project root contents:"
+          ls -la | head -20
+          echo ""
+          echo "Checking project files..."
+          [ -f "package.json" ] && echo "✓ package.json exists" || echo "✗ package.json missing"
+          [ -f "app.json" ] && echo "✓ app.json exists" || echo "✗ app.json missing"
+          [ -f "eas.json" ] && echo "✓ eas.json exists" || echo "✗ eas.json missing"
+          [ -d "node_modules" ] && echo "✓ node_modules exists" || echo "✗ node_modules missing"
+          [ -d "node_modules/expo-dev-client" ] && echo "✓ expo-dev-client installed" || echo "✗ expo-dev-client not found"
+          echo ""
           # Trim secrets (GitHub Secrets can have trailing newlines/spaces)
           ASC_KEY_ID=$(printf '%s' "$ASC_KEY_ID" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
           ASC_ISSUER_ID=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -126,6 +147,7 @@ jobs:
             echo "::error::No .ipa file found in artifact"
             exit 1
           fi
+          echo "Found IPA: $IPA"
           echo "Submitting iOS app to App Store Connect..."
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
@@ -137,9 +159,11 @@ jobs:
               printf 'import json\nimport os\n\nwith open("eas.json", "r") as f:\n    config = json.load(f)\n\nconfig["submit"]["production"]["ios"]["ascApiKeyPath"] = "/tmp/asc-key.p8"\nconfig["submit"]["production"]["ios"]["ascApiKeyId"] = os.environ["ASC_KEY_ID"]\nconfig["submit"]["production"]["ios"]["ascApiKeyIssuerId"] = os.environ["ASC_ISSUER_ID"]\n\nwith open("eas.json", "w") as f:\n    json.dump(config, f, indent=2)\n' > /tmp/update_eas.py
               python3 /tmp/update_eas.py
             fi
+            echo "Running: npx eas-cli submit --platform ios --path \"$IPA\" --profile production --non-interactive"
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
           else
             echo "Using app-specific password"
+            echo "Running: npx eas-cli submit --platform ios --path \"$IPA\" --profile production --non-interactive"
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
           fi
           echo "✅ Successfully submitted to App Store Connect!"
