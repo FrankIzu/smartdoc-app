@@ -155,14 +155,20 @@ jobs:
           # EAS submit runs "npx expo config" which resolves plugins; that fails in CI.
           # Use app.config.js (takes precedence over app.json) that exports config WITHOUT plugins.
           echo "Creating app.config.js without plugins so EAS config resolution succeeds..."
-          node -e "
-            const fs = require('fs');
-            const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-            const expo = { ...app.expo };
-            delete expo.plugins;
-            fs.writeFileSync('app.config.js', 'module.exports = { expo: ' + JSON.stringify(expo, null, 2) + ' };');
-          "
-          echo "✓ app.config.js created (no plugins)"
+          cat > /tmp/create-config.js << 'EOFJS'
+const fs = require('fs');
+const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+const expo = { ...app.expo };
+delete expo.plugins;
+const code = 'module.exports = ' + JSON.stringify({ expo }, null, 2) + ';';
+fs.writeFileSync('app.config.js', code);
+console.log('✓ app.config.js created (no plugins)');
+EOFJS
+          node /tmp/create-config.js
+          echo "Verifying app.config.js was created..."
+          ls -la app.config.js
+          echo "Testing that expo config can now load without plugin errors..."
+          npx expo config --type public 2>&1 | head -20 || echo "expo config test completed (may have warnings)"
           
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
