@@ -1,7 +1,7 @@
 # Build iOS app with EAS local (no EAS cloud charge).
 # Trigger: manual (workflow_dispatch) only. Deploy script triggers the selected platform (iOS or Android) via gh workflow run after push.
 # Requires: GitHub secret EXPO_TOKEN (Expo access token).
-# Auto-submit: Automatically submits to App Store Connect after successful production builds.
+# Auto-submit: Submit job runs after build; if it fails, re-run failed jobs to retry only submit.
 #   Requires: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (or EXPO_APPLE_APP_SPECIFIC_PASSWORD) in GitHub Secrets.
 # Runs on macOS (uses GitHub-hosted macOS runner).
 
@@ -78,8 +78,28 @@ jobs:
             *.ipa
           if-no-files-found: ignore
 
+  submit:
+    needs: build
+    runs-on: macos-latest
+    if: github.event.inputs.profile == 'production'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            eas.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download iOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-build
+
       - name: Submit to App Store
-        if: success() && github.event.inputs.profile == 'production'
         run: |
           HAS_ASC=$([ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; echo $?)
           HAS_PASSWORD=$([ -n "$EXPO_APPLE_APP_SPECIFIC_PASSWORD" ]; echo $?)
@@ -87,27 +107,22 @@ jobs:
             echo "::error::No Apple credentials set. Add ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 or EXPO_APPLE_APP_SPECIFIC_PASSWORD to GitHub Secrets."
             exit 1
           fi
-          IPA=$(find . -maxdepth 3 -name "*.ipa" -type f 2>/dev/null | head -1)
-          if [ -z "$IPA" ]; then 
-            echo "::error::No .ipa file found after build"
+          IPA=$(find . -maxdepth 5 -name "*.ipa" -type f 2>/dev/null | head -1)
+          if [ -z "$IPA" ]; then
+            echo "::error::No .ipa file found in artifact"
             exit 1
           fi
           echo "Submitting iOS app to App Store Connect..."
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
-            # Write the API key to a temporary file
             echo "$ASC_KEY_P8_BASE64" | base64 -d > /tmp/asc-key.p8
             chmod 600 /tmp/asc-key.p8
-            # Update eas.json to include ASC API key configuration (newer EAS CLI reads from eas.json)
-            # Use jq if available, otherwise use sed/python
             if command -v jq &> /dev/null; then
-              jq '.submit.production.ios.ascApiKeyPath = "/tmp/asc-key.p8" | .submit.production.ios.ascApiKeyId = "'"$ASC_KEY_ID"'" | .submit.production.ios.ascApiKeyIssuerId = "'"$ASC_ISSUER_ID"'"' eas.json > eas.json.tmp && mv eas.json.tmp eas.json
+              jq --arg path "/tmp/asc-key.p8" --arg kid "$ASC_KEY_ID" --arg iid "$ASC_ISSUER_ID" '.submit.production.ios.ascApiKeyPath = $path | .submit.production.ios.ascApiKeyId = $kid | .submit.production.ios.ascApiKeyIssuerId = $iid' eas.json > eas.json.tmp && mv eas.json.tmp eas.json
             else
-              # Fallback: use Python to update JSON
               printf 'import json\nimport os\n\nwith open("eas.json", "r") as f:\n    config = json.load(f)\n\nconfig["submit"]["production"]["ios"]["ascApiKeyPath"] = "/tmp/asc-key.p8"\nconfig["submit"]["production"]["ios"]["ascApiKeyId"] = os.environ["ASC_KEY_ID"]\nconfig["submit"]["production"]["ios"]["ascApiKeyIssuerId"] = os.environ["ASC_ISSUER_ID"]\n\nwith open("eas.json", "w") as f:\n    json.dump(config, f, indent=2)\n' > /tmp/update_eas.py
               python3 /tmp/update_eas.py
             fi
-            # Submit using the profile (credentials are read from eas.json)
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
           else
             echo "Using app-specific password"
@@ -122,7 +137,7 @@ jobs:
           EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.EXPO_APPLE_APP_SPECIFIC_PASSWORD }}
 
       - name: Send success email
-        if: success() && github.event.inputs.profile == 'production'
+        if: success()
         continue-on-error: true
         uses: dawidd6/action-send-mail@v3
         with:
@@ -135,7 +150,6 @@ jobs:
           from: ${{ secrets.SMTP_FROM }}
           body: |
             iOS build and deployment completed successfully!
-            
             Platform: iOS
             Profile: ${{ github.event.inputs.profile }}
             Workflow: ${{ github.workflow }}
@@ -143,11 +157,10 @@ jobs:
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
             Actor: ${{ github.actor }}
-            
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Send failure email
-        if: failure() && github.event.inputs.profile == 'production'
+        if: failure()
         continue-on-error: true
         uses: dawidd6/action-send-mail@v3
         with:
@@ -160,7 +173,6 @@ jobs:
           from: ${{ secrets.SMTP_FROM }}
           body: |
             iOS build or deployment failed!
-            
             Platform: iOS
             Profile: ${{ github.event.inputs.profile }}
             Workflow: ${{ github.workflow }}
@@ -168,7 +180,5 @@ jobs:
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
             Actor: ${{ github.actor }}
-            
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            
             Please check the workflow logs for details.

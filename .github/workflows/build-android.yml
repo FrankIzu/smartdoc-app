@@ -212,32 +212,41 @@ jobs:
             *.apk
           if-no-files-found: ignore
 
+  submit:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event.inputs.profile == 'production'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            eas.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-build
+
       - name: Submit to Google Play
-        if: success() && github.event.inputs.profile == 'production'
         run: |
           if [ -z "$ANDROID_SERVICE_ACCOUNT_JSON" ]; then
             echo "::error::ANDROID_SERVICE_ACCOUNT_JSON not set. Add it to GitHub Secrets to enable auto-submit."
             exit 1
           fi
-          # Find the EAS-generated AAB file (build-*.aab)
-          AAB=$(find . -maxdepth 3 -name "build-*.aab" -type f 2>/dev/null | head -1)
+          AAB=$(find . -maxdepth 5 -name "*.aab" -type f 2>/dev/null | head -1)
           if [ -z "$AAB" ]; then
-            # Fallback to any AAB if build-*.aab not found
-            AAB=$(find . -maxdepth 3 -name "*.aab" -type f 2>/dev/null | head -1)
-          fi
-          if [ -z "$AAB" ]; then 
-            echo "::error::No .aab file found after build"
+            echo "::error::No .aab file found in artifact"
             exit 1
           fi
           echo "Submitting Android app to Google Play Store..."
-          # Write service account JSON to temp file
           SERVICE_ACCOUNT_PATH="/tmp/play-service-account.json"
           echo "$ANDROID_SERVICE_ACCOUNT_JSON" > "$SERVICE_ACCOUNT_PATH"
-          
-          # Temporarily update eas.json to use the temp file and track
-          # Backup original eas.json
-          cp eas.json eas.json.backup
-          # Update serviceAccountKeyPath and track using Node.js
           PLAY_TRACK="${{ github.event.inputs.play_track || 'alpha' }}"
           echo "Submitting to Google Play track: $PLAY_TRACK"
           node -e "
@@ -247,20 +256,14 @@ jobs:
             easJson.submit.production.android.track = '$PLAY_TRACK';
             fs.writeFileSync('eas.json', JSON.stringify(easJson, null, 2) + '\n');
           "
-          
-          # Submit using eas.json configuration (track is set in eas.json above)
           npx eas-cli submit --platform android --path "$AAB" --profile production --non-interactive
-          
-          # Restore original eas.json
-          mv eas.json.backup eas.json
-          
           echo "✅ Successfully submitted to Google Play Store!"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ANDROID_SERVICE_ACCOUNT_JSON: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}
 
       - name: Send success email
-        if: success() && github.event.inputs.profile == 'production'
+        if: success()
         continue-on-error: true
         uses: dawidd6/action-send-mail@v3
         with:
@@ -273,7 +276,6 @@ jobs:
           from: ${{ secrets.SMTP_FROM }}
           body: |
             Android build and deployment completed successfully!
-            
             Platform: Android
             Profile: ${{ github.event.inputs.profile }}
             Workflow: ${{ github.workflow }}
@@ -281,11 +283,10 @@ jobs:
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
             Actor: ${{ github.actor }}
-            
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Send failure email
-        if: failure() && github.event.inputs.profile == 'production'
+        if: failure()
         continue-on-error: true
         uses: dawidd6/action-send-mail@v3
         with:
@@ -298,7 +299,6 @@ jobs:
           from: ${{ secrets.SMTP_FROM }}
           body: |
             Android build or deployment failed!
-            
             Platform: Android
             Profile: ${{ github.event.inputs.profile }}
             Workflow: ${{ github.workflow }}
@@ -306,7 +306,5 @@ jobs:
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
             Actor: ${{ github.actor }}
-            
             View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            
             Please check the workflow logs for details.
