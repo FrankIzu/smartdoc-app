@@ -101,14 +101,16 @@ jobs:
           ls -la app.json || echo "app.json not found!"
           echo "Installing dependencies..."
           npm ci
-          echo "Ensuring @expo/config-plugins is available (required for plugin resolution)..."
-          npm list @expo/config-plugins || npm install @expo/config-plugins@latest
-          echo "Verifying plugin packages are installed..."
-          npm list expo-dev-client expo-router expo-web-browser expo-build-properties || echo "Some plugins may be missing (will check during submit)"
-          echo "Verifying expo-dev-client installation..."
-          ls -la node_modules/expo-dev-client || echo "expo-dev-client not found in node_modules!"
-          echo "Testing expo config to ensure plugins can be resolved..."
-          npx expo config --type public > /dev/null 2>&1 && echo "✓ expo config works" || echo "⚠ expo config had issues (may still work for submit)"
+          echo "Explicitly installing expo-dev-client to ensure it's available..."
+          npm install expo-dev-client@~6.0.20 --save-exact
+          echo "Installing @expo/config-plugins (required for plugin resolution)..."
+          npm install @expo/config-plugins@latest
+          echo "Installing @expo/config (required for expo config command)..."
+          npm install @expo/config@latest
+          echo "Verifying installations..."
+          npm list expo-dev-client @expo/config-plugins @expo/config || echo "Some packages may show warnings"
+          echo "Testing expo config with full output to diagnose issues..."
+          npx expo config --type public 2>&1 | head -50 || echo "expo config failed - will try to work around"
 
       - name: Download iOS artifact
         uses: actions/download-artifact@v4
@@ -149,6 +151,18 @@ jobs:
           fi
           echo "Found IPA: $IPA"
           echo "Submitting iOS app to App Store Connect..."
+          
+          # Backup app.json and create a minimal version without plugins for submission
+          # (Plugins are only needed for builds, not submission)
+          APP_JSON_BACKUP=$(cat app.json)
+          echo "Creating minimal app.json without plugins for submission..."
+          if command -v jq &> /dev/null; then
+            jq 'del(.expo.plugins)' app.json > app.json.tmp && mv app.json.tmp app.json
+            echo "✓ Removed plugins from app.json temporarily"
+          else
+            echo "⚠️ jq not available, skipping app.json modification"
+          fi
+          
           if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8_BASE64" ]; then
             echo "Using App Store Connect API keys"
             echo "$ASC_KEY_P8_BASE64" | base64 -d > /tmp/asc-key.p8
@@ -161,12 +175,26 @@ jobs:
             fi
             echo "Running: npx eas-cli submit --platform ios --path \"$IPA\" --profile production --non-interactive"
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
+            SUBMIT_EXIT_CODE=$?
           else
             echo "Using app-specific password"
             echo "Running: npx eas-cli submit --platform ios --path \"$IPA\" --profile production --non-interactive"
             npx eas-cli submit --platform ios --path "$IPA" --profile production --non-interactive
+            SUBMIT_EXIT_CODE=$?
           fi
-          echo "✅ Successfully submitted to App Store Connect!"
+          
+          # Restore app.json
+          echo "$APP_JSON_BACKUP" > app.json
+          echo "✓ Restored original app.json"
+          
+          if [ $SUBMIT_EXIT_CODE -eq 0 ]; then
+            echo "✅ Successfully submitted to App Store Connect!"
+          else
+            echo "❌ Submission failed with exit code $SUBMIT_EXIT_CODE"
+            exit $SUBMIT_EXIT_CODE
+          fi
+          else
+          fi
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
