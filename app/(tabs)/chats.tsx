@@ -34,6 +34,7 @@ import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { secureStorage } from '../../utils/storage';
+import { useAuth } from '../context/auth';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
@@ -68,6 +69,8 @@ interface ChatMessage {
   sender: ChatParticipant | null;
   is_own_message: boolean;
   created_at: string;
+  /** Sender user id (for user/workspace chats). Used at render to determine left/right so alignment is correct even before profile loads. */
+  sender_id?: number | null;
   /** When true, message is preview/streaming placeholder - show in grey to indicate not final */
   is_preview?: boolean;
   /** Sources/citations used for this response (assistant messages) */
@@ -233,7 +236,8 @@ export default function ChatsScreen() {
   const params = useLocalSearchParams();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  
+  const { user: authUser } = useAuth();
+
   const [chats, setChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with ChatGD Assistant
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -245,6 +249,9 @@ export default function ChatsScreen() {
   const [isGoingBack, setIsGoingBack] = useState(false); // Track if user is going back to chat list
   const [userProfile, setUserProfile] = useState<any>(null); // User profile for determining is_own_message
   const userProfileRef = useRef<any>(null); // Ref to always have latest userProfile in WebSocket handlers
+  // Current user id: auth is available immediately; profile may load later. Used so sent messages always show on the right.
+  const currentUserIdRef = useRef<string | number | null>(null);
+  currentUserIdRef.current = authUser?.id ?? userProfile?.data?.id ?? userProfile?.id ?? userProfileRef.current?.data?.id ?? userProfileRef.current?.id ?? null;
   const recentlySentMessageIdsRef = useRef<Set<number>>(new Set()); // Track recently sent message IDs to prevent duplicates
   const lastMessageSentTimeRef = useRef<number>(0); // Track when last message was sent to prevent reload
   const lastLoadTimeRef = useRef<number>(0); // Track last load time to prevent excessive reloads
@@ -2804,21 +2811,25 @@ export default function ChatsScreen() {
             const response = await api.getChatMessages(chatId);
             if (response.success && (response as any).messages) {
               // Web chat.tsx returns: { success: true, messages: ChatMessage[] }
-              // Handle both formats: { id: ... } or { data: { id: ... } }
-              // Use ref to ensure we have latest value
-              const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
-              const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => ({
-                id: msg.id,
-                content: msg.content || '',
-                sender: msg.sender || null,
-                is_own_message: !!(userId && msg.sender_id && (msg.sender_id === userId || String(msg.sender_id) === String(userId))),
-                created_at: msg.created_at || new Date().toISOString(),
-                document_context: msg.metadata?.attachments?.[0] ? {
-                  id: msg.metadata.attachments[0].file_id,
-                  name: msg.metadata.attachments[0].name,
-                  type: msg.metadata.attachments[0].mimeType || 'other'
-                } : undefined
-              }));
+              // Use auth user id first (available immediately); fallback to profile so sent messages are always on the right on first open
+              const userId = currentUserIdRef.current ?? userProfileRef.current?.data?.id ?? userProfileRef.current?.id;
+              const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => {
+                const senderId = msg.sender_id != null ? msg.sender_id : null;
+                const isOwn = !!(userId != null && senderId != null && (senderId === userId || String(senderId) === String(userId)));
+                return {
+                  id: msg.id,
+                  content: msg.content || '',
+                  sender: msg.sender || null,
+                  is_own_message: isOwn,
+                  sender_id: senderId,
+                  created_at: msg.created_at || new Date().toISOString(),
+                  document_context: msg.metadata?.attachments?.[0] ? {
+                    id: msg.metadata.attachments[0].file_id,
+                    name: msg.metadata.attachments[0].name,
+                    type: msg.metadata.attachments[0].mimeType || 'other'
+                  } : undefined
+                };
+              });
               
               // Deduplicate messages before setting to prevent duplicate key errors
               const deduplicatedMessages = deduplicateMessages(convertedMessages);
@@ -4297,12 +4308,13 @@ export default function ChatsScreen() {
               content: newMsg.content,
               sender: newMsg.sender,
               is_own_message: true,
+              sender_id: (response as any).message?.sender_id ?? currentUserIdRef.current ?? undefined,
               created_at: newMsg.created_at || new Date().toISOString()
             }];
           });
           
           // Update chat list (set last_message_sender_id so unread badge stays hidden for sender)
-          const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
+          const userId = currentUserIdRef.current ?? userProfileRef.current?.data?.id ?? userProfileRef.current?.id;
           setChats(prev => prev.map(chat => 
             chat.id === selectedChat.id 
               ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString(), last_message_sender_id: userId ?? undefined }
@@ -4435,6 +4447,7 @@ export default function ChatsScreen() {
               content: newMsg.content,
               sender: newMsg.sender,
               is_own_message: true,
+              sender_id: (response as any).message?.sender_id ?? currentUserIdRef.current ?? undefined,
               created_at: newMsg.created_at || new Date().toISOString()
             }];
           });
@@ -6125,9 +6138,16 @@ export default function ChatsScreen() {
       selectedChat.type === 'bookmark_focused' ||
       selectedChat.type === 'ai_assistant'
     );
-    
-    // User messages always have bubbles
-    if (item.is_own_message) {
+    // For user/workspace chats: derive from sender_id vs current user so alignment is correct even before profile loads
+    const currentUserId = currentUserIdRef.current;
+    const isOwnMessage = isDocumentOrBookmarkChat
+      ? item.is_own_message
+      : (currentUserId != null && item.sender_id != null)
+        ? String(item.sender_id) === String(currentUserId)
+        : item.is_own_message;
+
+    // User messages always have bubbles (right); others on left
+    if (isOwnMessage) {
       return (
         <View style={[
           dynamicStyles.messageContainer,
@@ -6137,7 +6157,7 @@ export default function ChatsScreen() {
             dynamicStyles.messageBubble,
             dynamicStyles.ownBubble
           ]}>
-            {renderMessageContent(item.content, item.is_own_message, item.is_preview)}
+            {renderMessageContent(item.content, true, item.is_preview)}
             <Text style={[
               dynamicStyles.messageTime,
               dynamicStyles.ownMessageTime
@@ -6148,7 +6168,7 @@ export default function ChatsScreen() {
         </View>
       );
     } else {
-      // Assistant messages: no bubbles for document/bookmark/ai_assistant, bubbles for user/workspace
+      // Other person's messages (left side): no bubbles for document/bookmark/ai_assistant, bubbles for user/workspace
       const hasContent = item.content && item.content.trim().length > 0;
       // Check if this is the message being streamed by finding its index in the messages array
       const currentMessageIndex = messages.findIndex(m => m.id === item.id);
@@ -6184,7 +6204,7 @@ export default function ChatsScreen() {
                     />
                   )
                 : hasContent
-                  ? renderMessageContent(item.content, item.is_own_message, item.is_preview)
+                  ? renderMessageContent(item.content, false, item.is_preview)
                   : null}
               {showFooter && (
                 <ChatMessageFooter
@@ -6217,7 +6237,7 @@ export default function ChatsScreen() {
                 dynamicStyles.messageBubble,
                 dynamicStyles.otherBubble
               ]}>
-                {renderMessageContent(item.content, item.is_own_message, item.is_preview)}
+                {renderMessageContent(item.content, false, item.is_preview)}
               </View>
               {showFooter && (
                 <ChatMessageFooter

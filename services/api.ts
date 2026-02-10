@@ -190,6 +190,18 @@ const MOBILE_ENDPOINTS = {
   NOTIFICATION_MARK_ALL_READ: '/api/v1/mobile/notifications/mark-all-read',
   NOTIFICATION_CLEAR_ALL: '/api/v1/mobile/notifications/clear-all',
   
+  // File invites (draft/file – same web endpoints, user-level)
+  FILE_INVITES: '/api/v1/web/user/file-invites',
+  FILE_INVITE_ACCEPT: (shareId: number) => `/api/v1/web/user/file-invites/${shareId}/accept`,
+  FILE_INVITE_REJECT: (shareId: number) => `/api/v1/web/user/file-invites/${shareId}/reject`,
+  // Unified file-sharing (accept/reject + shared-with-me – same as web)
+  FILE_SHARING_ACCEPT: (shareId: number) => `/api/v1/web/file-sharing/accept-share/${shareId}`,
+  FILE_SHARING_REJECT: (shareId: number) => `/api/v1/web/file-sharing/reject-share/${shareId}`,
+
+  // Workspace invitations (from notification – same web endpoints)
+  WORKSPACE_INVITATION_ACCEPT: (invitationId: number) => `/api/v1/web/workspaces/invitations/${invitationId}/accept`,
+  WORKSPACE_INVITATION_REJECT: (invitationId: number) => `/api/v1/web/workspaces/invitations/${invitationId}/reject`,
+  
   // Push notifications (for when user is not in app)
   PUSH_TOKEN: '/api/v1/mobile/push-token',
   
@@ -981,8 +993,13 @@ class ApiService {
    * Get all external shares for a file
    */
   async getFileExternalShares(fileId: number): Promise<ApiResponse> {
-    const response = await this.client.get(`/api/v1/web/files/${fileId}/external-shares`);
-    return response.data;
+    try {
+      const response = await this.client.get(`/api/v1/web/files/${fileId}/external-shares`);
+      return response.data;
+    } catch (error: any) {
+      const msg = error?.response?.data?.message ?? error?.message;
+      throw new Error(typeof msg === 'string' ? msg : 'Failed to fetch external shares');
+    }
   }
 
   /**
@@ -3077,6 +3094,81 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to clear all notifications');
+    }
+  }
+
+  async getFileInvites(): Promise<ApiResponse & { file_invites?: Array<{
+    share_id: number;
+    file_id: number;
+    file_name: string;
+    is_draft: boolean;
+    role: string;
+    inviter_name: string;
+    message?: string;
+    created_at?: string;
+    expires_at?: string;
+  }> }> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.FILE_INVITES);
+      return response.data;
+    } catch (error: any) {
+      return { success: false, file_invites: [], message: error.response?.data?.message || 'Failed to get file invites' };
+    }
+  }
+
+  async acceptFileInvite(shareId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.FILE_INVITE_ACCEPT(shareId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to accept file invite');
+    }
+  }
+
+  async rejectFileInvite(shareId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.FILE_INVITE_REJECT(shareId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to reject file invite');
+    }
+  }
+
+  /** Unified file-sharing: accept share (internal or external). Use for draft_invite/file_invite notifications. */
+  async acceptFileShare(shareId: number): Promise<ApiResponse & { file_id?: number }> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.FILE_SHARING_ACCEPT(shareId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to accept share');
+    }
+  }
+
+  /** Unified file-sharing: reject share (internal or external). */
+  async rejectFileShare(shareId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.FILE_SHARING_REJECT(shareId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to reject share');
+    }
+  }
+
+  async acceptWorkspaceInvitation(invitationId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WORKSPACE_INVITATION_ACCEPT(invitationId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to accept workspace invitation');
+    }
+  }
+
+  async rejectWorkspaceInvitation(invitationId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WORKSPACE_INVITATION_REJECT(invitationId));
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to reject workspace invitation');
     }
   }
 

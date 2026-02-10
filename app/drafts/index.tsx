@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { toAlertMessage } from '../../utils/alertUtils';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -126,10 +127,10 @@ export default function DraftsListScreen() {
       if (res?.success && (res as any).draft?.id) {
         router.push(`/drafts/edit/${(res as any).draft.id}`);
       } else {
-        Alert.alert('Error', (res as any)?.message || 'Failed to create draft');
+        Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to create draft'));
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to create draft');
+      Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to create draft'));
     } finally {
       setCreating(false);
     }

@@ -26,6 +26,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
+import { useAuth } from './context/auth';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService as api } from '../services/api';
 import { secureStorage } from '../utils/storage';
@@ -63,6 +64,8 @@ interface ChatMessage {
   sender: ChatParticipant | null;
   is_own_message: boolean;
   created_at: string;
+  /** Sender user id; used at render so sent messages always show on the right even before profile loads */
+  sender_id?: number | null;
 }
 
 export default function UserChatScreen() {
@@ -70,7 +73,8 @@ export default function UserChatScreen() {
   const params = useLocalSearchParams();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  
+  const { user: authUser } = useAuth();
+
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -80,6 +84,8 @@ export default function UserChatScreen() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const currentUserIdRef = useRef<string | number | null>(null);
+  currentUserIdRef.current = authUser?.id ?? userProfile?.id ?? null;
   const [searchQuery, setSearchQuery] = useState('');
   const [users, setUsers] = useState<ChatParticipant[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -290,23 +296,15 @@ export default function UserChatScreen() {
           setUserProfile(currentProfile => {
             // Only add to messages if this is the currently selected chat
             if (data.chat_id === currentChat?.id) {
-              // Check if this message is from the current user
-              const isOwnMessage = !!(currentProfile?.id && data.message.sender_id && data.message.sender_id === currentProfile.id);
-              
-              console.log('🔍 [USER-CHAT] Message ownership check:', {
-                chat_id: data.chat_id,
-                current_chat_id: currentChat?.id,
-                sender_id: data.message.sender_id,
-                userProfile_id: currentProfile?.id,
-                isOwnMessage,
-                message_id: data.message.id
-              });
-              
+              const senderId = data.message.sender_id != null ? data.message.sender_id : null;
+              const userId = currentUserIdRef.current ?? currentProfile?.id;
+              const isOwnMessage = !!(userId != null && senderId != null && (String(senderId) === String(userId) || Number(senderId) === Number(userId)));
               const newMsg: ChatMessage = {
                 id: data.message.id,
                 content: data.message.content,
                 sender: data.message.sender,
                 is_own_message: isOwnMessage,
+                sender_id: senderId,
                 created_at: data.message.created_at,
               };
               
@@ -737,26 +735,17 @@ export default function UserChatScreen() {
       
       const response = await api.getChatMessages(chatId);
       if (response.success && (response as any).messages) {
+        // Use auth user id first (available immediately) so sent messages are always on the right on first open
+        const userId = currentUserIdRef.current ?? userProfile?.id;
         const convertedMessages: ChatMessage[] = (response as any).messages.map((msg: any) => {
-          // Use the same logic as sendMessageToChat for consistency
-          // Convert both to numbers for comparison in case one is string and other is number
-          const isOwnMessage = !!(userProfile?.id && msg.sender_id && Number(msg.sender_id) === Number(userProfile.id));
-          
-          console.log(`🔍 Message ${msg.id} ownership check:`, {
-            sender_id: msg.sender_id,
-            sender_id_type: typeof msg.sender_id,
-            userProfile_id: userProfile?.id,
-            userProfile_id_type: typeof userProfile?.id,
-            isOwnMessage,
-            comparison: `${msg.sender_id} === ${userProfile?.id}`,
-            numberComparison: `${Number(msg.sender_id)} === ${Number(userProfile?.id)}`
-          });
-          
+          const senderId = msg.sender_id != null ? msg.sender_id : null;
+          const isOwn = !!(userId != null && senderId != null && (Number(senderId) === Number(userId) || String(senderId) === String(userId)));
           return {
             id: msg.id,
             content: msg.content || '',
             sender: msg.sender || null,
-            is_own_message: isOwnMessage,
+            is_own_message: isOwn,
+            sender_id: senderId,
             created_at: msg.created_at || new Date().toISOString(),
           };
         });
@@ -942,28 +931,16 @@ export default function UserChatScreen() {
       
       if (response.success && (response as any).message) {
         const newMsg = (response as any).message;
-        // Use the same logic as loadMessages to determine is_own_message
-        // This ensures consistency between sent messages and loaded messages
-        // Convert both to numbers for comparison in case one is string and other is number
-        const isOwnMessage = !!(userProfile?.id && newMsg.sender_id && Number(newMsg.sender_id) === Number(userProfile.id));
+        const userId = currentUserIdRef.current ?? userProfile?.id;
+        const isOwnMessage = !!(userId != null && newMsg.sender_id != null && (Number(newMsg.sender_id) === Number(userId) || String(newMsg.sender_id) === String(userId)));
         const messageObj: ChatMessage = {
           id: newMsg.id,
           content: newMsg.content,
           sender: newMsg.sender,
           is_own_message: isOwnMessage,
+          sender_id: newMsg.sender_id ?? (userId != null ? Number(userId) : undefined),
           created_at: newMsg.created_at || new Date().toISOString()
         };
-        
-        console.log('📤 Sent message ownership check:', {
-          sender_id: newMsg.sender_id,
-          sender_id_type: typeof newMsg.sender_id,
-          userProfile_id: userProfile?.id,
-          userProfile_id_type: typeof userProfile?.id,
-          isOwnMessage,
-          message_id: newMsg.id,
-          comparison: `${newMsg.sender_id} === ${userProfile?.id}`,
-          numberComparison: `${Number(newMsg.sender_id)} === ${Number(userProfile?.id)}`
-        });
         
         // Add message locally (socket will also broadcast it, but we prevent duplicates)
         setMessages(prev => {
@@ -1827,23 +1804,28 @@ export default function UserChatScreen() {
                 <SectionList
                   ref={messagesListRef}
                   sections={messageSections}
-                  renderItem={({ item }) => (
-                    <View style={[dynamicStyles.messageItem, item.is_own_message ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
+                  renderItem={({ item }) => {
+                    const isOwnMessage = (currentUserIdRef.current != null && item.sender_id != null)
+                      ? String(item.sender_id) === String(currentUserIdRef.current)
+                      : item.is_own_message;
+                    return (
+                    <View style={[dynamicStyles.messageItem, isOwnMessage ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
                       <View style={{ maxWidth: '75%' }}>
-                        {!item.is_own_message && item.sender && (
+                        {!isOwnMessage && item.sender && (
                           <Text style={dynamicStyles.senderName}>{item.sender.username}</Text>
                         )}
-                        <View style={[dynamicStyles.messageBubble, item.is_own_message ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
-                          <Text style={[dynamicStyles.messageText, item.is_own_message ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
+                        <View style={[dynamicStyles.messageBubble, isOwnMessage ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
+                          <Text style={[dynamicStyles.messageText, isOwnMessage ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
                             {item.content}
                           </Text>
-                          <Text style={[dynamicStyles.messageTime, item.is_own_message ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
+                          <Text style={[dynamicStyles.messageTime, isOwnMessage ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
                             {formatMessageTime(item.created_at)}
                           </Text>
                         </View>
                       </View>
                     </View>
-                  )}
+                    );
+                  }}
                   keyExtractor={(item) => item.id.toString()}
                   renderSectionHeader={({ section: { title } }) => (
                     <View style={dynamicStyles.messageDateSectionHeader}>
@@ -1954,23 +1936,28 @@ export default function UserChatScreen() {
                 <SectionList
                   ref={messagesListRef}
                   sections={messageSections}
-                  renderItem={({ item }) => (
-                    <View style={[dynamicStyles.messageItem, item.is_own_message ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
+                  renderItem={({ item }) => {
+                    const isOwnMessage = (currentUserIdRef.current != null && item.sender_id != null)
+                      ? String(item.sender_id) === String(currentUserIdRef.current)
+                      : item.is_own_message;
+                    return (
+                    <View style={[dynamicStyles.messageItem, isOwnMessage ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
                       <View style={{ maxWidth: '75%' }}>
-                        {!item.is_own_message && item.sender && (
+                        {!isOwnMessage && item.sender && (
                           <Text style={dynamicStyles.senderName}>{item.sender.username}</Text>
                         )}
-                        <View style={[dynamicStyles.messageBubble, item.is_own_message ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
-                          <Text style={[dynamicStyles.messageText, item.is_own_message ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
+                        <View style={[dynamicStyles.messageBubble, isOwnMessage ? dynamicStyles.myMessageBubble : dynamicStyles.otherMessageBubble]}>
+                          <Text style={[dynamicStyles.messageText, isOwnMessage ? dynamicStyles.myMessageText : dynamicStyles.otherMessageText]}>
                             {item.content}
                           </Text>
-                          <Text style={[dynamicStyles.messageTime, item.is_own_message ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
+                          <Text style={[dynamicStyles.messageTime, isOwnMessage ? dynamicStyles.myMessageTime : dynamicStyles.otherMessageTime]}>
                             {formatMessageTime(item.created_at)}
                           </Text>
                         </View>
                       </View>
                     </View>
-                  )}
+                    );
+                  }}
                   keyExtractor={(item) => item.id.toString()}
                   renderSectionHeader={({ section: { title } }) => (
                     <View style={dynamicStyles.messageDateSectionHeader}>

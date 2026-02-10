@@ -26,6 +26,7 @@ import LoadingDots from '../../components/LoadingDots';
 import QuickFormViewer from '../../components/QuickFormViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { toAlertMessage } from '../../utils/alertUtils';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
 import { removeFileExtension } from '../../utils/fileUtils';
@@ -71,7 +72,21 @@ interface ApiDocument {
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
-type FilterOption = 'all' | 'documents' | 'receipts' | 'forms' | 'transcripts' | 'invoice' | 'meeting_notes' | 'meeting_chat' | 'meeting_summary' | 'draft' | 'spreadsheet' | 'picture' | 'pending' | 'unknown';
+type FilterOption =
+  | 'all'
+  | 'documents'
+  | 'receipts'
+  | 'forms'
+  | 'transcripts'
+  | 'invoice'
+  | 'meeting_notes'
+  | 'meeting_chat'
+  | 'meeting_summary'
+  | 'draft'
+  | 'spreadsheet'
+  | 'picture'
+  | 'pending'
+  | 'unknown';
 
 // Helper to check if a file is editable as Draft (text-like formats)
 function isEditableTextFormat(file: Document | { original_filename?: string; filename?: string; file_kind?: string }): boolean {
@@ -427,7 +442,7 @@ export default function QuickFilesScreen() {
     if (documents.length > 0) {
       categoryCounts.set('all', documents.length);
     }
-    
+
     // Count files by category
     documents.forEach(doc => {
       // Check for pending status first
@@ -815,7 +830,7 @@ export default function QuickFilesScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadDocuments(true); // Force refresh
+    await loadDocuments(true);
     setRefreshing(false);
   }, [loadDocuments]);
 
@@ -1385,10 +1400,10 @@ export default function QuickFilesScreen() {
         const draftId = (res as any).draft.id;
         router.push(`/drafts/edit/${draftId}`);
       } else {
-        Alert.alert('Error', (res as any)?.message || 'Failed to create Draft');
+        Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to create Draft'));
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.message || e?.message || 'Failed to create Draft');
+      Alert.alert('Error', toAlertMessage(e?.response?.data?.message ?? e?.message, 'Failed to create Draft'));
     }
   };
 
@@ -1437,10 +1452,10 @@ export default function QuickFilesScreen() {
         setMakeGlobalDocument(null);
         loadDocuments(true);
       } else {
-        Alert.alert('Error', (res as any)?.message || 'Failed to update workspace visibility');
+        Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to update workspace visibility'));
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to update workspace visibility');
+      Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to update workspace visibility'));
     } finally {
       setMakeGlobalSaving(false);
     }
@@ -1567,14 +1582,15 @@ export default function QuickFilesScreen() {
     >
       <DocumentIcon item={item} />
       
-        <View style={dynamicStyles.documentInfo}>
+      <View style={dynamicStyles.documentInfo}>
         <Text style={dynamicStyles.documentName} numberOfLines={1} ellipsizeMode="tail">
-            {item.name}
-          </Text>
+          {item.name}
+        </Text>
         <View style={dynamicStyles.documentMetaRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', flex: 1 }}>
             <Text style={dynamicStyles.documentMeta}>
-              {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}{item.size} • {item.uploadDate.toLocaleDateString()}
+              {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}
+              {item.size} • {item.uploadDate.toLocaleDateString()}
             </Text>
             {item.is_global && (
               <Ionicons name="globe-outline" size={12} color={colors.tint} style={{ marginLeft: 4 }} />
@@ -1589,18 +1605,18 @@ export default function QuickFilesScreen() {
             </Text>
           )}
         </View>
-        </View>
-        
-        {/* Kebab Menu Button */}
-        <TouchableOpacity
-          style={dynamicStyles.kebabButton}
-          onPress={(event) => {
-            event.stopPropagation();
-            handleKebabMenuPress(item, event);
-          }}
-        >
-          <Ionicons name="ellipsis-vertical" size={20} color="#666" />
-        </TouchableOpacity>
+      </View>
+      
+      {/* Kebab Menu Button */}
+      <TouchableOpacity
+        style={dynamicStyles.kebabButton}
+        onPress={(event) => {
+          event.stopPropagation();
+          handleKebabMenuPress(item, event);
+        }}
+      >
+        <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 
@@ -2273,7 +2289,7 @@ export default function QuickFilesScreen() {
       <FlatList
         data={filteredAndSortedDocuments}
         renderItem={renderDocument}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => (item as Document).id}
         style={dynamicStyles.documentsList}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
@@ -2290,7 +2306,7 @@ export default function QuickFilesScreen() {
               }
             </Text>
             {!searchQuery && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={dynamicStyles.uploadButton}
                 onPress={handleUploadFromFiles}
               >

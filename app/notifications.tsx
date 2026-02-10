@@ -34,6 +34,8 @@ export interface AppNotification {
     file_name?: string;
     sender_name?: string;
     invitation_id?: number;
+    inviter_name?: string;
+    role?: string;
     [key: string]: any;
   };
 }
@@ -47,6 +49,8 @@ export default function NotificationsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingId, setMarkingId] = useState<number | null>(null);
+  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
+  const [actionTaken, setActionTaken] = useState<Record<number, 'accepted' | 'rejected'>>({});
 
   const loadNotifications = useCallback(async () => {
     if (!user) return;
@@ -116,6 +120,7 @@ export default function NotificationsScreen() {
 
   const handleNotificationPress = useCallback(
     (n: AppNotification) => {
+      if (n.metadata?.has_actions) return;
       if (!n.read) markAsRead(n.id);
       const path =
         n.metadata?.navigation_path
@@ -132,6 +137,158 @@ export default function NotificationsScreen() {
       }
     },
     [markAsRead, router]
+  );
+
+  const handleAcceptFileInvite = useCallback(
+    async (n: AppNotification) => {
+      const shareId = n.metadata?.share_id;
+      if (shareId == null) return;
+      const key = `accept_file_invite_${n.id}`;
+      setActionLoading((prev) => ({ ...prev, [key]: true }));
+      try {
+        await apiClient.acceptFileShare(shareId);
+        try {
+          await apiClient.markNotificationRead(n.id);
+        } catch {
+          // Best-effort: home badge will refresh on next dashboard load
+        }
+        setActionTaken((prev) => ({ ...prev, [n.id]: 'accepted' }));
+        setNotifications((prev) =>
+          prev.map((n2) => (n2.id === n.id ? { ...n2, read: true } : n2))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setTimeout(() => {
+          setNotifications((prev) => prev.filter((n2) => n2.id !== n.id));
+          setActionTaken((prev) => {
+            const next = { ...prev };
+            delete next[n.id];
+            return next;
+          });
+          // Open Files tab so user sees the accepted file
+          router.push('/(tabs)/documents');
+        }, 800);
+      } catch (err: any) {
+        alert(err?.message || 'Failed to accept invite');
+      } finally {
+        setActionLoading((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    [router]
+  );
+
+  const handleRejectFileInvite = useCallback(
+    async (n: AppNotification) => {
+      const shareId = n.metadata?.share_id;
+      if (shareId == null) return;
+      const key = `reject_file_invite_${n.id}`;
+      setActionLoading((prev) => ({ ...prev, [key]: true }));
+      try {
+        await apiClient.rejectFileShare(shareId);
+        try {
+          await apiClient.markNotificationRead(n.id);
+        } catch {
+          // Best-effort: home badge will refresh on next dashboard load
+        }
+        setActionTaken((prev) => ({ ...prev, [n.id]: 'rejected' }));
+        setNotifications((prev) =>
+          prev.map((n2) => (n2.id === n.id ? { ...n2, read: true } : n2))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setTimeout(() => {
+          setNotifications((prev) => prev.filter((n2) => n2.id !== n.id));
+          setActionTaken((prev) => {
+            const next = { ...prev };
+            delete next[n.id];
+            return next;
+          });
+        }, 800);
+      } catch (err: any) {
+        alert(err?.message || 'Failed to reject invite');
+      } finally {
+        setActionLoading((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    []
+  );
+
+  const isDraftOrFileInvite = (n: AppNotification) =>
+    (n.type === 'draft_invite' || n.type === 'file_invite' || n.type === 'file_received' ||
+      n.metadata?.action_type === 'draft_invite' || n.metadata?.action_type === 'file_invite' || n.metadata?.action_type === 'file_share') &&
+    n.metadata?.share_id != null;
+
+  const isWorkspaceInvitation = (n: AppNotification) =>
+    (n.type === 'workspace_invite' ||
+      n.metadata?.action_type === 'workspace_invitation') &&
+    n.metadata?.invitation_id != null;
+
+  const handleAcceptWorkspaceInvitation = useCallback(
+    async (n: AppNotification) => {
+      const invitationId = n.metadata?.invitation_id;
+      if (invitationId == null) return;
+      const key = `accept_workspace_${n.id}`;
+      setActionLoading((prev) => ({ ...prev, [key]: true }));
+      try {
+        await apiClient.acceptWorkspaceInvitation(invitationId);
+        try {
+          await apiClient.markNotificationRead(n.id);
+        } catch {
+          // Best-effort: home badge will refresh on next dashboard load
+        }
+        setActionTaken((prev) => ({ ...prev, [n.id]: 'accepted' }));
+        setNotifications((prev) =>
+          prev.map((n2) => (n2.id === n.id ? { ...n2, read: true } : n2))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setTimeout(() => {
+          setNotifications((prev) => prev.filter((n2) => n2.id !== n.id));
+          setActionTaken((prev) => {
+            const next = { ...prev };
+            delete next[n.id];
+            return next;
+          });
+        }, 800);
+      } catch (err: any) {
+        alert(err?.message || 'Failed to accept workspace invitation');
+      } finally {
+        setActionLoading((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    []
+  );
+
+  const handleRejectWorkspaceInvitation = useCallback(
+    async (n: AppNotification) => {
+      const invitationId = n.metadata?.invitation_id;
+      if (invitationId == null) return;
+      const key = `reject_workspace_${n.id}`;
+      setActionLoading((prev) => ({ ...prev, [key]: true }));
+      try {
+        await apiClient.rejectWorkspaceInvitation(invitationId);
+        try {
+          await apiClient.markNotificationRead(n.id);
+        } catch {
+          // Best-effort: home badge will refresh on next dashboard load
+        }
+        setActionTaken((prev) => ({ ...prev, [n.id]: 'rejected' }));
+        setNotifications((prev) =>
+          prev.map((n2) => (n2.id === n.id ? { ...n2, read: true } : n2))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setTimeout(() => {
+          setNotifications((prev) => prev.filter((n2) => n2.id !== n.id));
+          setActionTaken((prev) => {
+            const next = { ...prev };
+            delete next[n.id];
+            return next;
+          });
+        }, 800);
+      } catch (err: any) {
+        alert(err?.message || 'Failed to reject workspace invitation');
+      } finally {
+        setActionLoading((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    []
   );
 
   const dynamicStyles = StyleSheet.create({
@@ -282,6 +439,70 @@ export default function NotificationsScreen() {
                         })
                       : ''}
                   </Text>
+                  {actionTaken[n.id] ? (
+                    <Text
+                      style={[
+                        dynamicStyles.time,
+                        {
+                          marginTop: 4,
+                          color: actionTaken[n.id] === 'accepted' ? '#34C759' : '#FF3B30',
+                          fontWeight: '600',
+                        },
+                      ]}
+                    >
+                      {actionTaken[n.id] === 'accepted' ? '✓ Accepted' : '✗ Rejected'}
+                    </Text>
+                  ) : isDraftOrFileInvite(n) ? (
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => handleAcceptFileInvite(n)}
+                        disabled={actionLoading[`accept_file_invite_${n.id}`]}
+                        style={[styles.actionBtn, { backgroundColor: '#34C759' }]}
+                      >
+                        {actionLoading[`accept_file_invite_${n.id}`] ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Ionicons name="checkmark" size={18} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleRejectFileInvite(n)}
+                        disabled={actionLoading[`reject_file_invite_${n.id}`]}
+                        style={[styles.actionBtn, { backgroundColor: '#FF3B30' }]}
+                      >
+                        {actionLoading[`reject_file_invite_${n.id}`] ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Ionicons name="close" size={18} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ) : isWorkspaceInvitation(n) ? (
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => handleAcceptWorkspaceInvitation(n)}
+                        disabled={actionLoading[`accept_workspace_${n.id}`]}
+                        style={[styles.actionBtn, { backgroundColor: '#34C759' }]}
+                      >
+                        {actionLoading[`accept_workspace_${n.id}`] ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Ionicons name="checkmark" size={18} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleRejectWorkspaceInvitation(n)}
+                        disabled={actionLoading[`reject_workspace_${n.id}`]}
+                        style={[styles.actionBtn, { backgroundColor: '#FF3B30' }]}
+                      >
+                        {actionLoading[`reject_workspace_${n.id}`] ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Ionicons name="close" size={18} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                 </View>
                 {!n.read && (
                   <View style={styles.unreadDot}>
@@ -306,6 +527,13 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   emptyContainer: { flexGrow: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  actionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   unreadDot: {
     width: 24,
     alignItems: 'center',

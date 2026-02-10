@@ -430,8 +430,14 @@ export function getNotificationScreen(data: Record<string, any>): string {
     case 'form_response':
       return '/(tabs)/documents';
     case 'workspace_invite':
+      // Navigate to notifications so user can Accept/Reject workspace invitation inline
+      return '/notifications';
     case 'workspace_update':
       return '/workspaces';
+    case 'draft_invite':
+    case 'file_invite':
+      // Navigate to notifications so user can Accept/Reject inline
+      return '/notifications';
     case 'upload_link_expiring':
       return '/upload-links';
     default:

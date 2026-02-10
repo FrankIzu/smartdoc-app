@@ -25,6 +25,7 @@ import { API_BASE_URL, STORAGE_KEYS } from '../../../constants/Config';
 import { useHeaderVisibility } from '../../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiClient } from '../../../services/api';
+import { toAlertMessage } from '../../../utils/alertUtils';
 import { secureStorage } from '../../../utils/storage';
 import { AnimatedHeaderContainer } from '../../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../../components/TapToToggleHeaderView';
@@ -149,8 +150,10 @@ export default function DraftEditScreen() {
       if ((res as any)?.success) {
         setExternalShares((res as any).shares || []);
       }
-    } catch (e) {
-      console.error('Failed to load external shares:', e);
+    } catch (e: any) {
+      // Only pass strings to console - passing objects can cause "cannot be cast to String" native crash
+      const msg = e?.message ?? (typeof e?.response?.data?.message === 'string' ? e.response.data.message : null) ?? 'Unknown error';
+      console.error('Failed to load external shares:', msg);
     } finally {
       setLoadingShares(false);
     }
@@ -180,10 +183,10 @@ export default function DraftEditScreen() {
                   }
                 }
               } else {
-                Alert.alert('Error', (res as any)?.message || 'Failed to revoke share link');
+                Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to revoke share link'));
               }
             } catch (e: any) {
-              Alert.alert('Error', e?.message || 'Failed to revoke share link');
+              Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to revoke share link'));
             }
           },
         },
@@ -208,10 +211,10 @@ export default function DraftEditScreen() {
                 Alert.alert('Success', 'Share link deleted');
                 loadExternalShares();
               } else {
-                Alert.alert('Error', (res as any)?.message || 'Failed to delete share link');
+                Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to delete share link'));
               }
             } catch (e: any) {
-              Alert.alert('Error', e?.message || 'Failed to delete share link');
+              Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to delete share link'));
             }
           },
         },
@@ -285,7 +288,7 @@ export default function DraftEditScreen() {
         }
       } catch (e: any) {
         if (!cancelled) {
-          Alert.alert('Error', e?.message || 'Failed to load draft', [{ text: 'OK', onPress: () => router.back() }]);
+          Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to load draft'), [{ text: 'OK', onPress: () => router.back() }]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -348,8 +351,8 @@ export default function DraftEditScreen() {
         });
 
         socketRef.current = socket;
-      } catch (e) {
-        console.warn('Draft socket init failed:', e);
+      } catch (e: any) {
+        console.warn('Draft socket init failed:', typeof e?.message === 'string' ? e.message : 'Unknown error');
       }
     })();
 
@@ -412,7 +415,7 @@ export default function DraftEditScreen() {
       if (e?.message?.includes('409') || (e?.response?.status === 409)) {
         Alert.alert('Someone else is editing', 'Your changes were not saved. Someone else is editing this draft.');
       } else {
-        Alert.alert('Error', e?.message || 'Failed to save draft');
+        Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to save draft'));
       }
     } finally {
       setSaving(false);
@@ -640,7 +643,7 @@ export default function DraftEditScreen() {
       setFilename(name);
       initialFilenameRef.current = name;
     } catch (e: any) {
-      Alert.alert('Rename failed', e?.message || 'Could not rename draft');
+      Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename draft'));
     }
   }, [draftId, filename]);
 
@@ -678,10 +681,10 @@ export default function DraftEditScreen() {
         setShowShareModal(false);
         setShowSendLinkModal(true);
       } else {
-        Alert.alert('Error', (res as any)?.message || 'Failed to create link');
+        Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to create link'));
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to create link');
+      Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to create link'));
     } finally {
       setLinkLoading(false);
     }
@@ -723,7 +726,7 @@ export default function DraftEditScreen() {
       setShareMessage('');
       setShowSendLinkModal(false);
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to send email');
+      Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to send email'));
     } finally {
       setSendingEmail(false);
     }
