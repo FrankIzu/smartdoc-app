@@ -184,7 +184,6 @@ export default function DraftsListScreen() {
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
-    itemIcon: { marginRight: 12 },
     itemContent: { flex: 1, minWidth: 0 },
     itemTitle: { fontSize: 16, fontWeight: '600', color: colors.text },
     itemSubtitle: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
@@ -323,9 +322,6 @@ export default function DraftsListScreen() {
                   onPress={() => handleOpenDraft(draft)}
                   activeOpacity={0.7}
                 >
-                  <View style={dynamicStyles.itemIcon}>
-                    <Ionicons name="create-outline" size={24} color="#34C759" />
-                  </View>
                   <View style={dynamicStyles.itemContent}>
                     <Text style={dynamicStyles.itemTitle} numberOfLines={1}>
                       {draft.original_filename || 'Untitled Draft'}
