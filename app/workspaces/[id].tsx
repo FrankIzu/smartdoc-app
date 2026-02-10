@@ -131,40 +131,34 @@ export default function WorkspaceDetailsScreen() {
             }
           }
 
-          // Load workspace files for recent activity (only current user's activity in this workspace)
+          // Load workspace files (shared within this workspace only) for recent activity
           try {
-            console.log('📁 Loading workspace recent activity (own files only), workspaceId:', id);
-            const filesResponse = await apiService.getDocuments(1, 20, undefined, undefined, Number(id), true);
+            console.log('📁 Loading workspace files (shared in workspace), workspaceId:', id);
+            const filesResponse = await apiService.getWorkspaceFiles(Number(id));
             let files: any[] = [];
-            
-            if (filesResponse && filesResponse.success) {
-              if (filesResponse.files && Array.isArray(filesResponse.files)) {
-                files = filesResponse.files;
-              } else if (filesResponse.data) {
-                if (Array.isArray(filesResponse.data)) {
-                  files = filesResponse.data;
-                } else if (filesResponse.data.files && Array.isArray(filesResponse.data.files)) {
-                  files = filesResponse.data.files;
-                }
-              }
+            if (filesResponse?.success && filesResponse.files && Array.isArray(filesResponse.files)) {
+              files = filesResponse.files;
+            } else if (Array.isArray(filesResponse?.data)) {
+              files = filesResponse.data;
             }
 
-            // Format files as recent activities (shared to this workspace)
+            // Format as recent activities; show only last 5 files shared in this workspace
             const activities = files
               .sort((a: any, b: any) => {
                 const dateA = a.updated_at || a.created_at ? new Date(a.updated_at || a.created_at).getTime() : 0;
                 const dateB = b.updated_at || b.created_at ? new Date(b.updated_at || b.created_at).getTime() : 0;
                 return dateB - dateA; // Most recent first
               })
-              .slice(0, 10) // Limit to 10 most recent
+              .slice(0, 5) // Last 5 files in workspace
               .map((file: any) => {
                 const fileName = file.original_filename || file.filename || file.name || 'Unknown file';
                 const timestamp = file.updated_at || file.created_at 
                   ? new Date(file.updated_at || file.created_at) 
                   : new Date();
-                
-                // Get who shared it (if available)
-                const sharedBy = file.shared_by_username || file.shared_by || null;
+                const owner = file.owner;
+                const sharedBy = owner?.username 
+                  ? `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || owner.username 
+                  : null;
                 const subtitle = sharedBy 
                   ? `${fileName} (shared by ${sharedBy})`
                   : fileName;

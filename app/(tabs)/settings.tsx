@@ -3,18 +3,16 @@ import Constants from 'expo-constants';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Linking,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppLock } from '../../contexts/AppLockContext';
@@ -104,9 +102,8 @@ export default function SettingsScreen() {
   const {
     appLockEnabled,
     setAppLockEnabled,
-    hasPinSet,
-    setPin,
-    checkHasPinSet,
+    checkHasPinSet, // still used in loadSettings; returns false (PIN hidden)
+    // hasPinSet, setPin - GrabDocs PIN hidden; app lock uses biometric + device passcode only
     lockAfterMinutes,
   } = useAppLock();
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -118,16 +115,15 @@ export default function SettingsScreen() {
   const [remember2FA, setRemember2FA] = useState(true);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState<DeviceFingerprint | null>(null);
-  const [showSetPinModal, setShowSetPinModal] = useState(false);
-  const [pinValue, setPinValue] = useState('');
-  const [pinConfirm, setPinConfirm] = useState('');
-  const [pinError, setPinError] = useState('');
+  // const [showSetPinModal, setShowSetPinModal] = useState(false);
+  // const [pinValue, setPinValue] = useState('');
+  // const [pinConfirm, setPinConfirm] = useState('');
+  // const [pinError, setPinError] = useState('');
 
   // Collapsible sections state - only About expanded by default
   const [expandedSections, setExpandedSections] = useState({
     notifications: false,
     security: false,
-    appLock: false,
     fileManagement: false,
     uploadSettings: false,
     display: false,
@@ -152,7 +148,6 @@ export default function SettingsScreen() {
       const newState: typeof expandedSections = {
         notifications: false,
         security: false,
-        appLock: false,
         fileManagement: false,
         uploadSettings: false,
         display: false,
@@ -175,7 +170,6 @@ export default function SettingsScreen() {
       setExpandedSections({
         notifications: false,
         security: false,
-        appLock: false,
         fileManagement: false,
         uploadSettings: false,
         display: false,
@@ -1025,6 +1019,21 @@ export default function SettingsScreen() {
             disabled={!biometricAvailable}
             feature="security.biometric"
           />
+
+          <EnhancedSettingItem
+            icon="lock-closed"
+            title="App lock"
+            subtitle={`Lock app ${lockAfterMinutes} min after background. Unlock with Face ID, Touch ID, or your device passcode.`}
+            value={appLockEnabled}
+            onToggle={async (value) => {
+              try {
+                await setAppLockEnabled(value);
+              } catch (e: any) {
+                Alert.alert('Error', e?.message || 'Failed to update app lock');
+              }
+            }}
+            feature="security.app_lock"
+          />
           
           <EnhancedSettingItem
             icon="shield-checkmark"
@@ -1222,49 +1231,6 @@ export default function SettingsScreen() {
               <Text style={dynamicStyles.deviceInfoText}>App Version: {deviceInfo.appVersion}</Text>
             </View>
           )}
-        </CollapsibleSection>
-
-        {/* App Lock Section */}
-        <CollapsibleSection
-          title="App lock"
-          isExpanded={expandedSections.appLock}
-          onToggle={() => toggleSection('appLock')}
-        >
-          <EnhancedSettingItem
-            icon="lock-closed"
-            title="Enable app lock"
-            subtitle={`Lock app ${lockAfterMinutes} min after background. Unlock with Face ID, Touch ID, or PIN. App lock is automatically enabled when you set a PIN.`}
-            value={appLockEnabled}
-            onToggle={async (value) => {
-              if (value && !hasPinSet) {
-                Alert.alert(
-                  'Set PIN first',
-                  'Set a 4–6 digit PIN below. App lock will be automatically enabled when you save your PIN.',
-                  [{ text: 'OK' }]
-                );
-                return;
-              }
-              try {
-                await setAppLockEnabled(value);
-              } catch (e: any) {
-                Alert.alert('Error', e?.message || 'Failed to update app lock');
-              }
-            }}
-            feature="security.app_lock"
-          />
-          <TouchableOpacity
-            style={[dynamicStyles.settingItem, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 }]}
-            onPress={() => { setPinValue(''); setPinConfirm(''); setPinError(''); setShowSetPinModal(true); }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Ionicons name="key" size={22} color={colors.tint} />
-              <View>
-                <Text style={dynamicStyles.settingTitle}>{hasPinSet ? 'Change PIN' : 'Set PIN'}</Text>
-                <Text style={dynamicStyles.settingSubtitle}>4–6 digit PIN to unlock app</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
         </CollapsibleSection>
 
         {/* File Management Section - HIDDEN */}
@@ -1664,75 +1630,11 @@ export default function SettingsScreen() {
         </CollapsibleSection>
       </ScrollView>
 
-      {/* Set / Change PIN modal */}
-      <Modal visible={showSetPinModal} transparent animationType="fade">
-        <TouchableOpacity
-          activeOpacity={1}
-          style={dynamicStyles.modalOverlay}
-          onPress={() => setShowSetPinModal(false)}
-        >
-          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[dynamicStyles.modalCard, { backgroundColor: colors.card }]}>
-            <Text style={[dynamicStyles.settingTitle, { marginBottom: 8 }]}>{hasPinSet ? 'Change PIN' : 'Set PIN'}</Text>
-            <Text style={[dynamicStyles.settingSubtitle, { marginBottom: 16 }]}>4–6 digit PIN to unlock app</Text>
-            {pinError ? <Text style={{ color: colors.error || '#ef4444', marginBottom: 8, fontSize: 14 }}>{pinError}</Text> : null}
-            <TextInput
-              style={[dynamicStyles.pinInput, { backgroundColor: colors.inputBackground, borderColor: colors.border, color: colors.text }]}
-              value={pinValue}
-              onChangeText={(t) => { setPinError(''); setPinValue(t.replace(/\D/g, '').slice(0, 6)); }}
-              placeholder="PIN"
-              placeholderTextColor={colors.textLight}
-              keyboardType="number-pad"
-              maxLength={6}
-              secureTextEntry
-            />
-            <TextInput
-              style={[dynamicStyles.pinInput, { backgroundColor: colors.inputBackground, borderColor: colors.border, color: colors.text, marginTop: 12 }]}
-              value={pinConfirm}
-              onChangeText={(t) => { setPinError(''); setPinConfirm(t.replace(/\D/g, '').slice(0, 6)); }}
-              placeholder="Confirm PIN"
-              placeholderTextColor={colors.textLight}
-              keyboardType="number-pad"
-              maxLength={6}
-              secureTextEntry
-            />
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
-              <TouchableOpacity style={[dynamicStyles.secondaryButton, { flex: 1 }]} onPress={() => setShowSetPinModal(false)}>
-                <Text style={dynamicStyles.secondaryButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[dynamicStyles.primaryButton, { flex: 1 }]}
-                onPress={async () => {
-                  const p = pinValue.replace(/\D/g, '');
-                  const c = pinConfirm.replace(/\D/g, '');
-                  if (p.length < 4 || p.length > 6) {
-                    setPinError('PIN must be 4–6 digits');
-                    return;
-                  }
-                  if (p !== c) {
-                    setPinError('PINs do not match');
-                    return;
-                  }
-                  setPinError('');
-                  try {
-                    await setPin(p);
-                    await checkHasPinSet();
-                    // Auto-enable app lock when PIN is set
-                    await setAppLockEnabled(true);
-                    setPinValue('');
-                    setPinConfirm('');
-                    setShowSetPinModal(false);
-                    Alert.alert('Done', 'PIN saved. App lock is now enabled.');
-                  } catch (e: any) {
-                    setPinError(e?.message || 'Failed to save PIN');
-                  }
-                }}
-              >
-                <Text style={dynamicStyles.primaryButtonText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
+      {/* GrabDocs Set/Change PIN modal - commented out; app lock uses biometric + device passcode only
+      <Modal visible={showSetPinModal} ...>
+        ... Set PIN / Confirm PIN / Save ...
       </Modal>
+      */}
 
       </TapToToggleHeaderView>
     </SafeAreaView>

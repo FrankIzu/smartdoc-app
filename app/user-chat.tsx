@@ -15,6 +15,7 @@ import {
     Modal,
     Platform,
     RefreshControl,
+    SectionList,
     StyleSheet,
     Text,
     TextInput,
@@ -102,7 +103,7 @@ export default function UserChatScreen() {
 
   // Socket connection
   const socketRef = useRef<Socket | null>(null);
-  const messagesListRef = useRef<FlatList>(null);
+  const messagesListRef = useRef<SectionList>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [otherUserOnline, setOtherUserOnline] = useState(false);
   const [typingUsers, setTypingUsers] = useState<{ [userId: number]: string }>({}); // userId -> username
@@ -481,7 +482,16 @@ export default function UserChatScreen() {
 
   const scrollToBottom = () => {
     setTimeout(() => {
-      messagesListRef.current?.scrollToEnd({ animated: true });
+      const list = messagesListRef.current;
+      if (!list || !messageSections.length) return;
+      const lastSection = messageSections[messageSections.length - 1];
+      if (!lastSection.data.length) return;
+      list.scrollToLocation({
+        sectionIndex: messageSections.length - 1,
+        itemIndex: lastSection.data.length - 1,
+        viewPosition: 1,
+        animated: true,
+      });
     }, 100);
   };
 
@@ -527,7 +537,7 @@ export default function UserChatScreen() {
     }
 
     const handleRouteParams = async () => {
-      // If chatId is provided, find and select it
+      // If chatId is provided, find and select it (or create minimal chat and load messages)
       if (params.chatId) {
         const chatId = parseInt(params.chatId as string);
         const chat = chats.find(c => c.id === chatId);
@@ -535,10 +545,30 @@ export default function UserChatScreen() {
         if (chat) {
           setSelectedChat(chat);
           loadMessages(chatId);
-          // Clear params to prevent re-triggering
           router.setParams({});
           return;
         }
+        // Chat not in list (e.g. opened via context before list refreshed): still load existing conversation
+        const chatType = (params.chatType === 'workspace' ? 'workspace' : 'user_direct') as 'user_direct' | 'workspace';
+        const workspaceName = (params.workspaceName as string) || 'Chat';
+        const minimalChat: Chat = {
+          id: chatId,
+          title: chatType === 'workspace' ? `#${workspaceName}` : 'Chat',
+          type: chatType,
+          participants: [],
+          last_message: '',
+          updated_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          unread_count: 0,
+          workspace: params.workspaceId && params.workspaceName
+            ? { id: parseInt(params.workspaceId as string), name: params.workspaceName as string, slug: '' }
+            : undefined,
+        };
+        setSelectedChat(minimalChat);
+        setIsNewChat(false);
+        loadMessages(chatId);
+        router.setParams({});
+        return;
       }
       
       // If workspace params exist, start/find the workspace chat
@@ -598,14 +628,9 @@ export default function UserChatScreen() {
       }
     };
 
-    // Wait for chats to load if we need chatId, otherwise proceed immediately for workspace
-    if (params.chatId && chats.length === 0) {
-      // Wait for chats to load
-      return;
-    }
-    
+    // Run immediately: for chatId we can load messages even if chat isn't in list (minimal chat + loadMessages)
     handleRouteParams();
-  }, [params.chatId, params.workspaceId, params.workspaceName, chats.length]);
+  }, [params.chatId, params.chatType, params.workspaceId, params.workspaceName, chats.length]);
 
   const loadUserProfile = async () => {
     try {
@@ -1093,6 +1118,48 @@ export default function UserChatScreen() {
     );
   }, [sortedChats, searchQuery]);
 
+  /** Section label for date grouping in conversation: Today, Yesterday, or "Monday, 10 Feb" (with year if different). */
+  const getDateSectionLabel = (timestamp: number): string => {
+    const d = new Date(timestamp);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    if (dayStart >= todayStart) return 'Today';
+    if (dayStart >= yesterdayStart) return 'Yesterday';
+    const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+    const dayMonth = d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+    if (d.getFullYear() !== now.getFullYear()) {
+      return `${dayName}, ${dayMonth} ${d.getFullYear()}`;
+    }
+    return `${dayName}, ${dayMonth}`;
+  };
+
+  /** Messages grouped by date for conversation (oldest first: Monday, ..., Yesterday, Today). */
+  const messageSections = useMemo(() => {
+    const list = messages || [];
+    const byLabel = new Map<string, ChatMessage[]>();
+    for (const msg of list) {
+      const ts = new Date(msg.created_at || 0).getTime();
+      const label = getDateSectionLabel(ts);
+      if (!byLabel.has(label)) byLabel.set(label, []);
+      byLabel.get(label)!.push(msg);
+    }
+    const sections: { title: string; data: ChatMessage[] }[] = [];
+    const restLabels = Array.from(byLabel.keys()).filter(l => l !== 'Today' && l !== 'Yesterday');
+    restLabels.sort((a, b) => {
+      const dataA = byLabel.get(a)!;
+      const dataB = byLabel.get(b)!;
+      const maxTsA = Math.max(...dataA.map(m => new Date(m.created_at).getTime()));
+      const maxTsB = Math.max(...dataB.map(m => new Date(m.created_at).getTime()));
+      return maxTsA - maxTsB; // oldest first
+    });
+    restLabels.forEach(title => sections.push({ title, data: byLabel.get(title)! }));
+    if (byLabel.has('Yesterday')) sections.push({ title: 'Yesterday', data: byLabel.get('Yesterday')! });
+    if (byLabel.has('Today')) sections.push({ title: 'Today', data: byLabel.get('Today')! });
+    return sections;
+  }, [messages]);
+
   // Handle add/remove favorite
   const handleToggleFavorite = async (chatId: number) => {
     try {
@@ -1294,9 +1361,10 @@ export default function UserChatScreen() {
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingVertical: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
+      minHeight: 56,
     },
     headerTitle: {
       fontSize: 20,
@@ -1309,10 +1377,11 @@ export default function UserChatScreen() {
       marginTop: 2,
     },
     backButton: {
-      padding: 8,
+      padding: 6,
+      marginRight: 6,
     },
     newChatButton: {
-      padding: 8,
+      padding: 10,
     },
     searchContainer: {
       paddingHorizontal: 16,
@@ -1338,6 +1407,32 @@ export default function UserChatScreen() {
     },
     chatsList: {
       flex: 1,
+    },
+    chatListSectionHeader: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      paddingTop: 16,
+      backgroundColor: colors.background,
+    },
+    chatListSectionHeaderText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.textSecondary || '#666',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    messageDateSectionHeader: {
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      alignItems: 'center',
+      backgroundColor: colors.background,
+    },
+    messageDateSectionHeaderText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.textSecondary || '#666',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
     },
     chatItem: {
       flexDirection: 'row',
@@ -1729,9 +1824,9 @@ export default function UserChatScreen() {
                   <ActivityIndicator size="large" color="#007AFF" />
                 </View>
               ) : (
-                <FlatList
+                <SectionList
                   ref={messagesListRef}
-                  data={messages}
+                  sections={messageSections}
                   renderItem={({ item }) => (
                     <View style={[dynamicStyles.messageItem, item.is_own_message ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
                       <View style={{ maxWidth: '75%' }}>
@@ -1750,6 +1845,13 @@ export default function UserChatScreen() {
                     </View>
                   )}
                   keyExtractor={(item) => item.id.toString()}
+                  renderSectionHeader={({ section: { title } }) => (
+                    <View style={dynamicStyles.messageDateSectionHeader}>
+                      <Text style={dynamicStyles.messageDateSectionHeaderText}>{title}</Text>
+                    </View>
+                  )}
+                  onScrollToIndexFailed={() => {}}
+                  stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
                   contentContainerStyle={{ paddingBottom: 10 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
@@ -1849,9 +1951,9 @@ export default function UserChatScreen() {
                   <ActivityIndicator size="large" color="#007AFF" />
                 </View>
               ) : (
-                <FlatList
+                <SectionList
                   ref={messagesListRef}
-                  data={messages}
+                  sections={messageSections}
                   renderItem={({ item }) => (
                     <View style={[dynamicStyles.messageItem, item.is_own_message ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
                       <View style={{ maxWidth: '75%' }}>
@@ -1870,6 +1972,13 @@ export default function UserChatScreen() {
                     </View>
                   )}
                   keyExtractor={(item) => item.id.toString()}
+                  renderSectionHeader={({ section: { title } }) => (
+                    <View style={dynamicStyles.messageDateSectionHeader}>
+                      <Text style={dynamicStyles.messageDateSectionHeaderText}>{title}</Text>
+                    </View>
+                  )}
+                  onScrollToIndexFailed={() => {}}
+                  stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
                   contentContainerStyle={{ paddingBottom: 10 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
@@ -1983,12 +2092,12 @@ export default function UserChatScreen() {
           >
             <Ionicons 
               name="refresh" 
-              size={20} 
+              size={26} 
               color={refreshing ? "#999" : "#007AFF"} 
             />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleNewChat} style={dynamicStyles.newChatButton}>
-            <Ionicons name="add" size={24} color="#007AFF" />
+            <Ionicons name="add" size={26} color="#007AFF" />
           </TouchableOpacity>
         </View>
       </View>

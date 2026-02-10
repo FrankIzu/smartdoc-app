@@ -131,6 +131,14 @@ class PushNotificationService {
         description: 'Notifications about workspace changes',
         importance: Notifications.AndroidImportance.DEFAULT,
       },
+      // Backend notification types (all 8)
+      { id: 'file_request', name: 'File requests', description: 'Upload link requests', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'file_received', name: 'File received', description: 'Someone shared a file with you', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'draft_edited', name: 'Draft edited', description: 'Collaborator started editing a draft', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'calendar_invite', name: 'Calendar invite', description: 'Calendar event invitations', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'file_share_viewed', name: 'File share viewed', description: 'Someone viewed your shared file', importance: Notifications.AndroidImportance.DEFAULT },
+      { id: 'join_request', name: 'Join request', description: 'Meeting join requests', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'transcript_ready', name: 'Transcript ready', description: 'Meeting transcript is ready', importance: Notifications.AndroidImportance.DEFAULT },
     ];
 
     for (const channel of channels) {
@@ -377,41 +385,76 @@ export async function initializePushNotifications(): Promise<string | null> {
   return await pushNotificationService.registerForPushNotifications();
 }
 
-// Helper function to handle navigation from notifications
+/** All 8 backend notification types that can trigger push + in-app notifications */
+export const NOTIFICATION_TYPES = [
+  'file_request',
+  'chat_message',
+  'file_received',
+  'draft_edited',
+  'calendar_invite',
+  'file_share_viewed',
+  'join_request',
+  'transcript_ready',
+] as const;
+
+/**
+ * Resolve app path for push/data payload (type + optional metadata).
+ * Used when user taps a push or an in-app notification so we open the right screen.
+ */
+export function getNotificationScreen(data: Record<string, any>): string {
+  const type = data?.type;
+  const screen = data?.screen;
+  if (screen && typeof screen === 'string' && screen.startsWith('/')) return screen;
+  if (screen && typeof screen === 'string') return screen.startsWith('/') ? screen : `/${screen}`;
+
+  switch (type) {
+    case 'file_request':
+      return '/upload-links';
+    case 'chat_message':
+      return data?.chat_id != null ? `/user-chat?chatId=${data.chat_id}` : '/(tabs)/chats';
+    case 'file_received':
+      return '/(tabs)/documents';
+    case 'draft_edited':
+      return data?.file_id != null ? `/drafts/edit/${data.file_id}` : '/(tabs)/documents';
+    case 'calendar_invite':
+      return data?.event_id != null ? `/quick-reach/schedule-meeting?eventId=${data.event_id}` : '/quick-reach/schedule-meeting';
+    case 'file_share_viewed':
+      return '/(tabs)/documents';
+    case 'join_request':
+      return data?.video_call_id != null ? `/quick-reach/meeting-call?roomId=${data.video_call_id}` : '/quick-reach/meeting-call';
+    case 'transcript_ready':
+      return data?.video_call_id != null ? `/quick-reach/meeting-details?roomId=${data.video_call_id}` : '/quick-reach/meeting-call';
+    case 'file_upload':
+    case 'file_processing':
+      return '/(tabs)/documents';
+    case 'form_response':
+      return '/(tabs)/documents';
+    case 'workspace_invite':
+    case 'workspace_update':
+      return '/workspaces';
+    case 'upload_link_expiring':
+      return '/upload-links';
+    default:
+      return '/notifications';
+  }
+}
+
+// Helper function to handle navigation from notifications (for navigator-based usage)
 export function handleNotificationNavigation(
   data: Record<string, any>,
   navigation: any
 ) {
-  const { type } = data;
-
-  switch (type) {
-    case 'file_upload':
-    case 'file_processing':
-      navigation.navigate('(tabs)', { screen: 'documents' });
-      break;
-    
-    case 'form_response':
-      navigation.navigate('(tabs)', { screen: 'forms' });
-      break;
-    
-    case 'chat_message':
-      navigation.navigate('(tabs)', { screen: 'chats' });
-      break;
-    
-    case 'workspace_invite':
-    case 'workspace_update':
-      navigation.navigate('(tabs)', { screen: 'workspaces' });
-      break;
-    
-    case 'upload_link_expiring':
-      // Navigate to upload links management
-      navigation.navigate('(tabs)', { screen: 'settings' });
-      break;
-    
-    default:
-      navigation.navigate('(tabs)', { screen: 'index' });
-      break;
+  const path = getNotificationScreen(data);
+  if (path === '/notifications') {
+    navigation.navigate('(tabs)', { screen: 'index' });
+    return;
   }
+  if (path.startsWith('/(tabs)/')) {
+    const screen = path.replace('/(tabs)/', '');
+    navigation.navigate('(tabs)', { screen });
+    return;
+  }
+  navigation.navigate(path as any);
 }
 
 export default pushNotificationService; 

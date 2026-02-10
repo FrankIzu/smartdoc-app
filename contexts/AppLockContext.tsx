@@ -4,8 +4,8 @@ import { deviceSecurityService } from '../services/deviceSecurity';
 import { secureStorage } from '../utils/storage';
 
 const APP_LOCK_ENABLED = 'app_lock_enabled';
-const APP_LOCK_PIN = 'app_lock_pin';
-const LOCK_AFTER_MINUTES = 5;
+// const APP_LOCK_PIN = 'app_lock_pin'; // GrabDocs PIN hidden: using phone biometric + device passcode only
+const LOCK_AFTER_MINUTES = 10;
 
 interface AppLockContextType {
   isLocked: boolean;
@@ -41,8 +41,10 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     try {
       const enabled = await secureStorage.getItem(APP_LOCK_ENABLED);
       setAppLockEnabledState(enabled === 'true');
-      const pin = await secureStorage.getItem(APP_LOCK_PIN);
-      setHasPinSet(!!pin && pin.length > 0);
+      // GrabDocs PIN hidden: no longer read stored PIN
+      // const pin = await secureStorage.getItem(APP_LOCK_PIN);
+      // setHasPinSet(!!pin && pin.length > 0);
+      setHasPinSet(false); // PIN UI hidden; unlock is biometric + device passcode only
       const config = await deviceSecurityService.initializeBiometrics();
       setBiometricAvailable(config.enabled);
     } catch {
@@ -79,10 +81,11 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
   }, [appLockEnabled, lockAfterMinutes]);
 
   const setAppLockEnabled = useCallback(async (enabled: boolean) => {
+    // GrabDocs PIN hidden: require biometric available instead of PIN
     if (enabled) {
-      const pin = await secureStorage.getItem(APP_LOCK_PIN);
-      if (!pin || pin.length < 4) {
-        throw new Error('Set a PIN first (4–6 digits) in Settings before enabling app lock.');
+      const config = await deviceSecurityService.initializeBiometrics();
+      if (!config.enabled) {
+        throw new Error('Biometric (Face ID / Touch ID) is required to enable app lock. Set it up in your device Settings.');
       }
     }
     setAppLockEnabledState(enabled);
@@ -90,6 +93,7 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     if (!enabled) setIsLocked(false);
   }, []);
 
+  /* GrabDocs PIN implementation commented out - using phone biometric + device passcode only
   const setPin = useCallback(async (pin: string) => {
     const trimmed = pin.replace(/\D/g, '');
     if (trimmed.length < 4 || trimmed.length > 6) {
@@ -110,6 +114,12 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     const trimmed = pin.replace(/\D/g, '');
     return trimmed === stored;
   }, []);
+  */
+  const setPin = useCallback(async (_pin: string) => {
+    throw new Error('App lock uses your phone’s biometric or passcode only. PIN is not used.');
+  }, []);
+  const removePin = useCallback(async () => {}, []);
+  const verifyPin = useCallback(async (_pin: string): Promise<boolean> => false, []);
 
   const unlock = useCallback(() => {
     setIsLocked(false);
@@ -121,17 +131,11 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     return result;
   }, []);
 
-  const unlockWithPin = useCallback(async (pin: string): Promise<boolean> => {
-    const ok = await verifyPin(pin);
-    if (ok) setIsLocked(false);
-    return ok;
-  }, [verifyPin]);
+  const unlockWithPin = useCallback(async (_pin: string): Promise<boolean> => false, []);
 
   const checkHasPinSet = useCallback(async (): Promise<boolean> => {
-    const pin = await secureStorage.getItem(APP_LOCK_PIN);
-    const set = !!(pin && pin.length >= 4);
-    setHasPinSet(set);
-    return set;
+    setHasPinSet(false);
+    return false;
   }, []);
 
   const checkBiometricAvailable = useCallback(async (): Promise<boolean> => {
@@ -140,8 +144,16 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     return config.enabled;
   }, []);
 
+  /* GrabDocs PIN reset - commented out; no app PIN stored
   const resetAppLockAndUnlock = useCallback(async () => {
     await secureStorage.removeItem(APP_LOCK_PIN);
+    await secureStorage.setItem(APP_LOCK_ENABLED, 'false');
+    setHasPinSet(false);
+    setAppLockEnabledState(false);
+    setIsLocked(false);
+  }, []);
+  */
+  const resetAppLockAndUnlock = useCallback(async () => {
     await secureStorage.setItem(APP_LOCK_ENABLED, 'false');
     setHasPinSet(false);
     setAppLockEnabledState(false);

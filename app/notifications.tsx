@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiClient } from '../services/api';
+import { getNotificationScreen } from './services/pushNotifications';
 import { AnimatedHeaderContainer } from './components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from './components/TapToToggleHeaderView';
 import { useAuth } from './context/auth';
@@ -116,10 +117,18 @@ export default function NotificationsScreen() {
   const handleNotificationPress = useCallback(
     (n: AppNotification) => {
       if (!n.read) markAsRead(n.id);
-      if (n.metadata?.navigation_path) {
-        const path = n.metadata.navigation_path as string;
-        if (path.startsWith('/')) router.push(path as any);
-        else router.push(`/${path}` as any);
+      const path =
+        n.metadata?.navigation_path
+          ? (n.metadata.navigation_path as string).startsWith('/')
+            ? (n.metadata.navigation_path as string)
+            : `/${n.metadata.navigation_path}`
+          : getNotificationScreen({ type: n.type, ...(n.metadata || {}) });
+      if (path !== '/notifications') {
+        try {
+          router.push(path as any);
+        } catch {
+          router.push('/notifications' as any);
+        }
       }
     },
     [markAsRead, router]

@@ -4,20 +4,20 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  FlatList,
-  Modal,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    FlatList,
+    Modal,
+    Platform,
+    RefreshControl,
+    ScrollView,
+    Share,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
@@ -606,20 +606,26 @@ export default function QuickFilesScreen() {
           console.error('Forms endpoint failed:', err);
           throw err;
         }
+      } else if (workspaceId != null) {
+        // Workspace context: show only files shared within this workspace (same as web)
+        try {
+          console.log('📁 Loading workspace files for workspaceId:', workspaceId);
+          response = await apiClient.getWorkspaceFiles(workspaceId);
+          console.log('📁 Workspace files response:', response?.success, 'Files count:', (response as any)?.files?.length ?? (response as any)?.data?.length ?? 0);
+        } catch (err) {
+          console.error('Workspace files endpoint failed:', err);
+          throw err;
+        }
       } else {
         try {
-          // Try the new getDocuments method first
-          // Pass workspaceId to filter files by workspace
-          console.log('📁 Loading documents with workspaceId:', workspaceId);
-          // Use API client's built-in timeout (30 seconds) instead of creating artificial timeout
-          response = await apiClient.getDocuments(1, 50, undefined, undefined, workspaceId);
+          // All documents (no workspace filter)
+          console.log('📁 Loading documents (no workspace)');
+          response = await apiClient.getDocuments(1, 50, undefined, undefined);
           console.log('📁 Documents response received:', response?.success, 'Files count:', (response as any)?.data?.length || (response as any)?.files?.length || 0);
         } catch (err) {
           console.warn('Documents endpoint failed, trying files endpoint:', err);
           try {
-            console.log('📁 Falling back to getFiles with workspaceId:', workspaceId);
-            // Use API client's built-in timeout (30 seconds) instead of creating artificial timeout
-            response = await apiClient.getFiles(1, 50, undefined, undefined, workspaceId);
+            response = await apiClient.getFiles(1, 50, undefined, undefined);
             console.log('📁 Files response received:', response?.success, 'Files count:', (response as any)?.files?.length || 0);
           } catch (fallbackErr) {
             console.error('Both endpoints failed:', fallbackErr);
@@ -714,7 +720,7 @@ export default function QuickFilesScreen() {
               is_global: doc.is_global,
               json_data: doc.json_data, // Store json_data to check if store name is populated
               original_filename: doc.original_filename || doc.filename,
-              user_id: doc.user_id, // Store owner's user ID
+              user_id: doc.user_id ?? (doc as any).owner?.id, // Store owner's user ID (workspace files use owner.id)
             };
           });
           
@@ -737,8 +743,8 @@ export default function QuickFilesScreen() {
     } catch (err: any) {
       console.error('Unexpected error in loadDocuments:', err);
       setDocuments([]);
-      if (err.message?.includes('CORS') || err.message?.includes('Network error')) {
-        setError(`Connection Error: ${err.message}`);
+      if (err.message?.includes('CORS') || err.message?.includes('Network error') || err.message?.toLowerCase().includes('backend') || err.message?.toLowerCase().includes('connection')) {
+        setError('Connection Error: waiting while we connect you ...');
       } else {
         setError(`Failed to load documents: ${err.message}`);
       }

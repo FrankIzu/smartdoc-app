@@ -1,8 +1,8 @@
-import { useTheme } from '../../contexts/ThemeContext';
-import { COLORS } from '../../constants/Config';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { COLORS } from '../../constants/Config';
+import { useTheme } from '../../contexts/ThemeContext';
 import { reloadToApplyUpdate } from '../../services/updateService';
 
 export default function OtaUpdateBanner() {

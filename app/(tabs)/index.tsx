@@ -1083,7 +1083,7 @@ function DashboardScreen() {
           <Text style={dynamicStyles.connectionBannerText}>
             {connectionStatus.message.includes('CORS') 
               ? 'CORS Error: Please configure backend for web development'
-              : 'Connection Error: Check if backend is running'
+              : 'Connection Error: waiting while we connect you ...'
             }
           </Text>
         </View>

@@ -135,12 +135,12 @@ const MOBILE_ENDPOINTS = {
   CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/chat/messages/${chatId}`,
   CHAT_SEND_MESSAGE: '/api/v1/mobile/chat/send',
   
-  // User Chat (Mobile-specific - separate from web user chat)
-  USER_CHATS: '/api/v1/mobile/user-chat/chats',
-  USER_CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/user-chat/chats/${chatId}/messages`,
-  USER_CHAT_SEND: (chatId: number) => `/api/v1/mobile/user-chat/chats/${chatId}/send`,
-  USER_CHAT_START: '/api/v1/mobile/user-chat/start-chat',
-  USER_CHAT_SEARCH_USERS: '/api/v1/mobile/user-chat/search-users',
+  // User Chat (use web endpoints - same as web app for chats list, messages, send, start, search)
+  USER_CHATS: '/api/v1/web/user-chat/chats',
+  USER_CHAT_MESSAGES: (chatId: number) => `/api/v1/web/user-chat/chats/${chatId}/messages`,
+  USER_CHAT_SEND: (chatId: number) => `/api/v1/web/user-chat/chats/${chatId}/send`,
+  USER_CHAT_START: '/api/v1/web/user-chat/start-chat',
+  USER_CHAT_SEARCH_USERS: '/api/v1/web/user-chat/search-users',
   
   // Bookmarks
   BOOKMARKS: '/api/v1/mobile/bookmarks',
@@ -3451,8 +3451,7 @@ class ApiService {
   // ==================== USER CHAT SYSTEM (Mobile-specific endpoints) ====================
   // These endpoints handle ONLY user-to-user and workspace chats (NOT AI chats)
   // Mobile endpoints are SEPARATE from web endpoints to avoid 403 errors
-  // Web uses: /api/v1/web/user-chat/*
-  // Mobile uses: /api/v1/mobile/user-chat/*
+  // User chat: app uses web endpoints /api/v1/web/user-chat/* for list, messages, send, start, search
   
   /**
    * Get all user chats - Mobile-specific endpoint
@@ -3798,7 +3797,6 @@ class ApiService {
 
   async getWorkspaceMembers(id: number, limit: number = 100, offset: number = 0): Promise<ApiResponse> {
     try {
-      // Add pagination support to prevent timeouts on large workspaces
       const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_MEMBERS(id), {
         params: { limit, offset }
       });
@@ -3876,14 +3874,12 @@ class ApiService {
 
   async getWorkspaceUsers(): Promise<ApiResponse> {
     try {
-      // Use shorter timeout (10s) to fail faster and prevent blocking UI
       const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_USERS, {
         timeout: 10000
       });
       return response.data;
     } catch (error: any) {
       console.error('Get workspace users error:', error);
-      // Log timeout but still throw - backend should be fixed to return data faster
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         console.error('❌ Workspace users request timed out after 10s - backend needs optimization');
         throw new Error('Request timed out. The backend endpoint is taking too long. Please check backend performance.');
@@ -3905,13 +3901,24 @@ class ApiService {
     }
   }
 
+  /**
+   * Get files shared within a workspace (same as web).
+   * Uses GET /api/v1/web/workspaces/:id/files so only files visible in that workspace are returned.
+   */
   async getWorkspaceFiles(workspaceId: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(`/api/v1/mobile/workspaces/${workspaceId}/files`);
-      return response.data;
+      const response = await this.client.get(`/api/v1/web/workspaces/${workspaceId}/files`);
+      const data = response.data;
+      return {
+        success: data?.success !== false,
+        files: data?.files ?? [],
+        data: data?.files ?? [],
+        total_count: data?.total_count ?? (data?.files?.length ?? 0),
+        workspace: data?.workspace,
+      };
     } catch (error: any) {
       console.error('Get workspace files error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to fetch workspace files');
+      throw new Error(error.response?.data?.message || error.response?.data?.error || 'Failed to fetch workspace files');
     }
   }
 

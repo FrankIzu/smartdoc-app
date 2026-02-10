@@ -1,47 +1,44 @@
+import { BlurView } from 'expo-blur';
 import * as LocalAuthentication from 'expo-local-authentication';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppLock } from '../../contexts/AppLockContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
-import { useAuth } from '../context/auth';
+// const { signOut } = useAuth(); // used only for Forgot PIN - commented out
 
 export default function AppLockScreen() {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  const { signOut } = useAuth();
   const {
     unlockWithBiometric,
-    unlockWithPin,
-    resetAppLockAndUnlock,
+    // unlockWithPin, resetAppLockAndUnlock, hasPinSet - GrabDocs PIN hidden; unlock via biometric + device passcode only
     biometricAvailable,
-    hasPinSet,
   } = useAppLock();
 
-  const [showPinInput, setShowPinInput] = useState(false);
-  const [pin, setPin] = useState('');
+  // const [showPinInput, setShowPinInput] = useState(false);
+  // const [pin, setPin] = useState('');
   const [error, setError] = useState('');
-  const [biometricLabel, setBiometricLabel] = useState('Face ID / Touch ID');
+  // Button label is generic so it stays correct when system shows passcode instead (e.g. Expo Go)
+  const [unlockButtonLabel, setUnlockButtonLabel] = useState('Unlock');
 
   useEffect(() => {
     (async () => {
       if (!biometricAvailable) return;
       const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
       if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
-        setBiometricLabel('Face ID');
+        setUnlockButtonLabel('Unlock with Face ID or passcode');
       } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-        setBiometricLabel('Touch ID');
+        setUnlockButtonLabel('Unlock with Touch ID or passcode');
+      } else {
+        setUnlockButtonLabel('Unlock');
       }
     })();
   }, [biometricAvailable]);
@@ -53,13 +50,13 @@ export default function AppLockScreen() {
     // Don't show an error when user simply cancelled—only for real failures
     const cancelled = result.error === 'user_cancel' || result.error === 'system_cancel' || result.error === 'app_cancel';
     if (cancelled) {
-      setError(''); // Try again or use PIN (no scary message)
+      setError('');
     } else {
-      setError('Face ID didn\'t recognize you. Try again or use PIN.');
+      setError('Try again or use your device passcode.');
     }
   }, [unlockWithBiometric]);
 
-
+  /* GrabDocs PIN unlock - commented out; use biometric + device passcode only
   const handlePinSubmit = useCallback(async () => {
     const trimmed = pin.replace(/\D/g, '');
     if (trimmed.length < 4) {
@@ -76,6 +73,7 @@ export default function AppLockScreen() {
       setPin('');
     }
   }, [pin, unlockWithPin]);
+  */
 
   const dynamicStyles = {
     overlay: {
@@ -111,103 +109,35 @@ export default function AppLockScreen() {
         <View style={[styles.overlay, dynamicStyles.overlay, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 }]}>
           <Text style={[styles.title, dynamicStyles.title]}>Unlock GrabDocs</Text>
           <Text style={[styles.subtitle, dynamicStyles.subtitle]}>
-            App locked after 5 minutes in background
+            App locked after 10 minutes in background. Use the button below to unlock.
           </Text>
 
           {error ? <Text style={[styles.error, dynamicStyles.error]}>{error}</Text> : null}
 
-          {!showPinInput ? (
-            <View style={styles.actions}>
-              {biometricAvailable && (
-                <TouchableOpacity
-                  style={[styles.primaryButton, dynamicStyles.button]}
-                  onPress={handleBiometric}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.primaryButtonText, dynamicStyles.buttonText]}>
-                    {biometricLabel}
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {hasPinSet && (
-                <TouchableOpacity
-                  style={[styles.secondaryButton, dynamicStyles.buttonSecondary]}
-                  onPress={() => setShowPinInput(true)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.secondaryButtonText, dynamicStyles.buttonTextSecondary]}>
-                    Use PIN
-                  </Text>
-                </TouchableOpacity>
-              )}
-              {!biometricAvailable && !hasPinSet && (
-                <Text style={[styles.subtitle, dynamicStyles.subtitle]}>
-                  Set a PIN in Settings → Security to unlock.
-                </Text>
-              )}
-            </View>
-          ) : (
-            <View style={styles.pinSection}>
-              <Text style={[styles.subtitle, dynamicStyles.subtitle]}>Enter your PIN</Text>
-              <TextInput
-                style={[styles.pinInput, dynamicStyles.pinInput]}
-                value={pin}
-                onChangeText={(t) => {
-                  setError('');
-                  setPin(t.replace(/\D/g, '').slice(0, 6));
-                }}
-                placeholder="••••••"
-                placeholderTextColor={colors.textLight}
-                keyboardType="number-pad"
-                maxLength={6}
-                secureTextEntry
-                autoFocus
-              />
+          <View style={styles.actions}>
+            {biometricAvailable && (
               <TouchableOpacity
                 style={[styles.primaryButton, dynamicStyles.button]}
-                onPress={handlePinSubmit}
+                onPress={handleBiometric}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.primaryButtonText, dynamicStyles.buttonText]}>Unlock</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.secondaryButton, dynamicStyles.buttonSecondary]}
-                onPress={() => { setShowPinInput(false); setPin(''); setError(''); Keyboard.dismiss(); }}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.secondaryButtonText, dynamicStyles.buttonTextSecondary]}>
-                  Back
+                <Text style={[styles.primaryButtonText, dynamicStyles.buttonText]}>
+                  {unlockButtonLabel}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.forgotPinLink}
-                onPress={() => {
-                  Alert.alert(
-                    'Forgot PIN?',
-                    'You will be signed out for security. Sign in again to access your account, then set a new PIN in Settings → App lock if you want to re-enable app lock.',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Sign out',
-                        style: 'destructive',
-                        onPress: async () => {
-                          await resetAppLockAndUnlock();
-                          setShowPinInput(false);
-                          setPin('');
-                          setError('');
-                          await signOut();
-                        },
-                      },
-                    ]
-                  );
-                }}
-              >
-                <Text style={[styles.forgotPinText, { color: colors.textSecondary }]}>
-                  Forgot PIN?
-                </Text>
-              </TouchableOpacity>
-            </View>
+            )}
+            {!biometricAvailable && (
+              <Text style={[styles.subtitle, dynamicStyles.subtitle]}>
+                Enable Face ID or Touch ID in your device Settings to unlock.
+              </Text>
+            )}
+          </View>
+
+          {/* GrabDocs PIN UI commented out - unlock via biometric + device passcode only
+          {!showPinInput ? ( ... ) : (
+            <View style={styles.pinSection}> ... Use PIN, Enter PIN, Forgot PIN? ... </View>
           )}
+          */}
         </View>
       </KeyboardAvoidingView>
     </View>

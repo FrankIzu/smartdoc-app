@@ -8,8 +8,8 @@
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { Platform } from 'react-native';
-import { API_BASE_URL, API_ENDPOINTS, STORE_URLS } from '../constants/Config';
 import semver from 'semver';
+import { API_BASE_URL, API_ENDPOINTS, STORE_URLS } from '../constants/Config';
 
 export type MinVersionResult =
   | { mustUpdate: true; storeUrl: string }

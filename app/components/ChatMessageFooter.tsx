@@ -33,6 +33,8 @@ export interface ChatMessageFooterProps {
   initialFeedbackScore?: number | null;
   /** Called after feedback is submitted so parent can persist */
   onFeedbackSubmitted?: (score: number | null) => void;
+  /** When false, hide copy / like / dislike / citation (e.g. for user or workspace chat). Default true. */
+  showActions?: boolean;
 }
 
 function truncateWithEllipsis(str: string, maxLen: number): string {
@@ -63,6 +65,7 @@ export function ChatMessageFooter({
   citations = null,
   initialFeedbackScore = null,
   onFeedbackSubmitted,
+  showActions = true,
 }: ChatMessageFooterProps) {
   const colors = useThemeColors();
   const [feedbackScore, setFeedbackScore] = useState<number | null>(initialFeedbackScore ?? null);
@@ -116,55 +119,57 @@ export function ChatMessageFooter({
 
   return (
     <View style={[styles.row, styles.footerBelowResponse]}>
-      <View style={styles.icons}>
-        <TouchableOpacity
-          onPress={handleCopy}
-          disabled={!responseText}
-          style={styles.iconBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons
-            name={copied ? 'checkmark' : 'copy-outline'}
-            size={18}
-            color={copied ? '#007AFF' : iconColor}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => submitFeedback(1)}
-          disabled={isSubmitting}
-          style={styles.iconBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <MaterialCommunityIcons
-            name={feedbackScore === 1 ? 'thumb-up' : 'thumb-up-outline'}
-            size={20}
-            color={activeUp}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => submitFeedback(-1)}
-          disabled={isSubmitting}
-          style={styles.iconBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <MaterialCommunityIcons
-            name={feedbackScore === -1 ? 'thumb-down' : 'thumb-down-outline'}
-            size={20}
-            color={activeDown}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setShowSourcesModal(true)}
-          style={styles.iconBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons
-            name="book-outline"
-            size={20}
-            color={sourceList.length > 0 ? iconColor : (colors.textLight ?? '#999')}
-          />
-        </TouchableOpacity>
-      </View>
+      {showActions && (
+        <View style={styles.icons}>
+          <TouchableOpacity
+            onPress={handleCopy}
+            disabled={!responseText}
+            style={styles.iconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={copied ? 'checkmark' : 'copy-outline'}
+              size={18}
+              color={copied ? '#007AFF' : iconColor}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => submitFeedback(1)}
+            disabled={isSubmitting}
+            style={styles.iconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <MaterialCommunityIcons
+              name={feedbackScore === 1 ? 'thumb-up' : 'thumb-up-outline'}
+              size={20}
+              color={activeUp}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => submitFeedback(-1)}
+            disabled={isSubmitting}
+            style={styles.iconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <MaterialCommunityIcons
+              name={feedbackScore === -1 ? 'thumb-down' : 'thumb-down-outline'}
+              size={20}
+              color={activeDown}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowSourcesModal(true)}
+            style={styles.iconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name="book-outline"
+              size={20}
+              color={sourceList.length > 0 ? iconColor : (colors.textLight ?? '#999')}
+            />
+          </TouchableOpacity>
+        </View>
+      )}
       <Text style={[styles.timestamp, { color: iconColor }]} numberOfLines={1}>
         {formatTime(createdAt)}
       </Text>
@@ -193,16 +198,19 @@ export function ChatMessageFooter({
               ) : (
                 sourceList.map((item, index) => {
                   const name = item.source_name || item.filename || item.source_type || `Source ${index + 1}`;
-                  const excerpt = (item.excerpt || item.chunk_content || '').trim();
+                  const data = (item.chunk_content || item.excerpt || '').trim();
                   return (
                     <View key={index} style={[styles.sourceItem, { borderBottomColor: colors.border }]}>
                       <Text style={[styles.sourceName, { color: colors.text }]} numberOfLines={2}>
                         {truncateWithEllipsis(name, 35)}
                       </Text>
-                      {excerpt ? (
-                        <Text style={[styles.sourceExcerpt, { color: colors.textSecondary }]} numberOfLines={3}>
-                          {truncateWithEllipsis(excerpt, 35)}
-                        </Text>
+                      {data ? (
+                        <>
+                          <Text style={[styles.sourceDataLabel, { color: colors.textSecondary }]}>Data</Text>
+                          <Text style={[styles.sourceExcerpt, { color: colors.textSecondary }]} numberOfLines={6}>
+                            {data}
+                          </Text>
+                        </>
                       ) : null}
                     </View>
                   );
@@ -278,6 +286,14 @@ const styles = StyleSheet.create({
   sourceName: {
     fontSize: 16,
     fontWeight: '500',
+  },
+  sourceDataLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   sourceExcerpt: {
     fontSize: 13,

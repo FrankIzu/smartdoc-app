@@ -39,7 +39,7 @@ import OtaUpdateBanner from './components/OtaUpdateBanner';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
 import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
-import { initializePushNotifications, pushNotificationService } from './services/pushNotifications';
+import { getNotificationScreen, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -48,7 +48,7 @@ function RootLayoutNav() {
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
   const { isDark } = useTheme();
   const { user } = useAuth();
-  const { isLocked, appLockEnabled, hasPinSet, checkHasPinSet } = useAppLock();
+  const { isLocked, appLockEnabled } = useAppLock();
   const router = useRouter();
   const pushListenerRef = useRef<{ remove: () => void } | null>(null);
 
@@ -67,14 +67,11 @@ function RootLayoutNav() {
     return () => { mounted = false; };
   }, [user]);
 
-  // Remind user to set app lock PIN periodically until they do
+  // Remind user to enable app lock periodically until they do (GrabDocs PIN hidden; unlock via biometric + device passcode)
   useEffect(() => {
-    if (!user || hasPinSet) return;
+    if (!user || appLockEnabled) return;
 
     const maybeShowReminder = async () => {
-      const pinSet = await checkHasPinSet();
-      if (pinSet) return;
-
       try {
         const lastStr = await AsyncStorage.getItem(APP_LOCK_REMINDER_KEY);
         const lastShown = lastStr ? parseInt(lastStr, 10) : 0;
@@ -82,7 +79,7 @@ function RootLayoutNav() {
 
         Alert.alert(
           'Set up app lock',
-          'For better security, set a PIN so your app locks 5 minutes after you leave it. You can unlock with Face ID, Touch ID, or your PIN.\n\nGo to Settings → App lock → Set PIN to get started.',
+          'For better security, lock the app 10 minutes after you leave it. You can unlock with Face ID, Touch ID, or your device passcode.\n\nGo to Settings → Security & 2FA to turn it on.',
           [
             { text: 'Later' },
             {
@@ -105,21 +102,16 @@ function RootLayoutNav() {
     maybeShowReminder();
 
     return () => sub.remove();
-  }, [user, hasPinSet, checkHasPinSet, router]);
+  }, [user, appLockEnabled, router]);
 
-  // When user taps a push notification, open notifications screen or deep link
+  // When user taps a push notification, open the right screen (all 8 backend notification types)
   useEffect(() => {
     pushNotificationService.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
-      if (data?.screen === 'notifications' || data?.type === 'workspace_invite') {
-        router.push('/notifications');
-      } else if (data?.screen) {
-        try {
-          router.push(data.screen as any);
-        } catch {
-          router.push('/notifications');
-        }
-      } else {
+      const data = response.notification.request.content.data || {};
+      const path = getNotificationScreen(data);
+      try {
+        router.push(path as any);
+      } catch {
         router.push('/notifications');
       }
     }).then((subscription) => {

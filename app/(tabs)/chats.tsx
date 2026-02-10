@@ -17,6 +17,7 @@ import {
     Platform,
     RefreshControl,
     ScrollView,
+    SectionList,
     StyleSheet,
     Text,
     TextInput,
@@ -53,6 +54,8 @@ interface Chat {
   updated_at: string;
   created_at: string;
   unread_count?: number;
+  /** For user/workspace chats: id of the sender of the last message. Used to show unread badge only for receiver. */
+  last_message_sender_id?: number | null;
   workspace?: Workspace;
   document_context?: Document;
   bookmark_collection?: string;
@@ -379,7 +382,7 @@ export default function ChatsScreen() {
   const bounceAnim = useRef(new Animated.Value(1)).current;
   const abortControllerRef = useRef<AbortController | null>(null);
   
-  const messagesRef = useRef<FlatList>(null);
+  const messagesRef = useRef<SectionList>(null);
 
   // WebSocket for user chats (user_direct and workspace only)
   const socketRef = useRef<Socket | null>(null);
@@ -1633,6 +1636,48 @@ export default function ChatsScreen() {
     }
   };
 
+  /** Section label for date grouping in conversation: Today, Yesterday, or "Monday, 10 Feb" (with year if different). */
+  const getDateSectionLabel = (timestamp: number): string => {
+    const d = new Date(timestamp);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    if (dayStart >= todayStart) return 'Today';
+    if (dayStart >= yesterdayStart) return 'Yesterday';
+    const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+    const dayMonth = d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+    if (d.getFullYear() !== now.getFullYear()) {
+      return `${dayName}, ${dayMonth} ${d.getFullYear()}`;
+    }
+    return `${dayName}, ${dayMonth}`;
+  };
+
+  /** Messages grouped by date for conversation (oldest first: Monday, ..., Yesterday, Today). */
+  const messageSections = useMemo(() => {
+    const list = messages || [];
+    const byLabel = new Map<string, ChatMessage[]>();
+    for (const msg of list) {
+      const ts = new Date(msg.created_at || 0).getTime();
+      const label = getDateSectionLabel(ts);
+      if (!byLabel.has(label)) byLabel.set(label, []);
+      byLabel.get(label)!.push(msg);
+    }
+    const sections: { title: string; data: ChatMessage[] }[] = [];
+    const restLabels = Array.from(byLabel.keys()).filter(l => l !== 'Today' && l !== 'Yesterday');
+    restLabels.sort((a, b) => {
+      const dataA = byLabel.get(a)!;
+      const dataB = byLabel.get(b)!;
+      const maxTsA = Math.max(...dataA.map(m => new Date(m.created_at).getTime()));
+      const maxTsB = Math.max(...dataB.map(m => new Date(m.created_at).getTime()));
+      return maxTsA - maxTsB; // oldest first
+    });
+    restLabels.forEach(title => sections.push({ title, data: byLabel.get(title)! }));
+    if (byLabel.has('Yesterday')) sections.push({ title: 'Yesterday', data: byLabel.get('Yesterday')! });
+    if (byLabel.has('Today')) sections.push({ title: 'Today', data: byLabel.get('Today')! });
+    return sections;
+  }, [messages]);
+
   // Sort chat list: ChatGD Assistant (id === -1) always first; favorites right after; then all others by last activity (most recent first).
   const sortChatsByLastMessage = (chatsToSort: Chat[]): Chat[] => {
     const validChats = chatsToSort.filter(chat => chat && typeof chat === 'object');
@@ -1695,6 +1740,7 @@ export default function ChatsScreen() {
             updated_at: chat.last_message_at || new Date().toISOString(),
             created_at: chat.created_at || new Date().toISOString(),
             unread_count: chat.unread_count || 0,
+            last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
             workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
           }));
           
@@ -2446,19 +2492,21 @@ export default function ChatsScreen() {
         // Timeout is now handled in the API method itself (10s)
         const response = await (api as any).getWorkspaceUsers();
         
+        const r = response as any;
         console.log('👥 Workspace users API response:', { 
-          success: (response as any)?.success, 
-          hasUsers: !!(response as any)?.users,
-          hasData: !!(response as any)?.data,
-          usersCount: (response as any)?.users?.length || (response as any)?.data?.length || 0
+          success: r?.success, 
+          hasDataUsers: !!(r?.data?.users),
+          usersCount: r?.data?.users?.length ?? r?.users?.length ?? (Array.isArray(r?.data) ? r.data.length : 0) ?? 0
         });
         
-        if (response && (response as any).success !== false) {
-          // Handle different response formats
-          if ((response as any)?.users) {
-            usersList = (response as any).users;
-          } else if ((response as any)?.data) {
-            usersList = Array.isArray((response as any).data) ? (response as any).data : [];
+        if (response && r.success !== false) {
+          // Backend returns { data: { users: [...] } } - handle that structure first
+          if (r?.data?.users && Array.isArray(r.data.users)) {
+            usersList = r.data.users;
+          } else if (r?.users && Array.isArray(r.users)) {
+            usersList = r.users;
+          } else if (r?.data && Array.isArray(r.data)) {
+            usersList = r.data;
           } else if (Array.isArray(response)) {
             usersList = response as any[];
           }
@@ -2486,13 +2534,14 @@ export default function ChatsScreen() {
             workspacesData = workspaces;
             console.log(`📋 Using ${workspacesData.length} workspaces from state - fetching members from each...`);
           } else {
-            // Only call API if workspaces haven't been loaded yet
+            // Reuse in-flight workspace request if loadWorkspaces is also loading (avoids duplicate API call)
             console.log('📋 Workspaces not in state, loading from API...');
-            const workspacesResponse = await (api as any).getMobileWorkspaces();
-            
+            const workspacePromise = workspaceRequestRef.current ?? (api as any).getMobileWorkspaces();
+            const workspacesResponse = await workspacePromise;
+
             if (workspacesResponse && (workspacesResponse as any).success && (workspacesResponse as any).data) {
-              workspacesData = Array.isArray((workspacesResponse as any).data) 
-                ? (workspacesResponse as any).data 
+              workspacesData = Array.isArray((workspacesResponse as any).data)
+                ? (workspacesResponse as any).data
                 : ((workspacesResponse as any).data.workspaces || []);
               console.log(`📋 Found ${workspacesData.length} workspaces from API - fetching members from each...`);
             }
@@ -2560,19 +2609,22 @@ export default function ChatsScreen() {
             new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
           ]);
           
+          const fr = fallbackResponse as any;
           console.log('👥 Fallback search users response:', { 
-            success: (fallbackResponse as any)?.success,
-            hasUsers: !!(fallbackResponse as any)?.users,
-            hasData: !!(fallbackResponse as any)?.data,
-            usersCount: (fallbackResponse as any)?.users?.length || (fallbackResponse as any)?.data?.length || 0
+            success: fr?.success,
+            hasUsers: !!(fr?.users || fr?.data?.users),
+            usersCount: fr?.users?.length ?? fr?.data?.users?.length ?? (Array.isArray(fr?.data) ? fr.data.length : 0) ?? 0
           });
           
           // Handle different response formats from searchUsersForChat
+          // Backend returns { success, users, workspaces } or possibly { success, data: { users } }
           let fallbackUsers: any[] = [];
-          if ((fallbackResponse as any)?.users) {
-            fallbackUsers = (fallbackResponse as any).users;
-          } else if ((fallbackResponse as any)?.data) {
-            fallbackUsers = Array.isArray((fallbackResponse as any).data) ? (fallbackResponse as any).data : [];
+          if (fr?.users && Array.isArray(fr.users)) {
+            fallbackUsers = fr.users;
+          } else if (fr?.data?.users && Array.isArray(fr.data.users)) {
+            fallbackUsers = fr.data.users;
+          } else if (fr?.data && Array.isArray(fr.data)) {
+            fallbackUsers = fr.data;
           } else if (Array.isArray(fallbackResponse)) {
             fallbackUsers = fallbackResponse as any[];
           }
@@ -2704,9 +2756,13 @@ export default function ChatsScreen() {
         return;
       }
       
-      // FIRST: Check the chat type from the local chats array
-      // This is the most reliable way to determine if it's a user chat or AI chat
+      // FIRST: Check the chat type from the local chats array (or selectedChatRef when loaded via context)
+      // When opening user/workspace chat via context, the chat may not be in chats yet - use selectedChatRef
       const chat = chats.find(c => c.id === chatId);
+      const selectedForId = selectedChatRef.current && Number(selectedChatRef.current.id) === Number(chatId)
+        ? selectedChatRef.current
+        : null;
+      const effectiveChat = chat || selectedForId;
       
       // Check if this chat exists in the chat store (AI assistant chats)
       // CRITICAL: All chats from /api/v1/mobile/chat/history are AI assistant chats
@@ -2724,30 +2780,25 @@ export default function ChatsScreen() {
       })());
       
       // Determine if this is an AI chat based on type or store presence
-      // CRITICAL LOGIC:
-      // 1. If chat exists in store (from /api/v1/mobile/chat/history), it's ALWAYS an AI chat - NEVER use user-chat endpoint
-      // 2. If chat type is 'ai_assistant', 'document_focused', or 'bookmark_focused', it's ALWAYS an AI chat
-      // 3. If chat type is 'user_direct' or 'workspace', it's a user chat - use user-chat endpoint
-      // 4. FALLBACK: If chat not found in local array AND not explicitly user/workspace type, assume it's an AI chat
-      //    (This handles cases where chat history is loaded but chat list hasn't been updated yet)
+      // CRITICAL: Use effectiveChat (chat from list OR selectedChatRef) so user/workspace chats loaded via context still load messages
       const isAIChat = chatExistsInStore || 
-                       (chat && (chat.type === 'ai_assistant' || chat.type === 'document_focused' || chat.type === 'bookmark_focused')) ||
-                       (!chat); // If chat not found in local array, assume AI chat (safer default)
+                       (effectiveChat && (effectiveChat.type === 'ai_assistant' || effectiveChat.type === 'document_focused' || effectiveChat.type === 'bookmark_focused')) ||
+                       (!effectiveChat); // If no chat found, assume AI chat (safer default)
       
       console.log(`🔍 [loadMessages] Chat ${chatId} check:`, {
         chatFound: !!chat,
-        chatType: chat?.type,
+        effectiveChatFromRef: !!selectedForId,
+        chatType: effectiveChat?.type,
         chatExistsInStore,
         isAIChat,
         historiesCount: histories?.length || 0,
         historyIds: histories?.slice(0, 10).map(h => h.id) || [],
-        willUseUserChatEndpoint: !isAIChat && chat && (chat.type === 'user_direct' || chat.type === 'workspace')
+        willUseUserChatEndpoint: !isAIChat && effectiveChat && (effectiveChat.type === 'user_direct' || effectiveChat.type === 'workspace')
       });
       
       // Only use user-chat endpoint for actual user/workspace chats that are NOT AI chats
-      // AI assistant chats (ai_assistant, document_focused, bookmark_focused) are document queries and should use chat store
-      // IMPORTANT: Only use user-chat endpoint if chat is EXPLICITLY a user/workspace chat AND not an AI chat
-      if (!isAIChat && chat && (chat.type === 'user_direct' || chat.type === 'workspace')) {
+      // Use effectiveChat so when opening existing workspace/user chat (including via context), messages load
+      if (!isAIChat && effectiveChat && (effectiveChat.type === 'user_direct' || effectiveChat.type === 'workspace')) {
           // Load user chat messages using web endpoint (same as web chat.tsx)
           try {
             const response = await api.getChatMessages(chatId);
@@ -4250,10 +4301,11 @@ export default function ChatsScreen() {
             }];
           });
           
-          // Update chat list
+          // Update chat list (set last_message_sender_id so unread badge stays hidden for sender)
+          const userId = userProfileRef.current?.data?.id || userProfileRef.current?.id;
           setChats(prev => prev.map(chat => 
             chat.id === selectedChat.id 
-              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString() }
+              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString(), last_message_sender_id: userId ?? undefined }
               : chat
           ));
           console.log('📤 [CHATS-WEB] User direct message successfully added to UI and chat list updated');
@@ -4387,10 +4439,10 @@ export default function ChatsScreen() {
             }];
           });
           
-          // Update chat list
+          // Update chat list (set last_message_sender_id so unread badge stays hidden for sender)
           setChats(prev => prev.map(chat => 
             chat.id === selectedChat.id 
-              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString() }
+              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString(), last_message_sender_id: userId ?? undefined }
               : chat
           ));
           console.log('📤 [CHATS-WEB] Workspace message successfully added to UI and chat list updated');
@@ -4869,6 +4921,8 @@ export default function ChatsScreen() {
     }
     
     setSelectedChat(chatToSelect);
+    // Set ref immediately so loadMessages can use it (state update is async; ref is sync)
+    selectedChatRef.current = chatToSelect;
     
     // CRITICAL: Restore context IMMEDIATELY before loading messages
     // This ensures context is set even if loadMessages fails or takes time
@@ -5172,12 +5226,15 @@ export default function ChatsScreen() {
   };
 
   const removeMention = () => {
-    // If this is the chat's built-in context (document/bookmark/workspace), mark as explicitly removed so we don't restore on reload
+    // User and workspace context are bound to the conversation and cannot be removed
+    if (selectedMention?.type === 'user' || selectedMention?.type === 'workspace') {
+      return;
+    }
+    // If this is the chat's built-in context (document/bookmark only; workspace is bound), mark as explicitly removed so we don't restore on reload
     const chatId = selectedChat?.id != null && selectedChat.id !== -1 ? Number(selectedChat.id) : null;
     const isBuiltInContext = selectedChat && selectedMention && (
       (selectedChat.document_context && selectedMention.type === 'file' && selectedMention.id === selectedChat.document_context.id) ||
-      (selectedChat.bookmark_context && selectedMention.type === 'bookmark' && selectedMention.id === selectedChat.bookmark_context.id) ||
-      (selectedChat.workspace && selectedMention.type === 'workspace' && selectedMention.id === selectedChat.workspace.id)
+      (selectedChat.bookmark_context && selectedMention.type === 'bookmark' && selectedMention.id === selectedChat.bookmark_context.id)
     );
     if (chatId != null && isBuiltInContext) {
       contextRemovedChatIdsRef.current.add(chatId);
@@ -5863,6 +5920,11 @@ export default function ChatsScreen() {
     const safeLastMessage = String(item.last_message || 'No messages');
     const safeUpdatedAt = String(item.updated_at || new Date().toISOString());
     const safeUnreadCount = Number(item.unread_count || 0);
+    // Unread badge only for receiver: for user/workspace chats, hide when last message was sent by current user
+    const currentUserId = userProfileRef.current?.data?.id ?? userProfileRef.current?.id;
+    const isUserOrWorkspaceChat = item.type === 'user_direct' || item.type === 'workspace';
+    const lastMessageIsFromMe = item.last_message_sender_id != null && currentUserId != null && item.last_message_sender_id === currentUserId;
+    const showUnreadBadge = safeUnreadCount > 0 && (!isUserOrWorkspaceChat || !lastMessageIsFromMe);
 
     return (
       <Swipeable
@@ -5927,7 +5989,7 @@ export default function ChatsScreen() {
               <Text style={dynamicStyles.lastMessage} numberOfLines={2}>
                 {safeLastMessage}
               </Text>
-              {safeUnreadCount > 0 && (
+              {showUnreadBadge && (
                 <View style={dynamicStyles.unreadBadge}>
                   <Text style={dynamicStyles.unreadText}>
                     {String(safeUnreadCount)}
@@ -6132,6 +6194,7 @@ export default function ChatsScreen() {
                   responseText={item.content}
                   createdAt={item.created_at}
                   citations={item.citations}
+                  showActions={true}
                 />
               )}
             </View>
@@ -6139,7 +6202,7 @@ export default function ChatsScreen() {
         );
       } else {
         // User/workspace: we never add an empty assistant message, but guard anyway.
-        // Footer shows only after streaming is done, below the bubble.
+        // Footer shows only after streaming is done, below the bubble. No copy/like/dislike/citation for user/workspace.
         if (!hasContent) return null;
         const messagePairIndex = Math.floor(index / 2);
         const queryText = index > 0 ? messages[index - 1]?.content : undefined;
@@ -6164,6 +6227,7 @@ export default function ChatsScreen() {
                   responseText={item.content}
                   createdAt={item.created_at}
                   citations={item.citations}
+                  showActions={false}
                 />
               )}
             </View>
@@ -6194,12 +6258,12 @@ export default function ChatsScreen() {
             >
               <Ionicons 
                 name="refresh" 
-                size={20} 
+                size={26} 
                 color={refreshing ? "#999" : "#007AFF"} 
               />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
-              <Ionicons name="add" size={20} color="#007AFF" />
+              <Ionicons name="add" size={26} color="#007AFF" />
             </TouchableOpacity>
           </View>
         </View>
@@ -6252,7 +6316,7 @@ export default function ChatsScreen() {
     <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom']}>
       <TapToToggleHeaderView style={dynamicStyles.container}>
       {/* Chat Header */}
-      <AnimatedHeaderContainer height={56}>
+      <AnimatedHeaderContainer height={64}>
         <View style={dynamicStyles.chatHeader}>
         <TouchableOpacity 
           style={dynamicStyles.backButton} 
@@ -6304,9 +6368,16 @@ export default function ChatsScreen() {
           >
             <Ionicons 
               name="refresh" 
-              size={20} 
+              size={26} 
               color={refreshing || !selectedChat ? "#999" : "#007AFF"} 
             />
+          </TouchableOpacity>
+          {/* + opens same chat types as listing page (New Chat modal) */}
+          <TouchableOpacity 
+            style={dynamicStyles.searchTypeButton} 
+            onPress={() => setShowNewChatModal(true)}
+          >
+            <Ionicons name="add" size={26} color="#007AFF" />
           </TouchableOpacity>
           {/* Search Type Menu for AI Assistant */}
           {selectedChat?.type === 'ai_assistant' && (
@@ -6314,7 +6385,7 @@ export default function ChatsScreen() {
               style={dynamicStyles.searchTypeButton} 
               onPress={handleSearchTypeMenuPress}
             >
-              <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+              <Ionicons name="ellipsis-vertical" size={26} color="#666" />
             </TouchableOpacity>
           )}
         </View>
@@ -6333,15 +6404,17 @@ export default function ChatsScreen() {
           </View>
         ) : (
           <>
-            <FlatList
+            <SectionList
               ref={messagesRef}
-              data={messages}
-              renderItem={renderMessageItem}
-              keyExtractor={(item, index) => {
-                // Use ID + index to ensure uniqueness even if IDs are duplicated
-                // This prevents React key warnings when messages have duplicate IDs
-                return `${item.id}-${index}`;
-              }}
+              sections={messageSections}
+              renderItem={({ item, index }) => renderMessageItem({ item, index })}
+              keyExtractor={(item, index) => `${item.id}-${index}`}
+              renderSectionHeader={({ section: { title } }) => (
+                <View style={dynamicStyles.messageDateSectionHeader}>
+                  <Text style={dynamicStyles.messageDateSectionHeaderText}>{title}</Text>
+                </View>
+              )}
+              stickySectionHeadersEnabled={false}
               style={dynamicStyles.messagesList}
               ListFooterComponent={
                 // Typing Indicator for user chats
@@ -6358,7 +6431,19 @@ export default function ChatsScreen() {
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
               }
               showsVerticalScrollIndicator={false}
-              onContentSizeChange={() => messagesRef.current?.scrollToEnd({ animated: true })}
+              onScrollToIndexFailed={() => {}}
+              onContentSizeChange={() => {
+                const list = messagesRef.current;
+                if (!list || !messageSections.length) return;
+                const lastSection = messageSections[messageSections.length - 1];
+                if (!lastSection.data.length) return;
+                list.scrollToLocation({
+                  sectionIndex: messageSections.length - 1,
+                  itemIndex: lastSection.data.length - 1,
+                  viewPosition: 1,
+                  animated: true,
+                });
+              }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
               onTouchStart={() => setShowQuickChatTypes(false)}
@@ -6384,15 +6469,18 @@ export default function ChatsScreen() {
               <Text style={dynamicStyles.mentionText}>
                 {selectedMention.type === 'file' ? truncateFilename(selectedMention.name) : selectedMention.name}
               </Text>
-              <TouchableOpacity 
-                onPress={(e) => {
-                  e.stopPropagation();
-                  removeMention();
-                }} 
-                style={dynamicStyles.removeMentionButton}
-              >
-                <Ionicons name="close" size={16} color="#666" />
-              </TouchableOpacity>
+              {/* User and workspace context are bound to the conversation and cannot be removed */}
+              {(selectedMention.type !== 'user' && selectedMention.type !== 'workspace') ? (
+                <TouchableOpacity 
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    removeMention();
+                  }} 
+                  style={dynamicStyles.removeMentionButton}
+                >
+                  <Ionicons name="close" size={16} color="#666" />
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         )}
@@ -6839,7 +6927,7 @@ export default function ChatsScreen() {
       color: colors.text,
     },
     newChatButton: {
-      padding: 4,
+      padding: 10,
     },
     loadingContainer: {
       flex: 1,
@@ -6852,6 +6940,32 @@ export default function ChatsScreen() {
     },
     chatsList: {
       flex: 1,
+    },
+    chatListSectionHeader: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      paddingTop: 16,
+      backgroundColor: colors.background,
+    },
+    chatListSectionHeaderText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.textSecondary || '#666',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    messageDateSectionHeader: {
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      alignItems: 'center',
+      backgroundColor: colors.background,
+    },
+    messageDateSectionHeaderText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.textSecondary || '#666',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
     },
     chatItem: {
       flexDirection: 'row',
@@ -6918,10 +7032,11 @@ export default function ChatsScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingVertical: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       backgroundColor: colors.card,
+      minHeight: 64,
     },
     backButton: {
       padding: 6,
@@ -6929,13 +7044,16 @@ export default function ChatsScreen() {
     },
     chatHeaderInfo: {
       flex: 1,
+      justifyContent: 'center',
+      minWidth: 0,
     },
     chatSubtitle: {
       fontSize: 11,
       color: colors.textSecondary,
+      marginTop: 2,
     },
     searchTypeButton: {
-      padding: 6,
+      padding: 8,
     },
     chatContainer: {
       flex: 1,
@@ -7461,7 +7579,7 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   newChatButton: {
-    padding: 4,
+    padding: 10,
   },
   loadingContainer: {
     flex: 1,
@@ -7474,6 +7592,32 @@ const styles = StyleSheet.create({
   },
   chatsList: {
     flex: 1,
+  },
+  chatListSectionHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingTop: 16,
+    backgroundColor: '#f8f9fa',
+  },
+  chatListSectionHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  messageDateSectionHeader: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  messageDateSectionHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   chatItem: {
     flexDirection: 'row',
@@ -7544,6 +7688,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
     backgroundColor: '#fff',
+    minHeight: 64,
   },
   backButton: {
     padding: 6,
@@ -7551,6 +7696,8 @@ const styles = StyleSheet.create({
   },
   chatHeaderInfo: {
     flex: 1,
+    justifyContent: 'center',
+    minWidth: 0,
   },
   chatHeaderTitle: {
     fontSize: 16,
@@ -7560,9 +7707,10 @@ const styles = StyleSheet.create({
   chatSubtitle: {
     fontSize: 11,
     color: '#666',
+    marginTop: 2,
   },
   searchTypeButton: {
-    padding: 6,
+    padding: 8,
   },
   chatContainer: {
     flex: 1,

@@ -236,7 +236,7 @@ class DeviceSecurityService {
       const config: BiometricConfig = {
         enabled: hasHardware && isEnrolled && supportedTypes.length > 0,
         types: supportedTypes,
-        fallbackEnabled: false, // Disable fallback to force biometric authentication
+        fallbackEnabled: true, // Enable device passcode fallback when biometric fails
       };
 
       this.biometricConfig = config;
@@ -249,7 +249,7 @@ class DeviceSecurityService {
       return {
         enabled: false,
         types: [],
-        fallbackEnabled: false, // Disable fallback to force biometric authentication
+        fallbackEnabled: true, // Enable device passcode fallback
       };
     }
   }
@@ -273,15 +273,15 @@ class DeviceSecurityService {
 
       console.log('🔐 Starting biometric authentication with config:', {
         promptMessage: reason,
-        fallbackLabel: 'Use Password',
-        disableDeviceFallback: true,
+        fallbackLabel: 'Use Passcode',
+        disableDeviceFallback: false,
         cancelLabel: 'Cancel',
       });
 
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: reason,
-        fallbackLabel: 'Use Password',
-        disableDeviceFallback: true, // Disable device passcode fallback to force biometric authentication
+        fallbackLabel: 'Use Passcode', // OS shows device PIN/passcode when user taps this or biometric fails
+        disableDeviceFallback: false, // Enable phone PIN/passcode fallback
         cancelLabel: 'Cancel',
       });
 
