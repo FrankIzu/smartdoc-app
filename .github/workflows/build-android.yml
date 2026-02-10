@@ -220,13 +220,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          submodules: false
           sparse-checkout: |
-            eas.json
+            /*
+            !manager-francis
+          sparse-checkout-cone-mode: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Download Android artifact
         uses: actions/download-artifact@v4
@@ -244,6 +251,10 @@ jobs:
             echo "::error::No .aab file found in artifact"
             exit 1
           fi
+          # Swap to plugin-free config so EAS submit doesn't resolve plugins (expo-router, etc.)
+          cp app.config.js app.config.js.bak
+          cp app.config.submit.js app.config.js
+          trap 'mv -f app.config.js.bak app.config.js' EXIT
           echo "Submitting Android app to Google Play Store..."
           SERVICE_ACCOUNT_PATH="/tmp/play-service-account.json"
           echo "$ANDROID_SERVICE_ACCOUNT_JSON" > "$SERVICE_ACCOUNT_PATH"
