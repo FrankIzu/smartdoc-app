@@ -174,13 +174,7 @@ jobs:
           sed -i 's/^android\.enableMinifyInReleaseBuilds=.*/android.enableMinifyInReleaseBuilds=false/' android/gradle.properties
           sed -i 's/^android\.enableShrinkResourcesInReleaseBuilds=.*/android.enableShrinkResourcesInReleaseBuilds=false/' android/gradle.properties
 
-      - name: Prepare production build (reduce Metaspace pressure - CI OOM fix)
-        if: github.event.inputs.profile == 'production'
-        run: |
-          echo "Production: single ABI (arm64-v8a), minify disabled to avoid Metaspace OOM in CI"
-          sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
-          sed -i 's/^android\.enableMinifyInReleaseBuilds=.*/android.enableMinifyInReleaseBuilds=false/' android/gradle.properties
-          sed -i 's/^android\.enableShrinkResourcesInReleaseBuilds=.*/android.enableShrinkResourcesInReleaseBuilds=false/' android/gradle.properties
+      # Production: use default gradle.properties (multi-ABI, minify enabled). 1024m Metaspace avoids OOM.
 
       # No clean: we don't run gradle clean; incremental build uses Gradle cache (5–8 min, <5 warm).
       - name: Clean old build artifacts
@@ -218,6 +212,7 @@ jobs:
           path: |
             build-*.aab
             *.apk
+            android/app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: ignore
 
   submit:
@@ -258,6 +253,10 @@ jobs:
           if [ -z "$AAB" ]; then
             echo "::error::No .aab file found in artifact"
             exit 1
+          fi
+          # R8 mapping file (if present) is in artifact; upload manually in Play Console: Release > App bundle explorer > version > Deobfuscation file
+          if [ -f "android/app/build/outputs/mapping/release/mapping.txt" ]; then
+            echo "R8 mapping file available at android/app/build/outputs/mapping/release/mapping.txt - upload in Play Console for crash deobfuscation"
           fi
           # Swap to plugin-free config so EAS submit doesn't resolve plugins (expo-router, etc.)
           cp app.config.js app.config.js.bak
