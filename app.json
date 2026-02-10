@@ -53,7 +53,7 @@
     },
     "android": {
       "package": "com.grabdocs.mobile",
-      "versionCode": 33,
+      "versionCode": 34,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
         "backgroundColor": "#ffffff",
