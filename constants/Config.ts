@@ -134,6 +134,12 @@ export const FRONTEND_URL = (() => {
 export const APP_NAME = process.env.EXPO_PUBLIC_APP_NAME || 'GrabDocs Mobile';
 export const APP_VERSION = process.env.EXPO_PUBLIC_APP_VERSION || '1.0.0';
 
+/** Store URLs for "Update required" deep links. Backend min version is in Render env (MIN_SUPPORTED_APP_VERSION, etc.). */
+export const STORE_URLS = {
+  ios: 'https://apps.apple.com/app/id6752529430',
+  android: 'https://play.google.com/store/apps/details?id=com.grabdocs.mobile',
+} as const;
+
 // API Endpoints
 export const API_ENDPOINTS = {
   // Authentication
@@ -237,6 +243,9 @@ export const API_ENDPOINTS = {
   
   // Health
   HEALTH: '/health',
+
+  // App config (min supported version from backend; no auth required)
+  APP_CONFIG: '/api/app-config',
   
   // Mobile OAuth
   MOBILE_GOOGLE_AUTH: '/api/v1/mobile/external-auth/googledrive',

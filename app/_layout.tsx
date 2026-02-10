@@ -1,6 +1,6 @@
 // Import polyfills for mobile compatibility
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, LogBox, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
@@ -33,8 +33,11 @@ import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
+import { checkMinVersion, checkOtaAndFetch } from '../services/updateService';
 import AppLockScreen from './components/AppLockScreen';
+import OtaUpdateBanner from './components/OtaUpdateBanner';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
+import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
 import { initializePushNotifications, pushNotificationService } from './services/pushNotifications';
 
@@ -175,6 +178,8 @@ function RootLayoutNav() {
 
 function AuthWrapper() {
   const { loading } = useAuth();
+  const [updateRequired, setUpdateRequired] = useState<{ storeUrl: string } | null>(null);
+  const [updateReady, setUpdateReady] = useState(false);
 
   useEffect(() => {
     if (!loading) {
@@ -182,11 +187,54 @@ function AuthWrapper() {
     }
   }, [loading]);
 
+  // Min version from backend (Render env). Block app if behind.
+  useEffect(() => {
+    if (loading) return;
+    let mounted = true;
+    checkMinVersion().then((result) => {
+      if (mounted && result.mustUpdate) {
+        setUpdateRequired({ storeUrl: result.storeUrl });
+      }
+    });
+    return () => { mounted = false; };
+  }, [loading]);
+
+  // Re-check min version when app comes to foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        checkMinVersion().then((result) => {
+          if (result.mustUpdate) setUpdateRequired({ storeUrl: result.storeUrl });
+        });
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  // OTA: check and fetch silently; show banner when ready (user restarts when they want)
+  useEffect(() => {
+    if (loading || updateRequired) return;
+    let mounted = true;
+    checkOtaAndFetch().then(({ updateReady: ready }) => {
+      if (mounted && ready) setUpdateReady(true);
+    });
+    return () => { mounted = false; };
+  }, [loading, updateRequired]);
+
   if (loading) {
     return null;
   }
 
-  return <RootLayoutNav />;
+  if (updateRequired) {
+    return <UpdateRequiredScreen storeUrl={updateRequired.storeUrl} />;
+  }
+
+  return (
+    <>
+      {updateReady && <OtaUpdateBanner />}
+      <RootLayoutNav />
+    </>
+  );
 }
 
 export default function RootLayout() {

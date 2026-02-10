@@ -18,6 +18,11 @@ const config = {
   expo: {
     ...appJson.expo,
     plugins,
+    // EAS Update: OTA only applies to builds with matching app version (no JS/native mismatch).
+    runtimeVersion: { policy: 'appVersion' },
+    updates: {
+      url: 'https://u.expo.dev/341d1cdf-5759-41ef-8ae3-36e4cf7fab00',
+    },
   },
 };
 
