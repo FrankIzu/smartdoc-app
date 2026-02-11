@@ -9,7 +9,7 @@
 #   Local build (no EAS cloud): .\scripts\deploy.ps1 -Platform android -Environment prod -Local
 #   Local build (iOS, requires macOS): .\scripts\deploy.ps1 -Platform ios -Environment prod -Local
 #
-#   In production, UpdateReason is written to render.yaml (default: feature). Valid: security, breaking, feature.
+#   In production, UpdateReason is prompted (1=security, 2=breaking, 3=feature) or use -UpdateReason param.
 #
 #   In interactive mode you can choose: (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions.
 #   Option 3 commits version/build and pushes; iOS runs on push to main, Android runs on push to main or tag.
@@ -19,7 +19,7 @@ param(
     [string]$Environment,
     [string]$BuildNumber,
     [string]$Version,
-    [string]$UpdateReason = "feature",
+    [string]$UpdateReason,
     [switch]$Local
 )
 
@@ -436,6 +436,15 @@ try {
             } catch {
                 Write-Host "❌ Error updating build number: $($_.Exception.Message)" -ForegroundColor Red
                 exit 1
+            }
+            # Prompt for update reason if not provided
+            if (-not $UpdateReason) {
+                Write-Host "`n📋 Update reason (for app-config):" -ForegroundColor Cyan
+                Write-Host "   1 = security   (security fix)" -ForegroundColor Gray
+                Write-Host "   2 = breaking   (breaking change)" -ForegroundColor Gray
+                Write-Host "   3 = feature    (new features)" -ForegroundColor Gray
+                $choice = Prompt-WithValidation "Select update reason (1/2/3) [3]" @("1", "2", "3") -DefaultValue "3"
+                $UpdateReason = switch ($choice) { "1" { "security" } "2" { "breaking" } "3" { "feature" } }
             }
             # Update render.yaml with LATEST_APP_VERSION and UPDATE_REASON for backend app-config
             Update-RenderAppConfig -Version $Version -UpdateReason $UpdateReason
