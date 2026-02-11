@@ -1,6 +1,6 @@
 // Import polyfills for mobile compatibility
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, AppState, LogBox, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
@@ -33,10 +33,12 @@ import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
-import { checkMinVersion, checkOtaAndFetch } from '../services/updateService';
+import { checkMinVersion, checkOtaAndFetch, checkSoftStoreUpdate, fetchAppConfig, reportUpdateTelemetry } from '../services/updateService';
+import type { MinVersionResult } from '../services/updateService';
 import AppLockScreen from './components/AppLockScreen';
 import OtaUpdateBanner from './components/OtaUpdateBanner';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
+import SoftStoreUpdateBanner from './components/SoftStoreUpdateBanner';
 import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
 import { getNotificationScreen, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
@@ -174,7 +176,9 @@ function RootLayoutNav() {
 
 function AuthWrapper() {
   const { loading } = useAuth();
-  const [updateRequired, setUpdateRequired] = useState<{ storeUrl: string } | null>(null);
+  const [updateRequired, setUpdateRequired] = useState<{ storeUrl: string; message?: string } | null>(null);
+  const [softWarning, setSoftWarning] = useState<MinVersionResult['softWarning']>(undefined);
+  const [softStoreUpdate, setSoftStoreUpdate] = useState<{ latestVersion: string; storeUrl: string } | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
 
   useEffect(() => {
@@ -187,29 +191,52 @@ function AuthWrapper() {
     }
   }, [loading]);
 
-  // Min version from backend (Render env). Block app if behind.
+  const runUpdateChecks = useCallback(async () => {
+    const config = await fetchAppConfig();
+    const minResult = await checkMinVersion(undefined, config);
+    if (minResult.mustUpdate) {
+      reportUpdateTelemetry('min_version_blocked', {
+        currentVersion: undefined,
+        minVersion: undefined,
+      }).catch(() => {});
+      setUpdateRequired({ storeUrl: minResult.storeUrl, message: minResult.message });
+      setSoftWarning(undefined);
+      setSoftStoreUpdate(null);
+      return;
+    }
+    if (minResult.softWarning) {
+      setUpdateRequired(null);
+      setSoftWarning(minResult.softWarning);
+      setSoftStoreUpdate(null);
+      return;
+    }
+    setUpdateRequired(null);
+    setSoftWarning(undefined);
+    const soft = await checkSoftStoreUpdate(undefined, config);
+    if (soft.updateAvailable) {
+      setSoftStoreUpdate({ latestVersion: soft.latestVersion, storeUrl: soft.storeUrl });
+    } else {
+      setSoftStoreUpdate(null);
+    }
+  }, []);
+
+  // Min version + soft store update: fetch config once, then run both checks.
   useEffect(() => {
     if (loading) return;
     let mounted = true;
-    checkMinVersion().then((result) => {
-      if (mounted && result.mustUpdate) {
-        setUpdateRequired({ storeUrl: result.storeUrl });
-      }
+    runUpdateChecks().then(() => {
+      if (!mounted) return;
     });
     return () => { mounted = false; };
-  }, [loading]);
+  }, [loading, runUpdateChecks]);
 
-  // Re-check min version when app comes to foreground
+  // Re-check when app comes to foreground
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        checkMinVersion().then((result) => {
-          if (result.mustUpdate) setUpdateRequired({ storeUrl: result.storeUrl });
-        });
-      }
+      if (state === 'active') runUpdateChecks();
     });
     return () => sub.remove();
-  }, []);
+  }, [runUpdateChecks]);
 
   // OTA: check and fetch silently; show banner when ready (user restarts when they want)
   useEffect(() => {
@@ -226,11 +253,28 @@ function AuthWrapper() {
   }
 
   if (updateRequired) {
-    return <UpdateRequiredScreen storeUrl={updateRequired.storeUrl} />;
+    return <UpdateRequiredScreen storeUrl={updateRequired.storeUrl} message={updateRequired.message} />;
   }
 
   return (
     <>
+      {softWarning && (
+        <SoftStoreUpdateBanner
+          message={softWarning.message}
+          storeUrl={softWarning.storeUrl}
+          latestVersion=""
+          onDismiss={() => setSoftWarning(undefined)}
+        />
+      )}
+      {softStoreUpdate && !softWarning && (
+        <SoftStoreUpdateBanner
+          message="A new version is available."
+          storeUrl={softStoreUpdate.storeUrl}
+          latestVersion={softStoreUpdate.latestVersion}
+          onDismiss={() => setSoftStoreUpdate(null)}
+          persistDismissForVersion={softStoreUpdate.latestVersion}
+        />
+      )}
       {updateReady && <OtaUpdateBanner />}
       <RootLayoutNav />
     </>

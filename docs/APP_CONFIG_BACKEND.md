@@ -14,8 +14,10 @@ Add these in your Render service → Environment:
 | `MIN_SUPPORTED_APP_VERSION` | `1.0.6` | Semver; app version below this → "Update required" |
 | `MIN_SUPPORTED_BUILD_IOS` | `2` | (Optional) iOS buildNumber; app below → "Update required" |
 | `MIN_SUPPORTED_VERSION_CODE_ANDROID` | `32` | (Optional) Android versionCode; app below → "Update required" |
+| `LATEST_APP_VERSION` | `1.0.7` | Latest version for soft update prompts. **Set by deploy.ps1** on production deploy. |
+| `UPDATE_REASON` | `feature` | `security` \| `breaking` \| `feature`. Defaults to `feature` if empty. **Set by deploy.ps1**. |
 
-You can use only `MIN_SUPPORTED_APP_VERSION`, or add the build/code fields for stricter control.
+You can use only `MIN_SUPPORTED_APP_VERSION`, or add the build/code fields for stricter control. `LATEST_APP_VERSION` and `UPDATE_REASON` are updated automatically when running `scripts/deploy.ps1` for production.
 
 ## Response shape
 

@@ -6,9 +6,10 @@ import { useTheme } from '../../contexts/ThemeContext';
 
 interface UpdateRequiredScreenProps {
   storeUrl: string;
+  message?: string;
 }
 
-export default function UpdateRequiredScreen({ storeUrl }: UpdateRequiredScreenProps) {
+export default function UpdateRequiredScreen({ storeUrl, message }: UpdateRequiredScreenProps) {
   const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const openStore = () => Linking.openURL(storeUrl);
@@ -19,7 +20,7 @@ export default function UpdateRequiredScreen({ storeUrl }: UpdateRequiredScreenP
         Update required
       </Text>
       <Text style={[styles.message, { color: isDark ? COLORS.textDark : COLORS.textSecondary }]}>
-        A new version of GrabDocs is available. Please update from the store to continue.
+        {message ?? 'A new version of GrabDocs is available. Please update from the store to continue.'}
       </Text>
       <TouchableOpacity style={styles.button} onPress={openStore} activeOpacity={0.8}>
         <Text style={styles.buttonText}>Update</Text>

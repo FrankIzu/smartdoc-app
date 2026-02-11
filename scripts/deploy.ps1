@@ -5,8 +5,11 @@
 #   Interactive mode: .\scripts\deploy.ps1
 #   Direct parameters (Android): .\scripts\deploy.ps1 -Platform android -Environment prod -BuildNumber 11 -Version 1.0.3
 #   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 2 -Version 1.0.3
+#   With update reason: .\scripts\deploy.ps1 -Platform android -Environment prod -Version 1.0.4 -UpdateReason security
 #   Local build (no EAS cloud): .\scripts\deploy.ps1 -Platform android -Environment prod -Local
 #   Local build (iOS, requires macOS): .\scripts\deploy.ps1 -Platform ios -Environment prod -Local
+#
+#   In production, UpdateReason is written to render.yaml (default: feature). Valid: security, breaking, feature.
 #
 #   In interactive mode you can choose: (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions.
 #   Option 3 commits version/build and pushes; iOS runs on push to main, Android runs on push to main or tag.
@@ -16,6 +19,7 @@ param(
     [string]$Environment,
     [string]$BuildNumber,
     [string]$Version,
+    [string]$UpdateReason = "feature",
     [switch]$Local
 )
 
@@ -225,6 +229,34 @@ function Update-BuildNumber {
     }
 }
 
+# Function to update LATEST_APP_VERSION and UPDATE_REASON in render.yaml (for production deploys)
+function Update-RenderAppConfig {
+    param(
+        [string]$Version,
+        [string]$UpdateReason
+    )
+    $renderPath = "$PSScriptRoot\..\manager-francis\render.yaml"
+    if (-not (Test-Path $renderPath)) {
+        Write-Host "⚠️  render.yaml not found at $renderPath. Skipping app config update." -ForegroundColor Yellow
+        return
+    }
+    $validReasons = @("security", "breaking", "feature")
+    if ($UpdateReason -notin $validReasons) {
+        $UpdateReason = "feature"
+        Write-Host "⚠️  Invalid UpdateReason. Defaulting to 'feature'." -ForegroundColor Yellow
+    }
+    try {
+        $content = Get-Content $renderPath -Raw -Encoding UTF8
+        $content = $content -replace '(- key: LATEST_APP_VERSION\s+value: )["'']?[^"'']*["'']?', "`${1}`"$Version`""
+        $content = $content -replace '(- key: UPDATE_REASON\s+value: )["'']?[^"'']*["'']?', "`${1}$UpdateReason"
+        Set-Content $renderPath $content -Encoding UTF8
+        Write-Host "✅ Updated render.yaml: LATEST_APP_VERSION=$Version, UPDATE_REASON=$UpdateReason" -ForegroundColor Green
+    } catch {
+        Write-Host "❌ Error updating render.yaml: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+}
+
 # Function to run EAS build
 function Run-EasBuild {
     param(
@@ -405,6 +437,8 @@ try {
                 Write-Host "❌ Error updating build number: $($_.Exception.Message)" -ForegroundColor Red
                 exit 1
             }
+            # Update render.yaml with LATEST_APP_VERSION and UPDATE_REASON for backend app-config
+            Update-RenderAppConfig -Version $Version -UpdateReason $UpdateReason
         } else {
             Write-Host "❌ Invalid build number. Must be a number." -ForegroundColor Red
             exit 1
