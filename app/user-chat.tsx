@@ -171,14 +171,13 @@ export default function UserChatScreen() {
       // Request participant online status
       socketRef.current.emit('get_chat_participants_status', { chatId: selectedChat.id });
     } else {
-      console.log('⚠️ [USER-CHAT] Cannot join chat room:', {
-        hasSelectedChat: !!selectedChat,
-        isNewChat,
-        hasSocket: !!socketRef.current,
-        isConnected,
-        socketConnected: socketRef.current?.connected
-      });
-      // Reset when no chat is selected
+      if (selectedChat && !isNewChat) {
+        console.log('⚠️ [USER-CHAT] Cannot join chat room:', {
+          hasSocket: !!socketRef.current,
+          isConnected,
+          socketConnected: socketRef.current?.connected
+        });
+      }
       setOtherUserOnline(false);
     }
   }, [selectedChat, isNewChat, isConnected]);
@@ -1015,15 +1014,18 @@ export default function UserChatScreen() {
   };
 
 
+  /** Parse backend timestamp (UTC); if no timezone, treat as UTC so display shows local time. */
+  const parseBackendTime = (dateString: string): Date => {
+    if (!dateString) return new Date(0);
+    const hasTimezone = dateString.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(dateString);
+    const iso = hasTimezone ? dateString : (dateString.includes('T') ? dateString + 'Z' : dateString);
+    return new Date(iso);
+  };
+
   const formatMessageTime = (dateString: string) => {
     try {
-      const date = new Date(dateString);
-      
-      if (isNaN(date.getTime())) {
-        return '';
-      }
-      
-      // Format as HH:MM (e.g., "2:30 PM" or "14:30")
+      const date = parseBackendTime(dateString);
+      if (isNaN(date.getTime())) return '';
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } catch (error) {
       return '';
@@ -1032,12 +1034,8 @@ export default function UserChatScreen() {
 
   const formatChatTime = (dateString: string) => {
     try {
-      const date = new Date(dateString);
-      
-      if (isNaN(date.getTime())) {
-        return 'Unknown';
-      }
-      
+      const date = parseBackendTime(dateString);
+      if (isNaN(date.getTime())) return 'Unknown';
       return formatRelativeDate(date);
     } catch (error) {
       return 'Unknown';
@@ -1117,7 +1115,7 @@ export default function UserChatScreen() {
     const list = messages || [];
     const byLabel = new Map<string, ChatMessage[]>();
     for (const msg of list) {
-      const ts = new Date(msg.created_at || 0).getTime();
+      const ts = parseBackendTime(msg.created_at || '').getTime();
       const label = getDateSectionLabel(ts);
       if (!byLabel.has(label)) byLabel.set(label, []);
       byLabel.get(label)!.push(msg);
@@ -1127,8 +1125,8 @@ export default function UserChatScreen() {
     restLabels.sort((a, b) => {
       const dataA = byLabel.get(a)!;
       const dataB = byLabel.get(b)!;
-      const maxTsA = Math.max(...dataA.map(m => new Date(m.created_at).getTime()));
-      const maxTsB = Math.max(...dataB.map(m => new Date(m.created_at).getTime()));
+      const maxTsA = Math.max(...dataA.map(m => parseBackendTime(m.created_at).getTime()));
+      const maxTsB = Math.max(...dataB.map(m => parseBackendTime(m.created_at).getTime()));
       return maxTsA - maxTsB; // oldest first
     });
     restLabels.forEach(title => sections.push({ title, data: byLabel.get(title)! }));
@@ -1835,7 +1833,7 @@ export default function UserChatScreen() {
                   onScrollToIndexFailed={() => {}}
                   stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
-                  contentContainerStyle={{ paddingBottom: 10 }}
+                  contentContainerStyle={{ paddingBottom: 100 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
                   onContentSizeChange={() => scrollToBottom()}
                   onLayout={() => scrollToBottom()}
@@ -1967,7 +1965,7 @@ export default function UserChatScreen() {
                   onScrollToIndexFailed={() => {}}
                   stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
-                  contentContainerStyle={{ paddingBottom: 10 }}
+                  contentContainerStyle={{ paddingBottom: 100 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
                   onContentSizeChange={() => scrollToBottom()}
                   onLayout={() => scrollToBottom()}

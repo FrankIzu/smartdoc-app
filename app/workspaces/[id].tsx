@@ -385,13 +385,6 @@ export default function WorkspaceDetailsScreen() {
             setShowMemberActionSheet(false);
           }
         },
-        { 
-          text: 'Owner', 
-          onPress: () => {
-            handleChangeMemberRole('owner');
-            setShowMemberActionSheet(false);
-          }
-        },
       ]
     );
   };

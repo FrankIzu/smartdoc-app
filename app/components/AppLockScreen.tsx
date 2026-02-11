@@ -80,7 +80,7 @@ export default function AppLockScreen() {
       backgroundColor: colors.background + 'F0',
     },
     title: { color: colors.text },
-    subtitle: { color: colors.textSecondary },
+    subtitle: { color: colors.text },
     error: { color: colors.error || '#ef4444' },
     pinInput: {
       backgroundColor: colors.inputBackground || colors.surface,

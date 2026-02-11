@@ -759,7 +759,7 @@ export default function QuickFilesScreen() {
       console.error('Unexpected error in loadDocuments:', err);
       setDocuments([]);
       if (err.message?.includes('CORS') || err.message?.includes('Network error') || err.message?.toLowerCase().includes('backend') || err.message?.toLowerCase().includes('connection')) {
-        setError('Connection Error: waiting while we connect you ...');
+        setError('Connection Error: Connecting you back ...');
       } else {
         setError(`Failed to load documents: ${err.message}`);
       }

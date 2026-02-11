@@ -155,6 +155,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  useEffect(() => {
+    apiService.setOnSessionExpired(() => {
+      forceReset();
+    });
+  }, []);
+
   const signIn = async (email: string, password: string, remember: boolean = false) => {
     try {
       // Do NOT set loading=true here: it would unmount the entire app (AuthWrapper returns null)

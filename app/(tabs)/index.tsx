@@ -357,6 +357,18 @@ function DashboardScreen() {
     await Promise.all([statsPromise, activitiesPromise]);
     const loadTime = Date.now() - startTime;
     console.log(`📊 Dashboard loaded in ${loadTime}ms (stats and activities in parallel)`);
+
+    // Bell count excludes chat messages (chat has its own in-conversation UX)
+    try {
+      const notifRes = await apiClient.getNotifications();
+      if (notifRes?.success && notifRes?.data?.notifications) {
+        const list = notifRes.data.notifications as { read?: boolean; type?: string }[];
+        const nonChatUnread = list.filter((n) => !n.read && n.type !== 'chat_message').length;
+        setStats((prev) => ({ ...prev, unreadNotifications: nonChatUnread }));
+      }
+    } catch {
+      // keep dashboard unread count as-is
+    }
       
     } catch (error) {
       // console.error('🏠 Unexpected error in dashboard data loading:', error);
@@ -1083,7 +1095,7 @@ function DashboardScreen() {
           <Text style={dynamicStyles.connectionBannerText}>
             {connectionStatus.message.includes('CORS') 
               ? 'CORS Error: Please configure backend for web development'
-              : 'Connection Error: waiting while we connect you ...'
+              : 'Connection Error: Connecting you back ...'
             }
           </Text>
         </View>

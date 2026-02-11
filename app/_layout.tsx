@@ -41,8 +41,12 @@ import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
 import { getNotificationScreen, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
 
-// Prevent the splash screen from auto-hiding
-SplashScreen.preventAutoHideAsync();
+// Prevent the splash screen from auto-hiding (ignore if native splash not ready yet)
+SplashScreen.preventAutoHideAsync().catch((err) => {
+  if (!err?.message?.includes('No native splash screen registered')) {
+    console.warn('SplashScreen.preventAutoHideAsync failed:', err);
+  }
+});
 
 function RootLayoutNav() {
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
@@ -175,7 +179,11 @@ function AuthWrapper() {
 
   useEffect(() => {
     if (!loading) {
-      SplashScreen.hideAsync();
+      SplashScreen.hideAsync().catch((err) => {
+        if (!err?.message?.includes('No native splash screen registered')) {
+          console.warn('SplashScreen.hideAsync failed:', err);
+        }
+      });
     }
   }, [loading]);
 

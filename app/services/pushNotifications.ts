@@ -40,11 +40,15 @@ class PushNotificationService {
     const Notifications = await getNotifications();
     if (!Notifications) return;
     Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-      }),
+      handleNotification: async (notification) => {
+        const data = notification.request.content.data as Record<string, unknown> | undefined;
+        const isChatMessage = data?.type === 'chat_message';
+        return {
+          shouldShowAlert: !isChatMessage,
+          shouldPlaySound: !isChatMessage,
+          shouldSetBadge: !isChatMessage,
+        };
+      },
     });
     this.initialized = true;
   }

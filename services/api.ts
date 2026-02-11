@@ -216,6 +216,11 @@ let meetingAssetsCache: { at: number; response: ApiResponse } | null = null;
 // Main API Service Class
 class ApiService {
   public client: AxiosInstance;
+  private onSessionExpired?: () => void;
+
+  setOnSessionExpired(callback: () => void) {
+    this.onSessionExpired = callback;
+  }
 
   constructor() {
     // Determine the actual platform for the X-Platform header
@@ -371,6 +376,7 @@ class ApiService {
         if (error.response?.status === 401) {
           console.log('🔐 Clearing auth data due to 401 error');
           await this.clearAuthData();
+          this.onSessionExpired?.();
         }
         return Promise.reject(error);
       }

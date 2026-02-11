@@ -1165,9 +1165,8 @@ export default function ChatsScreen() {
               socketRef.current.emit('leave_chat_room', { chat_id: selectedChat.id });
             }
           };
-        } else {
+        } else if (selectedChat) {
           console.log('⚠️ [CHATS] Cannot join chat room:', {
-            hasSelectedChat: !!selectedChat,
             chatType: selectedChat?.type,
             hasSocket: !!socketRef.current,
             isSocketConnected,

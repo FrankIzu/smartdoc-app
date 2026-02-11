@@ -58,8 +58,9 @@ export default function NotificationsScreen() {
       const res = await apiClient.getNotifications();
       if (res?.success && res?.data) {
         const list = res.data.notifications ?? [];
-        const count = res.data.unreadCount ?? list.filter((n: AppNotification) => !n.read).length;
-        setNotifications(list);
+        const withoutChat = list.filter((n: AppNotification) => n.type !== 'chat_message');
+        const count = withoutChat.filter((n: AppNotification) => !n.read).length;
+        setNotifications(withoutChat);
         setUnreadCount(count);
       } else {
         setNotifications([]);
@@ -212,13 +213,13 @@ export default function NotificationsScreen() {
   );
 
   const isDraftOrFileInvite = (n: AppNotification) =>
-    (n.type === 'draft_invite' || n.type === 'file_invite' || n.type === 'file_received' ||
+    (n.type === 'draft_invite' || n.type === 'file_invite' || n.type === 'file_received' || n.type === 'file_share' ||
       n.metadata?.action_type === 'draft_invite' || n.metadata?.action_type === 'file_invite' || n.metadata?.action_type === 'file_share') &&
     n.metadata?.share_id != null;
 
   const isWorkspaceInvitation = (n: AppNotification) =>
-    (n.type === 'workspace_invite' ||
-      n.metadata?.action_type === 'workspace_invitation') &&
+    (n.type === 'workspace_invite' || n.type === 'workspace_invitation' ||
+      n.metadata?.action_type === 'workspace_invite' || n.metadata?.action_type === 'workspace_invitation') &&
     n.metadata?.invitation_id != null;
 
   const handleAcceptWorkspaceInvitation = useCallback(
