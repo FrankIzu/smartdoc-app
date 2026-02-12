@@ -2,16 +2,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Modal,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -36,6 +37,10 @@ export default function ManageBookmarksScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [bookmarkToRename, setBookmarkToRename] = useState<Bookmark | null>(null);
+  const [renameInputValue, setRenameInputValue] = useState('');
+  const [renaming, setRenaming] = useState(false);
   const [newBookmarkName, setNewBookmarkName] = useState('');
   const [newBookmarkDescription, setNewBookmarkDescription] = useState('');
   const [selectedColor, setSelectedColor] = useState('#007AFF');
@@ -141,6 +146,49 @@ export default function ManageBookmarksScreen() {
     });
   };
 
+  const handleOpenRename = (bookmark: Bookmark, e: any) => {
+    e?.stopPropagation?.();
+    setBookmarkToRename(bookmark);
+    setRenameInputValue(bookmark.name);
+    setShowRenameModal(true);
+  };
+
+  const handleRenameBookmark = async () => {
+    if (!bookmarkToRename || !renameInputValue.trim()) return;
+    setRenaming(true);
+    try {
+      const response = await apiClient.updateBookmark(bookmarkToRename.id, {
+        name: renameInputValue.trim(),
+      });
+      if (response.success) {
+        setShowRenameModal(false);
+        setBookmarkToRename(null);
+        setRenameInputValue('');
+        loadBookmarks();
+        Alert.alert('Success', 'Bookmark renamed successfully');
+      } else {
+        Alert.alert('Error', response.message || 'Failed to rename bookmark');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to rename bookmark');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const handleChatWithBookmark = (bookmark: Bookmark, e: any) => {
+    e?.stopPropagation?.();
+    router.push({
+      pathname: '/(tabs)/chats',
+      params: {
+        bookmark_id: bookmark.id.toString(),
+        bookmark_name: bookmark.name,
+        bookmark_description: bookmark.description || '',
+        bookmark_file_count: bookmark.file_count.toString(),
+      },
+    });
+  };
+
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
@@ -175,7 +223,7 @@ export default function ManageBookmarksScreen() {
     },
     content: {
       flex: 1,
-      padding: 16,
+      padding: 10,
     },
     emptyState: {
       flex: 1,
@@ -211,8 +259,9 @@ export default function ManageBookmarksScreen() {
     bookmarkCard: {
       backgroundColor: colors.card,
       borderRadius: 8,
-      padding: 16,
-      marginBottom: 12,
+      padding: 10,
+      paddingRight: 8,
+      marginBottom: 6,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.1,
@@ -227,9 +276,7 @@ export default function ManageBookmarksScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       marginLeft: 'auto',
-    },
-    chevron: {
-      marginLeft: 8,
+      gap: 4,
     },
     bookmarkColorIndicator: {
       width: 16,
@@ -240,11 +287,20 @@ export default function ManageBookmarksScreen() {
     bookmarkInfo: {
       flex: 1,
     },
+    bookmarkNameRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 4,
+    },
     bookmarkName: {
       fontSize: 16,
       fontWeight: '600',
       color: colors.text,
-      marginBottom: 4,
+      flex: 1,
+    },
+    chatgdButton: {
+      padding: 4,
     },
     bookmarkDescription: {
       fontSize: 14,
@@ -256,7 +312,7 @@ export default function ManageBookmarksScreen() {
       color: colors.textLight,
     },
     deleteButton: {
-      padding: 8,
+      padding: 4,
     },
     modalOverlay: {
       position: 'absolute',
@@ -370,7 +426,9 @@ export default function ManageBookmarksScreen() {
       <View style={dynamicStyles.bookmarkHeader}>
         <View style={[dynamicStyles.bookmarkColorIndicator, { backgroundColor: item.color }]} />
         <View style={dynamicStyles.bookmarkInfo}>
-          <Text style={dynamicStyles.bookmarkName}>{item.name}</Text>
+          <View style={dynamicStyles.bookmarkNameRow}>
+            <Text style={dynamicStyles.bookmarkName}>{item.name.length > 30 ? `${item.name.slice(0, 30)}...` : item.name}</Text>
+          </View>
           {item.description && (
             <Text style={dynamicStyles.bookmarkDescription}>{item.description}</Text>
           )}
@@ -380,6 +438,18 @@ export default function ManageBookmarksScreen() {
         </View>
         <View style={dynamicStyles.bookmarkActions}>
           <TouchableOpacity
+            style={dynamicStyles.chatgdButton}
+            onPress={(e) => handleChatWithBookmark(item, e)}
+          >
+            <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={dynamicStyles.chatgdButton}
+            onPress={(e) => handleOpenRename(item, e)}
+          >
+            <Ionicons name="pencil-outline" size={20} color="#6B7280" />
+          </TouchableOpacity>
+          <TouchableOpacity
             style={dynamicStyles.deleteButton}
             onPress={(e) => {
               e.stopPropagation();
@@ -388,7 +458,6 @@ export default function ManageBookmarksScreen() {
           >
             <Ionicons name="trash-outline" size={20} color="#FF3B30" />
           </TouchableOpacity>
-          <Ionicons name="chevron-forward" size={20} color={colors.textLight} style={dynamicStyles.chevron} />
         </View>
       </View>
     </TouchableOpacity>
@@ -527,6 +596,59 @@ export default function ManageBookmarksScreen() {
           </View>
         </View>
       )}
+
+      {/* Rename Bookmark Modal */}
+      <Modal
+        visible={showRenameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !renaming && setShowRenameModal(false)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !renaming && setShowRenameModal(false)}
+        >
+          <View style={dynamicStyles.modalContainer} onStartShouldSetResponder={() => true}>
+            <View style={dynamicStyles.modalHeader}>
+              <Text style={dynamicStyles.modalTitle}>Rename Bookmark</Text>
+              <TouchableOpacity onPress={() => !renaming && setShowRenameModal(false)}>
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={dynamicStyles.modalContent}>
+              <Text style={[dynamicStyles.inputLabel, { marginTop: 0 }]}>Name</Text>
+              <TextInput
+                style={dynamicStyles.textInput}
+                value={renameInputValue}
+                onChangeText={setRenameInputValue}
+                placeholder="Enter bookmark name"
+                placeholderTextColor={colors.textLight}
+                editable={!renaming}
+                autoFocus
+              />
+            </View>
+            <View style={dynamicStyles.modalActions}>
+              <TouchableOpacity
+                style={dynamicStyles.cancelButton}
+                onPress={() => !renaming && setShowRenameModal(false)}
+                disabled={renaming}
+              >
+                <Text style={dynamicStyles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={dynamicStyles.createButton}
+                onPress={handleRenameBookmark}
+                disabled={renaming || !renameInputValue.trim()}
+              >
+                <Text style={dynamicStyles.createButtonText}>
+                  {renaming ? 'Saving...' : 'Save'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }

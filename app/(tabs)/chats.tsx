@@ -34,11 +34,11 @@ import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { secureStorage } from '../../utils/storage';
-import { useAuth } from '../context/auth';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
+import { useAuth } from '../context/auth';
 
 interface ChatParticipant {
   id: number;
@@ -50,6 +50,8 @@ interface Chat {
   id: number;
   title: string;
   type: 'ai_assistant' | 'user_direct' | 'workspace' | 'document_focused' | 'bookmark_focused';
+  /** Backend source: 'llm' = ChatHistory, 'user' = UserChat. Used for favorite API (unified ID). */
+  source?: 'llm' | 'user';
   participants: ChatParticipant[];
   last_message: string;
   updated_at: string;
@@ -143,10 +145,14 @@ const DEFAULT_CHAT_ASSISTANT: Chat = {
 const CHAT_CONTEXTS_KEY = '@grabdocs_chat_contexts';
 const FAVORITE_CHATS_KEY = '@grabdocs_favorite_chats';
 
+// Composite key to prevent AI chat and user chat ID collision in storage
+const getChatStorageKey = (chat: { type: string; id: number }) =>
+  (chat.type === 'user_direct' || chat.type === 'workspace' ? 'user_' : 'ai_') + chat.id;
+
 // Helper: Save document/bookmark/user/workspace chat contexts to AsyncStorage
 const savePersistedChatContexts = async (chats: Chat[]) => {
   try {
-    const contextsToSave: Record<number, {
+    const contextsToSave: Record<string, {
       type: string;
       title: string;
       document_context?: Document;
@@ -172,7 +178,7 @@ const savePersistedChatContexts = async (chats: Chat[]) => {
                            chat.type === 'user_direct' ? 'user_direct' :
                            chat.type;
         
-        contextsToSave[chat.id] = {
+        contextsToSave[getChatStorageKey(chat)] = {
           type: correctType,
           title: chat.title,
           document_context: chat.document_context,
@@ -181,28 +187,17 @@ const savePersistedChatContexts = async (chats: Chat[]) => {
           workspace: chat.workspace
         };
         
-        // Log if we're fixing the type
-        if (hasContext && !hasCorrectType) {
-          console.log(`🔧 Saving chat ${chat.id} with context but fixing type from ${chat.type} to ${correctType}`);
-        }
       }
     });
     
     await AsyncStorage.setItem(CHAT_CONTEXTS_KEY, JSON.stringify(contextsToSave));
-    console.log('💾 Saved', Object.keys(contextsToSave).length, 'chat contexts to AsyncStorage:', 
-      Object.entries(contextsToSave).map(([id, ctx]) => ({ 
-        id, 
-        type: ctx.type, 
-        title: ctx.title 
-      }))
-    );
   } catch (error) {
     console.error('❌ Failed to save chat contexts:', error);
   }
 };
 
-// Helper: Load persisted chat contexts from AsyncStorage
-const loadPersistedChatContexts = async (): Promise<Map<number, {
+// Helper: Load persisted chat contexts from AsyncStorage (uses composite key: ai_95, user_95)
+const loadPersistedChatContexts = async (): Promise<Map<string, {
   type: string;
   title: string;
   document_context?: Document;
@@ -212,18 +207,15 @@ const loadPersistedChatContexts = async (): Promise<Map<number, {
 }>> => {
   try {
     const stored = await AsyncStorage.getItem(CHAT_CONTEXTS_KEY);
-    if (!stored) {
-      console.log('💾 No persisted chat contexts found');
-      return new Map();
-    }
+    if (!stored) return new Map();
     
     const parsed = JSON.parse(stored);
-    const contextsMap = new Map();
+    const contextsMap = new Map<string, any>();
     Object.entries(parsed).forEach(([chatId, context]) => {
-      contextsMap.set(Number(chatId), context);
+      // Support both legacy numeric keys and new composite keys
+      const key = String(chatId).startsWith('ai_') || String(chatId).startsWith('user_') ? chatId : Number(chatId);
+      contextsMap.set(String(key), context);
     });
-    
-    console.log('💾 Loaded', contextsMap.size, 'chat contexts from AsyncStorage');
     return contextsMap;
   } catch (error) {
     console.error('❌ Failed to load chat contexts:', error);
@@ -281,6 +273,8 @@ export default function ChatsScreen() {
   const workspaceRequestRef = useRef<Promise<any> | null>(null); // Track in-flight workspace request to prevent duplicate calls
   const isPreservingContextRef = useRef<boolean>(false); // Track when we're preserving context to prevent loadChats from overwriting
   const contextPreservationTimeRef = useRef<number>(0); // Track when context was last preserved
+  const pendingBookmarkFromParamsRef = useRef<Bookmark | null>(null); // Bookmark from nav params so loadChats can re-inject if it overwrites list
+  const placeholderChatToPreserveRef = useRef<Chat | null>(null); // Placeholder -2 when going back, so loadChats can merge it (avoids stale closure)
   
   // Keep selectedChatRef in sync with selectedChat state
   useEffect(() => {
@@ -704,7 +698,7 @@ export default function ChatsScreen() {
     // Context should show instantly when fileId params are available
   }, [params.fileId, params.fileName, params.workspaceId]);
 
-  // Handle bookmark context from navigation
+  // Handle bookmark context from navigation: set ref and load chats; loadChats will find existing or create -2 and load messages
   useEffect(() => {
     if (params.bookmark_id && params.bookmark_name) {
       const bookmarkContext: Bookmark = {
@@ -714,41 +708,8 @@ export default function ChatsScreen() {
         file_count: parseInt(params.bookmark_file_count as string) || 0,
         documents: []
       };
-      
-      // Create a bookmark-focused chat
-      // Backend will create chat history when first message is sent
-      const bookmarkChat: Chat = {
-        id: -2,
-        title: `Chat about ${bookmarkContext.name}`,
-        type: 'bookmark_focused',
-        participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
-        last_message: `Ready to answer questions about ${bookmarkContext.name}`,
-        updated_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        unread_count: 0,
-        bookmark_context: bookmarkContext
-      };
-      
-      // Add the chat to the list and select it
-      setChats(prev => {
-        const chatAssistant = prev.find(chat => chat.id === -1); // Find the default ChatGD Assistant
-        const otherChats = prev.filter(chat => chat.id !== -1); // All chats except default ChatGD Assistant
-        
-        if (chatAssistant) {
-          // ChatGD Assistant exists, add new chat after it
-          return [chatAssistant, bookmarkChat, ...otherChats];
-        } else {
-          // No ChatGD Assistant found, add new chat at beginning
-          return [bookmarkChat, ...prev];
-        }
-      });
-      setSelectedChat(bookmarkChat);
-      
-      // Don't show welcome message - just show empty chat
-      setMessages([]);
-      loadedChatIdRef.current = bookmarkChat.id; // Track that we've set empty messages for this chat
-      
-      // Clear the params to prevent re-triggering
+      pendingBookmarkFromParamsRef.current = bookmarkContext;
+      loadChats().then(() => { /* selection and loadMessages done inside loadChats */ });
       router.setParams({});
     }
   }, [params.bookmark_id, params.bookmark_name, params.bookmark_description, params.bookmark_file_count]);
@@ -823,8 +784,6 @@ export default function ChatsScreen() {
 
   // Stop message processing
   const stopProcessing = () => {
-    console.log('🛑 Stopping message processing...');
-    
     // Abort the HTTP request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -863,8 +822,6 @@ export default function ChatsScreen() {
     // This ensures ProcessingMessageDisplay receives isProcessing={false} and stops
     setSendingMessage(false);
     stopBounceAnimation();
-    
-    console.log('✅ Message processing stopped - fake streaming should now be inactive');
   };
 
   // Progress tracking functions - removed, only using bouncing dots
@@ -887,34 +844,21 @@ export default function ChatsScreen() {
       });
 
       socket.on('connect', () => {
-        console.log('✅ [CHATS] Socket connected');
         setIsSocketConnected(true);
-        
-        // Join user room first (required for receiving messages)
-        // Note: userProfile comes from useChatStore, need to get it from there
-        // We'll join user room in a separate useEffect when userProfile is available
-        console.log('🔌 [CHATS] Socket connected, will join user room when userProfile is available');
-        
-        // Use state setter to get latest selectedChat
         setSelectedChat(currentChat => {
-          // Rejoin chat room if we have a selected chat
           if (currentChat && (currentChat.type === 'user_direct' || currentChat.type === 'workspace')) {
-            console.log('🔌 [CHATS] Rejoining chat room after reconnect:', currentChat.id);
             socket.emit('join_chat_room', { chat_id: currentChat.id });
-            console.log('🔌 [CHATS] Emitted join_chat_room for chat:', currentChat.id);
           }
           return currentChat;
         });
       });
 
       socket.on('disconnect', () => {
-        console.log('❌ [CHATS] Socket disconnected');
         setIsSocketConnected(false);
       });
 
       // Listen for new messages (only for user chats)
       socket.on('new_chat_message', (data: any) => {
-        console.log('📨 [CHATS] New message received:', data);
         // Use state setter with function form to access latest selectedChat and messages
         setSelectedChat(currentChat => {
           if (currentChat && (currentChat.type === 'user_direct' || currentChat.type === 'workspace')) {
@@ -931,26 +875,14 @@ export default function ChatsScreen() {
                 (senderId === userId || 
                  String(senderId) === String(userId)));
               
-              console.log('📨 [CHATS] Message ownership check:', {
-                senderId: senderId,
-                userId: userId,
-                userProfile: currentUserProfile,
-                isOwnMessage: isOwnMessage,
-                messageId: messageId
-              });
-              
               // Check for duplicates BEFORE processing - use setMessages to access current messages
               setMessages(prev => {
                 // First check: Is this a recently sent message ID?
-                if (recentlySentMessageIdsRef.current.has(messageId)) {
-                  console.log('⏭️ [CHATS] Duplicate detected - recently sent message ID, skipping:', messageId);
-                  return prev;
-                }
+                if (recentlySentMessageIdsRef.current.has(messageId)) return prev;
                 
                 // Second check: exact ID match in current messages
                 const existingById = prev.find(msg => msg.id === messageId);
                 if (existingById) {
-                  console.log('⏭️ [CHATS] Duplicate detected by ID, skipping:', messageId);
                   // Add to recently sent set to prevent future duplicates
                   recentlySentMessageIdsRef.current.add(messageId);
                   setTimeout(() => {
@@ -981,10 +913,6 @@ export default function ChatsScreen() {
                 });
                 
                 if (duplicateByContent) {
-                  const msgTimeStr = duplicateByContent.created_at + (duplicateByContent.created_at.includes('T') && !duplicateByContent.created_at.match(/[Z+-]/) ? 'Z' : '');
-                  const newMsgTimeStr = data.message.created_at + (data.message.created_at.includes('T') && !data.message.created_at.match(/[Z+-]/) ? 'Z' : '');
-                  const timeDiff = Math.abs(new Date(msgTimeStr).getTime() - new Date(newMsgTimeStr).getTime());
-                  console.log('⏭️ [CHATS] Duplicate detected by content+time, skipping:', messageId, 'existing:', duplicateByContent.id, 'timeDiff:', timeDiff, 'ms');
                   // Add to recently sent set to prevent future duplicates
                   recentlySentMessageIdsRef.current.add(messageId);
                   setTimeout(() => {
@@ -995,7 +923,6 @@ export default function ChatsScreen() {
                 
                 // Fourth check: If this is our own message, it was already added optimistically - skip it
                 if (isOwnMessage) {
-                  console.log('⏭️ [CHATS] Skipping own message from WebSocket (already added optimistically):', messageId);
                   // Also add to recently sent set to prevent future duplicates
                   recentlySentMessageIdsRef.current.add(messageId);
                   setTimeout(() => {
@@ -1012,8 +939,6 @@ export default function ChatsScreen() {
                   is_own_message: false, // This is a received message, not our own
                   created_at: data.message.created_at,
                 };
-                
-                console.log('✅ [CHATS] Adding new received message from WebSocket:', newMsg.id);
                 
                 // Update chat list when adding new message
                 setChats(prevChats => prevChats.map(chat => 
@@ -1032,13 +957,7 @@ export default function ChatsScreen() {
 
       // Listen for typing indicators
       socket.on('chat_typing', (data: any) => {
-        console.log('⌨️ [CHATS] Typing event received:', data);
-        
-        // Validate required fields exist
-        if (!data || data.chat_id == null || data.user_id == null) {
-          console.warn('⚠️ [CHATS] Ignoring malformed typing event - missing chat_id or user_id:', data);
-          return;
-        }
+        if (!data || data.chat_id == null || data.user_id == null) return;
         
         // Use state setters with function form to access latest values
         setSelectedChat(currentChat => {
@@ -1104,10 +1023,8 @@ export default function ChatsScreen() {
                 }
                 
                 const username = displayName || 'Someone';
-                console.log('⌨️ [CHATS] Setting typing user:', username, 'for user_id:', data.user_id);
                 setTypingUsers(prev => ({ ...prev, [data.user_id]: username }));
               } else {
-                console.log('⌨️ [CHATS] Removing typing user:', data.user_id);
                 setTypingUsers(prev => {
                   const updated = { ...prev };
                   delete updated[data.user_id];
@@ -1153,25 +1070,16 @@ export default function ChatsScreen() {
         };
       }, []);
 
-      // Join/leave chat room when user chat is selected
+      // Join/leave chat room when user chat is selected (only user_direct and workspace use socket rooms)
       useEffect(() => {
-        if (selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'workspace') && socketRef.current && isSocketConnected) {
-          console.log('🔌 [CHATS] Joining chat room:', selectedChat.id, 'socket connected:', socketRef.current.connected);
+        const needsRoom = selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'workspace');
+        if (needsRoom && socketRef.current && isSocketConnected) {
           socketRef.current.emit('join_chat_room', { chat_id: selectedChat.id });
-          console.log('🔌 [CHATS] Emitted join_chat_room event for chat:', selectedChat.id);
           return () => {
             if (socketRef.current && isSocketConnected) {
-              console.log('🔌 [CHATS] Leaving chat room:', selectedChat.id);
               socketRef.current.emit('leave_chat_room', { chat_id: selectedChat.id });
             }
           };
-        } else if (selectedChat) {
-          console.log('⚠️ [CHATS] Cannot join chat room:', {
-            chatType: selectedChat?.type,
-            hasSocket: !!socketRef.current,
-            isSocketConnected,
-            socketConnected: socketRef.current?.connected
-          });
         }
       }, [selectedChat, isSocketConnected]);
 
@@ -1183,9 +1091,7 @@ export default function ChatsScreen() {
       loadDocuments(),
       loadUsers(),
       loadBookmarks()
-    ]).then(() => {
-      console.log('✅ Initial mention data loaded successfully');
-    }).catch(error => {
+    ]).catch(error => {
       console.error('❌ Error loading initial data:', error);
     });
   }, []);
@@ -1193,10 +1099,6 @@ export default function ChatsScreen() {
   // Reload users when direct chat modal opens
   useEffect(() => {
     if (showNewChatModal && newChatType === 'user_direct') {
-      console.log('🔄 Direct chat modal opened - reloading users...', {
-        currentUsersCount: users.length,
-        modalUserSearch: modalUserSearch
-      });
       loadUsers().catch(error => {
         console.error('❌ Failed to reload users for direct chat:', error);
       });
@@ -1215,28 +1117,14 @@ export default function ChatsScreen() {
       // This ensures that if user navigates away and back, it will refresh
       if (isSettingUpFileContextRef.current) {
         const timeSinceSetup = Date.now() - fileContextSetupStartTimeRef.current;
-        if (timeSinceSetup < 2000) {
-          console.log('⏭️ Skipping reload - file context is being set up (recent,', timeSinceSetup, 'ms ago)');
-          return;
-        } else {
-          // Setup took too long, allow refresh
-          console.log('🔄 Allowing reload - file context setup took longer than expected (', timeSinceSetup, 'ms)');
-          isSettingUpFileContextRef.current = false;
-        }
+        if (timeSinceSetup < 2000) return;
+        isSettingUpFileContextRef.current = false;
       }
       
-      // CRITICAL: Skip reload if we're currently preserving context (going back from chat)
-      // This prevents loadChats from overwriting context that was just saved
       if (isPreservingContextRef.current) {
         const timeSincePreservation = Date.now() - contextPreservationTimeRef.current;
-        if (timeSincePreservation < 2000) {
-          console.log('⏭️ Skipping reload - context is being preserved (recent,', timeSincePreservation, 'ms ago)');
-          return;
-        } else {
-          // Preservation took longer than expected, allow reload
-          console.log('🔄 Allowing reload - context preservation took longer than expected');
-          isPreservingContextRef.current = false;
-        }
+        if (timeSincePreservation < 2000) return;
+        isPreservingContextRef.current = false;
       }
       
       // Debounce reloads to prevent excessive API calls when quickly switching screens
@@ -1247,17 +1135,7 @@ export default function ChatsScreen() {
       const timeSinceLastLoad = now - lastLoadTimeRef.current;
       const shouldSkipDebounce = timeSinceLastLoad > 5000; // Skip debounce if more than 5 seconds (user navigated away)
       
-      // Only apply debounce if it's been less than 5 seconds (user is quickly switching screens)
-      if (!shouldSkipDebounce && timeSinceLastLoad < RELOAD_DEBOUNCE_MS) {
-        console.log('⏭️ Skipping reload - too soon since last load (debounce active)');
-        return;
-      }
-      
-      if (shouldSkipDebounce) {
-        console.log('🔄 Refreshing - user navigated back after', Math.round(timeSinceLastLoad / 1000), 'seconds');
-      } else {
-        console.log('🔄 Refreshing - screen came into focus');
-      }
+      if (!shouldSkipDebounce && timeSinceLastLoad < RELOAD_DEBOUNCE_MS) return;
       
       lastLoadTimeRef.current = now;
       
@@ -1282,13 +1160,17 @@ export default function ChatsScreen() {
         }
       };
       
-      // Load favorites from storage
+      // Load favorites from storage (merge with current so server favorites from loadChats are not lost)
       const loadFavorites = async () => {
         try {
           const stored = await AsyncStorage.getItem(FAVORITE_CHATS_KEY);
           if (stored) {
-            const favoriteIds = JSON.parse(stored);
-            setFavoriteChatIds(new Set(favoriteIds));
+            const favoriteIds = JSON.parse(stored) as number[];
+            setFavoriteChatIds(prev => {
+              const next = new Set(prev);
+              favoriteIds.forEach(id => next.add(id));
+              return next;
+            });
           }
         } catch (error) {
           console.error('Failed to load favorites:', error);
@@ -1298,9 +1180,6 @@ export default function ChatsScreen() {
       // Initialize socket and load chats in parallel (user profile can load separately)
       initializeSocket();
       
-      // Always reload chats when screen comes into focus to get latest data
-      // Also reload workspaces, documents, users, and bookmarks to ensure all data is fresh
-      console.log('🔄 Refreshing ChatGD screen - loading latest data...');
       Promise.all([
         loadUserProfile(),
         loadChats(),
@@ -1310,22 +1189,12 @@ export default function ChatsScreen() {
         loadUsers(),
         loadBookmarks()
       ]).then(() => {
-        console.log('✅ ChatGD screen refresh complete - all data loaded');
-        // After chats are loaded, if there's a selected chat, reload its messages to get latest updates
-        // BUT: Don't reload if a message was just sent (within last 3 seconds) to prevent duplicates
-        // ALSO: Don't reload if we're setting up file context (temporary chat with id -2)
         const timeSinceLastMessage = Date.now() - lastMessageSentTimeRef.current;
-        const shouldSkipReload = timeSinceLastMessage < 3000; // Skip if message sent within last 3 seconds
-        
+        const shouldSkipReload = timeSinceLastMessage < 3000;
         const currentSelectedChat = selectedChatRef.current;
-        // Skip auto-reload for temporary chats (id -2) created when adding file context
         const isTemporaryChat = currentSelectedChat && (currentSelectedChat.id === -2 || currentSelectedChat.id === -1);
         
-        if (currentSelectedChat && currentSelectedChat.id && currentSelectedChat.id !== -1 && !isTemporaryChat) {
-          if (shouldSkipReload) {
-            console.log('⏭️ Skipping auto-reload - message was just sent (within 3 seconds)');
-          } else {
-            console.log('🔄 Auto-reloading messages for selected chat:', currentSelectedChat.id);
+        if (currentSelectedChat && currentSelectedChat.id && currentSelectedChat.id !== -1 && !isTemporaryChat && !shouldSkipReload) {
             loadMessages(currentSelectedChat.id, true).then(() => {
               // CRITICAL: Restore context after reloading messages to ensure it persists permanently
               // Find the updated chat from the chats list to get latest context
@@ -1341,9 +1210,6 @@ export default function ChatsScreen() {
                 return prevChats;
               });
             });
-          }
-        } else if (isTemporaryChat) {
-          console.log('⏭️ Skipping auto-reload - temporary chat (file context being set up)');
         }
       }).catch(error => {
         console.error('Error refreshing data on focus:', error);
@@ -1488,7 +1354,7 @@ export default function ChatsScreen() {
 
     // Debug: Log data availability when mention query changes
     if (showMentionModal) {
-      console.log('📋 @ Mention modal open, data availability:', {
+      if (__DEV__) console.log('📋 @ Mention modal open, data availability:', {
         documents: documents.length,
         users: users.length,
         workspaces: workspaces.length,
@@ -1561,7 +1427,6 @@ export default function ChatsScreen() {
       
       // Debug logging for file search
       if (query.trim() && documentResults.length === 0 && documents.length > 0) {
-        console.log(`🔍 No files found for query "${query}". Available files:`, documents.map(d => d.name));
       }
     } else {
       // Show recent/popular items when no query - prioritize recent files
@@ -1611,14 +1476,14 @@ export default function ChatsScreen() {
         const workspacesCount = results.filter(r => r.type === 'workspace').length;
         const bookmarksCount = results.filter(r => r.type === 'bookmark').length;
         
-        console.log(`📋 @ Mention results: ${results.length} items found`, {
+        if (__DEV__) console.log(`📋 @ Mention results: ${results.length} items found`, {
           documents: documentsCount,
           users: usersCount,
           workspaces: workspacesCount,
           bookmarks: bookmarksCount
         });
       } else {
-        console.log('⚠️ @ Mention modal open but no results found', {
+        if (__DEV__) console.log('⚠️ @ Mention modal open but no results found', {
           documentsAvailable: documents.length,
           usersAvailable: users.length,
           workspacesAvailable: workspaces.length,
@@ -1733,14 +1598,17 @@ export default function ChatsScreen() {
       
       // Load user chats (SAME endpoint as web chat.tsx - user-to-user and workspace only)
       let userChats: Chat[] = [];
+      let rawUserChats: any[] = [];
       try {
         const userChatsResponse = await api.getChats();
         if (userChatsResponse.success && (userChatsResponse as any).chats) {
+          rawUserChats = (userChatsResponse as any).chats;
           // Web chat.tsx returns: { success: true, chats: Chat[] }
-          userChats = (userChatsResponse as any).chats.map((chat: any) => ({
+          userChats = rawUserChats.map((chat: any) => ({
             id: chat.id,
             title: chat.display_name || 'Untitled Chat',
             type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
+            source: 'user' as const,
             participants: chat.participants || [],
             last_message: chat.latest_message?.content || 'No messages yet',
             updated_at: chat.last_message_at || new Date().toISOString(),
@@ -1749,12 +1617,38 @@ export default function ChatsScreen() {
             last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
             workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
           }));
-          
-          console.log('📱 Loaded', userChats.length, 'user chats from web endpoint');
         }
       } catch (userChatError) {
-        console.log('Failed to load user chats:', userChatError);
+        if (__DEV__) console.warn('Failed to load user chats:', userChatError);
       }
+
+      // Fetch server favorites (web + mobile use same DB) so web favorites show on mobile
+      let serverFavoriteHistoryIds: number[] = [];
+      let serverFavoriteChatIds: number[] = [];
+      try {
+        const favRes = await (api as any).getChatFavorites();
+        if (favRes?.success && (favRes.favorite_history_ids || favRes.favorite_chat_ids)) {
+          serverFavoriteHistoryIds = Array.isArray(favRes.favorite_history_ids) ? favRes.favorite_history_ids : [];
+          serverFavoriteChatIds = Array.isArray(favRes.favorite_chat_ids) ? favRes.favorite_chat_ids : [];
+        }
+      } catch (_) {
+        // non-critical; we still merge from list items below
+      }
+
+      // Merge server favorites (from web or mobile) so favorites sync across devices
+      setFavoriteChatIds(prev => {
+        const next = new Set(prev);
+        serverFavoriteHistoryIds.forEach(id => next.add(Number(id)));
+        serverFavoriteChatIds.forEach(id => next.add(Number(id)));
+        (histories || []).forEach((h: any) => {
+          if (h.is_favorite) next.add(Number(h.id));
+        });
+        rawUserChats.forEach((c: any) => {
+          if (c.is_favorite) next.add(Number(c.id));
+        });
+        AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(next)));
+        return next;
+      });
       
       // Convert chat histories to the expected format, excluding any existing "ChatGD Assistant" chats
       let convertedChats: Chat[] = [];
@@ -1768,14 +1662,17 @@ export default function ChatsScreen() {
                 // Handle both new format (messages array) and existing format (conversation_data)
                 const messages = (history as any).messages || (history as any).conversation_data || [];
                 let lastMessage = 'No messages yet';
-                
                 if (Array.isArray(messages) && messages.length > 0) {
+                  // Prefer last user message (query) for list preview so list shows the question like other chat types
+                  const contentFrom = (m: any) => {
+                    if (!m) return '';
+                    if (typeof m === 'object') return String((m as any).content ?? (m as any).message ?? '').trim();
+                    return String(m).trim();
+                  };
+                  const lastUserMsg = [...messages].reverse().find((m: any) => m && (m.role === 'user' || (m as any).is_own_message));
                   const lastMsg = messages[messages.length - 1];
-                  if (lastMsg && typeof lastMsg === 'object') {
-                    lastMessage = String((lastMsg as any).content || (lastMsg as any).message || 'No messages yet');
-                  } else if (typeof lastMsg === 'string') {
-                    lastMessage = String(lastMsg);
-                  }
+                  const raw = (lastUserMsg && contentFrom(lastUserMsg)) || contentFrom(lastMsg) || 'No messages yet';
+                  lastMessage = raw.length > 60 ? raw.substring(0, 60).trim() + '…' : raw;
                 }
                 
                 // Determine chat type based on selected context
@@ -1785,7 +1682,7 @@ export default function ChatsScreen() {
                 
                 // Debug: Log the first few chats to see what data we're getting
                 if (history.id <= 5) {
-                  console.log('🔍 Chat data for ID', history.id, ':', {
+                  if (__DEV__) console.log('🔍 Chat data for ID', history.id, ':', {
                     title: history.title,
                     selected_files: historyData.selected_files,
                     selected_bookmarks: historyData.selected_bookmarks,
@@ -1824,7 +1721,6 @@ export default function ChatsScreen() {
                 
                 // Debug: Log the determined chat type
                 if (history.id <= 5) {
-                  console.log('🎯 Chat type for ID', history.id, ':', chatType);
                 }
                 
                 // Handle timestamp formatting for chat timestamps
@@ -1836,20 +1732,8 @@ export default function ChatsScreen() {
                 // Don't add timezone indicators - treat as local time
                 // The backend timestamps are already in the correct format
                 
-                // Debug: Log the timestamps being used
-                if (__DEV__ && history.id <= 5) {
-                  console.log('🕐 Chat timestamp debug:', {
-                    id: history.id,
-                    title: history.title,
-                    lastMessageAt: (history as any).last_message_at,
-                    originalUpdatedAt: history.updated_at,
-                    originalCreatedAt: history.created_at,
-                    processedUpdatedAt: updatedAt,
-                    processedCreatedAt: createdAt
-                  });
-                }
-                
                 // For document_focused: title is "Document: {filename}" when we have file context; else use history.title
+                // For user_direct: title is "Chat with {user first name}" (backend sends this; fallback if missing)
                 const resolveTitle = (): string => {
                   if (chatType === 'document_focused') {
                     const pc = historyData.persistent_context || historyData.persistentContext;
@@ -1859,6 +1743,12 @@ export default function ChatsScreen() {
                       return `Document: ${truncateFilename(name)}`;
                     }
                   }
+                  if (chatType === 'user_direct') {
+                    const t = history.title?.trim();
+                    if (t) return t;
+                    if (historyData.selected_user_names?.[0]) return `Chat with ${historyData.selected_user_names[0]}`;
+                    return 'Chat with User';
+                  }
                   return String(history.title || 'Untitled Chat');
                 };
 
@@ -1866,6 +1756,7 @@ export default function ChatsScreen() {
                   id: Number(history.id) || Math.random(),
                   title: resolveTitle(),
                   type: chatType,
+                  source: 'llm' as const,
                   participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
                   last_message: String(lastMessage || 'No messages yet'),
                   updated_at: String(updatedAt),
@@ -1924,21 +1815,83 @@ export default function ChatsScreen() {
       
       // CRITICAL: Include temporary chats (id -2) from current chats list that have context
       // These are newly created bookmark/document chats that haven't been saved to backend yet
-      const currentChatsWithContext = chats.filter(chat => 
-        chat.id === -2 && (chat.bookmark_context || chat.document_context || chat.workspace)
-      );
+      // Exclude -2 when backend already has a chat with the same bookmark/document so list shows real chat with actual query text
+      const backendChatsOnly = [...convertedChats, ...userChats];
+      const currentChatsWithContext = chats.filter(chat => {
+        if (chat.id !== -2 || (!chat.bookmark_context && !chat.document_context && !chat.workspace)) return false;
+        const bookmarkId = chat.bookmark_context?.id;
+        const docId = chat.document_context?.id;
+        const backendHasMatch = bookmarkId
+          ? backendChatsOnly.some(c => c.bookmark_context?.id === bookmarkId)
+          : docId ? backendChatsOnly.some(c => c.document_context?.id === docId) : false;
+        return !backendHasMatch; // only include -2 if backend doesn't have this chat yet
+      });
+      const placeholderFromRef = placeholderChatToPreserveRef.current;
+      if (placeholderFromRef && placeholderFromRef.id === -2 && (placeholderFromRef.bookmark_context || placeholderFromRef.document_context)) {
+        // Only add placeholder if backend doesn't have a matching chat (by bookmark/doc id)
+        const bookmarkId = placeholderFromRef.bookmark_context?.id;
+        const docId = placeholderFromRef.document_context?.id;
+        const backendHasMatch = bookmarkId
+          ? backendChatsOnly.some(c => c.bookmark_context?.id === bookmarkId)
+          : docId
+            ? backendChatsOnly.some(c => c.document_context?.id === docId)
+            : false;
+        if (!backendHasMatch && !currentChatsWithContext.some(c =>
+          (bookmarkId && c.bookmark_context?.id === bookmarkId) || (docId && c.document_context?.id === docId)
+        )) {
+          currentChatsWithContext.push(placeholderFromRef);
+        }
+        placeholderChatToPreserveRef.current = null; // Clear after use
+      }
       if (currentChatsWithContext.length > 0) {
-        console.log(`📋 Including ${currentChatsWithContext.length} temporary chats with context in load`);
         allChatsCombined.push(...currentChatsWithContext);
       }
-      
+
+      // CRITICAL: Re-inject bookmark from nav params if loadChats overwrote the list (focus ran with stale chats)
+      // Check against backend-only list so we find existing bookmark chat and load its messages
+      let injectedBookmarkChat: Chat | null = null;
+      const pendingBookmark = pendingBookmarkFromParamsRef.current;
+      const hadPendingBookmark = !!pendingBookmark;
+      const pendingBookmarkId = pendingBookmark?.id ?? null;
+      if (pendingBookmark) {
+        const backendChatsOnly = [...convertedChats, ...userChats];
+        const hasBookmarkChat = backendChatsOnly.some(
+          c => c.bookmark_context?.id === pendingBookmark.id || (c as any).bookmark_context?.id === pendingBookmark.id
+        );
+        if (!hasBookmarkChat) {
+          const bookmarkChat: Chat = {
+            id: -2,
+            title: `Chat about ${pendingBookmark.name}`,
+            type: 'bookmark_focused',
+            participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
+            last_message: `Ready to answer questions about ${pendingBookmark.name}`,
+            updated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            unread_count: 0,
+            bookmark_context: pendingBookmark
+          };
+          const chatAssistantIdx = allChatsCombined.findIndex(chat => chat.id === -1);
+          if (chatAssistantIdx >= 0) {
+            allChatsCombined.splice(chatAssistantIdx + 1, 0, bookmarkChat);
+          } else {
+            allChatsCombined.unshift(bookmarkChat);
+          }
+          injectedBookmarkChat = bookmarkChat;
+        }
+        pendingBookmarkFromParamsRef.current = null; // Only inject once
+      }
+
+      // CRITICAL: Use composite key to prevent AI chat histories and user chats from colliding
+      // They can have overlapping numeric IDs from different backends - e.g. AI chat 95 (bookmark) vs user chat 95
+      const getChatKey = (c: Chat) => (c.type === 'user_direct' || c.type === 'workspace' ? 'user_' : 'ai_') + c.id;
+
       // CRITICAL: Preserve document_focused type and document_context from existing local state
-      // This prevents losing document chat status when backend doesn't return full context
-      // Build map from: 1) Persisted AsyncStorage contexts, 2) Current in-memory state
-      const existingChatsMap = new Map<number, Chat>();
+      // Build map from: 1) Persisted AsyncStorage contexts, 2) Current in-memory state (uses composite keys)
+      const existingChatsMap = new Map<string, Chat>();
+      const parseIdFromKey = (k: string) => (String(k).startsWith('ai_') || String(k).startsWith('user_')) ? parseInt(String(k).replace(/^(ai_|user_)/, ''), 10) : Number(k);
       
       // First, add persisted contexts from AsyncStorage (survives app restart)
-      persistedContexts.forEach((context: any, chatId: number) => {
+      persistedContexts.forEach((context: any, chatId: string) => {
         // CRITICAL: Load ALL persisted contexts, even if type isn't set correctly
         // The type might be wrong but context exists
         if (context.type === 'document_focused' || 
@@ -1956,10 +1909,12 @@ export default function ChatsScreen() {
                              (context.type as any);
           
           // Create a minimal Chat object from persisted context
-          existingChatsMap.set(chatId, {
-            id: chatId,
+          const persistedKey = String(chatId);
+          existingChatsMap.set(persistedKey, {
+            id: parseIdFromKey(persistedKey),
             title: context.title,
             type: correctType,
+            source: persistedKey.startsWith('user_') ? 'user' as const : 'llm' as const,
             participants: context.participants || [],
             last_message: '',
             updated_at: new Date().toISOString(),
@@ -1969,12 +1924,6 @@ export default function ChatsScreen() {
             workspace: context.workspace
           });
           
-          console.log(`📖 Loaded persisted context for chat ${chatId}:`, {
-            type: correctType,
-            hasBookmark: !!context.bookmark_context,
-            hasDocument: !!context.document_context,
-            title: context.title
-          });
         }
       });
       
@@ -1986,10 +1935,9 @@ export default function ChatsScreen() {
             chat.type === 'bookmark_focused' || 
             chat.type === 'user_direct' || 
             chat.type === 'workspace') {
-          existingChatsMap.set(chat.id, chat);
+          existingChatsMap.set(getChatKey(chat), chat);
         } else if (chat.id === -2 && (chat.bookmark_context || chat.document_context || chat.workspace)) {
-          // Include temporary chats with context (they'll get real IDs when backend responds)
-          existingChatsMap.set(chat.id, chat);
+          existingChatsMap.set(getChatKey(chat), chat);
         } else if (chat.bookmark_context || chat.document_context || chat.workspace) {
           // CRITICAL: Include chats that have context even if type isn't set correctly
           // This catches cases where context exists but type was lost
@@ -2000,32 +1948,24 @@ export default function ChatsScreen() {
                   chat.workspace ? 'workspace' :
                   chat.type) as 'ai_assistant' | 'user_direct' | 'workspace' | 'document_focused' | 'bookmark_focused'
           };
-          existingChatsMap.set(chat.id, chatWithCorrectType);
-          console.log(`🔧 Found chat ${chat.id} with context but wrong type, fixing:`, {
-            oldType: chat.type,
-            newType: chatWithCorrectType.type,
-            hasBookmark: !!chat.bookmark_context,
-            bookmarkName: chat.bookmark_context?.name,
-            hasDocument: !!chat.document_context
-          });
+          existingChatsMap.set(getChatKey(chat), chatWithCorrectType);
         }
       });
       
       // CRITICAL: Also check AsyncStorage for any chats that might have been saved with real IDs
-      // This handles the case where chat ID changed from -2 to real ID but we're loading before the transfer completed
-      persistedContexts.forEach((context: any, chatId: number) => {
-        // If we have a persisted context but the chat isn't in existingChatsMap yet, add it
-        // This ensures we don't lose context when chat ID changes
-        if (!existingChatsMap.has(chatId) && (context.bookmark_context || context.document_context || context.workspace)) {
+      persistedContexts.forEach((context: any, chatId: string) => {
+        const key = String(chatId);
+        if (!existingChatsMap.has(key) && (context.bookmark_context || context.document_context || context.workspace)) {
           const correctType = context.bookmark_context ? 'bookmark_focused' :
                              context.document_context ? 'document_focused' :
                              context.workspace ? 'workspace' :
                              (context.type as any);
           
-          existingChatsMap.set(chatId, {
-            id: chatId,
+          existingChatsMap.set(key, {
+            id: parseIdFromKey(key),
             title: context.title,
             type: correctType,
+            source: key.startsWith('user_') ? 'user' as const : 'llm' as const,
             participants: context.participants || [],
             last_message: '',
             updated_at: new Date().toISOString(),
@@ -2035,51 +1975,36 @@ export default function ChatsScreen() {
             workspace: context.workspace
           });
           
-          console.log(`📖 [LOAD] Found persisted context for chat ${chatId} not in current state:`, {
-            type: correctType,
-            hasBookmark: !!context.bookmark_context,
-            bookmarkName: context.bookmark_context?.name
-          });
         }
       });
       
       // CRITICAL: Build a map of bookmark contexts by bookmark ID to help match chats
-      // This allows us to match chats even if the chat ID changed
-      const bookmarkContextMap = new Map<number, { chatId: number; context: any }>();
-      persistedContexts.forEach((context: any, chatId: number) => {
+      const bookmarkContextMap = new Map<number, { chatId: string; context: any }>();
+      persistedContexts.forEach((context: any, chatId: string) => {
         if (context.bookmark_context?.id) {
-          bookmarkContextMap.set(context.bookmark_context.id, { chatId, context });
+          bookmarkContextMap.set(context.bookmark_context.id, { chatId: String(chatId), context });
         }
       });
       chats.forEach(chat => {
         if (chat.bookmark_context?.id && !bookmarkContextMap.has(chat.bookmark_context.id)) {
-          bookmarkContextMap.set(chat.bookmark_context.id, { chatId: chat.id, context: { bookmark_context: chat.bookmark_context } });
+          bookmarkContextMap.set(chat.bookmark_context.id, { chatId: getChatKey(chat), context: { bookmark_context: chat.bookmark_context } });
         }
       });
-      console.log('🔒 Preserving', existingChatsMap.size, 'chat contexts (document/bookmark/user/workspace) from persisted + in-memory');
-      console.log('🔍 Bookmark context map has', bookmarkContextMap.size, 'entries');
       
-      // Remove duplicates based on chat ID, preserving local document/bookmark context
-      const uniqueChatsMap = new Map<number, Chat>();
+      // Remove duplicates based on composite key, preserving local document/bookmark context
+      const uniqueChatsMap = new Map<string, Chat>();
       allChatsCombined.forEach(chat => {
-        if (!uniqueChatsMap.has(chat.id)) {
+        const key = getChatKey(chat);
+        if (!uniqueChatsMap.has(key)) {
           // Check if we have local context for this chat
-          const localChat = existingChatsMap.get(chat.id);
+          const localChat = existingChatsMap.get(key);
           if (localChat && (localChat.type === 'document_focused' || 
                             localChat.type === 'bookmark_focused' || 
                             localChat.type === 'user_direct' || 
                             localChat.type === 'workspace')) {
             // Preserve type and context from local state
             // Backend might not return persistent_context consistently
-            console.log(`🔒 Preserving ${localChat.type} for chat ${chat.id}:`, {
-              title: localChat.title,
-              backendType: chat.type,
-              backendTitle: chat.title,
-              hasDocContext: !!localChat.document_context,
-              hasBookmarkContext: !!localChat.bookmark_context,
-              hasWorkspace: !!localChat.workspace
-            });
-            uniqueChatsMap.set(chat.id, {
+            uniqueChatsMap.set(key, {
               ...chat,
               type: localChat.type,
               title: localChat.title || chat.title, // Prefer local title, fallback to backend
@@ -2091,7 +2016,7 @@ export default function ChatsScreen() {
           } else {
             // CRITICAL: Always check persisted contexts and current state for EVERY chat
             // This ensures we don't lose context even if it's not in existingChatsMap yet
-            let persistedContext = persistedContexts.get(chat.id);
+            let persistedContext = persistedContexts.get(getChatKey(chat)) ?? persistedContexts.get(String(chat.id));
             let currentStateChat = chats.find(c => c.id === chat.id);
             
             // CRITICAL: If we didn't find context for this chat ID, try multiple strategies:
@@ -2100,14 +2025,9 @@ export default function ChatsScreen() {
             // IMPORTANT: Exclude Chat Assistant (ID -1) from context matching
             if (!persistedContext && !currentStateChat && chat.id > 0 && chat.id !== -1 && !chat.bookmark_context && !chat.document_context) {
               // Strategy 1: Check for temporary ID -2
-              const tempContext = persistedContexts.get(-2);
+              const tempContext = persistedContexts.get('ai_-2') ?? persistedContexts.get('-2');
               if (tempContext && (tempContext.bookmark_context || tempContext.document_context)) {
-                console.log(`🔄 [ID MATCH] Chat ${chat.id} might be migrated from chat -2, checking if we should transfer context...`);
                 persistedContext = tempContext;
-                console.log(`✅ [ID MATCH] Using context from ID -2 for chat ${chat.id}`, {
-                  hasBookmark: !!tempContext.bookmark_context,
-                  bookmarkName: tempContext.bookmark_context?.name
-                });
               } else {
                 // Strategy 2: Check if backend has bookmark context in persistent_context
                 const historyData = chat as any;
@@ -2116,7 +2036,6 @@ export default function ChatsScreen() {
                   const bookmarkId = backendPersistentContext.context_bookmark_ids[0];
                   const matchedContext = bookmarkContextMap.get(bookmarkId);
                   if (matchedContext) {
-                    console.log(`🔄 [MATCH] Chat ${chat.id} matches bookmark ${bookmarkId} from chat ${matchedContext.chatId}, transferring context`);
                     persistedContext = matchedContext.context;
                   }
                 }
@@ -2135,59 +2054,27 @@ export default function ChatsScreen() {
             const hasDocumentContext = !!documentContext;
             const hasWorkspace = !!workspaceContext;
             
-            // CRITICAL: If we have context from persisted or state but backend doesn't, log it
-            if ((persistedContext?.bookmark_context || currentStateChat?.bookmark_context) && !chat.bookmark_context) {
-              console.log(`⚠️ [WARNING] Chat ${chat.id} has bookmark context in storage/state but NOT in backend! Preserving it.`, {
-                persistedBookmarkId: persistedContext?.bookmark_context?.id,
-                stateBookmarkId: currentStateChat?.bookmark_context?.id,
-                bookmarkName: persistedContext?.bookmark_context?.name || currentStateChat?.bookmark_context?.name
-              });
-            }
-            
             // CRITICAL: Exclude Chat Assistant (ID -1) from all context type fixing
             // Chat Assistant should always stay as 'ai_assistant' type
             if (chat.id > 0 && chat.id !== -1) { // Don't process default chat (-1)
-              console.log(`📋 Processing chat ${chat.id}:`, {
-                backendType: chat.type,
-                hasBookmarkContext,
-                hasDocumentContext,
-                hasPersistedContext: !!persistedContext,
-                hasCurrentStateChat: !!currentStateChat,
-                persistedBookmarkId: persistedContext?.bookmark_context?.id,
-                stateBookmarkId: currentStateChat?.bookmark_context?.id,
-                backendBookmarkId: chat.bookmark_context?.id
-              });
-              
               // CRITICAL: If we have bookmark/document context from ANY source, preserve it and fix the type
               // Priority: persistedContext > currentStateChat > backend chat
               if (hasBookmarkContext) {
-                const source = persistedContext?.bookmark_context ? 'persisted' : 
-                              currentStateChat?.bookmark_context ? 'state' : 
-                              'backend';
-                console.log(`🔧 [FIX] Setting chat ${chat.id} to bookmark_focused (context from ${source})`);
-                uniqueChatsMap.set(chat.id, {
+                uniqueChatsMap.set(key, {
                   ...chat,
                   type: 'bookmark_focused',
                   bookmark_context: bookmarkContext,
                   title: persistedContext?.title || currentStateChat?.title || chat.title || (bookmarkContext?.name ? `Chat about ${bookmarkContext.name}` : `Bookmark: ${bookmarkContext?.name || 'Collection'}`)
                 });
               } else if (hasDocumentContext) {
-                const source = persistedContext?.document_context ? 'persisted' : 
-                              currentStateChat?.document_context ? 'state' : 
-                              'backend';
-                console.log(`🔧 [FIX] Setting chat ${chat.id} to document_focused (context from ${source})`);
-                uniqueChatsMap.set(chat.id, {
+                uniqueChatsMap.set(key, {
                   ...chat,
                   type: 'document_focused',
                   document_context: documentContext,
                   title: persistedContext?.title || currentStateChat?.title || chat.title || (documentContext?.name ? `Document: ${truncateFilename(documentContext.name)}` : chat.title)
                 });
               } else if (hasWorkspace) {
-                const source = persistedContext?.workspace ? 'persisted' : 
-                              currentStateChat?.workspace ? 'state' : 
-                              'backend';
-                console.log(`🔧 [FIX] Setting chat ${chat.id} to workspace (context from ${source})`);
-                uniqueChatsMap.set(chat.id, {
+                uniqueChatsMap.set(key, {
                   ...chat,
                   type: 'workspace',
                   workspace: workspaceContext,
@@ -2197,9 +2084,7 @@ export default function ChatsScreen() {
                 // Fallback: If backend says 'ai_assistant' but has context, fix it
                 // IMPORTANT: Exclude Chat Assistant (ID -1) - it should always stay ai_assistant
                 if (chat.id === -1) {
-                  // Chat Assistant should never have context - if it does, clear it
-                  console.log(`⚠️ Chat Assistant (ID -1) has context, clearing it to preserve ai_assistant type`);
-                  uniqueChatsMap.set(chat.id, {
+                  uniqueChatsMap.set(key, {
                     ...chat,
                     document_context: undefined,
                     bookmark_context: undefined,
@@ -2207,31 +2092,28 @@ export default function ChatsScreen() {
                     type: 'ai_assistant' as const
                   });
                 } else if (chat.document_context) {
-                  console.log(`🔧 Fixing chat type from ai_assistant to document_focused for chat ${chat.id}`);
-                  uniqueChatsMap.set(chat.id, {
+                  uniqueChatsMap.set(key, {
                     ...chat,
                     type: 'document_focused',
                     title: chat.title || `Document: ${truncateFilename(chat.document_context.name)}`
                   });
                 } else if (chat.bookmark_context) {
-                  console.log(`🔧 Fixing chat type from ai_assistant to bookmark_focused for chat ${chat.id}`);
-                  uniqueChatsMap.set(chat.id, {
+                  uniqueChatsMap.set(key, {
                     ...chat,
                     type: 'bookmark_focused',
                     title: chat.title || `Bookmark: ${chat.bookmark_context.name}`
                   });
                 } else {
-                  uniqueChatsMap.set(chat.id, chat);
+                  uniqueChatsMap.set(key, chat);
                 }
               } else {
-                uniqueChatsMap.set(chat.id, chat);
+                uniqueChatsMap.set(key, chat);
               }
             } else {
               // For Chat Assistant (ID -1) or other special IDs, preserve as-is
               // But ensure Chat Assistant never has context
               if (chat.id === -1 && (chat.bookmark_context || chat.document_context || chat.workspace)) {
-                console.log(`⚠️ Chat Assistant (ID -1) has context, clearing it to preserve ai_assistant type`);
-                uniqueChatsMap.set(chat.id, {
+                uniqueChatsMap.set(key, {
                   ...chat,
                   document_context: undefined,
                   bookmark_context: undefined,
@@ -2239,24 +2121,23 @@ export default function ChatsScreen() {
                   type: 'ai_assistant'
                 });
               } else {
-                uniqueChatsMap.set(chat.id, chat);
+                uniqueChatsMap.set(key, chat);
               }
             }
           }
         } else {
-          // If duplicate found, keep the one with more recent last message timestamp
-          const existing = uniqueChatsMap.get(chat.id)!;
+          // If duplicate found (same type + id), keep the one with more recent last message timestamp
+          const existing = uniqueChatsMap.get(key)!;
           const existingTimestamp = getLastMessageTimestamp(existing);
           const newTimestamp = getLastMessageTimestamp(chat);
           if (newTimestamp > existingTimestamp) {
             // Check if we should preserve local context
-            const localChat = existingChatsMap.get(chat.id);
+            const localChat = existingChatsMap.get(key);
             if (localChat && (localChat.type === 'document_focused' || 
                               localChat.type === 'bookmark_focused' || 
                               localChat.type === 'user_direct' || 
                               localChat.type === 'workspace')) {
-              console.log(`🔒 Preserving ${localChat.type} for chat ${chat.id} (newer):`, localChat.title);
-              uniqueChatsMap.set(chat.id, {
+              uniqueChatsMap.set(key, {
                 ...chat,
                 type: localChat.type,
                 title: localChat.title || chat.title,
@@ -2270,8 +2151,7 @@ export default function ChatsScreen() {
               // IMPORTANT: Exclude Chat Assistant (ID -1) from type fixing
               if (chat.id === -1 && (chat.bookmark_context || chat.document_context || chat.workspace)) {
                 // Chat Assistant should never have context - clear it
-                console.log(`⚠️ Chat Assistant (ID -1) has context in duplicate handling, clearing it`);
-                uniqueChatsMap.set(chat.id, {
+                uniqueChatsMap.set(key, {
                   ...chat,
                   document_context: undefined,
                   bookmark_context: undefined,
@@ -2279,19 +2159,19 @@ export default function ChatsScreen() {
                   type: 'ai_assistant'
                 });
               } else if (chat.type === 'ai_assistant' && chat.document_context && chat.id !== -1) {
-                uniqueChatsMap.set(chat.id, {
+                uniqueChatsMap.set(key, {
                   ...chat,
                   type: 'document_focused',
                   title: chat.title || `Document: ${truncateFilename(chat.document_context.name)}`
                 });
               } else if (chat.type === 'ai_assistant' && chat.bookmark_context && chat.id !== -1) {
-                uniqueChatsMap.set(chat.id, {
+                uniqueChatsMap.set(key, {
                   ...chat,
                   type: 'bookmark_focused',
                   title: chat.title || `Bookmark: ${chat.bookmark_context.name}`
                 });
               } else {
-                uniqueChatsMap.set(chat.id, chat);
+                uniqueChatsMap.set(key, chat);
               }
             }
           }
@@ -2312,7 +2192,6 @@ export default function ChatsScreen() {
         )
       );
       if (temporaryChatsWithContext.length > 0) {
-        console.log(`📋 Adding ${temporaryChatsWithContext.length} temporary chats with context to list`);
         allChatsArray.push(...temporaryChatsWithContext);
       }
       
@@ -2324,7 +2203,6 @@ export default function ChatsScreen() {
         // Chat Assistant should never have context - if it does, clear it
         if (chat.id === -1) {
           if (chat.bookmark_context || chat.document_context || chat.workspace) {
-            console.log(`⚠️ [FINAL FIX] Chat Assistant (ID -1) has context, clearing it to preserve ai_assistant type`);
             return {
               ...chat,
               document_context: undefined,
@@ -2338,7 +2216,6 @@ export default function ChatsScreen() {
         
         // If chat has bookmark_context but wrong type, fix it
         if (chat.bookmark_context && chat.type !== 'bookmark_focused') {
-          console.log(`🔧 [FINAL FIX] Chat ${chat.id} has bookmark_context but type is ${chat.type}, fixing to bookmark_focused`);
           return {
             ...chat,
             type: 'bookmark_focused' as const
@@ -2346,7 +2223,6 @@ export default function ChatsScreen() {
         }
         // If chat has document_context but wrong type, fix it
         if (chat.document_context && chat.type !== 'document_focused') {
-          console.log(`🔧 [FINAL FIX] Chat ${chat.id} has document_context but type is ${chat.type}, fixing to document_focused`);
           return {
             ...chat,
             type: 'document_focused' as const
@@ -2354,7 +2230,6 @@ export default function ChatsScreen() {
         }
         // If chat has workspace but wrong type, fix it
         if (chat.workspace && chat.type !== 'workspace') {
-          console.log(`🔧 [FINAL FIX] Chat ${chat.id} has workspace but type is ${chat.type}, fixing to workspace`);
           return {
             ...chat,
             type: 'workspace' as const
@@ -2363,28 +2238,56 @@ export default function ChatsScreen() {
         return chat;
       });
       
+      // When opening from bookmark: prefer existing backend chat (so we can load its messages); remove duplicate -2
+      let chatsToSet = finalChats;
+      let bookmarkChatToSelect: Chat | null = injectedBookmarkChat;
+      if (hadPendingBookmark && pendingBookmarkId != null) {
+        const matching = finalChats.filter(c => c.bookmark_context?.id === pendingBookmarkId || (c as any).bookmark_context?.id === pendingBookmarkId);
+        const existingBackend = matching.find(c => c.id > 0);
+        if (existingBackend) {
+          bookmarkChatToSelect = existingBackend;
+          // Remove duplicate -2 for this bookmark so we don't show two entries
+          chatsToSet = finalChats.filter(c => !(c.id === -2 && (c.bookmark_context?.id === pendingBookmarkId || (c as any).bookmark_context?.id === pendingBookmarkId)));
+        } else if (injectedBookmarkChat) {
+          bookmarkChatToSelect = injectedBookmarkChat;
+        }
+      }
+
       // CRITICAL: Log bookmark chats to verify they're being preserved
-      const bookmarkChats = finalChats.filter(c => c.type === 'bookmark_focused' || c.bookmark_context);
-      console.log('📱 Loaded chats:', {
-        total: finalChats.length,
-        aiChats: convertedChats.length,
-        userChats: userChats.length,
-        bookmarkChats: bookmarkChats.length,
-        bookmarkChatIds: bookmarkChats.map(c => ({ id: c.id, type: c.type, hasBookmark: !!c.bookmark_context, bookmarkName: c.bookmark_context?.name })),
-        defaultChat: DEFAULT_CHAT_ASSISTANT,
-        otherChats: finalChats.length - 1, // Excluding ChatGD Assistant
-      });
-      
-      setChats(finalChats);
-      
+      const bookmarkChats = chatsToSet.filter(c => c.type === 'bookmark_focused' || c.bookmark_context);
+      setChats(chatsToSet);
+
+      // If we opened from bookmark (nav params): select the bookmark chat and load its messages when it's an existing backend chat
+      if (bookmarkChatToSelect) {
+        setSelectedChat(bookmarkChatToSelect);
+        selectedChatRef.current = bookmarkChatToSelect;
+        if (bookmarkChatToSelect.id > 0) {
+          loadMessages(bookmarkChatToSelect.id, true);
+        } else {
+          setMessages([]);
+          loadedChatIdRef.current = bookmarkChatToSelect.id;
+        }
+      } else {
+        // When returning to ChatGD tab: restore selected chat from fresh list so bookmark/document chats stay open
+        const currentSelected = selectedChatRef.current;
+        if (currentSelected && currentSelected.id != null && currentSelected.id !== -1) {
+          const chatInNewList = chatsToSet.find(c => c.id === currentSelected.id && c.type === currentSelected.type);
+          if (chatInNewList) {
+            setSelectedChat(chatInNewList);
+            selectedChatRef.current = chatInNewList;
+            if (chatInNewList.id > 0) {
+              loadMessages(chatInNewList.id, true);
+            }
+          }
+        }
+      }
+
       // CRITICAL: Persist document/bookmark chat contexts to AsyncStorage
       // This ensures contexts survive app restarts and reloads
-      savePersistedChatContexts(finalChats).then(() => {
-        console.log('✅ Successfully persisted all chat contexts after loadChats');
-      }).catch(error => {
+      savePersistedChatContexts(finalChats).catch(error => {
         console.error('❌ Failed to persist chat contexts after loadChats:', error);
       });
-      
+
     } catch (error) {
       console.error('Failed to load chats:', error);
       // Fallback: just show default ChatGD Assistant
@@ -2398,7 +2301,6 @@ export default function ChatsScreen() {
   const loadWorkspaces = async () => {
     // Request deduplication: reuse in-flight request if one exists
     if (workspaceRequestRef.current) {
-      console.log('🔄 Reusing existing workspace request');
       try {
         const response = await workspaceRequestRef.current;
         if (response && (response as any).success && (response as any).data) {
@@ -2428,7 +2330,6 @@ export default function ChatsScreen() {
           ? (response as any).data 
           : ((response as any).data.workspaces || []);
         
-        console.log('✅ Loaded', workspacesData.length, 'workspaces');
         setWorkspaces(workspacesData);
       } else {
         console.warn('⚠️ Workspaces API unavailable');
@@ -2453,16 +2354,8 @@ export default function ChatsScreen() {
 
   const loadDocuments = async () => {
     try {
-      console.log('📄 Loading documents for @ mentions...');
       // Use getDocuments which uses the mobile endpoint and handles errors gracefully
       const response = await api.getDocuments(1, 50); // Get up to 50 recent files for mentions
-      console.log('📄 Documents API response:', { 
-        success: response?.success, 
-        hasFiles: !!(response?.files), 
-        hasData: !!(response?.data),
-        filesCount: response?.files?.length || response?.data?.length || 0
-      });
-      
       if (response && (response.success !== false)) {
         // Handle different response formats (files or data array)
         const files = response.files || response.data || [];
@@ -2474,7 +2367,6 @@ export default function ChatsScreen() {
           size: file.file_size || file.size
         })) : [];
         setDocuments(docs);
-        console.log(`✅ Loaded ${docs.length} documents for @ mentions`);
       } else {
         console.warn('⚠️ Documents API returned unsuccessful response');
         setDocuments([]);
@@ -2488,8 +2380,6 @@ export default function ChatsScreen() {
   const loadUsers = async () => {
     try {
       setUsersLoading(true);
-      console.log('👥 Loading all users from all workspaces for direct messages and @ mentions...');
-      
       // Strategy 1: Try the workspace-users endpoint first (should get all users from all workspaces)
       let usersList: any[] = [];
       let usersLoaded = false;
@@ -2499,12 +2389,6 @@ export default function ChatsScreen() {
         const response = await (api as any).getWorkspaceUsers();
         
         const r = response as any;
-        console.log('👥 Workspace users API response:', { 
-          success: r?.success, 
-          hasDataUsers: !!(r?.data?.users),
-          usersCount: r?.data?.users?.length ?? r?.users?.length ?? (Array.isArray(r?.data) ? r.data.length : 0) ?? 0
-        });
-        
         if (response && r.success !== false) {
           // Backend returns { data: { users: [...] } } - handle that structure first
           if (r?.data?.users && Array.isArray(r.data.users)) {
@@ -2517,10 +2401,7 @@ export default function ChatsScreen() {
             usersList = response as any[];
           }
           
-          if (usersList.length > 0) {
-            usersLoaded = true;
-            console.log(`✅ Loaded ${usersList.length} users from workspace-users endpoint`);
-          }
+          if (usersList.length > 0) usersLoaded = true;
         }
       } catch (error: any) {
         console.warn('⚠️ Workspace users endpoint failed:', error?.message);
@@ -2528,28 +2409,20 @@ export default function ChatsScreen() {
       
       // Strategy 2: If primary endpoint failed or returned empty, fetch from each workspace
       if (!usersLoaded || usersList.length === 0) {
-        console.log('🔄 Fetching users from individual workspaces...');
-        
         try {
           // REUSE existing workspaces state instead of calling API again
           // This prevents duplicate API calls and timeouts
           let workspacesData: any[] = [];
           
           if (workspaces.length > 0) {
-            // Use existing workspaces from state
             workspacesData = workspaces;
-            console.log(`📋 Using ${workspacesData.length} workspaces from state - fetching members from each...`);
           } else {
-            // Reuse in-flight workspace request if loadWorkspaces is also loading (avoids duplicate API call)
-            console.log('📋 Workspaces not in state, loading from API...');
             const workspacePromise = workspaceRequestRef.current ?? (api as any).getMobileWorkspaces();
             const workspacesResponse = await workspacePromise;
-
             if (workspacesResponse && (workspacesResponse as any).success && (workspacesResponse as any).data) {
               workspacesData = Array.isArray((workspacesResponse as any).data)
                 ? (workspacesResponse as any).data
                 : ((workspacesResponse as any).data.workspaces || []);
-              console.log(`📋 Found ${workspacesData.length} workspaces from API - fetching members from each...`);
             }
           }
           
@@ -2596,10 +2469,7 @@ export default function ChatsScreen() {
             });
             
             usersList = Array.from(uniqueUsersMap.values());
-            console.log(`✅ Loaded ${usersList.length} unique users from ${workspacesData.length} workspaces`);
             usersLoaded = true;
-          } else {
-            console.log('⚠️ No workspaces available to fetch users from');
           }
         } catch (error: any) {
           console.warn('⚠️ Failed to load users from workspaces:', error?.message);
@@ -2608,20 +2478,12 @@ export default function ChatsScreen() {
       
       // Strategy 3: Final fallback - try searchUsersForChat with empty query
       if (!usersLoaded || usersList.length === 0) {
-        console.log('🔄 Trying searchUsersForChat as final fallback...');
         try {
           const fallbackResponse = await Promise.race([
             api.searchUsersForChat(''),
             new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
           ]);
-          
           const fr = fallbackResponse as any;
-          console.log('👥 Fallback search users response:', { 
-            success: fr?.success,
-            hasUsers: !!(fr?.users || fr?.data?.users),
-            usersCount: fr?.users?.length ?? fr?.data?.users?.length ?? (Array.isArray(fr?.data) ? fr.data.length : 0) ?? 0
-          });
-          
           // Handle different response formats from searchUsersForChat
           // Backend returns { success, users, workspaces } or possibly { success, data: { users } }
           let fallbackUsers: any[] = [];
@@ -2637,7 +2499,6 @@ export default function ChatsScreen() {
           
           if (fallbackUsers.length > 0) {
             usersList = fallbackUsers;
-            console.log(`✅ Loaded ${fallbackUsers.length} users from searchUsersForChat fallback`);
             usersLoaded = true;
           }
         } catch (fallbackError: any) {
@@ -2648,7 +2509,6 @@ export default function ChatsScreen() {
       // Set the final users list
       if (usersList.length > 0) {
         setUsers(usersList);
-        console.log(`✅ Successfully loaded ${usersList.length} total users for direct messaging`);
       } else {
         console.warn('⚠️ No users found - you may not be part of any workspaces yet');
         setUsers([]);
@@ -2682,10 +2542,8 @@ export default function ChatsScreen() {
           ? response.data 
           : (response.data.bookmarks || []);
         
-        console.log('Bookmarks loaded:', bookmarksData.length);
         setBookmarks(bookmarksData);
       } else {
-        console.log('Bookmarks API returned no data');
         setBookmarks([]);
       }
     } catch (error: any) {
@@ -2693,7 +2551,7 @@ export default function ChatsScreen() {
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         console.warn('⚠️ Bookmarks request timed out - this is non-critical, continuing without bookmarks');
       } else {
-        console.log('Failed to load bookmarks:', error);
+        if (__DEV__) console.warn('Failed to load bookmarks:', error);
       }
       setBookmarks([]);
     }
@@ -2710,14 +2568,11 @@ export default function ChatsScreen() {
     const isCurrentlyStreaming = isStreamingRef.current || isStreamCompleteRef.current;
     if (!forceReload && loadedChatIdRef.current === chatId && messages.length > 0) {
       if (isCurrentlyStreaming) {
-        console.log(`⏭️ [loadMessages] Skipping reload - currently streaming or just finished streaming for chat ${chatId}`);
         return;
       }
       if (shouldSkipReloadDueToRecentSend) {
-        console.log(`⏭️ [loadMessages] Skipping reload - message was just sent (within 3 seconds) for chat ${chatId}`);
         return;
       }
-      console.log(`⏭️ [loadMessages] Skipping reload - messages already loaded for chat ${chatId}`);
       return;
     }
     
@@ -2726,23 +2581,19 @@ export default function ChatsScreen() {
     // BUT: Don't force reload if a message was just sent (to prevent duplicates)
     if (!forceReload && loadedChatIdRef.current === chatId && messages.length === 0) {
       if (shouldSkipReloadDueToRecentSend) {
-        console.log(`⏭️ [loadMessages] Messages empty but message just sent - skipping reload to prevent duplicates`);
         return;
       }
-      console.log(`🔄 [loadMessages] Messages empty for chat ${chatId} - forcing reload`);
       forceReload = true;
     }
     
     // If we're streaming and force reload is requested, wait a bit for streaming to complete
     if (forceReload && isCurrentlyStreaming) {
-      console.log(`⏳ [loadMessages] Streaming in progress, waiting before reload...`);
       // Wait for streaming to complete (max 5 seconds)
       let waitCount = 0;
       while ((isStreamingRef.current || isStreamCompleteRef.current) && waitCount < 50) {
         await new Promise(resolve => setTimeout(resolve, 100));
         waitCount++;
       }
-      console.log(`✅ [loadMessages] Streaming completed, proceeding with reload`);
     }
     
     setMessagesLoading(true);
@@ -2764,24 +2615,80 @@ export default function ChatsScreen() {
       
       // FIRST: Check the chat type from the local chats array (or selectedChatRef when loaded via context)
       // When opening user/workspace chat via context, the chat may not be in chats yet - use selectedChatRef
+      let resolvedChatId = chatId;
       const chat = chats.find(c => c.id === chatId);
       const selectedForId = selectedChatRef.current && Number(selectedChatRef.current.id) === Number(chatId)
         ? selectedChatRef.current
         : null;
-      const effectiveChat = chat || selectedForId;
+      let effectiveChat = chat || selectedForId;
+      
+      // CRITICAL: Placeholder -2 never exists on backend; resolve to real chat from list (same bookmark/document)
+      // After refresh we load messages for -2 → 404 and response clears. Resolve -2 to real id before calling API.
+      if (chatId === -2 && (effectiveChat?.bookmark_context || effectiveChat?.document_context)) {
+        const bookmarkId = effectiveChat.bookmark_context?.id;
+        const documentId = effectiveChat.document_context?.id;
+        let realChat = chats.find(c =>
+          c.id > 0 && (
+            (bookmarkId != null && c.bookmark_context?.id === bookmarkId) ||
+            (documentId != null && c.document_context?.id === documentId)
+          )
+        );
+        // If not in current list (e.g. user just sent message, list not refreshed yet), fetch histories and resolve
+        if (!realChat) {
+          const { fetchChatHistories } = useChatStore.getState();
+          await fetchChatHistories(50, 0);
+          const { histories } = useChatStore.getState();
+          const rawHistory = histories?.find((h: any) => {
+            const pc = h.persistent_context || h.persistentContext;
+            const bookmarkIds = pc?.context_bookmark_ids || pc?.selected_bookmarks || h.selected_bookmarks;
+            if (bookmarkId != null && Array.isArray(bookmarkIds) && bookmarkIds.includes(bookmarkId)) return true;
+            // document: match by context_file_ids / selected_files
+            const fileIds = pc?.context_file_ids || pc?.selected_files || h.selected_files;
+            if (documentId != null && Array.isArray(fileIds) && fileIds.includes(documentId)) return true;
+            return false;
+          });
+          if (rawHistory) {
+            const realId = typeof rawHistory.id === 'string' ? parseInt(String(rawHistory.id), 10) : Number(rawHistory.id);
+            if (!isNaN(realId) && realId > 0) {
+              resolvedChatId = realId;
+              const title = (rawHistory as any).title || effectiveChat?.title || 'Chat';
+              const base = effectiveChat!;
+              effectiveChat = {
+                ...base,
+                id: realId,
+                title,
+                participants: base.participants || [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
+                last_message: base.last_message || '',
+                updated_at: base.updated_at || new Date().toISOString(),
+                created_at: base.created_at || new Date().toISOString(),
+              };
+              setSelectedChat(prev => prev && prev.id === -2 ? { ...prev, id: realId, title } : prev);
+              if (__DEV__) console.log('🔄 [loadMessages] Resolved placeholder -2 to real chat id from histories:', realId);
+            }
+          }
+        } else {
+          resolvedChatId = realChat.id;
+          effectiveChat = realChat;
+          setSelectedChat(prev => prev && prev.id === -2 ? { ...prev, ...realChat, id: realChat!.id } : prev);
+          if (__DEV__) console.log('🔄 [loadMessages] Resolved placeholder -2 to real chat id:', realChat!.id);
+        }
+      }
+      
+      // Use resolved id for API calls (still use chatId for loadedChatIdRef when we started with -2)
+      const chatIdForApi = resolvedChatId;
       
       // Check if this chat exists in the chat store (AI assistant chats)
       // CRITICAL: All chats from /api/v1/mobile/chat/history are AI assistant chats
-      // Compare IDs robustly to handle string/number mismatches
+      // Compare IDs robustly to handle string/number mismatches; use resolved id (-2 → real id)
       const { histories, currentHistory } = useChatStore.getState();
       const chatExistsInStore = (histories && histories.length > 0 && histories.some(h => {
         const historyId = typeof h.id === 'string' ? parseInt(String(h.id), 10) : Number(h.id);
-        const targetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+        const targetId = typeof chatIdForApi === 'string' ? parseInt(String(chatIdForApi), 10) : Number(chatIdForApi);
         return !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
       })) || 
       (currentHistory && (() => {
         const currentId = typeof currentHistory.id === 'string' ? parseInt(String(currentHistory.id), 10) : Number(currentHistory.id);
-        const targetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+        const targetId = typeof chatIdForApi === 'string' ? parseInt(String(chatIdForApi), 10) : Number(chatIdForApi);
         return !isNaN(currentId) && !isNaN(targetId) && currentId === targetId;
       })());
       
@@ -2791,23 +2698,12 @@ export default function ChatsScreen() {
                        (effectiveChat && (effectiveChat.type === 'ai_assistant' || effectiveChat.type === 'document_focused' || effectiveChat.type === 'bookmark_focused')) ||
                        (!effectiveChat); // If no chat found, assume AI chat (safer default)
       
-      console.log(`🔍 [loadMessages] Chat ${chatId} check:`, {
-        chatFound: !!chat,
-        effectiveChatFromRef: !!selectedForId,
-        chatType: effectiveChat?.type,
-        chatExistsInStore,
-        isAIChat,
-        historiesCount: histories?.length || 0,
-        historyIds: histories?.slice(0, 10).map(h => h.id) || [],
-        willUseUserChatEndpoint: !isAIChat && effectiveChat && (effectiveChat.type === 'user_direct' || effectiveChat.type === 'workspace')
-      });
-      
       // Only use user-chat endpoint for actual user/workspace chats that are NOT AI chats
       // Use effectiveChat so when opening existing workspace/user chat (including via context), messages load
       if (!isAIChat && effectiveChat && (effectiveChat.type === 'user_direct' || effectiveChat.type === 'workspace')) {
           // Load user chat messages using web endpoint (same as web chat.tsx)
           try {
-            const response = await api.getChatMessages(chatId);
+            const response = await api.getChatMessages(chatIdForApi);
             if (response.success && (response as any).messages) {
               // Web chat.tsx returns: { success: true, messages: ChatMessage[] }
               // Use auth user id first (available immediately); fallback to profile so sent messages are always on the right on first open
@@ -2840,18 +2736,16 @@ export default function ChatsScreen() {
               const messagesAreEmpty = messages.length === 0;
               
               // CRITICAL: When switching chats or force reloading, REPLACE messages (don't merge)
-              const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatId;
+              const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatIdForApi;
               const shouldReplace = forceReload || isSwitchingChats || messagesAreEmpty;
               
               if ((isCurrentlyStreaming || recentlyCompleted) && !messagesAreEmpty && !shouldReplace) {
-                console.log(`⏸️ [loadMessages] Streaming active or recently completed - skipping message update to preserve streamed content`);
-                loadedChatIdRef.current = chatId;
+                loadedChatIdRef.current = chatIdForApi;
                 return;
               }
               
               // If messages are empty, always load them (user navigated back)
               if (messagesAreEmpty) {
-                console.log(`🔄 [loadMessages] Messages empty - loading messages for chat ${chatId} (streaming check bypassed)`);
               }
               
               if (shouldReplace) {
@@ -2861,7 +2755,6 @@ export default function ChatsScreen() {
                 const shouldMergeInstead = timeSinceLastMessage < 3000 && messages.length > 0;
                 
                 if (shouldMergeInstead) {
-                  console.log(`🔄 [loadMessages] Merging instead of replacing (message just sent) for chat ${chatId}`);
                   setMessages(prev => {
                     const mergedMessages = [...prev];
                     const existingIds = new Set(prev.map(m => m.id));
@@ -2873,12 +2766,10 @@ export default function ChatsScreen() {
                     return deduplicatedMessages.length > mergedMessages.length ? deduplicatedMessages : mergedMessages;
                   });
                 } else {
-                  console.log(`🔄 [loadMessages] Replacing messages for chat ${chatId} (forceReload: ${forceReload}, switching: ${isSwitchingChats}, empty: ${messagesAreEmpty})`);
                   setMessages(deduplicatedMessages);
                 }
               } else {
                 // Same chat, merge messages (for updates while viewing the same chat)
-                console.log(`🔄 [loadMessages] Merging messages for chat ${chatId} (same chat, incremental update)`);
                 setMessages(prev => {
                   const mergedMessages = [...prev];
                   const existingIds = new Set(prev.map(m => m.id));
@@ -2910,10 +2801,10 @@ export default function ChatsScreen() {
                   return mergedMessages;
                 });
               }
-              loadedChatIdRef.current = chatId; // Track that we've loaded this chat
+              loadedChatIdRef.current = chatIdForApi; // Track that we've loaded this chat
             } else {
               setMessages([]);
-              loadedChatIdRef.current = chatId; // Track even empty chats to prevent reloads
+              loadedChatIdRef.current = chatIdForApi; // Track even empty chats to prevent reloads
             }
           } catch (error: any) {
             console.error(`❌ Failed to load messages for chat ${chatId}:`, error.message || error);
@@ -2921,15 +2812,15 @@ export default function ChatsScreen() {
             if (error.message?.includes('Chat not found') || error.message?.includes('404') || error.response?.status === 404) {
               console.warn(`⚠️ Chat ${chatId} not found in user-chat endpoint, trying chat store instead`);
               // If it's a 404, it might be an AI assistant chat that was misclassified
-              // Try loading from chat store instead
+              // Try loading from chat store instead (use resolved id)
               try {
                 const { fetchChatConversation } = useChatStore.getState();
-                await fetchChatConversation(chatId);
+                await fetchChatConversation(chatIdForApi);
                 const { currentHistory: fallbackHistory } = useChatStore.getState();
                 
-                // CRITICAL: Verify that fallbackHistory matches the chatId we're loading
+                // CRITICAL: Verify that fallbackHistory matches the chatId we're loading (use resolved id)
                 const fallbackHistoryId = fallbackHistory ? (typeof fallbackHistory.id === 'string' ? parseInt(String(fallbackHistory.id), 10) : Number(fallbackHistory.id)) : null;
-                const fallbackTargetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+                const fallbackTargetId = typeof chatIdForApi === 'string' ? parseInt(String(chatIdForApi), 10) : Number(chatIdForApi);
                 const fallbackHistoryMatches = fallbackHistoryId !== null && !isNaN(fallbackHistoryId) && !isNaN(fallbackTargetId) && fallbackHistoryId === fallbackTargetId;
                 
                 if (fallbackHistory && fallbackHistory.messages.length > 0 && fallbackHistoryMatches) {
@@ -2964,27 +2855,23 @@ export default function ChatsScreen() {
                   const messagesAreEmpty = messages.length === 0;
                   
                   // CRITICAL: When switching chats or force reloading, REPLACE messages (don't merge)
-                  const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatId;
+                  const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatIdForApi;
                   const shouldReplace = forceReload || isSwitchingChats || messagesAreEmpty;
                   
                   if ((isCurrentlyStreaming || recentlyCompleted) && !messagesAreEmpty && !shouldReplace) {
-                    console.log(`⏸️ [loadMessages] Streaming active or recently completed - skipping message update to preserve streamed content`);
-                    loadedChatIdRef.current = chatId;
+                    loadedChatIdRef.current = chatIdForApi;
                     return;
                   }
                   
                   // If messages are empty, always load them (user navigated back)
                   if (messagesAreEmpty) {
-                    console.log(`🔄 [loadMessages] Messages empty - loading messages for chat ${chatId} (streaming check bypassed)`);
                   }
                   
                   if (shouldReplace) {
                     // Replace messages completely - this is a different chat or force reload
-                    console.log(`🔄 [loadMessages] Replacing messages for chat ${chatId} (forceReload: ${forceReload}, switching: ${isSwitchingChats}, empty: ${messagesAreEmpty})`);
                     setMessages(deduplicatedMessages);
                   } else {
                     // Same chat, merge messages (for updates while viewing the same chat)
-                    console.log(`🔄 [loadMessages] Merging messages for chat ${chatId} (same chat, incremental update)`);
                     setMessages(prev => {
                       const mergedMessages = [...prev];
                       const existingIds = new Set(prev.map(m => m.id));
@@ -3010,21 +2897,21 @@ export default function ChatsScreen() {
                       return mergedMessages;
                     });
                   }
-                  loadedChatIdRef.current = chatId; // Track that we've loaded this chat
+                  loadedChatIdRef.current = chatIdForApi; // Track that we've loaded this chat
                 } else {
                   setMessages([]);
-                  loadedChatIdRef.current = chatId; // Track even empty chats to prevent reloads
+                  loadedChatIdRef.current = chatIdForApi; // Track even empty chats to prevent reloads
                 }
               } catch (storeError) {
                 console.error(`❌ Failed to load from chat store for chat ${chatId}:`, storeError);
                 setMessages([]);
-                loadedChatIdRef.current = chatId; // Track even on error to prevent infinite retries
+                loadedChatIdRef.current = chatIdForApi; // Track even on error to prevent infinite retries
                 // Refresh the chat list to remove stale chat IDs
                 loadChats();
               }
             } else {
               setMessages([]);
-              loadedChatIdRef.current = chatId; // Track even empty chats to prevent reloads
+              loadedChatIdRef.current = chatIdForApi; // Track even empty chats to prevent reloads
             }
           }
           return;
@@ -3033,28 +2920,24 @@ export default function ChatsScreen() {
       // If chat is an AI chat, or not found in local list, or exists in chat store, use chat store
       // AI assistant chats (ai_assistant, document_focused, bookmark_focused) are document queries, NOT user chats
       if (isAIChat) {
-        console.log(`📚 Chat ${chatId} is an AI assistant chat (type: ${chat?.type || 'unknown'}, in store: ${chatExistsInStore}) - using chat store`);
       } else if (!chat) {
         // Chat not found in local array - if it's not explicitly a user chat, try chat store first
         // This handles the case where chat history is loaded but chat list hasn't been updated yet
-        console.log(`⚠️ Chat ${chatId} not found in local list, trying chat store first (might be AI assistant chat)...`);
       } else {
-        console.log(`⚠️ Chat ${chatId} found but type is ${chat.type} - isAIChat=${isAIChat}, will ${isAIChat ? 'use chat store' : 'use user-chat endpoint'}`);
       }
       
       // Use the chat store to load the specific conversation (for AI chats/document queries)
-      // console.log('🔄 Loading messages for chat ID:', chatId);
+      // Use resolved id so we never call API with placeholder -2 (404)
       const { fetchChatConversation } = useChatStore.getState();
-      await fetchChatConversation(chatId);
+      await fetchChatConversation(chatIdForApi);
       
       // Get the current history from the store
       const { currentHistory: storeHistory } = useChatStore.getState();
-      console.log('📋 Current history from store:', storeHistory, 'for chatId:', chatId);
       
       // CRITICAL: Verify that currentHistory matches the chatId we're loading
-      // This prevents showing messages from a different chat
+      // This prevents showing messages from a different chat (use resolved id)
       const historyId = storeHistory ? (typeof storeHistory.id === 'string' ? parseInt(String(storeHistory.id), 10) : Number(storeHistory.id)) : null;
-      const targetId = typeof chatId === 'string' ? parseInt(String(chatId), 10) : Number(chatId);
+      const targetId = typeof chatIdForApi === 'string' ? parseInt(String(chatIdForApi), 10) : Number(chatIdForApi);
       const historyMatches = historyId !== null && !isNaN(historyId) && !isNaN(targetId) && historyId === targetId;
       
       if (storeHistory && storeHistory.messages.length > 0 && historyMatches) {
@@ -3109,7 +2992,7 @@ export default function ChatsScreen() {
         if ((isCurrentlyStreaming || recentlyCompleted) && !messagesAreEmpty) {
           console.log(`⏸️ [loadMessages] Streaming active or recently completed - skipping message update to preserve streamed content`);
           // Don't update messages while streaming or right after - streaming interval will handle updates
-          loadedChatIdRef.current = chatId; // Still track that we've loaded this chat
+          loadedChatIdRef.current = chatIdForApi; // Still track that we've loaded this chat
           return;
         }
         
@@ -3120,12 +3003,12 @@ export default function ChatsScreen() {
         
         // CRITICAL: When switching chats or force reloading, REPLACE messages (don't merge)
         // This prevents messages from one chat appearing in another
-        const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatId;
+        const isSwitchingChats = loadedChatIdRef.current !== null && loadedChatIdRef.current !== chatIdForApi;
         const shouldReplace = forceReload || isSwitchingChats || messages.length === 0;
         
         if (shouldReplace) {
           // Replace messages completely - this is a different chat or force reload
-          console.log(`🔄 [loadMessages] Replacing messages for chat ${chatId} (forceReload: ${forceReload}, switching: ${isSwitchingChats}, empty: ${messages.length === 0})`);
+          console.log(`🔄 [loadMessages] Replacing messages for chat ${chatIdForApi} (forceReload: ${forceReload}, switching: ${isSwitchingChats}, empty: ${messages.length === 0})`);
           setMessages(deduplicatedMessages);
         } else {
           // Same chat, merge messages (for updates while viewing the same chat)
@@ -3175,7 +3058,7 @@ export default function ChatsScreen() {
             return mergedMessages;
           });
         }
-        loadedChatIdRef.current = chatId; // Track that we've loaded this chat
+        loadedChatIdRef.current = chatIdForApi; // Track that we've loaded this chat
       } else {
         // History doesn't match chatId or is empty - clear messages to prevent showing wrong chat's messages
         if (!historyMatches) {
@@ -3183,7 +3066,7 @@ export default function ChatsScreen() {
         }
         // For empty chats, don't show any welcome message - just show empty chat
         setMessages([]);
-        loadedChatIdRef.current = chatId; // Track even empty chats to prevent reloads
+        loadedChatIdRef.current = chatIdForApi; // Track even empty chats to prevent reloads
       }
     } catch (error: any) {
       console.error('Failed to load messages:', error);
@@ -3192,12 +3075,12 @@ export default function ChatsScreen() {
       if (error.message?.includes('Chat not found') || error.message?.includes('404') || error.response?.status === 404) {
         console.warn(`⚠️ Chat ${chatId} not found, refreshing chat list`);
         setMessages([]);
-        loadedChatIdRef.current = chatId; // Track even on error to prevent infinite retries
+        loadedChatIdRef.current = chatIdForApi; // Track even on error to prevent infinite retries
         loadChats();
       } else {
         // Show error message for other errors - but preserve existing messages if any
         // Only replace if we don't have messages for this chat
-        if (loadedChatIdRef.current !== chatId || messages.length === 0) {
+        if (loadedChatIdRef.current !== chatIdForApi || messages.length === 0) {
           const errorMessage: ChatMessage = {
             id: generateUniqueMessageId(),
             content: 'Failed to load messages. Please try again.',
@@ -3206,7 +3089,7 @@ export default function ChatsScreen() {
             created_at: new Date().toISOString(),
           };
           setMessages([errorMessage]);
-          loadedChatIdRef.current = chatId; // Track even on error
+          loadedChatIdRef.current = chatIdForApi; // Track even on error
         }
       }
     } finally {
@@ -3389,13 +3272,9 @@ export default function ChatsScreen() {
   };
 
   const sendMessage = async () => {
-    console.log('📤 [CHATS-WEB] ===== sendMessage CALLED =====');
-    console.log('📤 [CHATS-WEB] selectedChat:', selectedChat);
-    console.log('📤 [CHATS-WEB] newMessage:', newMessage);
-    console.log('📤 [CHATS-WEB] userProfile:', userProfile);
     
     if (!selectedChat || !newMessage.trim()) {
-      console.log('⚠️ [CHATS-WEB] Cannot send - missing chat or empty message:', {
+      if (__DEV__) console.log('⚠️ [CHATS-WEB] Cannot send - missing chat or empty message:', {
         hasSelectedChat: !!selectedChat,
         hasMessage: !!newMessage.trim(),
         messageLength: newMessage.trim().length
@@ -3499,6 +3378,8 @@ export default function ChatsScreen() {
         
         // Check if context was explicitly removed for this chat
         const ctxRemoved = selectedChat.id != null && selectedChat.id !== -1 && contextRemovedChatIdsRef.current.has(Number(selectedChat.id));
+        // Use ref as fallback so we have latest chat (avoids stale closure when navigating from bookmark)
+        const effectiveChat = selectedChatRef.current || selectedChat;
         
         // Build search filters based on context
         let searchFilters = {};
@@ -3530,10 +3411,10 @@ export default function ChatsScreen() {
               context_type: 'user'
             };
           }
-        } else if (!ctxRemoved && selectedChat.type === 'bookmark_focused' && selectedChat.bookmark_context) {
-          searchFilters = { bookmark_id: selectedChat.bookmark_context.id, context_type: 'bookmark' };
-        } else if (!ctxRemoved && selectedChat.type === 'document_focused' && selectedChat.document_context) {
-          const id = Number(selectedChat.document_context.id);
+        } else if (!ctxRemoved && (effectiveChat.type === 'bookmark_focused' && effectiveChat.bookmark_context)) {
+          searchFilters = { bookmark_id: effectiveChat.bookmark_context.id, context_type: 'bookmark' };
+        } else if (!ctxRemoved && (effectiveChat.type === 'document_focused' && effectiveChat.document_context)) {
+          const id = Number(effectiveChat.document_context.id);
           searchFilters = Number.isNaN(id) ? {} : { 
             context_file_ids: [id],
             document_ids: [id],
@@ -3574,15 +3455,24 @@ export default function ChatsScreen() {
             ...searchFilters // Include any context filters (bookmark, document, etc.)
           };
           
-          // Also include context from selectedChat if available
-          if (!ctxRemoved && selectedChat) {
-            if (selectedChat.workspace?.id) {
-              streamFilters.selected_workspaces = [Number(selectedChat.workspace.id)];
-              streamFilters.active_workspace_id = Number(selectedChat.workspace.id);
+          // Also include context from selected chat (use effectiveChat so bookmark-from-nav is not lost)
+          if (!ctxRemoved && effectiveChat) {
+            if (effectiveChat.workspace?.id) {
+              streamFilters.selected_workspaces = [Number(effectiveChat.workspace.id)];
+              streamFilters.active_workspace_id = Number(effectiveChat.workspace.id);
             }
-            if (selectedChat.bookmark_context?.id) {
-              streamFilters.selected_bookmarks = [Number(selectedChat.bookmark_context.id)];
-              streamFilters.context_bookmark_ids = [Number(selectedChat.bookmark_context.id)];
+            if (effectiveChat.bookmark_context?.id) {
+              streamFilters.selected_bookmarks = [Number(effectiveChat.bookmark_context.id)];
+              streamFilters.context_bookmark_ids = [Number(effectiveChat.bookmark_context.id)];
+            }
+          }
+          // CRITICAL: Ensure bookmark ID is sent when we have bookmark_id in searchFilters (e.g. bookmark_focused)
+          // Backend only reads context_bookmark_ids/selected_bookmarks, not bookmark_id
+          if (!streamFilters.context_bookmark_ids?.length && streamFilters.bookmark_id != null) {
+            const bid = Number(streamFilters.bookmark_id);
+            if (!Number.isNaN(bid)) {
+              streamFilters.context_bookmark_ids = [bid];
+              streamFilters.selected_bookmarks = [bid];
             }
           }
         }
@@ -3627,16 +3517,28 @@ export default function ChatsScreen() {
           console.log('📋 [MOBILE] Not sending chat_history_id - backend will create new chat history');
         }
 
+        // FINAL FALLBACK: Ensure bookmark ID is sent when chat is bookmark_focused (backend reads context_bookmark_ids only)
+        if (!streamFilters.context_bookmark_ids?.length && selectedChat?.bookmark_context?.id != null) {
+          const bid = Number(selectedChat.bookmark_context.id);
+          if (!Number.isNaN(bid)) {
+            streamFilters.context_bookmark_ids = [bid];
+            streamFilters.selected_bookmarks = [bid];
+            console.log('📋 [MOBILE] Final fallback: set context_bookmark_ids from selectedChat:', bid);
+          }
+        }
+
         // Log what we're sending to match web behavior
         console.log('📤 [MOBILE] Sending chat request:', {
           message: chatContext.substring(0, 100),
           context_file_ids: streamFilters.context_file_ids,
+          context_bookmark_ids: streamFilters.context_bookmark_ids,
           document_ids: streamFilters.document_ids,
           chat_history_id: streamFilters.chat_history_id,
           hasSelectedMention: !!selectedMention,
           selectedMentionType: selectedMention?.type,
           selectedChatType: selectedChat?.type,
-          documentContextId: selectedChat?.document_context?.id
+          documentContextId: selectedChat?.document_context?.id,
+          bookmarkContextId: selectedChat?.bookmark_context?.id
         });
 
         // Use chunked polling for AI chat (resilient alternative to streaming)
@@ -4195,7 +4097,6 @@ export default function ChatsScreen() {
         if (socketRef.current && 
             userId && 
             selectedChat.id != null) {
-          console.log('📤 [CHATS-WEB] Emitting typing stopped event');
           socketRef.current.emit('user_typing', { 
             chat_id: selectedChat.id,
             user_id: userId,
@@ -4335,7 +4236,6 @@ export default function ChatsScreen() {
         if (socketRef.current && 
             userId && 
             selectedChat.id != null) {
-          console.log('📤 [CHATS-WEB] Emitting typing stopped event');
           socketRef.current.emit('user_typing', { 
             chat_id: selectedChat.id,
             user_id: userId,
@@ -4932,6 +4832,26 @@ export default function ChatsScreen() {
       chatToSelect = chat;
     }
     
+    // When selecting placeholder (-2) with bookmark: use real backend chat if it exists
+    // Backend creates chat history on first message; user may have gone back before complete event updated the list
+    if (chatToSelect.id === -2 && chatToSelect.bookmark_context?.id) {
+      const bookmarkId = chatToSelect.bookmark_context.id;
+      let realChat = chats.find(c =>
+        c.id > 0 &&
+        c.type !== 'user_direct' &&
+        c.type !== 'workspace' &&
+        (c.bookmark_context?.id === bookmarkId || (c as any).bookmark_context?.id === bookmarkId)
+      );
+      if (realChat) {
+        chatToSelect = realChat;
+        console.log('🔄 [SELECT] Using real backend chat for bookmark (placeholder -2 ->', realChat.id, ')');
+      } else if (currentChatIdRef.current != null && currentChatIdRef.current > 0) {
+        // Fallback: backend returned chat_history_id before user went back; list may not have refreshed yet
+        chatToSelect = { ...chatToSelect, id: currentChatIdRef.current };
+        console.log('🔄 [SELECT] Using chat_history_id from ref for bookmark (placeholder -2 ->', currentChatIdRef.current, ')');
+      }
+    }
+    
     setSelectedChat(chatToSelect);
     // Set ref immediately so loadMessages can use it (state update is async; ref is sync)
     selectedChatRef.current = chatToSelect;
@@ -5058,7 +4978,7 @@ export default function ChatsScreen() {
           });
         } else {
           // Chat doesn't exist in list (temporary id -2 or new chat) - add it
-          console.log(`📋 Adding chat ${selectedChat.id} to list (preserving context):`, {
+          if (__DEV__) console.log(`📋 Adding chat ${selectedChat.id} to list (preserving context):`, {
             type: selectedChat.type,
             hasBookmarkContext: !!selectedChat.bookmark_context,
             hasDocumentContext: !!selectedChat.document_context
@@ -5125,6 +5045,14 @@ export default function ChatsScreen() {
     setSelectedChat(null);
     setMessages([]);
     loadedChatIdRef.current = null; // Clear loaded chat ID when leaving chat
+    
+    // When leaving a placeholder bookmark/document chat (-2): refresh list to get real chat from backend
+    // Backend creates chat history on first message but may not return chat_history_id in polling response
+    // Store in ref so loadChats can merge it (avoids stale closure - loadChats would otherwise read old chats)
+    if (selectedChat && selectedChat.id === -2 && (selectedChat.bookmark_context || selectedChat.document_context)) {
+      placeholderChatToPreserveRef.current = selectedChat;
+      setTimeout(() => loadChats(), 500); // Brief delay so backend can persist the new chat
+    }
     
     // CRITICAL: Clear selectedMention if we're leaving Chat Assistant
     // This prevents context from persisting when switching to Chat Assistant
@@ -5515,7 +5443,7 @@ export default function ChatsScreen() {
               // Web chat.tsx returns: { success: true, chat: Chat, existing: boolean }
               newChat = {
                 id: (response as any).chat.id,
-                title: (response as any).chat.display_name || `Chat with ${selectedUser.username}`,
+                title: (response as any).chat.display_name || `Chat with ${(selectedUser as any).first_name || (selectedUser as any).last_name || selectedUser.username || 'User'}`,
                 type: 'user_direct',
                 participants: (response as any).chat.participants || [selectedUser],
                 last_message: (response as any).chat.latest_message?.content || 'Start a conversation',
@@ -6085,24 +6013,31 @@ export default function ChatsScreen() {
     );
   };
 
-  // Handle add/remove favorite
+  // Handle add/remove favorite (syncs with web via PUT /api/v1/mobile/chat/unified-history/<id>/favorite)
   const handleToggleFavorite = async (chatId: number) => {
+    const chat = chats.find(c => c.id === chatId);
+    // Use source to determine unified ID: 'user' = UserChat (user_<id>), 'llm' or missing = ChatHistory (llm_<id>)
+    // Type alone is unreliable: LLM chats can have selected_users/workspaces and get typed as user_direct/workspace
+    const unifiedId = chat?.source === 'user' ? `user_${chatId}` : `llm_${chatId}`;
+    const isFavorite = favoriteChatIds.has(chatId);
+    const nextFavorite = !isFavorite;
+
     try {
-      const isFavorite = favoriteChatIds.has(chatId);
-      const newFavorites = new Set(favoriteChatIds);
-      
-      if (isFavorite) {
-        newFavorites.delete(chatId);
-        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
-        setFavoriteChatIds(newFavorites);
-      } else {
-        newFavorites.add(chatId);
-        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
-        setFavoriteChatIds(newFavorites);
+      // Skip API for special IDs; sync with backend for real chats
+      if (chatId !== -1 && chatId !== -2) {
+        await api.setUnifiedChatFavorite(unifiedId, nextFavorite);
       }
-      
+
+      const newFavorites = new Set(favoriteChatIds);
+      if (nextFavorite) {
+        newFavorites.add(chatId);
+      } else {
+        newFavorites.delete(chatId);
+      }
+      await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+      setFavoriteChatIds(newFavorites);
+
       setMenuChatId(null);
-      // Close swipeable
       const swipeableRef = chatSwipeableRefs.current.get(chatId);
       if (swipeableRef) {
         swipeableRef.close();
@@ -6316,7 +6251,7 @@ export default function ChatsScreen() {
         <FlatList
           data={filteredChats}
           renderItem={renderChatItem}
-          keyExtractor={(item) => String(item?.id || Math.random())}
+          keyExtractor={(item, index) => item ? `${item.type}-${item.id}-${index}` : `${index}-${Math.random()}`}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }

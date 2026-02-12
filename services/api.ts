@@ -135,8 +135,8 @@ const MOBILE_ENDPOINTS = {
   CHAT_MESSAGES: (chatId: number) => `/api/v1/mobile/chat/messages/${chatId}`,
   CHAT_SEND_MESSAGE: '/api/v1/mobile/chat/send',
   
-  // User Chat (use web endpoints - same as web app for chats list, messages, send, start, search)
-  USER_CHATS: '/api/v1/web/user-chat/chats',
+  // User Chat (mobile endpoint for list so JWT auth works and web favorites sync via is_favorite)
+  USER_CHATS: '/api/v1/mobile/user-chat/chats',
   USER_CHAT_MESSAGES: (chatId: number) => `/api/v1/web/user-chat/chats/${chatId}/messages`,
   USER_CHAT_SEND: (chatId: number) => `/api/v1/web/user-chat/chats/${chatId}/send`,
   USER_CHAT_START: '/api/v1/web/user-chat/start-chat',
@@ -3602,6 +3602,45 @@ class ApiService {
   }
 
   /**
+   * Get all favorite chat ids from server (LLM history ids + user chat ids) so web favorites show on mobile.
+   * GET /api/v1/mobile/chat/favorites
+   */
+  async getChatFavorites(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get('/api/v1/mobile/chat/favorites');
+      return response.data;
+    } catch (error: any) {
+      console.error('Get chat favorites error:', error);
+      return { success: false, favorite_history_ids: [], favorite_chat_ids: [] } as ApiResponse;
+    }
+  }
+
+  /**
+   * Set favorite for a chat (unified history) - syncs with web.
+   * PUT /api/v1/mobile/chat/unified-history/<id>/favorite
+   * @param unifiedId - For AI/LLM chats use "llm_<historyId>", for user chats use "user_<chatId>"
+   * @param isFavorite - true to favorite, false to unfavorite
+   */
+  async setUnifiedChatFavorite(unifiedId: string, isFavorite: boolean): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(
+        `/api/v1/mobile/chat/unified-history/${unifiedId}/favorite`,
+        { is_favorite: isFavorite }
+      );
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        (typeof error.response?.data === 'string' ? error.response.data : null);
+      const suffix = status != null ? ` (${status})` : '';
+      throw new Error(msg ? `${msg}${suffix}` : `Failed to update favorite${suffix}`);
+    }
+  }
+
+  /**
    * Delete a user chat - Uses unified endpoint like web version
    * Uses /api/v1/mobile/chat/unified-history/user_<id> so any participant can remove themselves
    */
@@ -3713,11 +3752,11 @@ class ApiService {
 
   // ==================== MOBILE BOOKMARKS ====================
   
-  async getBookmarks(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
+  async getBookmarks(limit: number = 50, offset: number = 0, workspaceId?: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.BOOKMARKS, {
-        params: { limit, offset }
-      });
+      const params: { limit: number; offset: number; workspace_id?: number } = { limit, offset };
+      if (workspaceId != null) params.workspace_id = workspaceId;
+      const response = await this.client.get(MOBILE_ENDPOINTS.BOOKMARKS, { params });
       return response.data;
     } catch (error: any) {
       console.error('Get bookmarks error:', error);

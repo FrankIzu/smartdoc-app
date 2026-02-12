@@ -26,9 +26,9 @@ import LoadingDots from '../../components/LoadingDots';
 import QuickFormViewer from '../../components/QuickFormViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
-import { toAlertMessage } from '../../utils/alertUtils';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
+import { toAlertMessage } from '../../utils/alertUtils';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { scaleStyleObject } from '../../utils/styleUtils';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
@@ -767,6 +767,25 @@ export default function QuickFilesScreen() {
       setLoading(false);
     }
   }, [searchQuery, filterBy, workspaceId]); // Add dependencies including workspaceId
+
+  // When connection error is shown, retry so it clears as soon as connection is back
+  const CONNECTION_ERROR_MSG = 'Connection Error: Connecting you back ...';
+  useEffect(() => {
+    if (error !== CONNECTION_ERROR_MSG) return;
+    const CONNECTION_RETRY_MS = 2000;
+    const id = setInterval(async () => {
+      try {
+        const result = await apiClient.checkAuth();
+        if (result?.success) {
+          setError(null);
+          loadDocuments(true);
+        }
+      } catch {
+        // still offline, keep retrying
+      }
+    }, CONNECTION_RETRY_MS);
+    return () => clearInterval(id);
+  }, [error, loadDocuments]);
 
   // Re-read params and reload when screen comes into focus (must be after loadDocuments is defined)
   useFocusEffect(

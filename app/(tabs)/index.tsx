@@ -69,6 +69,36 @@ function DashboardScreen() {
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
 
+  /** Get user initials for header avatar: first+last name, else name, else username/email prefix, else null (show icon). */
+  const getUserInitials = (u: { name?: string; email?: string; first_name?: string; last_name?: string; username?: string } | null): string | null => {
+    if (!u) return null;
+    const first = (u.first_name ?? '').trim();
+    const last = (u.last_name ?? '').trim();
+    if (first || last) {
+      const initials = (first.charAt(0) + last.charAt(0)).toUpperCase();
+      if (initials) return initials;
+    }
+    const name = (u.name ?? '').trim();
+    if (name) {
+      const parts = name.split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+      }
+      if (parts.length === 1 && parts[0].length >= 1) {
+        return parts[0].slice(0, 2).toUpperCase();
+      }
+    }
+    const username = (u.username ?? '').trim();
+    if (username) return username.slice(0, 2).toUpperCase();
+    const email = (u.email ?? '').trim();
+    if (email) {
+      const local = email.split('@')[0] || '';
+      if (local.length >= 2) return local.slice(0, 2).toUpperCase();
+      if (local.length === 1) return local.toUpperCase();
+    }
+    return null;
+  };
+
   // When not signed in, stay on login screen (redirect to sign-in)
   useFocusEffect(
     useCallback(() => {
@@ -427,6 +457,24 @@ function DashboardScreen() {
 
     return () => clearInterval(interval);
   }, [isAuthenticated, user, loadDashboardData]);
+
+  // When connection failed, retry quickly so banner clears as soon as connection is back
+  const CONNECTION_RETRY_MS = 2000;
+  useEffect(() => {
+    if (!connectionStatus || connectionStatus.success) return;
+    const id = setInterval(async () => {
+      try {
+        const result = await apiClient.checkAuth();
+        if (result?.success) {
+          setConnectionStatus({ success: true, message: '' });
+          loadDashboardData(); // refresh data now that we're back online
+        }
+      } catch {
+        // still offline, keep retrying
+      }
+    }, CONNECTION_RETRY_MS);
+    return () => clearInterval(id);
+  }, [connectionStatus?.success, connectionStatus?.message, loadDashboardData]);
 
   // Cleanup upload timeout on unmount
   useEffect(() => {
@@ -936,6 +984,19 @@ function DashboardScreen() {
   headerButton: {
     padding: 4,
   },
+  headerAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerAvatarText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
   refreshingButton: {
     opacity: 0.5,
   },
@@ -1150,7 +1211,17 @@ function DashboardScreen() {
                   style={dynamicStyles.headerButton}
                   onPress={() => router.push('/(tabs)/settings')}
                 >
-                  <Ionicons name="person-circle" size={34} color="#007AFF" />
+                  {(() => {
+                    const initials = getUserInitials(user);
+                    if (initials) {
+                      return (
+                        <View style={dynamicStyles.headerAvatar}>
+                          <Text style={dynamicStyles.headerAvatarText}>{initials}</Text>
+                        </View>
+                      );
+                    }
+                    return <Ionicons name="person-circle" size={34} color="#007AFF" />;
+                  })()}
                 </TouchableOpacity>
               </>
             )}

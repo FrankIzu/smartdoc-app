@@ -151,9 +151,7 @@ export default function UserChatScreen() {
   // Join user room when socket is connected and userProfile is available
   useEffect(() => {
     if (socketRef.current && isConnected && userProfile?.id) {
-      console.log('🔌 [USER-CHAT] Joining user room:', userProfile.id);
       socketRef.current.emit('join_user_room', { user_id: userProfile.id });
-      console.log('🔌 [USER-CHAT] Emitted join_user_room for user:', userProfile.id);
     }
   }, [isConnected, userProfile?.id]);
 
@@ -164,20 +162,10 @@ export default function UserChatScreen() {
       socketRef.current.emit('leave_chat_room', { chat_id: selectedChat.id });
       // Reset online status when leaving
       setOtherUserOnline(false);
-      // Join new room
-      console.log('🔌 [USER-CHAT] Joining chat room:', selectedChat.id, 'socket connected:', socketRef.current.connected);
       socketRef.current.emit('join_chat_room', { chat_id: selectedChat.id });
-      console.log('🔌 [USER-CHAT] Emitted join_chat_room event for chat:', selectedChat.id);
       // Request participant online status
       socketRef.current.emit('get_chat_participants_status', { chatId: selectedChat.id });
     } else {
-      if (selectedChat && !isNewChat) {
-        console.log('⚠️ [USER-CHAT] Cannot join chat room:', {
-          hasSocket: !!socketRef.current,
-          isConnected,
-          socketConnected: socketRef.current?.connected
-        });
-      }
       setOtherUserOnline(false);
     }
   }, [selectedChat, isNewChat, isConnected]);
@@ -229,33 +217,15 @@ export default function UserChatScreen() {
         path: '/socket.io/',
       });
 
-      // TEST: Add a direct listener to catch ALL events (before other handlers)
-      const originalOnevent = (socket as any).onevent;
-      if (originalOnevent) {
-        (socket as any).onevent = function(packet: any) {
-          if (packet && packet.data && packet.data[0]) {
-            const eventName = packet.data[0];
-            if (eventName === 'new_chat_message') {
-              console.log('🔍 [USER-CHAT] ===== RAW onevent DETECTED new_chat_message =====', packet.data[1]);
-            }
-          }
-          return originalOnevent.call(this, packet);
-        };
-      }
 
       socket.on('connect', () => {
-        console.log('✅ [USER-CHAT] Socket connected');
         setIsConnected(true);
         
         // Join user room first (required for receiving messages)
         // Use state setter to get latest userProfile
         setUserProfile(currentProfile => {
           if (currentProfile?.id) {
-            console.log('🔌 [USER-CHAT] Joining user room:', currentProfile.id);
             socket.emit('join_user_room', { user_id: currentProfile.id });
-            console.log('🔌 [USER-CHAT] Emitted join_user_room for user:', currentProfile.id);
-          } else {
-            console.log('⚠️ [USER-CHAT] Cannot join user room - userProfile not loaded yet');
           }
           return currentProfile;
         });
@@ -264,25 +234,17 @@ export default function UserChatScreen() {
         setSelectedChat(currentChat => {
           // Rejoin chat room if we have a selected chat
           if (currentChat && !isNewChat) {
-            console.log('🔌 [USER-CHAT] Rejoining chat room after reconnect:', currentChat.id);
             socket.emit('join_chat_room', { chat_id: currentChat.id });
-            console.log('🔌 [USER-CHAT] Emitted join_chat_room for chat:', currentChat.id);
           }
           return currentChat;
         });
       });
 
       socket.on('disconnect', () => {
-        console.log('❌ Socket disconnected');
         setIsConnected(false);
       });
 
-      // Register new_chat_message handler
-      console.log('📨 [USER-CHAT] Registering new_chat_message event handler...');
       socket.on('new_chat_message', (data: any) => {
-        console.log('📨 [USER-CHAT] ===== NEW MESSAGE EVENT TRIGGERED =====');
-        console.log('📨 [USER-CHAT] Event handler called with data:', data);
-        console.log('📨 [USER-CHAT] New message received:', JSON.stringify(data, null, 2));
         // Always update chat list first
         setChats(prev => prev.map(chat => 
           chat.id === data.chat_id 
@@ -316,13 +278,10 @@ export default function UserChatScreen() {
                   if (existing.is_own_message !== newMsg.is_own_message) {
                     const updated = [...prev];
                     updated[existingIndex] = newMsg;
-                    console.log('🔄 [USER-CHAT] Updating existing message with correct ownership:', newMsg.id);
                     return updated;
                   }
-                  console.log('⚠️ [USER-CHAT] Duplicate message detected, skipping:', newMsg.id);
                   return prev;
                 }
-                console.log('✅ [USER-CHAT] Adding new message:', newMsg.id);
                 return [...prev, newMsg];
               });
               scrollToBottom();
@@ -331,11 +290,6 @@ export default function UserChatScreen() {
               if (!isOwnMessage) {
                 setOtherUserOnline(true);
               }
-            } else {
-              console.log('⚠️ [USER-CHAT] Message for different chat:', {
-                message_chat_id: data.chat_id,
-                current_chat_id: currentChat?.id
-              });
             }
             return currentProfile;
           });
@@ -344,7 +298,6 @@ export default function UserChatScreen() {
       });
 
       socket.on('chat_typing', (data: any) => {
-        console.log('⌨️ [USER-CHAT] Typing event received:', data);
         // Use state setter with function form to access latest selectedChat
         setSelectedChat(currentChat => {
           if (data.chat_id === currentChat?.id && data.user_id !== userProfile?.id) {
@@ -396,10 +349,8 @@ export default function UserChatScreen() {
               }
               
               const username = displayName || 'Someone';
-              console.log('⌨️ [USER-CHAT] Setting typing user:', username, 'for user_id:', data.user_id);
               setTypingUsers(prev => ({ ...prev, [data.user_id]: username }));
             } else {
-              console.log('⌨️ [USER-CHAT] Removing typing user:', data.user_id);
               setTypingUsers(prev => {
                 const updated = { ...prev };
                 delete updated[data.user_id];
@@ -414,14 +365,12 @@ export default function UserChatScreen() {
       // Listen for user online/offline events
       socket.on('user_online', (data: any) => {
         if (selectedChat && data.chat_id === selectedChat.id && data.user_id !== userProfile?.id) {
-          console.log('✅ User came online:', data.username);
           setOtherUserOnline(true);
         }
       });
 
       socket.on('user_offline', (data: any) => {
         if (selectedChat && data.chat_id === selectedChat.id && data.user_id !== userProfile?.id) {
-          console.log('❌ User went offline:', data.username);
           setOtherUserOnline(false);
         }
       });
@@ -449,28 +398,6 @@ export default function UserChatScreen() {
 
       socketRef.current = socket;
       
-      // Debug: Log all socket events (if available)
-      if (typeof (socket as any).onAny === 'function') {
-        (socket as any).onAny((eventName: string, ...args: any[]) => {
-          // Log ALL events including new_chat_message for debugging
-          if (eventName === 'new_chat_message') {
-            console.log(`🔍 [USER-CHAT] ===== onAny DETECTED new_chat_message =====`, args.length > 0 ? args[0] : '');
-          }
-          if (eventName !== 'connect' && eventName !== 'disconnect' && eventName !== 'connect_error' && eventName !== 'error') {
-            console.log(`🔍 [USER-CHAT] Socket event received: ${eventName}`, args.length > 0 ? args[0] : '');
-          }
-        });
-        console.log('✅ [USER-CHAT] onAny handler registered for debugging');
-      } else {
-        console.warn('⚠️ [USER-CHAT] socket.onAny is not available - cannot debug all events');
-      }
-      
-      // Verify handlers are registered
-      const listeners = (socket as any)._callbacks || (socket as any).listeners || {};
-      console.log('📋 [USER-CHAT] Registered event handlers:', Object.keys(listeners));
-      console.log('📋 [USER-CHAT] Has new_chat_message handler:', !!(listeners['new_chat_message'] || (socket as any)._events?.['new_chat_message']));
-      
-      console.log('✅ [USER-CHAT] Socket initialized and event handlers registered');
     } catch (error) {
       console.warn('Failed to initialize socket (chat will work without real-time updates):', error);
       // Don't throw - allow chat to work without WebSocket
@@ -632,12 +559,10 @@ export default function UserChatScreen() {
   const loadUserProfile = async () => {
     try {
       const response = await api.getUserProfile();
-      console.log('👤 getUserProfile response:', JSON.stringify(response, null, 2));
       
       // Extract user data from response - could be response.data or response.data.data
       const userData = response.data || response;
       if (userData) {
-        console.log('👤 Setting userProfile:', { id: userData.id, username: userData.username, email: userData.email });
         setUserProfile(userData);
       }
     } catch (error) {
@@ -650,7 +575,8 @@ export default function UserChatScreen() {
       setLoading(true);
       const response = await api.getChats();
       if (response.success && (response as any).chats) {
-        const userChats = (response as any).chats.map((chat: any) => {
+        const rawChats = (response as any).chats as any[];
+        const userChats = rawChats.map((chat: any) => {
           // For workspace chats, use #{workspace.name} format like web
           let title = chat.display_name || 'Untitled Chat';
           if (chat.type === 'workspace' && chat.workspace) {
@@ -677,6 +603,15 @@ export default function UserChatScreen() {
           };
         });
         setChats(userChats);
+        // Merge server favorites (from web or mobile) so favorites sync across devices
+        setFavoriteChatIds(prev => {
+          const next = new Set(prev);
+          rawChats.forEach((c: any) => {
+            if (c.is_favorite) next.add(Number(c.id));
+          });
+          AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(next)));
+          return next;
+        });
       }
     } catch (error) {
       console.error('Failed to load chats:', error);
@@ -725,7 +660,6 @@ export default function UserChatScreen() {
   const loadMessages = async (chatId: number) => {
     try {
       setMessagesLoading(true);
-      console.log(`📨 Loading messages for chat_id: ${chatId}`);
       
       // Ensure userProfile is loaded before determining message ownership
       if (!userProfile) {
@@ -748,11 +682,6 @@ export default function UserChatScreen() {
             created_at: msg.created_at || new Date().toISOString(),
           };
         });
-        console.log(`✅ Loaded ${convertedMessages.length} messages for chat ${chatId}`);
-        console.log(`📊 User profile ID: ${userProfile?.id}, Messages ownership summary:`, 
-          convertedMessages.map(m => ({ id: m.id, is_own: m.is_own_message })));
-        console.log(`📊 User profile ID: ${userProfile?.id}, Messages ownership:`, 
-          convertedMessages.map(m => ({ id: m.id, is_own: m.is_own_message, sender_id: (m.sender as any)?.id })));
         setMessages(convertedMessages);
       } else {
         console.warn(`⚠️ No messages found for chat ${chatId}`);
@@ -1135,24 +1064,23 @@ export default function UserChatScreen() {
     return sections;
   }, [messages]);
 
-  // Handle add/remove favorite
+  // Handle add/remove favorite (syncs with web via PUT unified-history/user_<id>/favorite)
   const handleToggleFavorite = async (chatId: number) => {
+    const isFavorite = favoriteChatIds.has(chatId);
+    const nextFavorite = !isFavorite;
     try {
-      const isFavorite = favoriteChatIds.has(chatId);
+      await api.setUnifiedChatFavorite(`user_${chatId}`, nextFavorite);
+
       const newFavorites = new Set(favoriteChatIds);
-      
-      if (isFavorite) {
-        newFavorites.delete(chatId);
-        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
-        setFavoriteChatIds(newFavorites);
-      } else {
+      if (nextFavorite) {
         newFavorites.add(chatId);
-        await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
-        setFavoriteChatIds(newFavorites);
+      } else {
+        newFavorites.delete(chatId);
       }
-      
+      await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+      setFavoriteChatIds(newFavorites);
+
       setMenuChatId(null);
-      // Close swipeable
       const swipeableRef = chatSwipeableRefs.current.get(chatId);
       if (swipeableRef) {
         swipeableRef.close();

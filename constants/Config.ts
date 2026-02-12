@@ -12,10 +12,11 @@ export const LOCAL_DEV_URL = `http://${LOCAL_DEV_IP}:${LOCAL_DEV_PORT}`;
 // API Configuration - Auto-detect based on environment
 export const API_BASE_URL = (() => {
   // 1. Check explicit environment variable (highest priority)
-  const envApiUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (envApiUrl && envApiUrl.trim() !== '') {
+  const raw = process.env.EXPO_PUBLIC_API_URL;
+  const envApiUrl = typeof raw === 'string' ? raw.trim() : '';
+  if (envApiUrl !== '') {
     // Ensure HTTPS for production URLs (not localhost)
-    let finalUrl = envApiUrl.trim();
+    let finalUrl = envApiUrl;
     if (finalUrl.includes('api.grabdocs.com') && !finalUrl.startsWith('https://')) {
       console.warn('⚠️ API URL from env var is not HTTPS, forcing HTTPS:', finalUrl);
       finalUrl = finalUrl.replace(/^http:\/\//, 'https://');

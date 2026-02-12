@@ -9,6 +9,9 @@ interface User {
   id: string;
   email: string;
   name: string;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
 }
 
 interface AuthContextType {
@@ -46,7 +49,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (result.success && result.user) {
           const u = result.user;
           const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
-          const userData = { id: String(u.id), email: u.email || '', name };
+          const userData: User = {
+            id: String(u.id),
+            email: u.email || '',
+            name,
+            first_name: u.firstName ?? undefined,
+            last_name: u.lastName ?? undefined,
+            username: u.username ?? undefined,
+          };
           await secureStorage.setItem('user', JSON.stringify(userData));
           
           // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
@@ -213,10 +223,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const fullName = `${response.user.first_name || ''} ${response.user.last_name || ''}`.trim();
           const displayName = fullName || response.user.username || response.user.email || email;
           
-          const localUser = {
+          const localUser: User = {
             id: response.user.id.toString(),
             email: response.user.email || email,
             name: displayName,
+            first_name: (response.user as any).first_name ?? undefined,
+            last_name: (response.user as any).last_name ?? undefined,
+            username: (response.user as any).username ?? undefined,
           };
           
           console.log('💾 Storing user data:', localUser);

@@ -4,6 +4,7 @@ import { deviceSecurityService } from '../services/deviceSecurity';
 import { secureStorage } from '../utils/storage';
 
 const APP_LOCK_ENABLED = 'app_lock_enabled';
+const APP_LOCK_LAST_BACKGROUNDED = 'app_lock_last_backgrounded';
 // const APP_LOCK_PIN = 'app_lock_pin'; // GrabDocs PIN hidden: using phone biometric + device passcode only
 const LOCK_AFTER_MINUTES = 10;
 
@@ -40,13 +41,30 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
   const loadSettings = useCallback(async () => {
     try {
       const enabled = await secureStorage.getItem(APP_LOCK_ENABLED);
-      setAppLockEnabledState(enabled === 'true');
+      const appLockOn = enabled === 'true';
+      setAppLockEnabledState(appLockOn);
       // GrabDocs PIN hidden: no longer read stored PIN
       // const pin = await secureStorage.getItem(APP_LOCK_PIN);
       // setHasPinSet(!!pin && pin.length > 0);
       setHasPinSet(false); // PIN UI hidden; unlock is biometric + device passcode only
       const config = await deviceSecurityService.initializeBiometrics();
       setBiometricAvailable(config.enabled);
+
+      // Android (and sometimes iOS): if app was killed in background, we never get AppState 'background'.
+      // Persisted last-backgrounded time lets us lock on cold start when app was backgrounded > lockAfter.
+      if (appLockOn) {
+        const lastBg = await secureStorage.getItem(APP_LOCK_LAST_BACKGROUNDED);
+        if (lastBg) {
+          const ts = parseInt(lastBg, 10);
+          if (!Number.isNaN(ts)) {
+            const elapsed = Date.now() - ts;
+            if (elapsed >= LOCK_AFTER_MINUTES * 60 * 1000) {
+              setIsLocked(true);
+            }
+            await secureStorage.removeItem(APP_LOCK_LAST_BACKGROUNDED);
+          }
+        }
+      }
     } catch {
       setAppLockEnabledState(false);
       setHasPinSet(false);
@@ -63,8 +81,11 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
 
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'background' || nextAppState === 'inactive') {
-        backgroundedAtRef.current = Date.now();
+        const now = Date.now();
+        backgroundedAtRef.current = now;
         appStateRef.current = nextAppState;
+        // Persist so we can lock on cold start (Android often kills app in background)
+        secureStorage.setItem(APP_LOCK_LAST_BACKGROUNDED, String(now)).catch(() => {});
       } else if (nextAppState === 'active') {
         const now = Date.now();
         const elapsed = backgroundedAtRef.current != null ? now - backgroundedAtRef.current : 0;
@@ -74,6 +95,7 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
         }
         backgroundedAtRef.current = null;
         appStateRef.current = nextAppState;
+        secureStorage.removeItem(APP_LOCK_LAST_BACKGROUNDED).catch(() => {});
       }
     });
 

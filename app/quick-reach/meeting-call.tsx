@@ -3,18 +3,18 @@ import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -65,6 +65,21 @@ export default function MeetingCallScreen() {
   const [inviteMessage, setInviteMessage] = useState('');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [featuresExpanded, setFeaturesExpanded] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  // Use keyboard height for padding so join modal stays above keyboard on both Android and iOS
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const loadMeetings = useCallback(async () => {
     if (!isAuthenticated) {
@@ -333,11 +348,11 @@ export default function MeetingCallScreen() {
   }, [loadMeetings]);
 
   const createMeeting = () => {
-    router.push('./create-meeting' as any);
+    router.push('/quick-reach/create-meeting');
   };
 
   const scheduleMeeting = () => {
-    router.push('./schedule-meeting' as any);
+    router.push('/quick-reach/schedule-meeting');
   };
 
   const joinMeeting = async (meeting: Meeting) => {
@@ -1234,7 +1249,7 @@ export default function MeetingCallScreen() {
       <Text style={dynamicStyles.emptyStateText}>{title}</Text>
       <Text style={dynamicStyles.emptyStateSubtext}>{subtitle}</Text>
       {title.includes('meeting') && (
-        <TouchableOpacity style={dynamicStyles.createFirstButton} onPress={createMeeting}>
+        <TouchableOpacity style={dynamicStyles.createFirstButton} onPress={scheduleMeeting}>
           <Text style={dynamicStyles.createFirstButtonText}>Schedule Your First Meeting</Text>
         </TouchableOpacity>
       )}
@@ -1402,15 +1417,19 @@ export default function MeetingCallScreen() {
         animationType="slide"
         transparent={true}
         onRequestClose={() => setShowJoinModal(false)}
+        statusBarTranslucent
       >
         <TouchableOpacity
-          style={dynamicStyles.modalOverlay}
+          style={[
+            dynamicStyles.modalOverlay,
+            keyboardHeight > 0 && { paddingBottom: keyboardHeight },
+          ]}
           activeOpacity={1}
           onPress={() => setShowJoinModal(false)}
         >
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+            behavior={undefined}
+            style={{ width: '100%' }}
           >
             <TouchableOpacity
               activeOpacity={1}

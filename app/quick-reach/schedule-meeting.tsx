@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     Alert,
     KeyboardAvoidingView,
@@ -15,9 +15,8 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { apiClient } from '../../services/api';
 import { useThemeColors } from '../../hooks/useThemeColors';
-import { useMemo } from 'react';
+import { apiClient } from '../../services/api';
 
 export default function ScheduleMeetingScreen() {
   const colors = useThemeColors();
@@ -46,6 +45,68 @@ export default function ScheduleMeetingScreen() {
   const getValidDate = (d: Date | undefined): Date => {
     if (d != null && !Number.isNaN(d.getTime())) return d;
     return new Date();
+  };
+
+  /** Android: open date then time with imperative API to avoid dismiss('datetime') crash (library has no pickers['datetime']). */
+  const openStartDatePickerAndroid = () => {
+    const value = getValidDate(startDateTime);
+    const minDate = getValidDate(new Date());
+    DateTimePickerAndroid.open({
+      value,
+      mode: 'date',
+      minimumDate: minDate,
+      onChange: (event, date) => {
+        if (event?.type !== 'set' || !date) return;
+        DateTimePickerAndroid.open({
+          value: date,
+          mode: 'time',
+          onChange: (event2, time) => {
+            if (event2?.type !== 'set' || !time) return;
+            const combined = new Date(date);
+            combined.setHours(time.getHours(), time.getMinutes(), time.getSeconds(), time.getMilliseconds());
+            const now = new Date();
+            if (combined < now) {
+              Alert.alert('Invalid Date', 'Please select a future date and time for the meeting.');
+              return;
+            }
+            setStartDateTime(combined);
+            setMeetingData(prev => ({ ...prev, startTime: combined.toISOString() }));
+            const newEnd = new Date(combined.getTime() + 60 * 60 * 1000);
+            setEndDateTime(newEnd);
+            setMeetingData(prev => ({ ...prev, endTime: newEnd.toISOString() }));
+          },
+        });
+      },
+    });
+  };
+
+  /** Android: open date then time with imperative API to avoid dismiss('datetime') crash. */
+  const openEndDatePickerAndroid = () => {
+    const value = getValidDate(endDateTime);
+    const minDate = getValidDate(startDateTime);
+    DateTimePickerAndroid.open({
+      value,
+      mode: 'date',
+      minimumDate: minDate,
+      onChange: (event, date) => {
+        if (event?.type !== 'set' || !date) return;
+        DateTimePickerAndroid.open({
+          value: date,
+          mode: 'time',
+          onChange: (event2, time) => {
+            if (event2?.type !== 'set' || !time) return;
+            const combined = new Date(date);
+            combined.setHours(time.getHours(), time.getMinutes(), time.getSeconds(), time.getMilliseconds());
+            if (combined <= startDateTime) {
+              Alert.alert('Invalid Time', 'End time must be after start time. Please select a later date and time.');
+              return;
+            }
+            setEndDateTime(combined);
+            setMeetingData(prev => ({ ...prev, endTime: combined.toISOString() }));
+          },
+        });
+      },
+    });
   };
 
   const createMeeting = async () => {
@@ -247,7 +308,12 @@ export default function ScheduleMeetingScreen() {
   };
 
   const onStartDateChange = (event: any, selectedDate?: Date) => {
-    // Don't close the modal automatically - let user close it manually
+    // On Android, native picker sends 'set' (confirm) or 'dismissed' (cancel); hide picker when done
+    if (Platform.OS === 'android') {
+      setShowStartDatePicker(false);
+      const confirmed = event && (event as { type?: string }).type === 'set';
+      if (!confirmed || !selectedDate) return;
+    }
     if (selectedDate) {
       // Prevent selecting past dates
       const now = new Date();
@@ -267,7 +333,12 @@ export default function ScheduleMeetingScreen() {
   };
 
   const onEndDateChange = (event: any, selectedDate?: Date) => {
-    // Don't close the modal automatically - let user close it manually
+    // On Android, native picker sends 'set' (confirm) or 'dismissed' (cancel); hide picker when done
+    if (Platform.OS === 'android') {
+      setShowEndDatePicker(false);
+      const confirmed = event && (event as { type?: string }).type === 'set';
+      if (!confirmed || !selectedDate) return;
+    }
     if (selectedDate) {
       // Prevent selecting end time before or equal to start time
       if (selectedDate <= startDateTime) {
@@ -594,8 +665,12 @@ export default function ScheduleMeetingScreen() {
               <TouchableOpacity 
                 style={dynamicStyles.datePickerContainer}
                 onPress={() => {
-                  setShowStartDatePicker(true);
-                  setShowEndDatePicker(false);
+                  if (Platform.OS === 'android') {
+                    openStartDatePickerAndroid();
+                  } else {
+                    setShowStartDatePicker(true);
+                    setShowEndDatePicker(false);
+                  }
                 }}
               >
                 <Text style={dynamicStyles.datePickerLabel}>
@@ -617,8 +692,12 @@ export default function ScheduleMeetingScreen() {
               <TouchableOpacity 
                 style={dynamicStyles.datePickerContainer}
                 onPress={() => {
-                  setShowEndDatePicker(true);
-                  setShowStartDatePicker(false);
+                  if (Platform.OS === 'android') {
+                    openEndDatePickerAndroid();
+                  } else {
+                    setShowEndDatePicker(true);
+                    setShowStartDatePicker(false);
+                  }
                 }}
               >
                 <Text style={dynamicStyles.datePickerLabel}>
@@ -741,91 +820,93 @@ export default function ScheduleMeetingScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Start Date/Time Picker Modal */}
-      <Modal
-        visible={showStartDatePicker}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowStartDatePicker(false)}
-      >
-        <TouchableOpacity 
-          style={dynamicStyles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowStartDatePicker(false)}
+      {/* Start Date/Time Picker: Android uses imperative API (no component mount = no dismiss crash); iOS uses Modal with spinner */}
+      {showStartDatePicker ? (
+        <Modal
+          visible={true}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowStartDatePicker(false)}
         >
-          <TouchableOpacity 
-            style={dynamicStyles.modalContainer}
+          <TouchableOpacity
+            style={dynamicStyles.modalOverlay}
             activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
+            onPress={() => setShowStartDatePicker(false)}
           >
-            <View style={dynamicStyles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
-                <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={dynamicStyles.modalTitle}>Select Start Date & Time</Text>
-              <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
-                <Text style={dynamicStyles.doneButton}>Done</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={dynamicStyles.modalContent}>
-            <DateTimePicker
-              value={getValidDate(startDateTime)}
-              mode="datetime"
-              display="spinner"
-              onChange={onStartDateChange}
-              style={dynamicStyles.modalDatePicker}
-              textColor={colors.text}
-              accentColor="#007AFF"
-              minimumDate={getValidDate(new Date())}
-            />
-            </View>
+            <TouchableOpacity
+              style={dynamicStyles.modalContainer}
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={dynamicStyles.modalHeader}>
+                <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
+                  <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={dynamicStyles.modalTitle}>Select Start Date & Time</Text>
+                <TouchableOpacity onPress={() => setShowStartDatePicker(false)}>
+                  <Text style={dynamicStyles.doneButton}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={dynamicStyles.modalContent}>
+                <DateTimePicker
+                  value={getValidDate(startDateTime)}
+                  mode="datetime"
+                  display="spinner"
+                  onChange={onStartDateChange}
+                  style={dynamicStyles.modalDatePicker}
+                  textColor={colors.text}
+                  accentColor="#007AFF"
+                  minimumDate={getValidDate(new Date())}
+                />
+              </View>
+            </TouchableOpacity>
           </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        </Modal>
+      ) : null}
 
-      {/* End Date/Time Picker Modal */}
-      <Modal
-        visible={showEndDatePicker}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowEndDatePicker(false)}
-      >
-        <TouchableOpacity 
-          style={dynamicStyles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowEndDatePicker(false)}
+      {/* End Date/Time Picker: Android uses imperative API (no component mount = no dismiss crash); iOS uses Modal with spinner */}
+      {showEndDatePicker ? (
+        <Modal
+          visible={true}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowEndDatePicker(false)}
         >
-          <TouchableOpacity 
-            style={dynamicStyles.modalContainer}
+          <TouchableOpacity
+            style={dynamicStyles.modalOverlay}
             activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
+            onPress={() => setShowEndDatePicker(false)}
           >
-            <View style={dynamicStyles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
-                <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={dynamicStyles.modalTitle}>Select End Date & Time</Text>
-              <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
-                <Text style={dynamicStyles.doneButton}>Done</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={dynamicStyles.modalContent}>
-            <DateTimePicker
-              value={getValidDate(endDateTime)}
-              mode="datetime"
-              display="spinner"
-              onChange={onEndDateChange}
-              style={dynamicStyles.modalDatePicker}
-              textColor={colors.text}
-              accentColor="#007AFF"
-              minimumDate={getValidDate(startDateTime)}
-            />
-            </View>
+            <TouchableOpacity
+              style={dynamicStyles.modalContainer}
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={dynamicStyles.modalHeader}>
+                <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
+                  <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={dynamicStyles.modalTitle}>Select End Date & Time</Text>
+                <TouchableOpacity onPress={() => setShowEndDatePicker(false)}>
+                  <Text style={dynamicStyles.doneButton}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={dynamicStyles.modalContent}>
+                <DateTimePicker
+                  value={getValidDate(endDateTime)}
+                  mode="datetime"
+                  display="spinner"
+                  onChange={onEndDateChange}
+                  style={dynamicStyles.modalDatePicker}
+                  textColor={colors.text}
+                  accentColor="#007AFF"
+                  minimumDate={getValidDate(startDateTime)}
+                />
+              </View>
+            </TouchableOpacity>
           </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }

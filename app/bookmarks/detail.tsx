@@ -1,23 +1,28 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Modal,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Modal,
+    Platform,
+    RefreshControl,
+    ScrollView,
+    Share,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
-import { formatTimestampToLocal } from '../../utils/timeFormatting';
+import { formatDateToLocal } from '../../utils/timeFormatting';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -41,6 +46,20 @@ interface Document {
   status: string;
 }
 
+/** For receipts use store name, for invoices use vendor name, else filename. */
+function getFileDisplayName(file: any): string {
+  const kind = (file.file_kind || file.category || '').toString().toLowerCase();
+  const data = file.json_data && typeof file.json_data === 'object' ? file.json_data : {};
+  const storeOrVendor =
+    kind === 'receipt'
+      ? (data.store_name || data.business_name || data.merchant_name || data.vendor_name || '').trim()
+      : kind === 'invoice'
+        ? (data.vendor_name || data.business_name || data.merchant_name || data.store_name || '').trim()
+        : '';
+  if (storeOrVendor) return storeOrVendor;
+  return file.filename || file.original_filename || 'Unknown file';
+}
+
 export default function BookmarkDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -59,7 +78,23 @@ export default function BookmarkDetailScreen() {
   const [loadingAvailableFiles, setLoadingAvailableFiles] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
-  
+  const [showKebabMenu, setShowKebabMenu] = useState(false);
+  const [selectedDocumentForMenu, setSelectedDocumentForMenu] = useState<Document | null>(null);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showPaymentStatusModal, setShowPaymentStatusModal] = useState(false);
+  const [categorizingReceipt, setCategorizingReceipt] = useState(false);
+  const [updatingPaymentStatus, setUpdatingPaymentStatus] = useState(false);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameInputValue, setRenameInputValue] = useState('');
+  const [renaming, setRenaming] = useState(false);
+
+  const receiptCategories = [
+    'Uncategorized', 'Advertising', 'Supplies', 'Professional Services', 'Personal',
+    'Rent and Lease', 'Education and Training', 'Cars and Truck', 'Travel', 'Office Expenses',
+    'Meals and Entertainment', 'Contractors', 'Employee Benefit', 'Banking', 'Other Expenses'
+  ];
+  const paymentStatuses = ['Paid', 'Unpaid', 'Partial'];
+
   // Edit form state
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
@@ -112,10 +147,10 @@ export default function BookmarkDetailScreen() {
         const filesData = filesResponse.data;
         console.log(`📁 Bookmark files loaded:`, filesData);
         
-        // Map backend field names to frontend interface
+        // Map backend field names to frontend interface (receipts/invoices show store/vendor name)
         const mappedFiles = filesData.map((file: any) => ({
           id: file.id.toString(),
-          name: file.filename || file.original_filename || 'Unknown file',
+          name: getFileDisplayName(file),
           type: file.file_type || file.file_kind || 'document',
           category: file.file_kind || file.file_type,
           size: file.file_size ? `${(file.file_size / 1024).toFixed(1)} KB` : undefined,
@@ -230,6 +265,207 @@ export default function BookmarkDetailScreen() {
     );
   };
 
+  const handleKebabMenuPress = (document: Document, event: any) => {
+    event?.stopPropagation?.();
+    setSelectedDocumentForMenu(document);
+    setShowKebabMenu(true);
+  };
+
+  const handleViewDocument = () => {
+    if (selectedDocumentForMenu) {
+      setSelectedDocument(selectedDocumentForMenu);
+      setShowDocumentViewer(true);
+      setShowKebabMenu(false);
+    }
+  };
+
+  const getMimeType = (extension: string): string => {
+    const mimeTypes: Record<string, string> = {
+      pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      txt: 'text/plain', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    };
+    return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
+  };
+
+  const handleShareDocument = async () => {
+    if (!selectedDocumentForMenu) return;
+    try {
+      const fileInfo = await apiClient.downloadFile(parseInt(selectedDocumentForMenu.id));
+      if (!fileInfo.url) throw new Error('Failed to get file download URL');
+      const filename = fileInfo.filename || selectedDocumentForMenu.name;
+      const fileExtension = filename.split('.').pop() || 'pdf';
+      const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!cacheDir) throw new Error('Unable to access file system directories');
+      const fileUri = `${cacheDir}${sanitizedFilename}`;
+      let authHeaders: Record<string, string> = {};
+      try {
+        const { secureStorage } = await import('../../utils/storage');
+        const { STORAGE_KEYS } = await import('../../constants/Config');
+        const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+        if (token) authHeaders = { Authorization: `Bearer ${token}` };
+      } catch (_) {}
+      const downloadResult = await FileSystem.downloadAsync(fileInfo.url, fileUri, { headers: authHeaders });
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(downloadResult.uri, {
+          mimeType: getMimeType(fileExtension),
+          dialogTitle: `Share ${selectedDocumentForMenu.name}`,
+        });
+      } else {
+        if (Platform.OS === 'ios' || Platform.OS === 'android') {
+          await Share.share({
+            message: `Check out this document: ${selectedDocumentForMenu.name}\n\n${fileInfo.url}`,
+            url: fileInfo.url,
+            title: selectedDocumentForMenu.name,
+          });
+        } else {
+          Alert.alert('Share Link', fileInfo.url);
+        }
+      }
+      setTimeout(async () => {
+        try {
+          const info = await FileSystem.getInfoAsync(downloadResult.uri);
+          if (info.exists) await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
+        } catch (_) {}
+      }, 60000);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to share document');
+    }
+    setShowKebabMenu(false);
+  };
+
+  const handleChatDocument = () => {
+    if (!selectedDocumentForMenu) return;
+    const q = `fileId=${selectedDocumentForMenu.id}&fileName=${encodeURIComponent(selectedDocumentForMenu.name || '')}`;
+    router.push(`/(tabs)/chats?${q}`);
+    setShowKebabMenu(false);
+  };
+
+  const handleCategorizeReceipt = () => {
+    if (!selectedDocumentForMenu) return;
+    setShowKebabMenu(false);
+    setShowCategoryModal(true);
+  };
+
+  const handleSelectCategory = async (category: string) => {
+    if (!selectedDocumentForMenu) return;
+    setCategorizingReceipt(true);
+    try {
+      const response = await apiClient.categorizeReceipt(parseInt(selectedDocumentForMenu.id), category);
+      if (response.success) {
+        Alert.alert('Success', `Receipt categorized as "${category}"`);
+        setFiles(prev => prev.map(f => f.id === selectedDocumentForMenu.id ? { ...f, category } : f));
+        setShowCategoryModal(false);
+        setSelectedDocumentForMenu(null);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to categorize receipt');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to categorize receipt');
+    } finally {
+      setCategorizingReceipt(false);
+    }
+  };
+
+  const handleUpdatePaymentStatus = () => {
+    if (!selectedDocumentForMenu) return;
+    setShowKebabMenu(false);
+    setShowPaymentStatusModal(true);
+  };
+
+  const handleSelectPaymentStatus = async (paymentStatus: string) => {
+    if (!selectedDocumentForMenu) return;
+    setUpdatingPaymentStatus(true);
+    try {
+      const response = await apiClient.updateInvoicePaymentStatus(parseInt(selectedDocumentForMenu.id), paymentStatus);
+      if (response.success) {
+        Alert.alert('Success', `Invoice payment status updated to "${paymentStatus}"`);
+        setShowPaymentStatusModal(false);
+        setSelectedDocumentForMenu(null);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to update payment status');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update payment status');
+    } finally {
+      setUpdatingPaymentStatus(false);
+    }
+  };
+
+  const handleRemoveFromBookmark = () => {
+    if (!selectedDocumentForMenu) return;
+    setShowKebabMenu(false);
+    handleRemoveFile(selectedDocumentForMenu.id);
+  };
+
+  const handleRenameDocument = () => {
+    if (!selectedDocumentForMenu) return;
+    const name = selectedDocumentForMenu.name || '';
+    setRenameInputValue(name.replace(/\.[^/.]+$/, ''));
+    setShowKebabMenu(false);
+    setShowRenameModal(true);
+  };
+
+  const handleConfirmRename = async () => {
+    if (!selectedDocumentForMenu || !renameInputValue.trim()) return;
+    const ext = (selectedDocumentForMenu.name || '').split('.').pop() || '';
+    const newName = ext ? `${renameInputValue.trim()}.${ext}` : renameInputValue.trim();
+    setRenaming(true);
+    try {
+      const response = await apiClient.renameFile(parseInt(selectedDocumentForMenu.id), newName);
+      if (response.success) {
+        setFiles(prev => prev.map(f => f.id === selectedDocumentForMenu.id ? { ...f, name: newName } : f));
+        setShowRenameModal(false);
+        setSelectedDocumentForMenu(null);
+        Alert.alert('Success', 'File renamed');
+      } else {
+        Alert.alert('Error', response.message || 'Failed to rename');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to rename');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const handleDeleteDocument = () => {
+    if (!selectedDocumentForMenu) return;
+    Alert.alert(
+      'Delete Document',
+      `Are you sure you want to delete "${selectedDocumentForMenu.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await apiClient.deleteFile(parseInt(selectedDocumentForMenu.id));
+              if (response.success) {
+                setFiles(prev => prev.filter(doc => doc.id !== selectedDocumentForMenu.id));
+                if (bookmark) setBookmark(prev => prev ? { ...prev, file_count: prev.file_count - 1 } : null);
+                Alert.alert('Success', 'Document deleted');
+              } else {
+                Alert.alert('Error', response.message || 'Failed to delete');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete');
+            }
+            setShowKebabMenu(false);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleCloseKebabMenu = () => {
+    setShowKebabMenu(false);
+    setSelectedDocumentForMenu(null);
+  };
+
   const loadAvailableFiles = async () => {
     try {
       setLoadingAvailableFiles(true);
@@ -261,10 +497,10 @@ export default function BookmarkDetailScreen() {
         }
       }
       
-      // Map backend field names to frontend interface
+      // Map backend field names to frontend interface (receipts/invoices show store/vendor name)
       const mappedFiles = allFiles.map((file: any) => ({
         id: file.id.toString(),
-        name: file.filename || file.original_filename || 'Unknown file',
+        name: getFileDisplayName(file),
         type: file.file_type || file.file_kind || 'document',
         category: file.file_kind || file.file_type,
         size: file.file_size ? `${(file.file_size / 1024).toFixed(1)} KB` : undefined,
@@ -394,9 +630,9 @@ export default function BookmarkDetailScreen() {
     bookmarkInfo: {
       flexDirection: 'row',
       alignItems: 'center',
-      padding: 16,
+      padding: 12,
       backgroundColor: themeColors.card,
-      marginBottom: 8,
+      marginBottom: 6,
     },
     colorIndicator: {
       width: 16,
@@ -425,25 +661,25 @@ export default function BookmarkDetailScreen() {
     },
     filesList: {
       flex: 1,
-      paddingHorizontal: 16,
+      paddingHorizontal: 12,
     },
     fileItem: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: 16,
+      padding: 10,
       backgroundColor: themeColors.card,
       borderRadius: 8,
-      marginBottom: 8,
+      marginBottom: 6,
     },
     availableFileItem: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: 16,
+      padding: 10,
       backgroundColor: themeColors.card,
       borderRadius: 8,
-      marginBottom: 8,
+      marginBottom: 6,
     },
     selectedFileItem: {
       backgroundColor: themeColors.surface,
@@ -456,7 +692,6 @@ export default function BookmarkDetailScreen() {
       flex: 1,
     },
     fileDetails: {
-      marginLeft: 12,
       flex: 1,
     },
     fileName: {
@@ -474,8 +709,103 @@ export default function BookmarkDetailScreen() {
       color: themeColors.textSecondary,
       marginTop: 2,
     },
-    removeButton: {
-      padding: 4,
+    kebabButton: {
+      padding: 6,
+      marginLeft: 6,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    kebabMenuContainer: {
+      backgroundColor: themeColors.card,
+      borderRadius: 12,
+      padding: 8,
+      minWidth: 150,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.25,
+      shadowRadius: 8,
+      elevation: 8,
+    },
+    kebabMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 8,
+    },
+    kebabMenuText: {
+      fontSize: 16,
+      color: themeColors.text,
+      marginLeft: 12,
+      fontWeight: '500',
+    },
+    categoryModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'flex-end',
+    },
+    categoryModalContent: {
+      backgroundColor: themeColors.card,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      maxHeight: '70%',
+      paddingBottom: 20,
+    },
+    categoryModalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: themeColors.border,
+    },
+    categoryModalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: themeColors.text,
+    },
+    categoryList: {
+      maxHeight: 400,
+    },
+    categoryModalItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: themeColors.border,
+    },
+    categoryItemText: {
+      fontSize: 16,
+      color: themeColors.text,
+    },
+    categoryModalLoading: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    renameModalContent: {
+      backgroundColor: themeColors.card,
+      borderRadius: 16,
+      padding: 20,
+      width: '90%',
+      maxWidth: 360,
+    },
+    renameModalTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: themeColors.text,
+      marginBottom: 16,
     },
     emptyState: {
       alignItems: 'center',
@@ -577,6 +907,10 @@ export default function BookmarkDetailScreen() {
     setShowDocumentViewer(true);
   };
 
+  const isReceipt = (doc: Document) => (doc.category || '').toString().toLowerCase() === 'receipt';
+  const isInvoice = (doc: Document) => (doc.category || '').toString().toLowerCase() === 'invoice';
+  const isReceiptOrInvoice = (doc: Document) => isReceipt(doc) || isInvoice(doc);
+
   const renderFileItem = ({ item }: { item: Document }) => (
     <TouchableOpacity 
       style={dynamicStyles.fileItem}
@@ -584,31 +918,21 @@ export default function BookmarkDetailScreen() {
       activeOpacity={0.7}
     >
       <View style={dynamicStyles.fileInfo}>
-        <Ionicons 
-          name={item.type === 'form' ? 'document-text' : 'document'} 
-          size={24} 
-          color="#007AFF" 
-        />
         <View style={dynamicStyles.fileDetails}>
           <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
           <Text style={dynamicStyles.fileMeta}>
-            {item.category || item.type} • {item.size || 'No size info'}
+            {[item.category || item.type, item.created_at && formatDateToLocal(item.created_at)].filter(Boolean).join(' • ')}
           </Text>
-          {item.created_at && (
-            <Text style={dynamicStyles.fileTimestamp}>
-              {formatTimestampToLocal(item.created_at)}
-            </Text>
-          )}
         </View>
       </View>
       <TouchableOpacity
-        style={dynamicStyles.removeButton}
+        style={dynamicStyles.kebabButton}
         onPress={(e) => {
           e.stopPropagation();
-          handleRemoveFile(item.id);
+          handleKebabMenuPress(item, e);
         }}
       >
-        <Ionicons name="close-circle" size={24} color="#FF3B30" />
+        <Ionicons name="ellipsis-vertical" size={20} color="#666" />
       </TouchableOpacity>
     </TouchableOpacity>
   );
@@ -622,21 +946,11 @@ export default function BookmarkDetailScreen() {
       onPress={() => toggleFileSelection(item.id)}
     >
       <View style={dynamicStyles.fileInfo}>
-        <Ionicons 
-          name={item.type === 'form' ? 'document-text' : 'document'} 
-          size={24} 
-          color="#007AFF" 
-        />
         <View style={dynamicStyles.fileDetails}>
           <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
           <Text style={dynamicStyles.fileMeta}>
-            {item.category || item.type} • {item.size || 'No size info'}
+            {[item.category || item.type, item.created_at && formatDateToLocal(item.created_at)].filter(Boolean).join(' • ')}
           </Text>
-          {item.created_at && (
-            <Text style={dynamicStyles.fileTimestamp}>
-              {formatTimestampToLocal(item.created_at)}
-            </Text>
-          )}
         </View>
       </View>
       {selectedFiles.has(item.id) && (
@@ -678,7 +992,7 @@ export default function BookmarkDetailScreen() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name}</Text>
+          <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
           <View style={dynamicStyles.headerActions}>
             <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton}>
               <Ionicons name="add" size={24} color="#007AFF" />
@@ -696,7 +1010,7 @@ export default function BookmarkDetailScreen() {
       <View style={dynamicStyles.bookmarkInfo}>
         <View style={[dynamicStyles.colorIndicator, { backgroundColor: bookmark.color }]} />
         <View style={dynamicStyles.bookmarkDetails}>
-          <Text style={dynamicStyles.bookmarkName}>{bookmark.name}</Text>
+          <Text style={dynamicStyles.bookmarkName}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
           {bookmark.description && (
             <Text style={dynamicStyles.bookmarkDescription}>{bookmark.description}</Text>
           )}
@@ -828,6 +1142,180 @@ export default function BookmarkDetailScreen() {
              />
            )}
         </SafeAreaView>
+      </Modal>
+
+      {/* Kebab Menu Modal */}
+      <Modal
+        visible={showKebabMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCloseKebabMenu}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={handleCloseKebabMenu}
+        >
+          <View style={dynamicStyles.kebabMenuContainer} onStartShouldSetResponder={() => true}>
+            <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleViewDocument}>
+              <Ionicons name="eye-outline" size={20} color="#007AFF" />
+              <Text style={dynamicStyles.kebabMenuText}>View</Text>
+            </TouchableOpacity>
+            {selectedDocumentForMenu && isReceipt(selectedDocumentForMenu) && (
+              <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleCategorizeReceipt}>
+                <Ionicons name="pricetag-outline" size={20} color="#FF9500" />
+                <Text style={dynamicStyles.kebabMenuText}>Categorize</Text>
+              </TouchableOpacity>
+            )}
+            {selectedDocumentForMenu && isInvoice(selectedDocumentForMenu) && (
+              <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleUpdatePaymentStatus}>
+                <Ionicons name="card-outline" size={20} color="#2563EB" />
+                <Text style={dynamicStyles.kebabMenuText}>Update Payment Status</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleShareDocument}>
+              <Ionicons name="share-outline" size={20} color="#10B981" />
+              <Text style={dynamicStyles.kebabMenuText}>Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleChatDocument}>
+              <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
+              <Text style={dynamicStyles.kebabMenuText}>Ask ChatGD</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleRemoveFromBookmark}>
+              <Ionicons name="bookmark" size={20} color="#FF9500" />
+              <Text style={dynamicStyles.kebabMenuText}>Remove from Bookmark</Text>
+            </TouchableOpacity>
+            {selectedDocumentForMenu && !isReceiptOrInvoice(selectedDocumentForMenu) && (
+              <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleRenameDocument}>
+                <Ionicons name="pencil-outline" size={20} color="#6B7280" />
+                <Text style={dynamicStyles.kebabMenuText}>Rename</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={handleDeleteDocument}
+            >
+              <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Category Selection Modal */}
+      <Modal
+        visible={showCategoryModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCategoryModal(false)}
+      >
+        <View style={dynamicStyles.categoryModalOverlay}>
+          <View style={dynamicStyles.categoryModalContent}>
+            <View style={dynamicStyles.categoryModalHeader}>
+              <Text style={dynamicStyles.categoryModalTitle}>Select Category</Text>
+              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
+                <Ionicons name="close" size={24} color={themeColors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={dynamicStyles.categoryList}>
+              {receiptCategories.map((category) => (
+                <TouchableOpacity
+                  key={category}
+                  style={dynamicStyles.categoryModalItem}
+                  onPress={() => handleSelectCategory(category)}
+                  disabled={categorizingReceipt}
+                >
+                  <Text style={dynamicStyles.categoryItemText}>{category}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            {categorizingReceipt && (
+              <View style={dynamicStyles.categoryModalLoading}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Payment Status Selection Modal */}
+      <Modal
+        visible={showPaymentStatusModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPaymentStatusModal(false)}
+      >
+        <View style={dynamicStyles.categoryModalOverlay}>
+          <View style={dynamicStyles.categoryModalContent}>
+            <View style={dynamicStyles.categoryModalHeader}>
+              <Text style={dynamicStyles.categoryModalTitle}>Update Payment Status</Text>
+              <TouchableOpacity
+                onPress={() => setShowPaymentStatusModal(false)}
+                disabled={updatingPaymentStatus}
+              >
+                <Ionicons name="close" size={24} color={themeColors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={dynamicStyles.categoryList}>
+              {paymentStatuses.map((status) => (
+                <TouchableOpacity
+                  key={status}
+                  style={dynamicStyles.categoryModalItem}
+                  onPress={() => handleSelectPaymentStatus(status)}
+                  disabled={updatingPaymentStatus}
+                >
+                  <Text style={dynamicStyles.categoryItemText}>{status}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            {updatingPaymentStatus && (
+              <View style={dynamicStyles.categoryModalLoading}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rename File Modal */}
+      <Modal
+        visible={showRenameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !renaming && setShowRenameModal(false)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !renaming && setShowRenameModal(false)}
+        >
+          <View style={dynamicStyles.renameModalContent} onStartShouldSetResponder={() => true}>
+            <Text style={dynamicStyles.renameModalTitle}>Rename File</Text>
+            <TextInput
+              style={dynamicStyles.textInput}
+              value={renameInputValue}
+              onChangeText={setRenameInputValue}
+              placeholder="File name (without extension)"
+              placeholderTextColor={themeColors.textLight}
+              autoFocus
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, gap: 12 }}>
+              <TouchableOpacity onPress={() => !renaming && setShowRenameModal(false)}>
+                <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleConfirmRename}
+                disabled={renaming || !renameInputValue.trim()}
+              >
+                <Text style={[dynamicStyles.modalSaveButton, (renaming || !renameInputValue.trim()) && dynamicStyles.disabledButton]}>
+                  {renaming ? 'Saving...' : 'Save'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       {/* Document Viewer */}

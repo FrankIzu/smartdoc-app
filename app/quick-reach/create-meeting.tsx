@@ -282,6 +282,7 @@ export default function CreateMeetingScreen() {
       fontSize: 16,
       fontWeight: '600',
       color: colors.text,
+      marginBottom: 14,
     },
     inputGroup: {
       marginBottom: 16,
@@ -406,7 +407,7 @@ export default function CreateMeetingScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
+        style={dynamicStyles.keyboardView}
       >
         {/* Header */}
         <View style={dynamicStyles.header}>

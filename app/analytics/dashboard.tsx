@@ -170,8 +170,45 @@ export default function AnalyticsDashboard() {
   const [amountMax, setAmountMax] = useState<string>('');
   const [storeVendorName, setStoreVendorName] = useState<string>('');
   const [useCustomFilters, setUseCustomFilters] = useState(false);
+  /** Draft values in Advanced Filter modal; only applied on "Apply Filters" so typing doesn't refresh. */
+  const [draftStoreVendorName, setDraftStoreVendorName] = useState<string>('');
+  const [draftAmountMin, setDraftAmountMin] = useState<string>('');
+  const [draftAmountMax, setDraftAmountMax] = useState<string>('');
+  const [draftCustomDateFrom, setDraftCustomDateFrom] = useState<string>('');
+  const [draftCustomDateTo, setDraftCustomDateTo] = useState<string>('');
+  /** When opening date picker from Advanced Filter modal, update draft instead of applied. */
+  const datePickerEditingDraftRef = useRef<'from' | 'to' | null>(null);
+  /** iOS: commit draft only on Done; ref true = From/To picker was opened from Advanced Filter. */
+  const fromPickerForDraftRef = useRef(false);
+  const toPickerForDraftRef = useRef(false);
   /** iOS: reopen Advanced Filter modal after date picker closes (avoids two modals = freeze) */
   const [reopenAdvancedFilterAfterDatePicker, setReopenAdvancedFilterAfterDatePicker] = useState(false);
+  /** True when we're reopening the Advanced Filter modal after iOS date picker; skip overwriting draft dates in sync. */
+  const reopeningAfterDatePickerRef = useRef(false);
+
+  /** Draft "1 Year" in Advanced Filter; applied only when user taps Apply Filters. */
+  const [draftUseOneYear, setDraftUseOneYear] = useState(false);
+
+  /** When Advanced Filter modal opens, sync draft from current applied values so typing doesn't refresh until Apply. */
+  useEffect(() => {
+    if (showAdvancedFilterModal) {
+      if (reopeningAfterDatePickerRef.current) {
+        reopeningAfterDatePickerRef.current = false;
+        // Don't overwrite draft dates - they were just set by the date picker handler
+        setDraftStoreVendorName(storeVendorName);
+        setDraftAmountMin(amountMin);
+        setDraftAmountMax(amountMax);
+        setDraftUseOneYear(!useCustomFilters && timePeriod === '365');
+      } else {
+        setDraftStoreVendorName(storeVendorName);
+        setDraftAmountMin(amountMin);
+        setDraftAmountMax(amountMax);
+        setDraftCustomDateFrom(customDateFrom);
+        setDraftCustomDateTo(customDateTo);
+        setDraftUseOneYear(!useCustomFilters && timePeriod === '365');
+      }
+    }
+  }, [showAdvancedFilterModal]);
 
   /** Format a Date as YYYY-MM-DD in local time (user's calendar date). Use when saving so the selected date is stored correctly. */
   const formatDateLocal = (date: Date): string => {
@@ -229,6 +266,72 @@ export default function AnalyticsDashboard() {
     return end.toISOString();
   };
 
+  /** Get [from, to] as YYYY-MM-DD for "last N days" (inclusive). */
+  const getLastNDaysRange = (n: number): { from: string; to: string } => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - n);
+    return { from: formatDateLocal(from), to: formatDateLocal(to) };
+  };
+
+  /** Human-readable period label: "last 7 days" or "Jan 15 – Feb 12, 2025" for custom range. */
+  const getPeriodLabel = (days: string, fromStr: string, toStr: string, useCustom: boolean): string => {
+    if (useCustom && fromStr && toStr) {
+      const fromDate = parseLocalDateString(fromStr);
+      const toDate = parseLocalDateString(toStr);
+      if (fromDate && toDate && !Number.isNaN(fromDate.getTime()) && !Number.isNaN(toDate.getTime())) {
+        const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return `${fmt(fromDate)} – ${fmt(toDate)}`;
+      }
+    }
+    const n = days === '365' ? 365 : parseInt(String(days || '30'), 10) || 30;
+    if (n === 7) return 'last 7 days';
+    if (n === 30) return 'last 30 days';
+    if (n === 90) return 'last 90 days';
+    if (n === 365) return 'last 12 months';
+    return `last ${n} days`;
+  };
+
+  /** True if date (Date or ISO string) falls within [from, to] (local YYYY-MM-DD inclusive). Missing/invalid date is treated as in range (include). */
+  const isDateInFilterRange = (itemDate: Date | string | undefined, from: string, to: string): boolean => {
+    if (!from && !to) return true;
+    const d = itemDate instanceof Date ? itemDate : (typeof itemDate === 'string' ? new Date(itemDate) : undefined);
+    if (!d || Number.isNaN(d.getTime())) return true;
+    const t = d.getTime();
+    if (from) {
+      const start = parseLocalDateString(from);
+      if (start && !Number.isNaN(start.getTime()) && t < start.getTime()) return false;
+    }
+    if (to) {
+      const toDate = parseLocalDateString(to);
+      if (toDate && !Number.isNaN(toDate.getTime())) {
+        const end = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate(), 23, 59, 59, 999);
+        if (t > end.getTime()) return false;
+      }
+    }
+    return true;
+  };
+
+  /** Get item date for filter: document date (top-level or in json_data) or created_at. */
+  const getItemDateForFilter = (item: any, isReceipt: boolean): Date | string | undefined => {
+    const tx = isReceipt
+      ? (item?.date ?? item?.json_data?.date ?? item?.json_data?.receipt_data?.date)
+      : (item?.invoice_date ?? item?.date ?? item?.json_data?.date ?? item?.json_data?.invoice_date);
+    if (tx) return tx;
+    return item?.created_at;
+  };
+
+  /** True if receipt store name or invoice vendor name matches search (case-insensitive). */
+  const matchesStoreVendorFilter = (item: any, isReceipt: boolean): boolean => {
+    if (!storeVendorName || !storeVendorName.trim()) return true;
+    const search = storeVendorName.trim().toLowerCase();
+    const name = isReceipt
+      ? (item?.json_data?.store_name || item?.json_data?.receipt_data?.merchant_name || item?.business_name || item?.original_filename || item?.filename || item?.name || '')
+      : (item?.vendor_name || item?.business_name || item?.vendor || item?.json_data?.vendor_name || item?.json_data?.invoice_data?.vendor_name || item?.json_data?.merchant_name || '');
+    const nameStr = (typeof name === 'string' ? name : '').toLowerCase();
+    return nameStr.includes(search);
+  };
+
   /** Return a valid Date for DateTimePicker; never pass Invalid Date (causes calendar not to display). */
   const getValidDate = (d: Date | undefined): Date => {
     if (d != null && !Number.isNaN(d.getTime())) return d;
@@ -248,39 +351,79 @@ export default function AnalyticsDashboard() {
   })();
 
   const handleDateFromChange = (event: any, selectedDate?: Date) => {
+    if (!selectedDate) return;
+    const formatted = formatDateForInput(selectedDate);
+    const updateDraft = datePickerEditingDraftRef.current === 'from';
     if (Platform.OS === 'android') {
       setShowDateFromPicker(false);
-      if (event?.type === 'set' && selectedDate) {
+      if (event?.type === 'set') {
         setDateFromPickerValue(selectedDate);
-        setCustomDateFrom(formatDateForInput(selectedDate));
+        if (updateDraft) { datePickerEditingDraftRef.current = null; setDraftCustomDateFrom(formatted); }
+        else setCustomDateFrom(formatted);
       }
     } else {
-      // iOS spinner: update state as user scrolls; modal closes via Done/Cancel
-      if (selectedDate) {
-        setDateFromPickerValue(selectedDate);
-        setCustomDateFrom(formatDateForInput(selectedDate));
-      }
+      // iOS: only update spinner value; commit to draft/applied when user taps Done
+      setDateFromPickerValue(selectedDate);
     }
   };
 
   const handleDateToChange = (event: any, selectedDate?: Date) => {
+    if (!selectedDate) return;
+    const formatted = formatDateForInput(selectedDate);
+    const updateDraft = datePickerEditingDraftRef.current === 'to';
     if (Platform.OS === 'android') {
       setShowDateToPicker(false);
-      if (event?.type === 'set' && selectedDate) {
+      if (event?.type === 'set') {
         setDateToPickerValue(selectedDate);
-        setCustomDateTo(formatDateForInput(selectedDate));
+        if (updateDraft) { datePickerEditingDraftRef.current = null; setDraftCustomDateTo(formatted); }
+        else setCustomDateTo(formatted);
       }
     } else {
-      // iOS spinner: update state as user scrolls; modal closes via Done/Cancel
-      if (selectedDate) {
-        setDateToPickerValue(selectedDate);
-        setCustomDateTo(formatDateForInput(selectedDate));
-      }
+      // iOS: only update spinner value; commit to draft/applied when user taps Done
+      setDateToPickerValue(selectedDate);
+    }
+  };
+
+  /** iOS From date picker Done: commit current dateFromPickerValue to draft or applied, then close. */
+  const handleDateFromPickerDone = () => {
+    const formatted = formatDateForInput(dateFromPickerValue);
+    if (fromPickerForDraftRef.current) {
+      fromPickerForDraftRef.current = false;
+      datePickerEditingDraftRef.current = null;
+      setDraftCustomDateFrom(formatted);
+    } else {
+      setCustomDateFrom(formatted);
+    }
+    setShowDateFromPicker(false);
+    if (reopenAdvancedFilterAfterDatePicker) {
+      reopeningAfterDatePickerRef.current = true;
+      setReopenAdvancedFilterAfterDatePicker(false);
+      setTimeout(() => setShowAdvancedFilterModal(true), 100);
+    }
+  };
+
+  /** iOS To date picker Done: commit current dateToPickerValue to draft or applied, then close. */
+  const handleDateToPickerDone = () => {
+    const formatted = formatDateForInput(dateToPickerValue);
+    if (toPickerForDraftRef.current) {
+      toPickerForDraftRef.current = false;
+      datePickerEditingDraftRef.current = null;
+      setDraftCustomDateTo(formatted);
+    } else {
+      setCustomDateTo(formatted);
+    }
+    setShowDateToPicker(false);
+    if (reopenAdvancedFilterAfterDatePicker) {
+      reopeningAfterDatePickerRef.current = true;
+      setReopenAdvancedFilterAfterDatePicker(false);
+      setTimeout(() => setShowAdvancedFilterModal(true), 100);
     }
   };
   
   // Category selection modal states
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showReceiptCategoryFilterModal, setShowReceiptCategoryFilterModal] = useState(false);
+  const [showInvoiceCategoryFilterModal, setShowInvoiceCategoryFilterModal] = useState(false);
   const [selectedReceipt, setSelectedReceipt] = useState<any>(null);
   const [categorizingReceipt, setCategorizingReceipt] = useState(false);
   
@@ -303,7 +446,7 @@ export default function AnalyticsDashboard() {
   const [showEditDatePicker, setShowEditDatePicker] = useState(false);
   const [editDatePickerValue, setEditDatePickerValue] = useState<Date>(() => new Date());
 
-  // Document viewer (same as files page - open receipt/invoice file on row tap)
+  // Document viewer (row tap opens file; edit icon opens edit modal)
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
   const [selectedFileForView, setSelectedFileForView] = useState<{
     fileId: string;
@@ -376,10 +519,11 @@ export default function AnalyticsDashboard() {
       // Check authentication after auth has finished loading
       if (!isAuthenticated) {
         console.warn('📊 User not authenticated, cannot load analytics');
+        const periodLabel = getPeriodLabel(days, customDateFrom, customDateTo, !!(useCustomFilters && customDateFrom && customDateTo));
         const noAuthData = {
           summary: {
-            period: `${days} days`,
-            period_days: parseInt(days),
+            period: periodLabel,
+            period_days: parseInt(days) || 30,
             total_files: 0,
             total_size_mb: 0,
             total_receipts: 0,
@@ -428,10 +572,11 @@ export default function AnalyticsDashboard() {
       let receiptAnalytics: any = null;
       try {
         const category = selectedCategory !== 'All' ? selectedCategory : undefined;
-        // Use custom date range if set, otherwise use days parameter
-        const daysParam = (useCustomFilters && (customDateFrom || customDateTo)) ? undefined : parseInt(days);
-        const dateFrom = (useCustomFilters && customDateFrom) ? localDateStringToUTCISO(customDateFrom) : undefined;
-        const dateTo = (useCustomFilters && customDateTo) ? localDateStringToEndOfDayUTCISO(customDateTo) : undefined;
+        // Match web: only use custom date range when BOTH from and to are set; backend requires both
+        const hasCustomDateRange = useCustomFilters && customDateFrom && customDateTo;
+        const daysParam = hasCustomDateRange ? undefined : (parseInt(days, 10) || 30);
+        const dateFrom = hasCustomDateRange ? customDateFrom : undefined;
+        const dateTo = hasCustomDateRange ? customDateTo : undefined;
         const search = (useCustomFilters && storeVendorName) ? storeVendorName : undefined;
         const receiptResponse = await apiClient.getReceiptAnalytics(daysParam, category, dateFrom, dateTo, search);
         console.log('📊 Receipt analytics response:', {
@@ -484,10 +629,11 @@ export default function AnalyticsDashboard() {
       let invoiceAnalytics = null;
       try {
         const category = selectedInvoiceCategory !== 'All' ? selectedInvoiceCategory : undefined;
-        // Use custom date range if set, otherwise use days parameter
-        const daysParam = (useCustomFilters && (customDateFrom || customDateTo)) ? undefined : parseInt(days);
-        const dateFrom = (useCustomFilters && customDateFrom) ? localDateStringToUTCISO(customDateFrom) : undefined;
-        const dateTo = (useCustomFilters && customDateTo) ? localDateStringToEndOfDayUTCISO(customDateTo) : undefined;
+        // Match web: only use custom date range when BOTH from and to are set; backend requires both
+        const hasCustomDateRange = useCustomFilters && customDateFrom && customDateTo;
+        const daysParam = hasCustomDateRange ? undefined : (parseInt(days, 10) || 30);
+        const dateFrom = hasCustomDateRange ? customDateFrom : undefined;
+        const dateTo = hasCustomDateRange ? customDateTo : undefined;
         const search = (useCustomFilters && storeVendorName) ? storeVendorName : undefined;
         const invoiceResponse = await apiClient.getInvoiceAnalytics(daysParam, category, dateFrom, dateTo, search);
         if (invoiceResponse && invoiceResponse.success && invoiceResponse.data) {
@@ -511,10 +657,11 @@ export default function AnalyticsDashboard() {
         categoriesCount: receiptAnalytics?.categories?.length || 0
       });
       
+      const periodLabel = getPeriodLabel(days, customDateFrom, customDateTo, !!(useCustomFilters && customDateFrom && customDateTo));
       const analyticsData: ComprehensiveAnalytics = {
         summary: {
-          period: `${days} days`,
-          period_days: parseInt(days),
+          period: periodLabel,
+          period_days: parseInt(days) || 30,
           total_files: 0,
           total_size_mb: 0,
           total_receipts: receiptAnalytics?.summary?.total_receipts || 0,
@@ -582,7 +729,18 @@ export default function AnalyticsDashboard() {
               return true;
             });
           }
-          
+          // Apply date range and store name filter when custom filters are on
+          if (useCustomFilters && (customDateFrom || customDateTo || storeVendorName)) {
+            sortedReceipts = sortedReceipts.filter((receipt: any) => {
+              if (customDateFrom || customDateTo) {
+                const itemDate = getItemDateForFilter(receipt, true);
+                if (!isDateInFilterRange(itemDate, customDateFrom, customDateTo)) return false;
+              }
+              if (storeVendorName && !matchesStoreVendorFilter(receipt, true)) return false;
+              return true;
+            });
+          }
+          // API already returned receipts filtered by time period and category; no extra client filter
           setRecentReceipts(sortedReceipts);
           console.log('✅ Loaded receipts from web analytics endpoint:', sortedReceipts.length);
         } else {
@@ -594,17 +752,53 @@ export default function AnalyticsDashboard() {
             const filesResponse = await apiClient.getDocuments(1, 100, undefined, 'receipts');
             if (filesResponse && filesResponse.success) {
               const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
-              const receiptFiles = allFiles
+              let receiptFiles = allFiles
                 .filter((file: any) => {
                   const fileKind = (file.file_kind || '').toLowerCase();
                   return !file.file_kind || fileKind === 'receipt' || fileKind === 'receipts';
                 })
                 .filter((file: any) => getAmount(file) > 0); // Exclude $0 receipts
-              const sortedReceipts = [...receiptFiles].sort((a: any, b: any) => {
+              if (useCustomFilters && (customDateFrom || customDateTo || storeVendorName || amountMin || amountMax)) {
+                if (amountMin || amountMax) {
+                  receiptFiles = receiptFiles.filter((file: any) => {
+                    const numericAmount = getAmount(file);
+                    if (amountMin && numericAmount < parseFloat(amountMin)) return false;
+                    if (amountMax && numericAmount > parseFloat(amountMax)) return false;
+                    return true;
+                  });
+                }
+                if (customDateFrom || customDateTo || storeVendorName) {
+                  receiptFiles = receiptFiles.filter((receipt: any) => {
+                    if (customDateFrom || customDateTo) {
+                      const itemDate = getItemDateForFilter(receipt, true);
+                      if (!isDateInFilterRange(itemDate, customDateFrom, customDateTo)) return false;
+                    }
+                    if (storeVendorName && !matchesStoreVendorFilter(receipt, true)) return false;
+                    return true;
+                  });
+                }
+              }
+              let sortedReceipts = [...receiptFiles].sort((a: any, b: any) => {
                 const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
                 const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
                 return dateB - dateA;
               });
+              // Recent section: obey time period and category
+              if (!useCustomFilters && timePeriod) {
+                const n = parseInt(timePeriod, 10) || 30;
+                const { from, to } = getLastNDaysRange(n);
+                sortedReceipts = sortedReceipts.filter((receipt: any) => {
+                  const itemDate = getItemDateForFilter(receipt, true);
+                  return isDateInFilterRange(itemDate, from, to);
+                });
+              }
+              if (selectedCategory !== 'All') {
+                const sel = selectedCategory.toLowerCase();
+                sortedReceipts = sortedReceipts.filter((receipt: any) => {
+                  const cat = (receipt.category ?? receipt.receipt_category ?? receipt.json_data?.category ?? '').trim().toLowerCase();
+                  return !sel || cat.includes(sel) || sel.includes(cat) || (cat === '' && sel === 'uncategorized');
+                });
+              }
               setRecentReceipts(sortedReceipts);
               console.log(`✅ Fallback: Loaded ${sortedReceipts.length} receipts from mobile files endpoint`);
             } else {
@@ -654,7 +848,18 @@ export default function AnalyticsDashboard() {
               return true;
             });
           }
-          
+          // Apply date range and vendor name filter when custom filters are on
+          if (useCustomFilters && (customDateFrom || customDateTo || storeVendorName)) {
+            filteredInvoices = filteredInvoices.filter((invoice: any) => {
+              if (customDateFrom || customDateTo) {
+                const itemDate = getItemDateForFilter(invoice, false);
+                if (!isDateInFilterRange(itemDate, customDateFrom, customDateTo)) return false;
+              }
+              if (storeVendorName && !matchesStoreVendorFilter(invoice, false)) return false;
+              return true;
+            });
+          }
+          // API already returned invoices filtered by time period and category; no extra client filter
           setRecentInvoices(filteredInvoices);
         } else {
           // Need to fetch invoice records to get invoice IDs
@@ -696,7 +901,17 @@ export default function AnalyticsDashboard() {
                   return true;
                 });
               }
-              
+              // Apply date range and vendor name filter when custom filters are on
+              if (useCustomFilters && (customDateFrom || customDateTo || storeVendorName)) {
+                invoiceFiles = invoiceFiles.filter((invoice: any) => {
+                  if (customDateFrom || customDateTo) {
+                    const itemDate = getItemDateForFilter(invoice, false);
+                    if (!isDateInFilterRange(itemDate, customDateFrom, customDateTo)) return false;
+                  }
+                  if (storeVendorName && !matchesStoreVendorFilter(invoice, false)) return false;
+                  return true;
+                });
+              }
               console.log(`📊 Filtered invoice files: ${invoiceFiles.length}`);
               setRecentInvoices(invoiceFiles.slice(0, 50)); // Limit to 50 most recent
             } else {
@@ -720,7 +935,16 @@ export default function AnalyticsDashboard() {
                   return true;
                 });
               }
-              
+              if (useCustomFilters && (customDateFrom || customDateTo || storeVendorName)) {
+                filteredInvoices = filteredInvoices.filter((invoice: any) => {
+                  if (customDateFrom || customDateTo) {
+                    const itemDate = getItemDateForFilter(invoice, false);
+                    if (!isDateInFilterRange(itemDate, customDateFrom, customDateTo)) return false;
+                  }
+                  if (storeVendorName && !matchesStoreVendorFilter(invoice, false)) return false;
+                  return true;
+                });
+              }
               setRecentInvoices(filteredInvoices);
             }
           } catch (error) {
@@ -745,7 +969,16 @@ export default function AnalyticsDashboard() {
                 return true;
               });
             }
-            
+            if (useCustomFilters && (customDateFrom || customDateTo || storeVendorName)) {
+              filteredInvoices = filteredInvoices.filter((invoice: any) => {
+                if (customDateFrom || customDateTo) {
+                  const itemDate = getItemDateForFilter(invoice, false);
+                  if (!isDateInFilterRange(itemDate, customDateFrom, customDateTo)) return false;
+                }
+                if (storeVendorName && !matchesStoreVendorFilter(invoice, false)) return false;
+                return true;
+              });
+            }
             setRecentInvoices(filteredInvoices);
           }
         }
@@ -773,10 +1006,11 @@ export default function AnalyticsDashboard() {
       });
       // Show basic data on error
       console.log('📊 API Error - Showing basic data');
+      const periodLabel = getPeriodLabel(days, customDateFrom, customDateTo, !!(useCustomFilters && customDateFrom && customDateTo));
       const basicData = {
         summary: {
-          period: `${days} days`,
-          period_days: parseInt(days),
+          period: periodLabel,
+          period_days: parseInt(days) || 30,
           total_files: 0,
           total_size_mb: 0,
           total_receipts: 0,
@@ -1102,7 +1336,7 @@ export default function AnalyticsDashboard() {
     if (reportType === 'receipts') {
       // Receipts Report
       csvRows.push('RECEIPTS ANALYTICS REPORT');
-      csvRows.push(`Period: ${analytics.summary?.period || timePeriod} days`);
+      csvRows.push(`Period: ${analytics.summary?.period ?? (timePeriod ? `${timePeriod} days` : 'N/A')}`);
       csvRows.push(`Generated: ${new Date().toLocaleString()}`);
       csvRows.push('');
 
@@ -1160,7 +1394,7 @@ export default function AnalyticsDashboard() {
       }
 
       csvRows.push('INVOICES ANALYTICS REPORT');
-      csvRows.push(`Period: ${analytics.summary?.period || timePeriod} days`);
+      csvRows.push(`Period: ${analytics.summary?.period ?? (timePeriod ? `${timePeriod} days` : 'N/A')}`);
       csvRows.push(`Generated: ${new Date().toLocaleString()}`);
       csvRows.push('');
 
@@ -1253,26 +1487,32 @@ export default function AnalyticsDashboard() {
       const fileName = `${reportType.charAt(0).toUpperCase() + reportType.slice(1)}_Report_${dateStr}.docx`;
       const fileUri = `${cacheDir}${fileName}`;
 
-      // Prepare request body with time period and optional category filter
-      // Convert timePeriod string to integer (backend expects integer, not string)
-      const daysInt = parseInt(timePeriod, 10) || 30; // Default to 30 if parsing fails
-      const requestBody: any = {
-        days: daysInt, // Pass the selected time period as integer (e.g., 7, 30, 90, 365)
+      // Use same request body as web so the backend generates the same report layout and filtered content.
+      // Backend accepts: category, days, date_from, date_to, search, amount_min, amount_max.
+      const useCustom = useCustomFilters && (customDateFrom || customDateTo || storeVendorName.trim() || amountMin.trim() || amountMax.trim());
+      const daysInt = parseInt(timePeriod, 10) || 30;
+      const requestBody: Record<string, unknown> = {
+        days: useCustom && (customDateFrom || customDateTo) ? null : daysInt,
+        category: reportType === 'receipts' ? (selectedCategory !== 'All' ? selectedCategory : null) : (selectedInvoiceCategory !== 'All' ? selectedInvoiceCategory : null),
+        date_from: useCustom && customDateFrom ? customDateFrom : null,
+        date_to: useCustom && customDateTo ? customDateTo : null,
+        search: useCustom && storeVendorName.trim() ? storeVendorName.trim() : null,
+        amount_min: useCustom && amountMin.trim() && !Number.isNaN(parseFloat(amountMin.trim())) ? parseFloat(amountMin.trim()) : null,
+        amount_max: useCustom && amountMax.trim() && !Number.isNaN(parseFloat(amountMax.trim())) ? parseFloat(amountMax.trim()) : null,
       };
-      
-      // Add category filter if one is selected
-      if (reportType === 'receipts' && selectedCategory && selectedCategory !== 'All') {
-        requestBody.category = selectedCategory;
-      } else if (reportType === 'invoices' && selectedInvoiceCategory && selectedInvoiceCategory !== 'All') {
-        requestBody.category = selectedInvoiceCategory;
-      }
+      // Omit nulls so backend uses defaults where appropriate
+      const body: Record<string, unknown> = {};
+      Object.entries(requestBody).forEach(([k, v]) => {
+        if (v !== null && v !== undefined && v !== '') body[k] = v;
+      });
+      // When using custom date range we send date_from/date_to and no days; otherwise default days
+      if (body.days === undefined && !(useCustom && (customDateFrom || customDateTo))) body.days = daysInt;
 
-      console.log(`📊 Request body:`, requestBody);
-      console.log(`📊 Time period: ${timePeriod} days`);
+      console.log(`📊 Request body (same as web):`, body);
 
       // Use apiClient to download the file with proper authentication (POST request)
       // Use 'arraybuffer' instead of 'blob' for React Native compatibility
-      const response = await apiClient.client.post(endpoint, requestBody, {
+      const response = await apiClient.client.post(endpoint, body, {
         responseType: 'arraybuffer', // Use arraybuffer for React Native
       });
 
@@ -1361,6 +1601,29 @@ export default function AnalyticsDashboard() {
       loadAnalytics();
     }
   }, [authLoading, loadAnalytics]);
+
+  // Refetch when any filter changes so overview, category breakdown, and other displays stay in sync
+  const filterDepsRanRef = useRef(false);
+  useEffect(() => {
+    if (!filterDepsRanRef.current) {
+      filterDepsRanRef.current = true;
+      return;
+    }
+    if (authLoading) return;
+    loadAnalytics();
+  }, [
+    selectedCategory,
+    selectedInvoiceCategory,
+    timePeriod,
+    useCustomFilters,
+    customDateFrom,
+    customDateTo,
+    storeVendorName,
+    amountMin,
+    amountMax,
+    loadAnalytics,
+    authLoading,
+  ]);
 
   // Use useFocusEffect instead of useEffect to ensure data reloads when screen comes into focus
   // This is critical for Android where useEffect may not re-run when navigating to the screen
@@ -1474,32 +1737,29 @@ export default function AnalyticsDashboard() {
     </View>
   );
 
-  const CategoryFilter = () => {
-    const categories = [
-      'All', 'Advertising', 'Supplies', 'Professional Services', 'Personal',
-      'Rent and Lease', 'Education and Training', 'Cars and Truck', 'Travel',
-      'Office Expenses', 'Meals and Entertainment', 'Contractors', 'Employee Benefit',
-      'Banking', 'Other Expenses', 'Uncategorized'
-    ];
+  const receiptCategoryFilterOptions = ['All', ...receiptCategories];
 
-    return (
-      <View style={styles.categoryFilterContainer}>
-        <Text style={styles.sectionTitle}>Receipt Category Filter</Text>
-        <View style={styles.categoryFilterContent}>
-          <Text style={styles.categoryFilterLabel}>Filter by Category:</Text>
-          <View style={styles.categoryDropdown}>
-            <Text style={styles.categoryDropdownText}>{selectedCategory}</Text>
-            <Ionicons name="chevron-down" size={16} color="#666" />
-          </View>
-        </View>
-        {selectedCategory !== 'All' && (
-          <Text style={styles.categoryFilterNote}>
-            Showing data for: <Text style={styles.categoryFilterNoteBold}>{selectedCategory}</Text>
-          </Text>
-        )}
+  const CategoryFilter = () => (
+    <View style={styles.categoryFilterContainer}>
+      <Text style={styles.sectionTitle}>Receipt Category Filter</Text>
+      <View style={styles.categoryFilterContent}>
+        <Text style={styles.categoryFilterLabel}>Filter by Category:</Text>
+        <TouchableOpacity
+          style={styles.categoryDropdown}
+          onPress={() => setShowReceiptCategoryFilterModal(true)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.categoryDropdownText}>{selectedCategory}</Text>
+          <Ionicons name="chevron-down" size={16} color="#666" />
+        </TouchableOpacity>
       </View>
-    );
-  };
+      {selectedCategory !== 'All' && (
+        <Text style={styles.categoryFilterNote}>
+          Showing data for: <Text style={styles.categoryFilterNoteBold}>{selectedCategory}</Text>
+        </Text>
+      )}
+    </View>
+  );
 
   const StatCard = ({ title, value, subtitle, icon, color }: {
     title: string;
@@ -1728,7 +1988,7 @@ export default function AnalyticsDashboard() {
                             ? (analytics.receipts.summary.total_amount / analytics.receipts.summary.total_receipts)
                             : 0
                       )}
-                      subtitle={`${analytics.receipts?.summary?.recent_30d || 0} in last 30 days`}
+                      subtitle={`${analytics.receipts?.summary?.recent_30d ?? analytics.receipts?.summary?.total_receipts ?? 0} in ${analytics.summary?.period ?? 'last 30 days'}`}
                       icon="calculator"
                       color="#007AFF"
                     />
@@ -2103,10 +2363,10 @@ export default function AnalyticsDashboard() {
                               <View style={styles.receiptActions}>
                             <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
                                 <TouchableOpacity
-                                  style={styles.categorizeButton}
+                                  style={styles.editButton}
                                   onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(receipt, 'receipt'); }}
                                 >
-                                  <Ionicons name="pencil-outline" size={18} color="#007AFF" />
+                                  <Text style={styles.editButtonText}>Edit</Text>
                                 </TouchableOpacity>
                               </View>
                             </View>
@@ -2285,10 +2545,10 @@ export default function AnalyticsDashboard() {
                             <View style={styles.receiptActions}>
                           <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
                               <TouchableOpacity
-                                style={styles.categorizeButton}
+                                style={styles.editButton}
                                 onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(invoice, 'invoice'); }}
                               >
-                                <Ionicons name="pencil-outline" size={18} color="#007AFF" />
+                                <Text style={styles.editButtonText}>Edit</Text>
                               </TouchableOpacity>
                               <TouchableOpacity
                                 style={styles.categorizeButton}
@@ -2319,7 +2579,7 @@ export default function AnalyticsDashboard() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Document Viewer - same as files page when tapping a receipt/invoice row */}
+      {/* Document Viewer - opened when receipt/invoice row is tapped */}
       {showDocumentViewer && selectedFileForView && (
         <DocumentViewer
           fileId={selectedFileForView.fileId}
@@ -2333,6 +2593,40 @@ export default function AnalyticsDashboard() {
         />
       )}
       
+      {/* Receipt Category Filter Modal - filter dashboard by category */}
+      <Modal
+        visible={showReceiptCategoryFilterModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowReceiptCategoryFilterModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Filter by Category</Text>
+              <TouchableOpacity onPress={() => setShowReceiptCategoryFilterModal(false)}>
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.categoryList}>
+              {receiptCategoryFilterOptions.map((category) => (
+                <TouchableOpacity
+                  key={category}
+                  style={styles.categoryModalItem}
+                  onPress={() => {
+                    setSelectedCategory(category);
+                    setShowReceiptCategoryFilterModal(false);
+                  }}
+                >
+                  <Text style={styles.categoryItemText}>{category}</Text>
+                  {selectedCategory === category && <Ionicons name="checkmark" size={20} color="#007AFF" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Category Selection Modal */}
       <Modal
         visible={showCategoryModal}
@@ -2638,23 +2932,13 @@ export default function AnalyticsDashboard() {
                 <Text style={styles.filterSectionTitle}>Date Range</Text>
                 <TouchableOpacity
                   style={styles.filterOptionButton}
-                  onPress={() => {
-                    setCustomDateFrom('');
-                    setCustomDateTo('');
-                    setAmountMin('');
-                    setAmountMax('');
-                    setStoreVendorName('');
-                    setUseCustomFilters(false);
-                    setTimePeriod('365');
-                    Keyboard.dismiss();
-                    setTimeout(() => {
-                      setShowAdvancedFilterModal(false);
-                      loadAnalytics('365');
-                    }, 100);
-                  }}
+                  onPress={() => setDraftUseOneYear((prev) => !prev)}
+                  activeOpacity={0.7}
                 >
                   <Text style={styles.filterOptionText}>1 Year</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                  <View style={[styles.filterCheckbox, draftUseOneYear && styles.filterCheckboxChecked]}>
+                    {draftUseOneYear && <Ionicons name="checkmark" size={16} color="#fff" />}
+                  </View>
                 </TouchableOpacity>
 
                 <View style={styles.filterInputGroup}>
@@ -2662,8 +2946,11 @@ export default function AnalyticsDashboard() {
                   <TouchableOpacity
                     style={styles.filterDatePickerContainer}
                     onPress={() => {
-                      if (customDateFrom) {
-                        const [y, m, d] = customDateFrom.split('-').map(Number);
+                      datePickerEditingDraftRef.current = 'from';
+                      if (Platform.OS === 'ios') fromPickerForDraftRef.current = true;
+                      const fromStr = draftCustomDateFrom || customDateFrom;
+                      if (fromStr) {
+                        const [y, m, d] = fromStr.split('-').map(Number);
                         setDateFromPickerValue(new Date(y, m - 1, d));
                       }
                       if (Platform.OS === 'ios') {
@@ -2675,12 +2962,12 @@ export default function AnalyticsDashboard() {
                       }
                     }}
                   >
-                    <Text style={customDateFrom ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
-                      {customDateFrom
+                    <Text style={draftCustomDateFrom ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
+                      {draftCustomDateFrom
                         ? (() => {
-                            const d = parseLocalDateString(customDateFrom);
+                            const d = parseLocalDateString(draftCustomDateFrom);
                             return !d || Number.isNaN(d.getTime())
-                              ? customDateFrom
+                              ? draftCustomDateFrom
                               : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
                           })()
                         : 'Select date'}
@@ -2693,8 +2980,11 @@ export default function AnalyticsDashboard() {
                   <TouchableOpacity
                     style={styles.filterDatePickerContainer}
                     onPress={() => {
-                      if (customDateTo) {
-                        const [y, m, d] = customDateTo.split('-').map(Number);
+                      datePickerEditingDraftRef.current = 'to';
+                      if (Platform.OS === 'ios') toPickerForDraftRef.current = true;
+                      const toStr = draftCustomDateTo || customDateTo;
+                      if (toStr) {
+                        const [y, m, d] = toStr.split('-').map(Number);
                         setDateToPickerValue(new Date(y, m - 1, d));
                       }
                       if (Platform.OS === 'ios') {
@@ -2706,12 +2996,12 @@ export default function AnalyticsDashboard() {
                       }
                     }}
                   >
-                        <Text style={customDateTo ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
-                          {customDateTo
+                        <Text style={draftCustomDateTo ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
+                          {draftCustomDateTo
                             ? (() => {
-                                const d = parseLocalDateString(customDateTo);
+                                const d = parseLocalDateString(draftCustomDateTo);
                                 return !d || Number.isNaN(d.getTime())
-                                  ? customDateTo
+                                  ? draftCustomDateTo
                                   : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
                               })()
                             : 'Select date'}
@@ -2730,8 +3020,8 @@ export default function AnalyticsDashboard() {
                     <TextInput
                       style={styles.amountInput}
                       placeholder="0.00"
-                      value={amountMin}
-                      onChangeText={setAmountMin}
+                      value={draftAmountMin}
+                      onChangeText={setDraftAmountMin}
                       keyboardType="decimal-pad"
                       placeholderTextColor="#999"
                     />
@@ -2741,8 +3031,8 @@ export default function AnalyticsDashboard() {
                     <TextInput
                       style={styles.amountInput}
                       placeholder="0.00"
-                      value={amountMax}
-                      onChangeText={setAmountMax}
+                      value={draftAmountMax}
+                      onChangeText={setDraftAmountMax}
                       keyboardType="decimal-pad"
                       placeholderTextColor="#999"
                     />
@@ -2758,8 +3048,8 @@ export default function AnalyticsDashboard() {
                 <TextInput
                   style={styles.textInput}
                   placeholder={`Enter ${activeTab === 'receipts' ? 'store' : 'vendor'} name`}
-                  value={storeVendorName}
-                  onChangeText={setStoreVendorName}
+                  value={draftStoreVendorName}
+                  onChangeText={setDraftStoreVendorName}
                   placeholderTextColor="#999"
                 />
               </View>
@@ -2769,14 +3059,24 @@ export default function AnalyticsDashboard() {
                 <TouchableOpacity
                   style={[styles.filterButton, styles.filterButtonSecondary]}
                   onPress={() => {
+                    setDraftUseOneYear(false);
+                    setDraftCustomDateFrom('');
+                    setDraftCustomDateTo('');
+                    setDraftAmountMin('');
+                    setDraftAmountMax('');
+                    setDraftStoreVendorName('');
                     setCustomDateFrom('');
                     setCustomDateTo('');
                     setAmountMin('');
                     setAmountMax('');
                     setStoreVendorName('');
                     setUseCustomFilters(false);
+                    setTimePeriod('30'); // Restore default preset when clearing custom filters
                     Keyboard.dismiss();
-                    setTimeout(() => setShowAdvancedFilterModal(false), 100);
+                    setTimeout(() => {
+                      setShowAdvancedFilterModal(false);
+                      loadAnalytics('30');
+                    }, 100);
                   }}
                 >
                   <Text style={styles.filterButtonTextSecondary}>Clear All</Text>
@@ -2784,12 +3084,31 @@ export default function AnalyticsDashboard() {
                 <TouchableOpacity
                   style={[styles.filterButton, styles.filterButtonPrimary]}
                   onPress={() => {
-                    setUseCustomFilters(true);
                     Keyboard.dismiss();
-                    setTimeout(() => {
+                    if (draftUseOneYear) {
+                      setCustomDateFrom('');
+                      setCustomDateTo('');
+                      setAmountMin('');
+                      setAmountMax('');
+                      setStoreVendorName('');
+                      setUseCustomFilters(false);
+                      setTimePeriod('365');
+                      setTimeout(() => {
+                        setShowAdvancedFilterModal(false);
+                        loadAnalytics('365');
+                      }, 100);
+                    } else {
+                      setCustomDateFrom(draftCustomDateFrom);
+                      setCustomDateTo(draftCustomDateTo);
+                      setAmountMin(draftAmountMin);
+                      setAmountMax(draftAmountMax);
+                      setStoreVendorName(draftStoreVendorName);
+                      setUseCustomFilters(true);
+                      setTimePeriod(''); // Unselect 7/30/90 days when using custom/advanced filter
                       setShowAdvancedFilterModal(false);
-                      loadAnalytics();
-                    }, 100);
+                      // Don't call loadAnalytics here - state is not committed yet (stale closure).
+                      // useEffect will run when customDateFrom/customDateTo/useCustomFilters change and refetch with correct params.
+                    }
                   }}
                 >
                   <Text style={styles.filterButtonTextPrimary}>Apply Filters</Text>
@@ -2809,6 +3128,8 @@ export default function AnalyticsDashboard() {
           animationType="slide"
           transparent={true}
           onRequestClose={() => {
+            fromPickerForDraftRef.current = false;
+            datePickerEditingDraftRef.current = null;
             setShowDateFromPicker(false);
             if (reopenAdvancedFilterAfterDatePicker) {
               setReopenAdvancedFilterAfterDatePicker(false);
@@ -2820,6 +3141,8 @@ export default function AnalyticsDashboard() {
             style={styles.pickerModalOverlay}
             activeOpacity={1}
             onPress={() => {
+              fromPickerForDraftRef.current = false;
+              datePickerEditingDraftRef.current = null;
               setShowDateFromPicker(false);
               if (reopenAdvancedFilterAfterDatePicker) {
                 setReopenAdvancedFilterAfterDatePicker(false);
@@ -2834,6 +3157,8 @@ export default function AnalyticsDashboard() {
             >
               <View style={styles.pickerModalHeader}>
                 <TouchableOpacity onPress={() => {
+                  fromPickerForDraftRef.current = false;
+                  datePickerEditingDraftRef.current = null;
                   setShowDateFromPicker(false);
                   if (reopenAdvancedFilterAfterDatePicker) {
                     setReopenAdvancedFilterAfterDatePicker(false);
@@ -2843,13 +3168,7 @@ export default function AnalyticsDashboard() {
                   <Text style={styles.pickerModalCancelButton}>Cancel</Text>
                 </TouchableOpacity>
                 <Text style={styles.pickerModalTitle}>Select date</Text>
-                <TouchableOpacity onPress={() => {
-                  setShowDateFromPicker(false);
-                  if (reopenAdvancedFilterAfterDatePicker) {
-                    setReopenAdvancedFilterAfterDatePicker(false);
-                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
-                  }
-                }}>
+                <TouchableOpacity onPress={handleDateFromPickerDone}>
                   <Text style={styles.doneButton}>Done</Text>
                 </TouchableOpacity>
               </View>
@@ -2889,6 +3208,8 @@ export default function AnalyticsDashboard() {
           animationType="slide"
           transparent={true}
           onRequestClose={() => {
+            toPickerForDraftRef.current = false;
+            datePickerEditingDraftRef.current = null;
             setShowDateToPicker(false);
             if (reopenAdvancedFilterAfterDatePicker) {
               setReopenAdvancedFilterAfterDatePicker(false);
@@ -2900,6 +3221,8 @@ export default function AnalyticsDashboard() {
             style={styles.pickerModalOverlay}
             activeOpacity={1}
             onPress={() => {
+              toPickerForDraftRef.current = false;
+              datePickerEditingDraftRef.current = null;
               setShowDateToPicker(false);
               if (reopenAdvancedFilterAfterDatePicker) {
                 setReopenAdvancedFilterAfterDatePicker(false);
@@ -2914,6 +3237,8 @@ export default function AnalyticsDashboard() {
             >
               <View style={styles.pickerModalHeader}>
                 <TouchableOpacity onPress={() => {
+                  toPickerForDraftRef.current = false;
+                  datePickerEditingDraftRef.current = null;
                   setShowDateToPicker(false);
                   if (reopenAdvancedFilterAfterDatePicker) {
                     setReopenAdvancedFilterAfterDatePicker(false);
@@ -2923,13 +3248,7 @@ export default function AnalyticsDashboard() {
                   <Text style={styles.pickerModalCancelButton}>Cancel</Text>
                 </TouchableOpacity>
                 <Text style={styles.pickerModalTitle}>Select date</Text>
-                <TouchableOpacity onPress={() => {
-                  setShowDateToPicker(false);
-                  if (reopenAdvancedFilterAfterDatePicker) {
-                    setReopenAdvancedFilterAfterDatePicker(false);
-                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
-                  }
-                }}>
+                <TouchableOpacity onPress={handleDateToPickerDone}>
                   <Text style={styles.doneButton}>Done</Text>
                 </TouchableOpacity>
               </View>
@@ -3598,7 +3917,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingLeft: 12,
+    paddingRight: 4,
     backgroundColor: '#f8f9fa',
     borderRadius: 8,
     marginBottom: 8,
@@ -3732,7 +4052,16 @@ const styles = StyleSheet.create({
   receiptActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 6,
+  },
+  editButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  editButtonText: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '600',
   },
   categorizeButton: {
     padding: 6,
@@ -3968,6 +4297,19 @@ const styles = StyleSheet.create({
   filterOptionText: {
     fontSize: 16,
     color: '#333',
+  },
+  filterCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#999',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterCheckboxChecked: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
   },
   dateRangeContainer: {
     flexDirection: 'row',
