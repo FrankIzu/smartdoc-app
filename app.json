@@ -21,7 +21,8 @@
       "buildNumber": "2",
       "usesAppleSignIn": true,
       "associatedDomains": [
-        "applinks:api.grabdocs.com"
+        "applinks:api.grabdocs.com",
+        "applinks:app.grabdocs.com"
       ],
       "splash": {
         "image": "./assets/images/grabdocs-brand-app-images/png/logo-600x200.png",
@@ -53,7 +54,7 @@
     },
     "android": {
       "package": "com.grabdocs.mobile",
-      "versionCode": 38,
+      "versionCode": 39,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
         "backgroundColor": "#ffffff",
@@ -105,6 +106,16 @@
             {
               "scheme": "https",
               "host": "api.grabdocs.com",
+              "pathPrefix": "/meeting"
+            },
+            {
+              "scheme": "https",
+              "host": "app.grabdocs.com",
+              "pathPrefix": "/join-meeting"
+            },
+            {
+              "scheme": "https",
+              "host": "app.grabdocs.com",
               "pathPrefix": "/meeting"
             }
           ],

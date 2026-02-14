@@ -9,7 +9,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useAuth } from '../context/auth';
@@ -92,11 +92,16 @@ class HMSErrorBoundary extends Component<
   }
 }
 
+// Minimal bottom inset for Android so prebuilt toolbar clears system nav (kept small to avoid moving UI up too much)
+const ANDROID_NAV_INSET = 24;
+
 export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { meetingId, title, userName } = params;
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -978,37 +983,39 @@ export default function HMSMeetingInterfaceScreen() {
                     <Text style={styles.loadingText}>Checking permissions...</Text>
                   </View>
                 ) : (
-                  <HMSPrebuilt 
-                    token={hmsProps.token}
-                    roomCode={hmsProps.roomCode}
-                    options={hmsProps.options}
-                    onLeave={async (data?: any) => {
-                      console.log('👋 [HMS] onLeave callback fired');
-                      console.log('👋 [HMS] Leave data:', data);
-                      setHmsInitializing(false);
-                      setIsLoading(false);
-                      
-                      // Call backend to leave meeting (clears ActiveParticipant table)
-                      try {
-                        if (meetingId) {
-                          console.log('📱 [LEAVE] Calling leave endpoint for meeting:', meetingId);
-                          await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
-                          console.log('✅ [LEAVE] Successfully left meeting via backend');
+                  <View style={[styles.prebuiltWrapper, { paddingBottom: bottomInset }]}>
+                    <HMSPrebuilt 
+                      token={hmsProps.token}
+                      roomCode={hmsProps.roomCode}
+                      options={hmsProps.options}
+                      onLeave={async (data?: any) => {
+                        console.log('👋 [HMS] onLeave callback fired');
+                        console.log('👋 [HMS] Leave data:', data);
+                        setHmsInitializing(false);
+                        setIsLoading(false);
+                        
+                        // Call backend to leave meeting (clears ActiveParticipant table)
+                        try {
+                          if (meetingId) {
+                            console.log('📱 [LEAVE] Calling leave endpoint for meeting:', meetingId);
+                            await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
+                            console.log('✅ [LEAVE] Successfully left meeting via backend');
+                          }
+                        } catch (error: any) {
+                          // Log error but don't block navigation - user is leaving anyway
+                          console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
+                          console.error('⚠️ [LEAVE] Continuing with navigation despite error');
                         }
-                      } catch (error: any) {
-                        // Log error but don't block navigation - user is leaving anyway
-                        console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
-                        console.error('⚠️ [LEAVE] Continuing with navigation despite error');
-                      }
-                      
-                      // Navigate back regardless of API call result
-                      router.back();
-                    }}
-                    style={hmsProps.style}
-                    // Note: React Native HMSPrebuilt does NOT support onJoin callback
-                    // The component will automatically join when mounted with valid token/roomCode
-                    // We use a timeout to detect if join fails silently
-                  />
+                        
+                        // Navigate back regardless of API call result
+                        router.back();
+                      }}
+                      style={hmsProps.style}
+                      // Note: React Native HMSPrebuilt does NOT support onJoin callback
+                      // The component will automatically join when mounted with valid token/roomCode
+                      // We use a timeout to detect if join fails silently
+                    />
+                  </View>
                 )}
               </HMSErrorBoundary>
             </>
@@ -1157,6 +1164,9 @@ const styles = StyleSheet.create({
   backButtonText: {
     color: '#fff',
     fontSize: 16,
+  },
+  prebuiltWrapper: {
+    flex: 1,
   },
   prebuiltContainer: {
     flex: 1,
