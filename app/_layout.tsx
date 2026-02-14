@@ -41,7 +41,7 @@ import PersistentBottomNavigation from './components/PersistentBottomNavigation'
 import SoftStoreUpdateBanner from './components/SoftStoreUpdateBanner';
 import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
-import { getNotificationScreen, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
+import { getNotificationScreen, parseNotificationPath, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
 
 // Prevent the splash screen from auto-hiding (ignore if native splash not ready yet)
 SplashScreen.preventAutoHideAsync().catch((err) => {
@@ -111,12 +111,18 @@ function RootLayoutNav() {
   }, [user, appLockEnabled, router]);
 
   // When user taps a push notification, open the right screen (all 8 backend notification types)
+  // Use pathname + params so Expo Router receives params correctly (string with ? can lead to error page)
   useEffect(() => {
     pushNotificationService.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data || {};
       const path = getNotificationScreen(data);
       try {
-        router.push(path as any);
+        const { pathname, params } = parseNotificationPath(path);
+        if (params && Object.keys(params).length > 0) {
+          router.push({ pathname, params } as any);
+        } else {
+          router.push(pathname as any);
+        }
       } catch {
         router.push('/notifications');
       }

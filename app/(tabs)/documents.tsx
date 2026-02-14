@@ -613,10 +613,7 @@ export default function QuickFilesScreen() {
       // If forms filter is selected, load recent forms instead of documents
       if (filterBy === 'forms') {
         try {
-          console.log('📝 Loading recent forms for user...');
-          // Use API client's built-in timeout (30 seconds) instead of creating artificial timeout
           response = await apiClient.getForms();
-          console.log('✅ Forms response:', response);
         } catch (err) {
           console.error('Forms endpoint failed:', err);
           throw err;
@@ -624,9 +621,7 @@ export default function QuickFilesScreen() {
       } else if (workspaceId != null) {
         // Workspace context: show only files shared within this workspace (same as web)
         try {
-          console.log('📁 Loading workspace files for workspaceId:', workspaceId);
           response = await apiClient.getWorkspaceFiles(workspaceId);
-          console.log('📁 Workspace files response:', response?.success, 'Files count:', (response as any)?.files?.length ?? (response as any)?.data?.length ?? 0);
         } catch (err) {
           console.error('Workspace files endpoint failed:', err);
           throw err;

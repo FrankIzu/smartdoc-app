@@ -120,7 +120,6 @@ function DashboardScreen() {
       
       // Set a timeout to automatically reset upload state after 30 seconds
       const timeout = setTimeout(() => {
-        console.log('⏰ Upload timeout reached, resetting upload state');
         setIsUploading(false);
         setUploadTimeout(null);
       }, 30000);
@@ -140,7 +139,6 @@ function DashboardScreen() {
     
     // Check if user is authenticated before making API calls
     if (!isAuthenticated || !user) {
-      console.log('⚠️ User not authenticated, skipping API calls');
       setLoading(false);
       return;
     }
@@ -178,8 +176,6 @@ function DashboardScreen() {
       }
       
       if (!connectivityTest.success) {
-        // console.error('❌ Dashboard connectivity test failed:', connectivityTest);
-        console.log('⚠️ Using fallback data due to connectivity issues');
         // Set fallback data for development
         setStats({
           totalDocuments: 5,
@@ -293,8 +289,8 @@ function DashboardScreen() {
               };
             });
           }
-        } catch (apiError) {
-          console.log('📈 Recent activities API not available, falling back to files:', apiError);
+        } catch {
+          // Recent activities API not available, fallback to files below
         }
 
         // Also load recent files to include uploads and workspace shares
@@ -386,7 +382,6 @@ function DashboardScreen() {
     // Wait for both to complete in parallel
     await Promise.all([statsPromise, activitiesPromise]);
     const loadTime = Date.now() - startTime;
-    console.log(`📊 Dashboard loaded in ${loadTime}ms (stats and activities in parallel)`);
 
     // Bell count excludes chat messages (chat has its own in-conversation UX)
     try {
@@ -718,7 +713,6 @@ function DashboardScreen() {
   };
 
   const handleTestProgress = () => {
-    console.log('🧪 Testing global progress bar...');
     const progressStore = useProgressStore.getState();
     const taskId = `test_${Date.now()}`;
     const fileName = 'test-file.pdf';

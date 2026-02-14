@@ -34,27 +34,21 @@ import { secureStorage } from '../utils/storage';
 let Pdf: any = null;
 const isExpoGo = Constants.appOwnership === 'expo';
 
-// Log environment detection for debugging
-console.log('📱 PDF Viewer Environment:', {
-  platform: Platform.OS,
-  appOwnership: Constants.appOwnership,
-  isExpoGo,
-  executionEnvironment: Constants.executionEnvironment,
-});
+// Log environment detection for debugging (uncomment if needed):
+// console.log('📱 PDF Viewer Environment:', { platform: Platform.OS, appOwnership: Constants.appOwnership, isExpoGo, executionEnvironment: Constants.executionEnvironment });
 
 if (!isExpoGo && Platform.OS !== 'web') {
   try {
     Pdf = require('react-native-pdf').default;
-    console.log('✅ Native PDF viewer (react-native-pdf) loaded successfully');
   } catch (error: any) {
     // Native module not available - will fall back to external opening or WebView
     console.warn('⚠️ react-native-pdf not available:', error?.message || error);
     console.warn('📱 Will use fallback for PDF viewing (WebView or external opening)');
   }
 } else if (isExpoGo) {
-  console.log('ℹ️ Running in Expo Go - native PDF viewer not available (requires dev/prod build)');
+  // Native PDF not available in Expo Go
 } else if (Platform.OS === 'web') {
-  console.log('ℹ️ Running on web - native PDF viewer not available');
+  // Native PDF not available on web
 }
 
 interface DocumentViewerProps {

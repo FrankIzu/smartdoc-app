@@ -94,7 +94,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkSession = async () => {
     try {
       const userData = await secureStorage.getItem('user');
-      console.log('🔍 Checking stored user data:', userData);
       if (userData) {
         // Verify session with backend before setting user
         try {
@@ -102,11 +101,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (response.success && response.data) {
             // Backend confirms authentication, use stored user data
             const parsedUser = JSON.parse(userData);
-            console.log('✅ Restoring user from storage:', parsedUser);
             setUser(parsedUser);
           } else {
-            // Backend says not authenticated, clear stored data
-            console.log('🔄 Backend auth check failed, clearing stored user');
             await forceReset();
           }
         } catch (error) {

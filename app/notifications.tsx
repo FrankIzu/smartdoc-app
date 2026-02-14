@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiClient } from '../services/api';
-import { getNotificationScreen } from './services/pushNotifications';
+import { getNotificationScreen, parseNotificationPath } from './services/pushNotifications';
 import { AnimatedHeaderContainer } from './components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from './components/TapToToggleHeaderView';
 import { useAuth } from './context/auth';
@@ -131,7 +131,12 @@ export default function NotificationsScreen() {
           : getNotificationScreen({ type: n.type, ...(n.metadata || {}) });
       if (path !== '/notifications') {
         try {
-          router.push(path as any);
+          const { pathname, params } = parseNotificationPath(path);
+          if (params && Object.keys(params).length > 0) {
+            router.push({ pathname, params } as any);
+          } else {
+            router.push(pathname as any);
+          }
         } catch {
           router.push('/notifications' as any);
         }

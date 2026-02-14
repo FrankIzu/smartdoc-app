@@ -18,10 +18,8 @@ export const API_BASE_URL = (() => {
     // Ensure HTTPS for production URLs (not localhost)
     let finalUrl = envApiUrl;
     if (finalUrl.includes('api.grabdocs.com') && !finalUrl.startsWith('https://')) {
-      console.warn('⚠️ API URL from env var is not HTTPS, forcing HTTPS:', finalUrl);
       finalUrl = finalUrl.replace(/^http:\/\//, 'https://');
     }
-    console.log('📍 API URL: Using environment variable:', finalUrl);
     return finalUrl;
   }
   
@@ -35,34 +33,18 @@ export const API_BASE_URL = (() => {
   const isExpoGo = appOwnership === 'expo';
   // For standalone apps, appOwnership can be 'standalone', null, or undefined
   // Any value that's not 'expo' means it's a standalone app
-  
-  console.log('📍 API URL Detection:', {
-    platform: Platform.OS,
-    isWeb,
-    appOwnership: appOwnership,
-    isExpoGo,
-    isStandalone: !isExpoGo,
-    __DEV__,
-    envApiUrl: envApiUrl || '(not set)',
-    expoConstants: {
-      appOwnership: Constants.appOwnership,
-      executionEnvironment: Constants.executionEnvironment,
-    }
-  });
-  
+
   // For web platform in development, use localhost (requires CORS configuration on backend)
   if (isWeb && __DEV__) {
-    console.log('📍 API URL: Using localhost (Web platform in development)');
     return 'http://localhost:5000'; // Local development - backend must allow CORS from http://localhost:8081
   }
-  
+
   // Only use localhost when explicitly running in Expo Go
   // For dev builds installed on device, appOwnership should be 'standalone' or null
   if (isExpoGo) {
-    console.log('📍 API URL: Using localhost (Expo Go detected)');
     return LOCAL_DEV_URL; // Local development
   }
-  
+
   // 4. For standalone apps (dev builds or production builds), ALWAYS use production
   // This includes:
   // - Dev builds installed on physical devices (appOwnership: 'standalone' or null)
@@ -72,13 +54,6 @@ export const API_BASE_URL = (() => {
   // and should ALWAYS use production backend unless explicitly overridden
   // CRITICAL: Always use HTTPS for production - iOS requires it
   const productionUrl = 'https://api.grabdocs.com';
-  
-  if (Platform.OS === 'ios' && !isExpoGo) {
-    console.log('📍 API URL: Using production HTTPS (iOS standalone app detected):', productionUrl);
-    return productionUrl; // Production Render backend - MUST be HTTPS
-  }
-  
-  console.log('📍 API URL: Using production HTTPS (Standalone app detected):', productionUrl);
   return productionUrl; // Production Render backend - MUST be HTTPS
 })();
 

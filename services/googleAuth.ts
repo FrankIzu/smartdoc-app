@@ -87,12 +87,6 @@ class GoogleAuthService {
     };
 
     // Log so you can verify in Google Console: same client ID must have this redirect URI
-    const cid = this.config.clientId || '';
-    const clientIdSuffix = cid ? `${cid.slice(0, 20)}...${cid.slice(-15)}` : 'MISSING';
-    console.log('Google Auth redirect URI:', this.config.redirectUri);
-    console.log('Google Auth client ID (suffix):', clientIdSuffix);
-    console.log('Google Auth environment:', __DEV__ ? 'Development' : 'Production');
-    
     // Only initialize on client-side (avoid SSR issues)
     if (Platform.OS !== 'web' || typeof window !== 'undefined') {
       this.initializeAuth();
@@ -103,7 +97,6 @@ class GoogleAuthService {
     try {
       // Only proceed if we're in a proper client environment
       if (Platform.OS === 'web' && typeof window === 'undefined') {
-        console.log('Skipping Google Auth initialization on server-side');
         return;
       }
 
@@ -125,8 +118,6 @@ class GoogleAuthService {
           access_type: 'offline',
         },
       });
-
-      console.log('Google Auth initialized with redirect URI:', this.config.redirectUri);
     } catch (error) {
       console.error('Failed to initialize Google Auth:', error);
     }

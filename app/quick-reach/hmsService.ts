@@ -1,6 +1,5 @@
 // HMS package temporarily disabled for deployment
 // All HMS functionality is handled via backend API calls
-console.log('📱 HMS module temporarily disabled for deployment');
 
 import { HMSAuthTokenRequest, hmsBackendService } from './hmsBackendService';
 
@@ -21,7 +20,6 @@ const HMS_CONFIG = {
 
 // Note: HMS credentials are managed by the backend (manager-francis/.env)
 // Mobile app authenticates via backend API calls, not direct HMS credentials
-console.log('📱 HMS Service: Credentials managed by backend (manager-francis/.env)');
 
 export interface HMSMeetingConfig {
   roomCode: string;

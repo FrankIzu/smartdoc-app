@@ -449,6 +449,31 @@ export function getNotificationScreen(data: Record<string, any>): string {
   }
 }
 
+/**
+ * Parse a path string (optionally with ?key=value) into pathname + params for Expo Router.
+ * Expo Router expects router.push({ pathname, params }) for params; string with ? can fail and show error page.
+ */
+export function parseNotificationPath(path: string): { pathname: string; params?: Record<string, string> } {
+  const i = path.indexOf('?');
+  if (i < 0) return { pathname: path };
+  const pathname = path.slice(0, i).trim() || path;
+  const search = path.slice(i + 1).trim();
+  if (!search) return { pathname };
+  const params: Record<string, string> = {};
+  for (const part of search.split('&')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    try {
+      const key = decodeURIComponent(part.slice(0, eq).trim());
+      const value = decodeURIComponent(part.slice(eq + 1));
+      if (key) params[key] = value;
+    } catch {
+      // skip malformed segment
+    }
+  }
+  return Object.keys(params).length ? { pathname, params } : { pathname };
+}
+
 // Helper function to handle navigation from notifications (for navigator-based usage)
 export function handleNotificationNavigation(
   data: Record<string, any>,

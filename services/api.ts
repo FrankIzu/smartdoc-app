@@ -239,17 +239,7 @@ class ApiService {
       console.error('🚨 CRITICAL: API_BASE_URL is not HTTPS! Forcing HTTPS:', validatedBaseURL);
       validatedBaseURL = validatedBaseURL.replace(/^http:\/\//, 'https://');
     }
-    
-    console.log('🔧 API Service Platform Config:', {
-      platformOS: Platform.OS,
-      isExpoGo,
-      appOwnership: Constants.appOwnership,
-      platformHeader,
-      baseURL: validatedBaseURL,
-      originalBaseURL: API_BASE_URL,
-      isHTTPS: validatedBaseURL.startsWith('https://'),
-    });
-    
+
     // CRITICAL: Add X-Forwarded-Proto header for production HTTPS requests
     // This helps backend detect original HTTPS even if proxy forwards as HTTP
     const defaultHeaders: Record<string, string> = {
@@ -298,16 +288,10 @@ class ApiService {
           const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
           if (token) {
             config.headers.Authorization = `Bearer ${token}`;
-            console.log('🔐 Adding auth token to request:', token.substring(0, 20) + '...');
-          } else {
-            console.log('🔐 No auth token found in storage');
           }
-          
-          // Include device token for trusted device verification (especially for login requests)
           const deviceToken = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TOKEN);
           if (deviceToken) {
             config.headers['X-Device-Token'] = deviceToken;
-            console.log('🔐 Adding device token to request');
           }
         } catch (error) {
           console.warn('Failed to get auth token:', error);
@@ -323,24 +307,15 @@ class ApiService {
         // CRITICAL: For FormData in React Native, remove Content-Type header if manually set
         // React Native FormData needs to set Content-Type with boundary automatically
         if (config.data instanceof FormData && config.headers['Content-Type']) {
-          console.log('⚠️ Removing manually set Content-Type for FormData - React Native will set it with boundary');
           delete config.headers['Content-Type'];
         }
-        
-        // Log request details for debugging - show full URL
-        const fullRequestUrl = (config.baseURL || '') + (config.url || '');
-        console.log('🌐 API Request:', {
-          method: config.method?.toUpperCase(),
-          url: fullRequestUrl,
-          baseURL: config.baseURL,
-          endpoint: config.url,
-          isHTTPS: fullRequestUrl.startsWith('https://'),
-          hasForwardedProto: !!config.headers['X-Forwarded-Proto'],
-          forwardedProto: config.headers['X-Forwarded-Proto'],
-          isFormData: config.data instanceof FormData,
-        });
-        
-        // Log request details for debugging
+
+        // Log request details for debugging (uncomment if needed)
+        // const fullRequestUrl = (config.baseURL || '') + (config.url || '');
+        // console.log('🌐 API Request:', {
+        //   method: config.method?.toUpperCase(),
+        //   url: fullRequestUrl,
+        // });
         // console.log('📡 API Request:', {
         //   url: config.url,
         //   method: config.method,
@@ -374,7 +349,6 @@ class ApiService {
         // });
         
         if (error.response?.status === 401) {
-          console.log('🔐 Clearing auth data due to 401 error');
           await this.clearAuthData();
           this.onSessionExpired?.();
         }
@@ -3035,11 +3009,9 @@ class ApiService {
 
   async getRecentActivities(days = 7, limit = 10): Promise<ApiResponse> {
     try {
-      console.log(`📊 Getting recent activities (${days} days, ${limit} limit)`);
       const response = await this.client.get(MOBILE_ENDPOINTS.ACTIVITY, {
         params: { days, limit }
       });
-      console.log('✅ Recent activities loaded');
       return response.data;
     } catch (error: any) {
       // console.error('❌ Failed to get recent activities:', error);
@@ -3049,11 +3021,9 @@ class ApiService {
 
   async getComprehensiveAnalytics(days = 30): Promise<ApiResponse> {
     try {
-      console.log(`📊 Getting comprehensive analytics (${days} days)`);
       const response = await this.client.get(MOBILE_ENDPOINTS.COMPREHENSIVE, {
         params: { days }
       });
-      console.log('✅ Comprehensive analytics loaded');
       return response.data;
     } catch (error: any) {
       // console.error('❌ Failed to get comprehensive analytics:', error);
@@ -3533,11 +3503,7 @@ class ApiService {
 
   async getFormTemplates(): Promise<ApiResponse> {
     try {
-      console.log('🔄 Attempting to fetch form templates...');
-      
-      // Use proper mobile endpoint that exists in backend
       const response = await this.client.get(MOBILE_ENDPOINTS.FORM_TEMPLATES);
-      console.log('✅ Form templates loaded from mobile endpoint');
       return response.data;
       
     } catch (error: any) {

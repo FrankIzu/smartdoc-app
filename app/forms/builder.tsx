@@ -179,13 +179,7 @@ export default function FormBuilderScreen() {
 
     try {
       setSaving(true);
-      
-      console.log('📝 Creating form with data:', {
-        name: formData.name,
-        fieldsCount: formData.fields.length,
-        fields: formData.fields
-      });
-      
+
       const response = await apiService.createForm({
         name: formData.name,
         title: formData.name,
@@ -197,8 +191,6 @@ export default function FormBuilderScreen() {
         settings: {}
       });
 
-      console.log('📋 Form creation response:', JSON.stringify(response, null, 2));
-
       // Handle different response structures
       const isSuccess = response?.success === true || response?.success === 'true';
       const createdForm = response?.form || response?.data || response;
@@ -206,8 +198,7 @@ export default function FormBuilderScreen() {
       if (isSuccess) {
         const savedFormId = createdForm?.id || createdForm?.form?.id;
         const shareUrl = createdForm?.share_url || createdForm?.form?.share_url;
-        console.log('✅ Form created successfully:', savedFormId);
-        
+
         // Store the form ID and share URL so sharing works immediately
         if (savedFormId) {
           setFormId(typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId));
@@ -220,7 +211,7 @@ export default function FormBuilderScreen() {
           'Success',
           'Form saved successfully!',
           [
-            { text: 'OK', onPress: () => router.back() }
+            { text: 'OK', onPress: () => router.replace('/forms/create?tab=recent') }
           ]
         );
       } else {
@@ -379,7 +370,6 @@ export default function FormBuilderScreen() {
   };
 
   const renderFieldItem = ({ item, index }: { item: FormField; index: number }) => {
-    console.log('Rendering field item:', { id: item.id, label: item.label, type: item.type });
     return (
       <View style={styles.fieldItem}>
         <View style={styles.fieldHeader}>
@@ -440,10 +430,8 @@ export default function FormBuilderScreen() {
     
     setLoadingResponses(true);
     try {
-      console.log('Calling getFormResponses with formId:', parseInt(params.formId as string));
       const response = await apiService.getFormResponses(parseInt(params.formId as string));
-      console.log('Form responses API response:', response);
-      
+
       if (response.success) {
         // Handle different response structures
         let responsesData = [];
@@ -847,10 +835,6 @@ export default function FormBuilderScreen() {
           keyExtractor={(item) => item.id}
           scrollEnabled={false}
         />
-        
-        <TouchableOpacity style={styles.previewSubmitButton}>
-          <Text style={styles.previewSubmitText}>Submit</Text>
-        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -1117,6 +1101,7 @@ interface FieldEditorModalProps {
 }
 
 function FieldEditorModal({ field, visible, onSave, onCancel }: FieldEditorModalProps) {
+  const insets = useSafeAreaInsets();
   const [editingField, setEditingField] = useState<FormField>(field);
 
   useEffect(() => {
@@ -1378,14 +1363,25 @@ const styles = StyleSheet.create({
   footerButton: {
     flex: 1,
     borderRadius: 8,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 8,
   },
   saveButton: {
     backgroundColor: '#007AFF',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: 48,
+    alignSelf: 'stretch',
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   saveButtonDisabled: {
     backgroundColor: '#ccc',
@@ -1570,18 +1566,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000',
     marginLeft: 12,
-  },
-  previewSubmitButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 24,
-  },
-  previewSubmitText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
   },
   // Responses tab styles
   responsesContainer: {

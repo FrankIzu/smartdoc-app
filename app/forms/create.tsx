@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -37,11 +37,12 @@ interface FormField {
 
 export default function CreateFormScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ tab?: string }>();
   const [templates, setTemplates] = useState<FormTemplate[]>([]);
   const [userForms, setUserForms] = useState<Form[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'recent' | 'templates'>('templates');
+  const [activeTab, setActiveTab] = useState<'recent' | 'templates'>(params.tab === 'recent' ? 'recent' : 'templates');
 
   useEffect(() => {
     loadData();
@@ -50,7 +51,6 @@ export default function CreateFormScreen() {
   // Refresh forms list when switching to "My Forms" tab
   useEffect(() => {
     if (activeTab === 'recent') {
-      console.log('🔄 Tab switched to "My Forms", refreshing user forms...');
       loadUserForms();
     }
   }, [activeTab]);
@@ -67,7 +67,6 @@ export default function CreateFormScreen() {
         const now = Date.now();
         if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
           lastLoadTimeRef.current = now;
-          console.log('🔄 Screen focused, refreshing user forms...');
           loadUserForms();
         }
       }
@@ -83,20 +82,14 @@ export default function CreateFormScreen() {
 
   const loadUserForms = async () => {
     try {
-      console.log('🔄 Loading user forms...');
       const response = await apiService.getForms();
-      console.log('📋 API Response:', JSON.stringify(response, null, 2));
-      
       if (response.success && response.forms) {
-        console.log('✅ Loaded user forms:', response.forms.length);
-        console.log('📝 Forms data:', response.forms);
         setUserForms(response.forms);
       } else {
-        console.log('❌ No user forms found:', response);
         setUserForms([]);
       }
     } catch (error) {
-      console.error('❌ Failed to load user forms:', error);
+      console.error('Failed to load user forms:', error);
       setUserForms([]);
     }
   };
@@ -314,11 +307,8 @@ export default function CreateFormScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              console.log('🗑️ Deleting form:', form.id);
               const response = await apiService.deleteForm(form.id);
-              
               if (response.success) {
-                console.log('✅ Form deleted successfully');
                 // Remove from list and refresh
                 setUserForms(prev => prev.filter(f => f.id !== form.id));
                 Alert.alert('Success', 'Form deleted successfully');

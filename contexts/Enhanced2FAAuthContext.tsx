@@ -100,10 +100,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       const userPreferences = await deviceSecurityService.getUserPreferences();
       const riskScore = await deviceSecurityService.calculateRiskScore();
 
-      // Check authentication status
-      console.log('🔍 Checking auth status...');
       const authResult = await checkAuthStatus();
-      console.log('🔍 Auth check result:', authResult);
 
       setAuthState({
         isAuthenticated: authResult.success,
@@ -112,12 +109,6 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         deviceFingerprint,
         userPreferences,
         lastRiskScore: riskScore,
-      });
-
-      console.log('Enhanced 2FA Auth initialized:', {
-        authenticated: authResult.success,
-        riskScore,
-        deviceTrusted: await deviceSecurityService.getDeviceTrust(),
       });
 
     } catch (error) {
@@ -151,11 +142,9 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
             },
           };
         } else {
-          console.log('Auth check successful but no user data found');
           return { success: true, user: null };
         }
       } else {
-        console.log('Auth check returned unsuccessful:', response?.message || 'Unknown error');
         return { success: false, user: null };
       }
     } catch (error: any) {

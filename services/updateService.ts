@@ -53,15 +53,17 @@ function getStoreUrl(data?: AppConfigResponse): string {
   return Platform.OS === 'ios' ? STORE_URLS.ios : STORE_URLS.android;
 }
 
+/**
+ * iOS: only minSupportedVersion (semver) is used; build number is ignored.
+ * Android: minSupportedVersion (semver) and optionally minSupportedVersionCode for stricter control.
+ */
 function isBehindMinVersion(data: AppConfigResponse): boolean {
   const minVer = data.minSupportedVersion?.trim();
   if (minVer && semver.valid(minVer)) {
     const current = getAppVersion();
     if (semver.lt(semver.coerce(current) ?? current, minVer)) return true;
   }
-  if (Platform.OS === 'ios' && data.minSupportedBuildNumber != null) {
-    if (getIosBuildNumber() < data.minSupportedBuildNumber) return true;
-  }
+  // iOS: do not use build number; App Store uses version (minSupportedVersion) only.
   if (Platform.OS === 'android' && data.minSupportedVersionCode != null) {
     if (getAndroidVersionCode() < data.minSupportedVersionCode) return true;
   }
@@ -96,6 +98,7 @@ export async function fetchAppConfig(baseUrl: string = API_BASE_URL): Promise<Ap
 /**
  * Check if the current app is below the backend's minimum supported version.
  * If minSupportedEnforcedAt is set and in the future, return softWarning instead of blocking.
+ * "feature" reason never blocks: user can continue; only security/breaking can force update.
  */
 export async function checkMinVersion(baseUrl: string = API_BASE_URL, config?: AppConfigResponse | null): Promise<MinVersionResult> {
   try {
@@ -106,6 +109,14 @@ export async function checkMinVersion(baseUrl: string = API_BASE_URL, config?: A
     const reason = data.updateReason;
     const message = messageForReason(reason);
     const enforcedAtStr = data.minSupportedEnforcedAt?.trim();
+
+    // "feature" = new version available but do not block; show soft warning only so user can continue
+    if (reason === 'feature') {
+      return {
+        mustUpdate: false,
+        softWarning: { storeUrl, message, enforcedAt: enforcedAtStr ?? '', updateReason: reason },
+      };
+    }
 
     if (enforcedAtStr) {
       const enforcedAt = new Date(enforcedAtStr).getTime();
