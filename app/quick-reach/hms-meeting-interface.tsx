@@ -1,19 +1,35 @@
 // 100ms Prebuilt Interface Implementation
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
+import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { Component, ErrorInfo, ReactNode, useEffect, useRef, useState } from 'react';
+import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
+import * as Notifications from 'expo-notifications';
+import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
+import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Alert, Linking, Platform, StyleSheet,
+    Alert,
+    AppState,
+    AppStateStatus,
+    BackHandler,
+    Linking,
+    Platform,
+    StyleSheet,
     Text,
     TouchableOpacity,
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import MeetingFloatingBubble from '../components/MeetingFloatingBubble';
+import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useAuth } from '../context/auth';
 import { hmsBackendService } from './hmsBackendService';
+
+const HINT_KEY = 'reach_meeting_minimized_hint_seen';
+const AUTO_EXPAND_KEY = 'reach_meeting_auto_expand';
+const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
 
 // HMS package - enabled for local testing
 // All HMS functionality is handled via backend API calls
@@ -113,6 +129,16 @@ export default function HMSMeetingInterfaceScreen() {
   const [joinConfig, setJoinConfig] = useState<any>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingNotificationShownRef = useRef(false);
+
+  // Minimize-to-bubble: when user hits back or switches app, show floating bubble instead of leaving
+  const [isMinimized, setIsMinimized] = useState(false);
+  const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationDisplayedRef = useRef(false);
+
+  // Bubble: meeting start time for duration display; local mute state (HMS SDK doesn't expose mute in prebuilt)
+  const [meetingStartTime, setMeetingStartTime] = useState<string | undefined>(undefined);
+  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
 
   // Debug logging
       console.log('📱 GrabDocs Meeting Interface - Received params:', {
@@ -360,6 +386,37 @@ export default function HMSMeetingInterfaceScreen() {
     };
   }, [roomId]);
 
+  // Poll recording status - notify user when recording starts (mobile doesn't have websocket for real-time)
+  useEffect(() => {
+    if (!roomId || Platform.OS === 'web') return;
+
+    const RECORDING_POLL_INTERVAL = 6000; // 6 seconds
+
+    const checkRecording = async () => {
+      try {
+        const response = await apiClient.client.get(
+          `/api/v1/video/room/${roomId}/recording-status`,
+          { withCredentials: true }
+        );
+        if (response.data?.is_recording && !recordingNotificationShownRef.current) {
+          recordingNotificationShownRef.current = true;
+          const roomName = response.data?.room_name || 'This meeting';
+          Alert.alert(
+            'Recording Started',
+            `${roomName} is now being recorded. By staying, you consent to being recorded.`,
+            [{ text: 'OK' }]
+          );
+        }
+      } catch {
+        // Silently fail - recording status is non-critical
+      }
+    };
+
+    checkRecording(); // Check immediately
+    const interval = setInterval(checkRecording, RECORDING_POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, [roomId]);
+
   // Cleanup heartbeat and call leave endpoint on component unmount (e.g., user navigates away)
   useEffect(() => {
     return () => {
@@ -370,6 +427,14 @@ export default function HMSMeetingInterfaceScreen() {
         console.log('💓 [HEARTBEAT] Cleaned up heartbeat on unmount');
       }
 
+      // Dismiss meeting notification on unmount
+      if (Platform.OS === 'android') {
+        Notifications.dismissNotificationAsync(MEETING_NOTIFICATION_ID).catch(() => {});
+      }
+
+      // Deactivate keep-awake
+      deactivateKeepAwake();
+
       // Call leave endpoint if we have meetingId (async, don't await - component is unmounting)
       if (meetingId && user) {
         apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`).catch((error) => {
@@ -379,6 +444,134 @@ export default function HMSMeetingInterfaceScreen() {
       }
     };
   }, [meetingId, user]);
+
+  // Minimize-to-bubble: helper to minimize with haptic, hint, notification
+  const minimizeToBubble = useCallback(async () => {
+    setIsMinimized(true);
+    try {
+      if (Platform.OS !== 'web') {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (_) {}
+    try {
+      const seen = await AsyncStorage.getItem(HINT_KEY);
+      if (!seen) {
+        Alert.alert(
+          "You're still in the meeting",
+          "Tap the bubble to return to the meeting.",
+          [{ text: 'OK' }]
+        );
+        await AsyncStorage.setItem(HINT_KEY, '1');
+      }
+    } catch (_) {}
+    if (Platform.OS === 'android') {
+      try {
+        await Notifications.setNotificationChannelAsync('meeting', {
+          name: 'Meeting',
+          importance: Notifications.AndroidImportance.HIGH,
+        });
+        await Notifications.scheduleNotificationAsync({
+          identifier: MEETING_NOTIFICATION_ID,
+          content: {
+            title: 'In GrabDocs meeting',
+            body: 'Tap to return',
+            data: { type: 'meeting_minimized' },
+          },
+          trigger: null,
+          channelId: 'meeting',
+        });
+        notificationDisplayedRef.current = true;
+      } catch (err) {
+        console.warn('⚠️ [BUBBLE] Could not show notification:', err);
+      }
+    }
+  }, []);
+
+  // Minimize-to-bubble: Android back button
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !authToken || !meetingId) return;
+    const handler = () => {
+      minimizeToBubble();
+      return true;
+    };
+    BackHandler.addEventListener('hardwareBackPress', handler);
+    return () => BackHandler.removeEventListener('hardwareBackPress', handler);
+  }, [authToken, meetingId, minimizeToBubble]);
+
+  // Minimize-to-bubble: Expo Router / React Navigation back (header back, iOS swipe)
+  const navigation = useNavigation();
+  useEffect(() => {
+    if (!authToken || !meetingId) return;
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (!isMinimized) {
+        e.preventDefault();
+        minimizeToBubble();
+      }
+    });
+    return unsubscribe;
+  }, [navigation, authToken, meetingId, isMinimized, minimizeToBubble]);
+
+  // Minimize-to-bubble: App switch (background/inactive -> minimize; active -> auto-expand)
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        if (authToken && meetingId) {
+          minimizeToBubble();
+        }
+        if (autoExpandTimerRef.current) {
+          clearTimeout(autoExpandTimerRef.current);
+          autoExpandTimerRef.current = null;
+        }
+      } else if (nextState === 'active') {
+        if (Platform.OS === 'android' && notificationDisplayedRef.current) {
+          Notifications.dismissNotificationAsync(MEETING_NOTIFICATION_ID).catch(() => {});
+          notificationDisplayedRef.current = false;
+        }
+        if (isMinimized) {
+          const doAutoExpand = async () => {
+            try {
+              const val = await AsyncStorage.getItem(AUTO_EXPAND_KEY);
+              if (val === 'false') return;
+            } catch (_) {}
+            autoExpandTimerRef.current = setTimeout(() => {
+              setIsMinimized(false);
+              autoExpandTimerRef.current = null;
+            }, 1000);
+          };
+          doAutoExpand();
+        }
+      }
+    };
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      sub.remove();
+      if (autoExpandTimerRef.current) {
+        clearTimeout(autoExpandTimerRef.current);
+      }
+    };
+  }, [authToken, meetingId, isMinimized, minimizeToBubble]);
+
+  // Screen wake lock: activate when in full meeting, deactivate when minimized
+  useEffect(() => {
+    if (authToken && meetingId && !isMinimized) {
+      activateKeepAwake();
+    } else {
+      deactivateKeepAwake();
+    }
+    return () => deactivateKeepAwake();
+  }, [authToken, meetingId, isMinimized]);
+
+  // When user taps the "In meeting" notification, expand
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.type === 'meeting_minimized') {
+        setIsMinimized(false);
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   const initializePrebuiltInterface = async () => {
     try {
@@ -428,7 +621,8 @@ export default function HMSMeetingInterfaceScreen() {
         }
         
         setAuthToken(token);
-        
+        setMeetingStartTime(new Date().toISOString());
+
         // HARD LOGGING - Right before joining (as suggested by ChatGPT)
         const displayUserName = (userName as string) || user?.name || 'Mobile User';
         const joinConfigData = {
@@ -872,8 +1066,42 @@ export default function HMSMeetingInterfaceScreen() {
         console.log('📋 [HMS] Join Config:', JSON.stringify(joinConfig, null, 2));
       }
       
+      const displayUserName = (userName as string) || user?.name || 'Mobile User';
+      const meetingTitleStr = (title as string) || undefined;
+
       return (
-        <SafeAreaView style={styles.container}>
+        <>
+          {/* Play sound when someone joins - only when HMS is available (not Expo Go) */}
+          {HMSPrebuilt && (
+            <MeetingJoinSound enabled={!!authToken && !!meetingId} />
+          )}
+          {isMinimized && (
+            <MeetingFloatingBubble
+              participantName={displayUserName}
+              onExpand={() => setIsMinimized(false)}
+              onLeave={handleLeaveMeeting}
+              meetingTitle={meetingTitleStr}
+              meetingStartTime={meetingStartTime}
+              isAudioEnabled={isAudioEnabled}
+              onToggleMute={() => setIsAudioEnabled((prev) => !prev)}
+            />
+          )}
+          <SafeAreaView style={styles.container}>
+            <View
+              style={
+                isMinimized
+                  ? {
+                      opacity: 0,
+                      position: 'absolute' as const,
+                      left: 0,
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      pointerEvents: 'none' as const,
+                    }
+                  : undefined
+              }
+            >
           {hmsError || hmsInitTimeout ? (
             <View style={styles.errorContainer}>
               <Text style={styles.errorTitle}>HMS Error</Text>
@@ -1020,7 +1248,9 @@ export default function HMSMeetingInterfaceScreen() {
               </HMSErrorBoundary>
             </>
           )}
+            </View>
         </SafeAreaView>
+        </>
       );
     } catch (renderError: any) {
       console.error('📱 Error rendering HMSPrebuilt:', renderError);
