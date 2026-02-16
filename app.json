@@ -133,6 +133,7 @@
     },
     "plugins": [
       "./plugins/android-pip",
+      "./plugins/ios-pip",
       "expo-dev-client",
       "expo-router",
       "expo-web-browser",

@@ -513,8 +513,8 @@ export default function HMSMeetingInterfaceScreen() {
   }, [navigation, authToken, meetingId, isMinimized, minimizeToBubble]);
 
   // Minimize-to-bubble: App switch (background/inactive -> minimize; active -> auto-expand)
-  // When PiP is enabled on Android, do NOT call minimizeToBubble on background so the activity can enter PiP
-  const pipEnabled = Platform.OS === 'android';
+  // When PiP is enabled (Android and iOS), do NOT call minimizeToBubble on background so the activity can enter PiP
+  const pipEnabled = Platform.OS !== 'web';
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
@@ -1219,7 +1219,7 @@ export default function HMSMeetingInterfaceScreen() {
                       token={hmsProps.token}
                       roomCode={hmsProps.roomCode}
                       options={hmsProps.options}
-                      autoEnterPipMode={Platform.OS === 'android'}
+                      autoEnterPipMode={Platform.OS !== 'web'}
                       onLeave={async (data?: any) => {
                         console.log('👋 [HMS] onLeave callback fired');
                         console.log('👋 [HMS] Leave data:', data);
