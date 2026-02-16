@@ -499,12 +499,13 @@ export default function HMSMeetingInterfaceScreen() {
   }, [authToken, meetingId, minimizeToBubble]);
 
   // Minimize-to-bubble: Expo Router / React Navigation back (header back, iOS swipe)
+  // Always prevent leaving the meeting screen via back; show bubble until user taps Expand or Leave
   const navigation = useNavigation();
   useEffect(() => {
     if (!authToken || !meetingId) return;
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      e.preventDefault();
       if (!isMinimized) {
-        e.preventDefault();
         minimizeToBubble();
       }
     });
@@ -512,10 +513,12 @@ export default function HMSMeetingInterfaceScreen() {
   }, [navigation, authToken, meetingId, isMinimized, minimizeToBubble]);
 
   // Minimize-to-bubble: App switch (background/inactive -> minimize; active -> auto-expand)
+  // When PiP is enabled on Android, do NOT call minimizeToBubble on background so the activity can enter PiP
+  const pipEnabled = Platform.OS === 'android';
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
-        if (authToken && meetingId) {
+        if (authToken && meetingId && !pipEnabled) {
           minimizeToBubble();
         }
         if (autoExpandTimerRef.current) {
@@ -549,7 +552,7 @@ export default function HMSMeetingInterfaceScreen() {
         clearTimeout(autoExpandTimerRef.current);
       }
     };
-  }, [authToken, meetingId, isMinimized, minimizeToBubble]);
+  }, [authToken, meetingId, isMinimized, minimizeToBubble, pipEnabled]);
 
   // Screen wake lock: activate when in full meeting, deactivate when minimized
   useEffect(() => {
@@ -1216,6 +1219,7 @@ export default function HMSMeetingInterfaceScreen() {
                       token={hmsProps.token}
                       roomCode={hmsProps.roomCode}
                       options={hmsProps.options}
+                      autoEnterPipMode={Platform.OS === 'android'}
                       onLeave={async (data?: any) => {
                         console.log('👋 [HMS] onLeave callback fired');
                         console.log('👋 [HMS] Leave data:', data);

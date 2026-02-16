@@ -54,7 +54,7 @@
     },
     "android": {
       "package": "com.grabdocs.mobile",
-      "versionCode": 40,
+      "versionCode": 41,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
         "backgroundColor": "#ffffff",
@@ -132,6 +132,7 @@
       "favicon": "./assets/images/grabdocs-brand-app-images/favicon/favicon-48x48.png"
     },
     "plugins": [
+      "./plugins/android-pip",
       "expo-dev-client",
       "expo-router",
       "expo-web-browser",

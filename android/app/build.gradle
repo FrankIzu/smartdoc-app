@@ -104,7 +104,7 @@ android {
         applicationId 'com.grabdocs.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 40
+        versionCode 41
         versionName "1.0.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
@@ -192,6 +192,7 @@ dependencies {
         implementation jscFlavor
     }
 }
+
 
 
 

@@ -60,8 +60,19 @@ export default function MeetingFloatingBubble({
   const duration = useMeetingDuration(meetingStartTime);
   const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [positionLoaded, setPositionLoaded] = useState(false);
+  const getDefaultPosition = useCallback(() => {
+    const bottomInset = Platform.OS === 'ios' ? insets.bottom : 0;
+    const rightInset = Platform.OS === 'ios' ? insets.right : 0;
+    return {
+      x: screenWidth - BUBBLE_WIDTH - DEFAULT_OFFSET - rightInset,
+      y: screenHeight - BUBBLE_HEIGHT - DEFAULT_OFFSET - bottomInset,
+    };
+  }, [screenWidth, screenHeight, insets.bottom, insets.right]);
+
+  const [position, setPosition] = useState(() => {
+    const { width: w, height: h } = Dimensions.get('window');
+    return { x: Math.max(0, w - BUBBLE_WIDTH - DEFAULT_OFFSET), y: Math.max(0, h - BUBBLE_HEIGHT - DEFAULT_OFFSET) };
+  });
   const didDragRef = useRef(false);
   const positionRef = useRef({ x: 0, y: 0 });
 
@@ -79,25 +90,14 @@ export default function MeetingFloatingBubble({
           const { x, y } = JSON.parse(stored);
           setPosition({ x: Number(x), y: Number(y) });
         } else {
-          const bottomInset = Platform.OS === 'ios' ? insets.bottom : 0;
-          const rightInset = Platform.OS === 'ios' ? insets.right : 0;
-          setPosition({
-            x: screenWidth - BUBBLE_WIDTH - DEFAULT_OFFSET - rightInset,
-            y: screenHeight - BUBBLE_HEIGHT - DEFAULT_OFFSET - bottomInset,
-          });
+          setPosition(getDefaultPosition());
         }
       } catch (_) {
-        const bottomInset = Platform.OS === 'ios' ? insets.bottom : 0;
-        const rightInset = Platform.OS === 'ios' ? insets.right : 0;
-        setPosition({
-          x: screenWidth - BUBBLE_WIDTH - DEFAULT_OFFSET - rightInset,
-          y: screenHeight - BUBBLE_HEIGHT - DEFAULT_OFFSET - bottomInset,
-        });
+        setPosition(getDefaultPosition());
       }
-      setPositionLoaded(true);
     };
     loadPosition();
-  }, [screenWidth, screenHeight, insets.bottom, insets.right]);
+  }, [getDefaultPosition]);
 
   const persistPosition = useCallback(async (x: number, y: number) => {
     setPosition({ x, y });
@@ -180,8 +180,6 @@ export default function MeetingFloatingBubble({
     },
     [onToggleMute]
   );
-
-  if (!positionLoaded) return null;
 
   return (
     <>
