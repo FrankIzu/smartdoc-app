@@ -112,10 +112,14 @@ class HMSErrorBoundary extends Component<
 // Minimal bottom inset for Android so prebuilt toolbar clears system nav (kept small to avoid moving UI up too much)
 const ANDROID_NAV_INSET = 24;
 
+const DEFAULT_RETURN_TO = '/quick-reach';
+
 export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const params = useLocalSearchParams();
-  const { meetingId, title, userName } = params;
+  const { meetingId, title, userName, returnTo } = params;
+  const returnPath = (returnTo && typeof returnTo === 'string') ? String(returnTo) : DEFAULT_RETURN_TO;
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
@@ -271,17 +275,16 @@ export default function HMSMeetingInterfaceScreen() {
   // Timeout to detect if HMS gets stuck (black screen issue)
   // Since React Native HMSPrebuilt doesn't have onJoin callback,
   // we use a two-stage timeout:
-  // 1. After 5 seconds, assume join is in progress and hide loading overlay
-  // 2. After 20 seconds, if still initializing, show error
+  // 1. After 2s, hide loading overlay so preview (Get Started / audio-video setup) is visible
+  // 2. After 20s, if still initializing, show error
   useEffect(() => {
     if (hmsInitializing && authToken) {
-      // Stage 1: Clear loading overlay after 5 seconds (assuming join is in progress)
+      // Stage 1: Clear loading overlay after 2s so user sees preview screen (audio/video controls, name)
       const successTimeoutId = setTimeout(() => {
-        console.log('✅ [HMS] Assuming join successful after 5 seconds (HMSPrebuilt should be rendering)');
+        console.log('✅ [HMS] Hiding overlay so preview screen is visible');
         setHmsInitializing(false); // Clear loading overlay
         setIsLoading(false);
-        // Don't set error - component should be rendering by now
-      }, 5000); // 5 seconds - enough time for HMS to start joining
+      }, 2000);
       
       // Stage 2: Error timeout after 20 seconds
       const errorTimeoutId = setTimeout(() => {
@@ -496,30 +499,32 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, [meetingId, title, userName]);
 
-  // Minimize-to-bubble: Android back button
+  // Back returns to the rest of the app: show in-app bubble and push return screen (call stays connected)
+  const goBackToApp = useCallback(() => {
+    minimizeToBubble();
+    router.push(returnPath as any);
+  }, [minimizeToBubble, returnPath, router]);
+
   useEffect(() => {
     if (Platform.OS !== 'android' || !authToken || !meetingId) return;
     const handler = () => {
-      minimizeToBubble();
+      goBackToApp();
       return true;
     };
     BackHandler.addEventListener('hardwareBackPress', handler);
     return () => BackHandler.removeEventListener('hardwareBackPress', handler);
-  }, [authToken, meetingId, minimizeToBubble]);
+  }, [authToken, meetingId, goBackToApp]);
 
-  // Minimize-to-bubble: Expo Router / React Navigation back (header back, iOS swipe)
-  // Always prevent leaving the meeting screen via back; show bubble until user taps Expand or Leave
-  const navigation = useNavigation();
   useEffect(() => {
     if (!authToken || !meetingId) return;
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       e.preventDefault();
       if (!isMinimized) {
-        minimizeToBubble();
+        goBackToApp();
       }
     });
     return unsubscribe;
-  }, [navigation, authToken, meetingId, isMinimized, minimizeToBubble]);
+  }, [navigation, authToken, meetingId, isMinimized, goBackToApp]);
 
   // Bubble vs PiP (both iOS and Android):
   // - In-app: back/minimize -> show bubble only (user stays in app).
@@ -1091,7 +1096,10 @@ export default function HMSMeetingInterfaceScreen() {
           {isMinimized && (
             <MeetingFloatingBubble
               participantName={displayUserName}
-              onExpand={() => setIsMinimized(false)}
+              onExpand={() => {
+                router.back();
+                setIsMinimized(false);
+              }}
               onLeave={handleLeaveMeeting}
               meetingTitle={meetingTitleStr}
               meetingStartTime={meetingStartTime}
@@ -1099,9 +1107,9 @@ export default function HMSMeetingInterfaceScreen() {
               onToggleMute={() => setIsAudioEnabled((prev) => !prev)}
             />
           )}
-          <SafeAreaView style={styles.container}>
+          <SafeAreaView style={[styles.container, isMinimized && styles.containerMinimized]}>
             <View
-              style={
+              style={[
                 isMinimized
                   ? {
                       opacity: 0,
@@ -1112,8 +1120,8 @@ export default function HMSMeetingInterfaceScreen() {
                       bottom: 0,
                       pointerEvents: 'none' as const,
                     }
-                  : undefined
-              }
+                  : styles.meetingContentWrapper,
+              ]}
             >
           {hmsError || hmsInitTimeout ? (
             <View style={styles.errorContainer}>
@@ -1354,6 +1362,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
+  containerMinimized: {
+    backgroundColor: '#0d0d0d',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -1409,6 +1420,9 @@ const styles = StyleSheet.create({
   backButtonText: {
     color: '#fff',
     fontSize: 16,
+  },
+  meetingContentWrapper: {
+    flex: 1,
   },
   prebuiltWrapper: {
     flex: 1,

@@ -1,10 +1,12 @@
 package com.grabdocs.mobile
 import expo.modules.splashscreen.SplashScreenManager
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 
 import com.facebook.react.ReactActivity
+import com.reactnativehmssdk.HMSManager
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
@@ -42,6 +44,22 @@ class MainActivity : ReactActivity() {
               mainComponentName,
               fabricEnabled
           ){})
+  }
+
+  // 100ms PiP: when user switches app or goes home, enter Picture-in-Picture so meeting stays visible
+  override fun onUserLeaveHint() {
+    super.onUserLeaveHint()
+    HMSManager.onUserLeaveHint()
+  }
+
+  override fun onResume() {
+    super.onResume()
+    HMSManager.onResume()
+  }
+
+  override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+    super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    HMSManager.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
   }
 
   /**
