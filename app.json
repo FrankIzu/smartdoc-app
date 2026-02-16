@@ -38,6 +38,9 @@
         "NSFaceIDUsageDescription": "GrabDocs uses Face ID for secure and convenient authentication to access your account and documents.",
         "NSBiometricUsageDescription": "GrabDocs uses biometric authentication (Face ID or Touch ID) for secure and convenient access to your account and documents.",
         "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "voip"
+        ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true,
           "NSExceptionDomains": {
@@ -54,7 +57,7 @@
     },
     "android": {
       "package": "com.grabdocs.mobile",
-      "versionCode": 41,
+      "versionCode": 42,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
         "backgroundColor": "#ffffff",

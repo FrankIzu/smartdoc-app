@@ -7,6 +7,7 @@ import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import Toast from 'react-native-toast-message';
 import {
     Alert,
     AppState,
@@ -453,39 +454,47 @@ export default function HMSMeetingInterfaceScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (_) {}
+    // First-time hint: one-time toast when user first minimizes to bubble ("Tap the bubble to return")
     try {
       const seen = await AsyncStorage.getItem(HINT_KEY);
       if (!seen) {
-        Alert.alert(
-          "You're still in the meeting",
-          "Tap the bubble to return to the meeting.",
-          [{ text: 'OK' }]
-        );
+        Toast.show({
+          type: 'info',
+          text1: "You're still in the meeting",
+          text2: 'Tap the bubble to return.',
+          visibilityTime: 4000,
+        });
         await AsyncStorage.setItem(HINT_KEY, '1');
       }
     } catch (_) {}
-    if (Platform.OS === 'android') {
-      try {
+    // "In meeting" notification on both iOS and Android: tap to return to meeting
+    try {
+      if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('meeting', {
           name: 'Meeting',
           importance: Notifications.AndroidImportance.HIGH,
         });
-        await Notifications.scheduleNotificationAsync({
-          identifier: MEETING_NOTIFICATION_ID,
-          content: {
-            title: 'In GrabDocs meeting',
-            body: 'Tap to return',
-            data: { type: 'meeting_minimized' },
-          },
-          trigger: null,
-          channelId: 'meeting',
-        });
-        notificationDisplayedRef.current = true;
-      } catch (err) {
-        console.warn('⚠️ [BUBBLE] Could not show notification:', err);
       }
+      await Notifications.scheduleNotificationAsync({
+        identifier: MEETING_NOTIFICATION_ID,
+        content: {
+          title: 'In GrabDocs meeting',
+          body: 'Tap to return',
+          data: {
+            type: 'meeting_minimized',
+            meetingId: String(meetingId),
+            title: title ? String(title) : undefined,
+            userName: userName ? String(userName) : undefined,
+          },
+        },
+        trigger: null,
+        ...(Platform.OS === 'android' && { channelId: 'meeting' }),
+      });
+      notificationDisplayedRef.current = true;
+    } catch (err) {
+      console.warn('⚠️ [BUBBLE] Could not show notification:', err);
     }
-  }, []);
+  }, [meetingId, title, userName]);
 
   // Minimize-to-bubble: Android back button
   useEffect(() => {
@@ -512,8 +521,9 @@ export default function HMSMeetingInterfaceScreen() {
     return unsubscribe;
   }, [navigation, authToken, meetingId, isMinimized, minimizeToBubble]);
 
-  // Minimize-to-bubble: App switch (background/inactive -> minimize; active -> auto-expand)
-  // When PiP is enabled (Android and iOS), do NOT call minimizeToBubble on background so the activity can enter PiP
+  // Bubble vs PiP (both iOS and Android):
+  // - In-app: back/minimize -> show bubble only (user stays in app).
+  // - App backgrounded: do NOT minimize to bubble; let system PiP take over so meeting shows outside the app.
   const pipEnabled = Platform.OS !== 'web';
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
@@ -526,7 +536,7 @@ export default function HMSMeetingInterfaceScreen() {
           autoExpandTimerRef.current = null;
         }
       } else if (nextState === 'active') {
-        if (Platform.OS === 'android' && notificationDisplayedRef.current) {
+        if (notificationDisplayedRef.current) {
           Notifications.dismissNotificationAsync(MEETING_NOTIFICATION_ID).catch(() => {});
           notificationDisplayedRef.current = false;
         }
@@ -1215,6 +1225,7 @@ export default function HMSMeetingInterfaceScreen() {
                   </View>
                 ) : (
                   <View style={[styles.prebuiltWrapper, { paddingBottom: bottomInset }]}>
+                    {/* PiP: iOS needs app.json UIBackgroundModes ["voip"] + plugins/ios-pip (Multitasking Camera Access); Android uses plugins/android-pip */}
                     <HMSPrebuilt 
                       token={hmsProps.token}
                       roomCode={hmsProps.roomCode}

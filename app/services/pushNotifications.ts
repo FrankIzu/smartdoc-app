@@ -444,6 +444,15 @@ export function getNotificationScreen(data: Record<string, any>): string {
       return '/notifications';
     case 'upload_link_expiring':
       return '/upload-links';
+    case 'meeting_minimized':
+      // Tap "In meeting" notification -> open meeting screen
+      if (data?.meetingId) {
+        const params = new URLSearchParams({ meetingId: String(data.meetingId) });
+        if (data?.title) params.set('title', String(data.title));
+        if (data?.userName) params.set('userName', String(data.userName));
+        return `/quick-reach/hms-meeting-interface?${params.toString()}`;
+      }
+      return '/quick-reach/hms-meeting-interface';
     default:
       return '/notifications';
   }

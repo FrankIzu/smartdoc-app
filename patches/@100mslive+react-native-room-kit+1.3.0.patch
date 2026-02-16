@@ -1,0 +1,28 @@
+diff --git a/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts b/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts
+index 4d107f0..c0823f9 100644
+--- a/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts
++++ b/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts
+@@ -1653,8 +1653,14 @@ export const useAutoPip = (oneToOneCall: boolean) => {
+     return room && room.peerCount !== null ? room.peerCount > 1 : false; // `peerCount` includes local peer
+   });
+ 
++  // Enable PiP when in room (peerCount >= 1), not just when others present - so PiP works when alone
++  const inRoom = useSelector((state: RootState) => {
++    const room = state.hmsStates.room;
++    return room && room.peerCount !== null ? room.peerCount >= 1 : false;
++  });
++
+   useEffect(() => {
+-    if (autoEnterPipMode && remotePeersPresent) {
++    if (autoEnterPipMode && (remotePeersPresent || inRoom)) {
+       enableAutoPip({
+         scaleType: HMSVideoViewMode.ASPECT_FILL,
+         aspectRatio: [numerator, denominator],
+@@ -1666,6 +1672,7 @@ export const useAutoPip = (oneToOneCall: boolean) => {
+     }
+   }, [
+     remotePeersPresent,
++    inRoom,
+     numerator,
+     denominator,
+     autoEnterPipMode,

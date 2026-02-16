@@ -1,7 +1,8 @@
 // Import polyfills for mobile compatibility
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, AppState, LogBox, StyleSheet } from 'react-native';
+import { Alert, AppState, Linking, LogBox, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
 
@@ -18,7 +19,7 @@ LogBox.ignoreLogs([
   '@100mslive/react-native-hms', // HMS module errors
 ]);
 
-import { SplashScreen, Stack, useRouter } from 'expo-router';
+import { SplashScreen, Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -56,7 +57,12 @@ function RootLayoutNav() {
   const { user } = useAuth();
   const { isLocked, appLockEnabled } = useAppLock();
   const router = useRouter();
+  const segments = useSegments();
   const pushListenerRef = useRef<{ remove: () => void } | null>(null);
+  const lastNotificationResponse = Notifications.useLastNotificationResponse();
+
+  // Hide top bar (NetworkIndicator) on meeting screen to avoid black banner and full-screen meeting UX
+  const isMeetingScreen = segments.some((s) => String(s).includes('hms-meeting-interface'));
 
   const APP_LOCK_REMINDER_KEY = '@grabdocs_app_lock_reminder_last_shown';
   const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -74,11 +80,19 @@ function RootLayoutNav() {
   }, [user]);
 
   // Remind user to enable app lock periodically until they do (GrabDocs PIN hidden; unlock via biometric + device passcode)
+  // Do not show when user opened the app from an external link (deep link / universal link)
+  const openedViaLinkRef = useRef<boolean | null>(null);
   useEffect(() => {
     if (!user || appLockEnabled) return;
 
     const maybeShowReminder = async () => {
       try {
+        if (openedViaLinkRef.current === null) {
+          const initialUrl = await Linking.getInitialURL();
+          openedViaLinkRef.current = !!(initialUrl && initialUrl.trim().length > 0);
+        }
+        if (openedViaLinkRef.current) return;
+
         const lastStr = await AsyncStorage.getItem(APP_LOCK_REMINDER_KEY);
         const lastShown = lastStr ? parseInt(lastStr, 10) : 0;
         if (lastShown && Date.now() - lastShown < REMINDER_INTERVAL_MS) return;
@@ -104,18 +118,15 @@ function RootLayoutNav() {
       if (nextAppState === 'active') maybeShowReminder();
     });
 
-    // Show once on mount if they're logged in and no PIN (e.g. first open)
+    // Show once on mount if they're logged in and no PIN (e.g. first open), unless opened via link
     maybeShowReminder();
 
     return () => sub.remove();
   }, [user, appLockEnabled, router]);
 
-  // When user taps a push notification, open the right screen (all 8 backend notification types)
-  // Use pathname + params so Expo Router receives params correctly (string with ? can lead to error page)
-  useEffect(() => {
-    pushNotificationService.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data || {};
-      const path = getNotificationScreen(data);
+  const navigateFromNotificationData = useCallback(
+    (data: Record<string, unknown>) => {
+      const path = getNotificationScreen(data as Record<string, any>);
       try {
         const { pathname, params } = parseNotificationPath(path);
         if (params && Object.keys(params).length > 0) {
@@ -126,24 +137,46 @@ function RootLayoutNav() {
       } catch {
         router.push('/notifications');
       }
+    },
+    [router]
+  );
+
+  // When user taps a notification and app was killed, listener is not registered yet — use last response
+  useEffect(() => {
+    if (
+      !lastNotificationResponse ||
+      lastNotificationResponse.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER
+    )
+      return;
+    const data = lastNotificationResponse.notification.request.content.data || {};
+    navigateFromNotificationData(data as Record<string, unknown>);
+  }, [lastNotificationResponse, navigateFromNotificationData]);
+
+  // When user taps a push notification (app already running), open the right screen
+  useEffect(() => {
+    pushNotificationService.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data || {};
+      navigateFromNotificationData(data as Record<string, unknown>);
     }).then((subscription) => {
       pushListenerRef.current = subscription;
     });
     return () => {
       pushListenerRef.current?.remove();
     };
-  }, [router]);
+  }, [navigateFromNotificationData]);
 
   const showLock = !!user && appLockEnabled && isLocked;
 
   return (
     <>
       {showLock && <AppLockScreen />}
-      <StatusBar style={isDark ? "light" : "dark"} />
-      {/* Persistent Network Indicator */}
-      <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
-        <NetworkIndicator compact persistent />
-      </SafeAreaView>
+      <StatusBar style={isMeetingScreen ? "light" : isDark ? "light" : "dark"} />
+      {/* Persistent Network Indicator - hidden on meeting screen for full-screen UX */}
+      {!isMeetingScreen && (
+        <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
+          <NetworkIndicator compact persistent />
+        </SafeAreaView>
+      )}
       <View style={[styles.mainContainer, { backgroundColor: isDark ? '#151718' : '#fff' }]}>
         <HeaderVisibilityProvider>
         <Stack screenOptions={{ headerShown: false }}>
