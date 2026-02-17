@@ -1,4 +1,4 @@
-# Submit iOS build to App Store locally
+﻿# Submit iOS build to App Store locally
 # Usage: .\scripts\submit-ios-local.ps1 [path-to-ipa]
 #        .\scripts\submit-ios-local.ps1 -Latest   # submit latest EAS build using ASC key from .env.local (e.g. previous key 94J2FT265G)
 
@@ -176,7 +176,7 @@ if ($hasApiKeys) {
         Write-Host "   Using local ASC API key from .env.local (Key ID: $env:ASC_KEY_ID)" -ForegroundColor Green
     } catch {
         Write-Host "`n⚠️  Could not inject ASC key into eas.json: $($_.Exception.Message)" -ForegroundColor Yellow
-        Write-Host "   EAS may use stored key; if submit fails with 'Invalid ASC API key', update credentials at expo.dev" -ForegroundColor Gray
+        Write-Host '   EAS may use stored key; if submit fails with "Invalid ASC API key", update credentials at expo.dev' -ForegroundColor Gray
     }
 }
 
@@ -200,20 +200,20 @@ try {
         Write-Host "   Build may take 15 minutes to several hours to appear in TestFlight" -ForegroundColor Yellow
     } else {
         Write-Host "`n❌ Submission failed with exit code $LASTEXITCODE" -ForegroundColor Red
-        if ($easJsonBackup) { Set-Content -Path (Join-Path $PWD "eas.json") -Value $easJsonBackup -Encoding UTF8 }
+        if ($easJsonBackup) { Set-Content -Path (Join-Path $PWD 'eas.json') -Value $easJsonBackup -Encoding UTF8 }
         if ($tempP8Path -and (Test-Path $tempP8Path)) { Remove-Item $tempP8Path -Force -ErrorAction SilentlyContinue }
         exit $LASTEXITCODE
     }
 } catch {
     Write-Host "`n❌ Error during submission: $($_.Exception.Message)" -ForegroundColor Red
-    if ($easJsonBackup) { Set-Content -Path (Join-Path $PWD "eas.json") -Value $easJsonBackup -Encoding UTF8 }
+    if ($easJsonBackup) { Set-Content -Path (Join-Path $PWD 'eas.json') -Value $easJsonBackup -Encoding UTF8 }
     if ($tempP8Path -and (Test-Path $tempP8Path)) { Remove-Item $tempP8Path -Force -ErrorAction SilentlyContinue }
     exit 1
 } finally {
     # Restore eas.json and remove temp .p8
     if ($easJsonBackup) {
-        Set-Content -Path (Join-Path $PWD "eas.json") -Value $easJsonBackup -Encoding UTF8
-        Write-Host "   Restored eas.json" -ForegroundColor Gray
+        Set-Content -Path (Join-Path $PWD 'eas.json') -Value $easJsonBackup -Encoding UTF8
+        Write-Host '   Restored eas.json' -ForegroundColor Gray
     }
     if ($tempP8Path -and (Test-Path $tempP8Path)) {
         Remove-Item $tempP8Path -Force -ErrorAction SilentlyContinue

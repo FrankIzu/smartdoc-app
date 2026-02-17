@@ -1,0 +1,10 @@
+const fs = require('fs');
+const path = require('path');
+const p = path.join(__dirname, 'submit-ios-local.ps1');
+let c = fs.readFileSync(p, 'utf8');
+const bad = ['\u201C', '\u201D', '\u201E', '\u201F', '\uFF02'];
+bad.forEach((q) => { c = c.split(q).join('"'); });
+const BOM = '\uFEFF';
+if (!c.startsWith(BOM)) c = BOM + c;
+fs.writeFileSync(p, c, { encoding: 'utf8' });
+console.log('Done');
