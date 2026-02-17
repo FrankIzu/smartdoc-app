@@ -106,12 +106,19 @@ export default function BookmarkDetailScreen() {
   ];
 
   const bookmarkId = params.id ? parseInt(params.id as string) : null;
+  const openAddFiles = params.addFiles === '1' || params.addFiles === true;
 
   useEffect(() => {
     if (bookmarkId) {
       loadBookmarkDetails();
     }
   }, [bookmarkId]);
+
+  useEffect(() => {
+    if (bookmark && openAddFiles) {
+      handleShowAddFilesModal();
+    }
+  }, [bookmark?.id, openAddFiles]);
 
   const loadBookmarkDetails = async () => {
     if (!bookmarkId) return;
@@ -120,15 +127,11 @@ export default function BookmarkDetailScreen() {
       setLoading(true);
       
       // Load bookmark info and files in parallel
-      console.log(`📁 Loading bookmark details for ID: ${bookmarkId}`);
       const [bookmarkResponse, filesResponse] = await Promise.all([
         apiClient.getBookmarks(),
         apiClient.getBookmarkFiles(bookmarkId)
       ]);
-      
-      console.log(`📁 Bookmark response:`, bookmarkResponse);
-      console.log(`📁 Files response:`, filesResponse);
-      
+
       if (bookmarkResponse.success && bookmarkResponse.data) {
         const bookmarksData = Array.isArray(bookmarkResponse.data) 
           ? bookmarkResponse.data 
@@ -145,8 +148,7 @@ export default function BookmarkDetailScreen() {
       
       if (filesResponse.success && filesResponse.data) {
         const filesData = filesResponse.data;
-        console.log(`📁 Bookmark files loaded:`, filesData);
-        
+
         // Map backend field names to frontend interface (receipts/invoices show store/vendor name)
         const mappedFiles = filesData.map((file: any) => ({
           id: file.id.toString(),
@@ -161,8 +163,7 @@ export default function BookmarkDetailScreen() {
         setFiles(mappedFiles);
       }
       
-    } catch (error) {
-      console.error('Failed to load bookmark details:', error);
+    } catch {
       Alert.alert('Error', 'Failed to load bookmark details');
     } finally {
       setLoading(false);
@@ -469,34 +470,24 @@ export default function BookmarkDetailScreen() {
   const loadAvailableFiles = async () => {
     try {
       setLoadingAvailableFiles(true);
-      console.log('📁 Starting to load available files...');
       let allFiles: any[] = [];
       let page = 1;
       const perPage = 100;
       let hasMore = true;
-      
-      // Load files in batches until we get all files
+
       while (hasMore) {
         const response = await apiClient.getFiles(page, perPage);
-        console.log(`📁 API Response for page ${page}:`, response);
-        
+
         if (response.success && response.files) {
           const filesData = response.files;
-          console.log(`📁 Found ${filesData.length} files on page ${page}`);
-          console.log(`📁 Sample file data:`, filesData[0]);
-          
           allFiles = allFiles.concat(filesData);
-          
-          // Check if we have more files to load
-          // If we got fewer files than perPage, we've reached the end
           hasMore = filesData.length === perPage;
           page++;
         } else {
-          console.log('📁 No more files or error:', response);
           hasMore = false;
         }
       }
-      
+
       // Map backend field names to frontend interface (receipts/invoices show store/vendor name)
       const mappedFiles = allFiles.map((file: any) => ({
         id: file.id.toString(),
@@ -512,12 +503,7 @@ export default function BookmarkDetailScreen() {
       const bookmarkFileIds = new Set(files.map(f => f.id));
       const available = mappedFiles.filter((f: Document) => !bookmarkFileIds.has(f.id));
       setAvailableFiles(available);
-      console.log(`📁 Total files loaded: ${allFiles.length}`);
-      console.log(`📁 Files already in bookmark: ${bookmarkFileIds.size}`);
-      console.log(`📁 Available files for bookmark: ${available.length}`);
-      console.log(`📁 Available files:`, available);
-    } catch (error) {
-      console.error('Failed to load available files:', error);
+    } catch {
       Alert.alert('Error', 'Failed to load available files');
     } finally {
       setLoadingAvailableFiles(false);
@@ -525,7 +511,6 @@ export default function BookmarkDetailScreen() {
   };
 
   const handleShowAddFilesModal = () => {
-    console.log('📁 Opening add files modal...');
     loadAvailableFiles();
     setShowAddFilesModal(true);
   };
@@ -994,11 +979,8 @@ export default function BookmarkDetailScreen() {
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
           <View style={dynamicStyles.headerActions}>
-            <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton}>
+            <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton} accessibilityLabel="Add files to bookmark">
               <Ionicons name="add" size={24} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowEditModal(true)} style={dynamicStyles.headerIconButton}>
-              <Ionicons name="create-outline" size={24} color="#007AFF" />
             </TouchableOpacity>
             <TouchableOpacity onPress={handleDeleteBookmark} style={dynamicStyles.headerIconButton}>
               <Ionicons name="trash-outline" size={24} color="#FF3B30" />
@@ -1007,7 +989,7 @@ export default function BookmarkDetailScreen() {
         </View>
       </AnimatedHeaderContainer>
 
-      <View style={dynamicStyles.bookmarkInfo}>
+      <TouchableOpacity style={dynamicStyles.bookmarkInfo} onPress={() => setShowEditModal(true)} activeOpacity={0.7}>
         <View style={[dynamicStyles.colorIndicator, { backgroundColor: bookmark.color }]} />
         <View style={dynamicStyles.bookmarkDetails}>
           <Text style={dynamicStyles.bookmarkName}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
@@ -1016,7 +998,7 @@ export default function BookmarkDetailScreen() {
           )}
           <Text style={dynamicStyles.fileCount}>{bookmark.file_count} file(s)</Text>
         </View>
-      </View>
+      </TouchableOpacity>
 
       <FlatList
         data={files}

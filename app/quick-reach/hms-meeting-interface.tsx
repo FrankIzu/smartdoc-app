@@ -14,6 +14,7 @@ import {
     AppStateStatus,
     BackHandler,
     Linking,
+    NativeModules,
     Platform,
     StyleSheet,
     Text,
@@ -140,6 +141,7 @@ export default function HMSMeetingInterfaceScreen() {
   const [isMinimized, setIsMinimized] = useState(false);
   const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationDisplayedRef = useRef(false);
+  const pipFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Bubble: meeting start time for duration display; local mute state (HMS SDK doesn't expose mute in prebuilt)
   const [meetingStartTime, setMeetingStartTime] = useState<string | undefined>(undefined);
@@ -530,9 +532,30 @@ export default function HMSMeetingInterfaceScreen() {
   // - In-app: back/minimize -> show bubble only (user stays in app).
   // - App backgrounded: do NOT minimize to bubble; let system PiP take over so meeting shows outside the app.
   const pipEnabled = Platform.OS !== 'web';
+  // Phase 2 Option B: explicitly enter PiP when app goes to background and meeting is active (Android)
+  const pipModule = Platform.OS === 'android' ? NativeModules.GrabDocsPipModule : null;
+  const PIP_FALLBACK_DELAY_MS = 450;
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
+        if (authToken && meetingId && pipEnabled && pipModule) {
+          pipModule.enterPipForMeeting?.().then((entered: boolean) => {
+            if (entered) {
+              console.log('GrabDocsPiP: entered PiP via native module (Phase 2 Option B)');
+            }
+          }).catch(() => {});
+          // Option C fallback: if PiP did not activate, show bubble/notification so user is not left with nothing
+          if (pipFallbackTimerRef.current) clearTimeout(pipFallbackTimerRef.current);
+          pipFallbackTimerRef.current = setTimeout(() => {
+            pipFallbackTimerRef.current = null;
+            pipModule.isInPipMode?.().then((inPip: boolean) => {
+              if (!inPip && authToken && meetingId) {
+                minimizeToBubble();
+                console.log('GrabDocsPiP: PiP did not activate, fell back to bubble/notification');
+              }
+            }).catch(() => {});
+          }, PIP_FALLBACK_DELAY_MS);
+        }
         if (authToken && meetingId && !pipEnabled) {
           minimizeToBubble();
         }
@@ -541,6 +564,10 @@ export default function HMSMeetingInterfaceScreen() {
           autoExpandTimerRef.current = null;
         }
       } else if (nextState === 'active') {
+        if (pipFallbackTimerRef.current) {
+          clearTimeout(pipFallbackTimerRef.current);
+          pipFallbackTimerRef.current = null;
+        }
         if (notificationDisplayedRef.current) {
           Notifications.dismissNotificationAsync(MEETING_NOTIFICATION_ID).catch(() => {});
           notificationDisplayedRef.current = false;
@@ -566,8 +593,12 @@ export default function HMSMeetingInterfaceScreen() {
       if (autoExpandTimerRef.current) {
         clearTimeout(autoExpandTimerRef.current);
       }
+      if (pipFallbackTimerRef.current) {
+        clearTimeout(pipFallbackTimerRef.current);
+        pipFallbackTimerRef.current = null;
+      }
     };
-  }, [authToken, meetingId, isMinimized, minimizeToBubble, pipEnabled]);
+  }, [authToken, meetingId, isMinimized, minimizeToBubble, pipEnabled, pipModule]);
 
   // Screen wake lock: activate when in full meeting, deactivate when minimized
   useEffect(() => {

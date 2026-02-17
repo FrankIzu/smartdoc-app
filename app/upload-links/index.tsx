@@ -5,6 +5,7 @@ import {
     Alert,
     FlatList,
     Platform,
+    Pressable,
     RefreshControl,
     Share,
     StyleSheet,
@@ -95,27 +96,26 @@ export default function UploadLinksScreen() {
   };
 
   const getFullUrl = (url: string): string => {
-    // Construct full URL if it's just a path
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return url;
-    }
-    // Ensure the URL starts with / and prepend the frontend URL
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
     const path = url.startsWith('/') ? url : `/${url}`;
     return `${FRONTEND_URL}${path}`;
   };
 
+  const doShare = async (link: UploadLink) => {
+    const fullUrl = getFullUrl(link.url);
+    const message = `Upload files using this link: ${fullUrl}\n\nLink: ${link.name}\n${link.description ? `Description: ${link.description}` : ''}`;
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
+      await Share.share({
+        message,
+        url: fullUrl,
+        title: `Upload Link: ${link.name}`,
+      });
+    }
+  };
+
   const handleShareLink = async (link: UploadLink) => {
     try {
-      const fullUrl = getFullUrl(link.url);
-      const message = `Upload files using this link: ${fullUrl}\n\nLink: ${link.name}\n${link.description ? `Description: ${link.description}` : ''}`;
-      
-      if (Platform.OS === 'ios' || Platform.OS === 'android') {
-        await Share.share({
-          message,
-          url: fullUrl,
-          title: `File Request: ${link.name}`,
-        });
-      }
+      await doShare(link);
     } catch (error) {
       console.error('Share error:', error);
     }
@@ -181,14 +181,48 @@ export default function UploadLinksScreen() {
     setSelectedLink(null);
   };
 
+  const onMenuShare = () => {
+    const link = selectedLink;
+    closeMenu();
+    if (link) {
+      requestAnimationFrame(() => {
+        doShare(link).catch((e) => console.error('Share error:', e));
+      });
+    }
+  };
+
+  const onMenuDelete = () => {
+    if (selectedLink) handleDeleteLink(selectedLink);
+    closeMenu();
+  };
+
+  const onMenuOpen = () => {
+    if (selectedLink) handleViewFiles(selectedLink);
+    closeMenu();
+  };
+
+  const onMenuToggleActive = () => {
+    if (selectedLink) handleToggleActive(selectedLink);
+    closeMenu();
+  };
+
+  const parseUtc = (dateString: string | undefined): Date => {
+    if (!dateString || typeof dateString !== 'string') return new Date(NaN);
+    const s = dateString.trim();
+    if (!s) return new Date(NaN);
+    if (!/Z|[-+]\d{2}:?\d{2}$/.test(s)) return new Date(s + 'Z');
+    return new Date(s);
+  };
+
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const date = parseUtc(dateString);
+    if (isNaN(date.getTime())) return dateString;
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const isExpired = (expiresAt?: string) => {
     if (!expiresAt) return false;
-    return new Date(expiresAt) < new Date();
+    return parseUtc(expiresAt).getTime() < Date.now();
   };
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
@@ -327,8 +361,8 @@ export default function UploadLinksScreen() {
       fontSize: 12,
       color: colors.textLight,
     },
-    modalOverlay: {
-      flex: 1,
+    menuOverlay: {
+      ...StyleSheet.absoluteFillObject,
       backgroundColor: 'rgba(0, 0, 0, 0.5)',
       justifyContent: 'center',
       alignItems: 'center',
@@ -485,6 +519,43 @@ export default function UploadLinksScreen() {
           }
           showsVerticalScrollIndicator={false}
         />
+      )}
+
+      {menuVisible && (
+        <Pressable style={dynamicStyles.menuOverlay} onPress={closeMenu}>
+          <Pressable style={dynamicStyles.menuContainer} onPress={(e) => e.stopPropagation()}>
+            <TouchableOpacity style={dynamicStyles.menuItem} onPress={onMenuOpen}>
+              <Ionicons name="folder-open" size={20} color={colors.text} />
+              <Text style={dynamicStyles.menuItemText}>Open</Text>
+            </TouchableOpacity>
+            {selectedLink &&
+             selectedLink.is_active &&
+             !isExpired(selectedLink.expires_at) &&
+             !(selectedLink.max_uploads != null && selectedLink.upload_count >= selectedLink.max_uploads) && (
+              <TouchableOpacity style={dynamicStyles.menuItem} onPress={onMenuShare}>
+                <Ionicons name="share" size={20} color={colors.text} />
+                <Text style={dynamicStyles.menuItemText}>Share</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={dynamicStyles.menuItem} onPress={onMenuToggleActive}>
+              <Ionicons
+                name={selectedLink?.is_active ? 'pause' : 'play'}
+                size={20}
+                color={colors.text}
+              />
+              <Text style={dynamicStyles.menuItemText}>
+                {selectedLink?.is_active ? 'Deactivate' : 'Activate'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[dynamicStyles.menuItem, dynamicStyles.menuItemDanger]}
+              onPress={onMenuDelete}
+            >
+              <Ionicons name="trash" size={20} color="#FF3B30" />
+              <Text style={[dynamicStyles.menuItemText, dynamicStyles.menuItemTextDanger]}>Delete</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
       )}
     </SafeAreaView>
   );

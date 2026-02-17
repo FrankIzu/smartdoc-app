@@ -64,14 +64,11 @@ export default function ManageBookmarksScreen() {
           ? response.data 
           : (response.data.bookmarks || []);
         
-        console.log('✅ Loaded bookmarks:', bookmarksData.length);
         setBookmarks(bookmarksData);
       } else {
-        console.log('❌ No bookmarks found:', response);
         setBookmarks([]);
       }
-    } catch (error) {
-      console.error('❌ Failed to load bookmarks:', error);
+    } catch {
       setBookmarks([]);
     } finally {
       setLoading(false);
@@ -445,9 +442,13 @@ export default function ManageBookmarksScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={dynamicStyles.chatgdButton}
-            onPress={(e) => handleOpenRename(item, e)}
+            onPress={(e) => {
+              e.stopPropagation();
+              router.push({ pathname: '/bookmarks/detail', params: { id: item.id.toString(), addFiles: '1' } });
+            }}
+            accessibilityLabel="Add files to bookmark"
           >
-            <Ionicons name="pencil-outline" size={20} color="#6B7280" />
+            <Ionicons name="add" size={20} color="#007AFF" />
           </TouchableOpacity>
           <TouchableOpacity
             style={dynamicStyles.deleteButton}

@@ -14,6 +14,7 @@ function withAndroidPip(config) {
     const mainActivity = activities[0];
     mainActivity.$ = mainActivity.$ || {};
     mainActivity.$['android:supportsPictureInPicture'] = 'true';
+    mainActivity.$['android:resizeableActivity'] = 'true';
 
     return config;
   });

@@ -66,6 +66,7 @@ export default function MeetingCallScreen() {
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [featuresExpanded, setFeaturesExpanded] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [isJoining, setIsJoining] = useState(false);
 
   // Use keyboard height for padding so join modal stays above keyboard on both Android and iOS
   useEffect(() => {
@@ -355,54 +356,92 @@ export default function MeetingCallScreen() {
     router.push('/quick-reach/schedule-meeting');
   };
 
-  const joinMeeting = async (meeting: Meeting) => {
+  const navigateToMeetingScreen = (params: { meetingId: string; title: string; userName?: string; passcode?: string }) => {
+    router.replace({
+      pathname: './hms-meeting-interface',
+      params: {
+        meetingId: params.meetingId,
+        title: params.title,
+        userName: params.userName || 'Mobile User',
+        passcode: params.passcode ?? undefined
+      }
+    });
+  };
+
+  const joinMeeting = async (meeting: Meeting, forceJoin: boolean = false) => {
+    if (isJoining) return;
+    setIsJoining(true);
     try {
-      // IMPORTANT: Call join endpoint first to create ActiveParticipant record
-      // This ensures the user shows up as active in the meeting (green dot on web)
       const response = await apiClient.joinMeeting({
         meetingId: meeting.meetingId,
-        passcode: meeting.passcode || undefined
+        passcode: meeting.passcode || undefined,
+        force_join: forceJoin || undefined
       });
 
-      if (!response.success) {
-        Alert.alert('Error', response.message || 'Failed to join meeting');
+      const resp = response as any;
+      if (resp.type === 'already_in_meeting') {
+        Alert.alert(
+          "You're already in this meeting.",
+          resp.message || "You're already participating in this meeting. Would you like to end your current session and join again?",
+          [
+            { text: 'OK', style: 'cancel' },
+            {
+              text: 'Disconnect & Rejoin',
+              onPress: () => joinMeeting(meeting, true)
+            }
+          ]
+        );
         return;
       }
 
-      // Check if meeting is private and requires passcode (if not provided in response)
-      if (meeting.passcode && !response.data?.password) {
-        // Show passcode prompt for private meetings
+      if (!response.success) {
+        Alert.alert('Error', (response as any).message || 'Failed to join meeting');
+        return;
+      }
+
+      if (meeting.passcode && !(response as any).data?.password) {
         Alert.prompt(
           'Meeting Passcode',
           'This is a private meeting. Enter the passcode:',
           [
             { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Join', 
+            {
+              text: 'Join',
               onPress: async (passcode?: string) => {
                 if (passcode) {
+                  if (isJoining) return;
+                  setIsJoining(true);
                   try {
-                    // Retry join with passcode
                     const retryResponse = await apiClient.joinMeeting({
                       meetingId: meeting.meetingId,
-                      passcode: passcode
+                      passcode,
+                      force_join: forceJoin || undefined
                     });
-                    if (retryResponse.success) {
-                      router.push({
-                        pathname: './hms-meeting-interface',
-                        params: {
-                          meetingId: retryResponse.data?.meetingId || meeting.meetingId,
-                          title: retryResponse.data?.title || meeting.title,
-                          userName: 'Mobile User',
-                          passcode: passcode
-                        }
+                    const retry = retryResponse as any;
+                    if (retry.type === 'already_in_meeting') {
+                      Alert.alert(
+                        "You're already in this meeting.",
+                        retry.message || "Would you like to end your current session and join again?",
+                        [
+                          { text: 'OK', style: 'cancel' },
+                          { text: 'Disconnect & Rejoin', onPress: () => joinMeeting(meeting, true) }
+                        ]
+                      );
+                      return;
+                    }
+                    if (retryResponse.success && retryResponse.data) {
+                      navigateToMeetingScreen({
+                        meetingId: (retryResponse.data as any).meetingId || meeting.meetingId,
+                        title: (retryResponse.data as any).title || meeting.title,
+                        passcode
                       });
                     } else {
-                      Alert.alert('Error', retryResponse.message || 'Invalid passcode');
+                      Alert.alert('Error', (retryResponse as any).message || 'Invalid passcode');
                     }
-                  } catch (error) {
-                    console.error('Failed to join meeting with passcode:', error);
-                    Alert.alert('Error', 'Failed to join meeting. Please check the passcode.');
+                  } catch (error: any) {
+                    Alert.alert('Error', error.message || 'Failed to join meeting. Please check the passcode.');
+                  } finally {
+                    setIsJoining(false);
                   }
                 } else {
                   Alert.alert('Error', 'Passcode is required for private meetings');
@@ -415,19 +454,16 @@ export default function MeetingCallScreen() {
         return;
       }
 
-      // Navigate to meeting interface after successful join
-      router.push({
-        pathname: './hms-meeting-interface',
-        params: {
-          meetingId: response.data?.meetingId || meeting.meetingId,
-          title: response.data?.title || meeting.title,
-          userName: 'Mobile User',
-          passcode: meeting.passcode || undefined
-        }
+      navigateToMeetingScreen({
+        meetingId: (response as any).data?.meetingId || meeting.meetingId,
+        title: (response as any).data?.title || meeting.title,
+        passcode: meeting.passcode || undefined
       });
     } catch (error: any) {
       console.error('Failed to join meeting:', error);
       Alert.alert('Error', error.message || 'Failed to join meeting. Please try again.');
+    } finally {
+      setIsJoining(false);
     }
   };
 
@@ -444,38 +480,81 @@ export default function MeetingCallScreen() {
   };
 
   const joinMeetingById = async () => {
+    if (isJoining) return;
     if (!meetingId.trim()) {
       Alert.alert('Error', 'Please enter a meeting ID');
       return;
     }
-
+    setIsJoining(true);
+    const savedMeetingId = meetingId.trim();
+    const savedPassword = meetingPassword.trim();
     try {
       const response = await apiClient.joinMeeting({
-        meetingId: meetingId.trim(),
-        passcode: meetingPassword.trim()
+        meetingId: savedMeetingId,
+        passcode: savedPassword || undefined,
+        force_join: undefined
       });
 
+      const resp = response as any;
+      if (resp.type === 'already_in_meeting') {
+        Alert.alert(
+          "You're already in this meeting.",
+          resp.message || "Would you like to end your current session and join again?",
+          [
+            { text: 'OK', style: 'cancel' },
+            {
+              text: 'Disconnect & Rejoin',
+              onPress: async () => {
+                if (isJoining) return;
+                setIsJoining(true);
+                try {
+                  const retryResponse = await apiClient.joinMeeting({
+                    meetingId: savedMeetingId,
+                    passcode: savedPassword || undefined,
+                    force_join: true
+                  });
+                  const retry = retryResponse as any;
+                  if (retry.type === 'already_in_meeting') {
+                    Alert.alert('Error', (retryResponse as any).message || 'Could not rejoin.');
+                    return;
+                  }
+                  if (retryResponse.success && retryResponse.data) {
+                    setShowJoinModal(false);
+                    setMeetingId('');
+                    setMeetingPassword('');
+                    navigateToMeetingScreen({
+                      meetingId: (retryResponse.data as any).meetingId || savedMeetingId,
+                      title: (retryResponse.data as any).title || 'Meeting'
+                    });
+                  } else {
+                    Alert.alert('Error', (retryResponse as any).message || 'Invalid meeting ID or passcode');
+                  }
+                } finally {
+                  setIsJoining(false);
+                }
+              }
+            }
+          ]
+        );
+        return;
+      }
+
       if (response.success && response.data) {
-        // Save meetingId before clearing state
-        const savedMeetingId = meetingId.trim();
         setShowJoinModal(false);
         setMeetingId('');
         setMeetingPassword('');
-        
-        router.push({
-          pathname: './hms-meeting-interface',
-          params: {
-            meetingId: response.data.meetingId || savedMeetingId,
-            title: response.data.title || 'Meeting',
-            userName: 'Mobile User'
-          }
+        navigateToMeetingScreen({
+          meetingId: (response.data as any).meetingId || savedMeetingId,
+          title: (response.data as any).title || 'Meeting'
         });
       } else {
-        Alert.alert('Error', response.message || 'Invalid meeting ID or passcode');
+        Alert.alert('Error', (response as any).message || 'Invalid meeting ID or passcode');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to join meeting:', error);
-      Alert.alert('Error', 'Failed to join meeting. Please check the meeting ID and passcode.');
+      Alert.alert('Error', error.message || 'Failed to join meeting. Please check the meeting ID and passcode.');
+    } finally {
+      setIsJoining(false);
     }
   };
 
@@ -1130,10 +1209,11 @@ export default function MeetingCallScreen() {
       style={[dynamicStyles.meetingCard, item.status === 'active' && dynamicStyles.ongoingMeeting]}
       onPress={() => viewMeetingAssets(item)}
       onLongPress={() => {
+        if (isJoining) return;
         const isLive = item.status === 'active';
         const buttons = [
           { text: 'Cancel', style: 'cancel' as const },
-          { text: 'Join Meeting', onPress: () => joinMeeting(item) },
+          { text: 'Join Meeting', onPress: () => { if (!isJoining) joinMeeting(item); } },
           { text: 'View Assets', onPress: () => viewMeetingAssets(item) },
           ...(isLive ? [{ text: 'End Meeting', style: 'destructive' as const, onPress: () => endMeeting(item) }] : []),
           { text: 'Delete', style: 'destructive' as const, onPress: () => deleteMeeting(item) },
@@ -1178,9 +1258,11 @@ export default function MeetingCallScreen() {
 
       <View style={dynamicStyles.meetingActions}>
         <TouchableOpacity
-          style={dynamicStyles.actionIcon}
+          style={[dynamicStyles.actionIcon, isJoining && { opacity: 0.5 }]}
+          disabled={isJoining}
           onPress={(e) => {
             e.stopPropagation();
+            if (isJoining) return;
             joinMeeting(item);
           }}
         >
@@ -1325,7 +1407,11 @@ export default function MeetingCallScreen() {
           <Text style={dynamicStyles.actionButtonText}>Create</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity style={dynamicStyles.actionButton} onPress={() => setShowJoinModal(true)}>
+        <TouchableOpacity
+          style={[dynamicStyles.actionButton, isJoining && { opacity: 0.5 }]}
+          disabled={isJoining}
+          onPress={() => { if (!isJoining) setShowJoinModal(true); }}
+        >
           <Ionicons name="enter" size={24} color="#34C759" />
           <Text style={dynamicStyles.actionButtonText}>Join</Text>
         </TouchableOpacity>
@@ -1443,11 +1529,11 @@ export default function MeetingCallScreen() {
                   <Text style={dynamicStyles.modalTitle}>Join Meeting</Text>
                   <TouchableOpacity 
                     onPress={joinMeetingById}
-                    disabled={!meetingId.trim()}
+                    disabled={isJoining || !meetingId.trim()}
                   >
                     <Text style={[
                       dynamicStyles.joinButton,
-                      !meetingId.trim() && dynamicStyles.joinButtonDisabled
+                      (!meetingId.trim() || isJoining) && dynamicStyles.joinButtonDisabled
                     ]}>
                       Join
                     </Text>

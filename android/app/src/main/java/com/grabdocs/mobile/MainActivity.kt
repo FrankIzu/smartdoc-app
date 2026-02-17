@@ -4,6 +4,7 @@ import expo.modules.splashscreen.SplashScreenManager
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 
 import com.facebook.react.ReactActivity
 import com.reactnativehmssdk.HMSManager
@@ -48,6 +49,7 @@ class MainActivity : ReactActivity() {
 
   // 100ms PiP: when user switches app or goes home, enter Picture-in-Picture so meeting stays visible
   override fun onUserLeaveHint() {
+    Log.d("GrabDocsPiP", "MainActivity.onUserLeaveHint() called - 100ms will attempt PiP")
     super.onUserLeaveHint()
     HMSManager.onUserLeaveHint()
   }
@@ -58,6 +60,7 @@ class MainActivity : ReactActivity() {
   }
 
   override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+    Log.d("GrabDocsPiP", "MainActivity.onPictureInPictureModeChanged(isInPictureInPictureMode=$isInPictureInPictureMode)")
     super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
     HMSManager.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
   }

@@ -3725,7 +3725,6 @@ class ApiService {
       const response = await this.client.get(MOBILE_ENDPOINTS.BOOKMARKS, { params });
       return response.data;
     } catch (error: any) {
-      console.error('Get bookmarks error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch bookmarks');
     }
   }
@@ -3735,7 +3734,6 @@ class ApiService {
       const response = await this.client.post(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files/${fileId}`);
       return response.data;
     } catch (error: any) {
-      console.error('Add file to bookmark error:', error);
       throw new Error(error.response?.data?.message || 'Failed to add file to bookmark');
     }
   }
@@ -3745,7 +3743,16 @@ class ApiService {
       const response = await this.client.post(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files/bulk`, { file_ids: fileIds });
       return response.data;
     } catch (error: any) {
-      console.error('Add files to bookmark error:', error);
+      if (error.response?.status === 404) {
+        try {
+          for (const fileId of fileIds) {
+            await this.client.post(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files/${fileId}`);
+          }
+          return { success: true, message: `${fileIds.length} file(s) added to bookmark successfully` };
+        } catch (fallbackError: any) {
+          throw new Error(fallbackError.response?.data?.message || 'Failed to add files to bookmark');
+        }
+      }
       throw new Error(error.response?.data?.message || 'Failed to add files to bookmark');
     }
   }
@@ -3755,7 +3762,6 @@ class ApiService {
       const response = await this.client.get(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files`);
       return response.data;
     } catch (error: any) {
-      console.error('Get bookmark files error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch bookmark files');
     }
   }
@@ -3765,7 +3771,6 @@ class ApiService {
       const response = await this.client.delete(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files/${fileId}`);
       return response.data;
     } catch (error: any) {
-      console.error('Remove file from bookmark error:', error);
       throw new Error(error.response?.data?.message || 'Failed to remove file from bookmark');
     }
   }
@@ -4062,7 +4067,19 @@ class ApiService {
     max_uploads?: number;
   }): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINKS, data);
+      let expires_at: string | undefined;
+      if (data.expires_in_days != null && data.expires_in_days > 0) {
+        const d = new Date();
+        d.setDate(d.getDate() + data.expires_in_days);
+        expires_at = d.toISOString();
+      }
+      const payload: Record<string, unknown> = {
+        link_name: data.name?.trim() || undefined,
+        description: data.description?.trim() || undefined,
+        expires_at,
+        max_uploads: data.max_uploads,
+      };
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINKS, payload);
       const res = response.data;
       // Web returns { link } on create
       const link = res.link ?? res.upload_link;
@@ -4273,13 +4290,22 @@ class ApiService {
     }
   }
 
-  async joinMeeting(data: { meetingId: string; passcode?: string }): Promise<ApiResponse> {
+  async joinMeeting(data: { meetingId: string; passcode?: string; force_join?: boolean }): Promise<ApiResponse> {
     try {
       const response = await this.client.post('/api/v1/mobile/meetings/join', data);
       return response.data;
     } catch (error: any) {
+      const status = error.response?.status;
+      const responseData = error.response?.data;
+      if (status === 409 && responseData?.error_code === 'ALREADY_IN_MEETING') {
+        return {
+          success: false,
+          type: 'already_in_meeting',
+          ...responseData,
+        } as ApiResponse;
+      }
       console.error('Join meeting failed:', error);
-      throw new Error(error.response?.data?.message || 'Failed to join meeting');
+      throw new Error(responseData?.message || error.response?.data?.message || 'Failed to join meeting');
     }
   }
 
@@ -4289,7 +4315,7 @@ class ApiService {
       console.log('Using endpoint: /api/v1/video/room/' + meetingId + '/end');
       
       // Use string ID as confirmed by web backend logs
-      const response = await this.client.post(`/api/v1/video/room/${meetingId}/end`);
+      const response = await this.client.post(`/api/v1/video/room/${meetingId}/end`, {});
       console.log('End meeting response:', response.data);
       return response.data;
     } catch (error: any) {
@@ -4391,7 +4417,7 @@ class ApiService {
 
   async sendMeetingHeartbeat(roomId: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(`/api/v1/video/room/${roomId}/heartbeat`);
+      const response = await this.client.post(`/api/v1/video/room/${roomId}/heartbeat`, {});
       return response.data;
     } catch (error: any) {
       console.error('Send meeting heartbeat failed:', error);

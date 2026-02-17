@@ -65,6 +65,8 @@ export default function UploadLinkDetailsScreen() {
   const [shareLoading, setShareLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
 
   const loadUploadLink = async () => {
     if (!user) {
@@ -206,11 +208,38 @@ export default function UploadLinkDetailsScreen() {
     }
   };
 
+  const openRenameModal = () => {
+    if (uploadLink) {
+      setRenameValue(uploadLink.name || '');
+      setRenameModalVisible(true);
+    }
+  };
+
+  const handleRenameSave = async () => {
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      Alert.alert('Error', 'Name is required');
+      return;
+    }
+    if (!uploadLink) return;
+    try {
+      const response = await apiService.updateUploadLink(uploadLink.id, { link_name: trimmed });
+      if (response.success) {
+        setUploadLink(prev => prev ? { ...prev, name: trimmed } : null);
+        setRenameModalVisible(false);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to rename');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to rename');
+    }
+  };
+
   const handleDeleteLink = () => {
     if (!uploadLink) return;
 
     Alert.alert(
-      'Delete Upload Link',
+      'Delete File Request',
       `Are you sure you want to delete "${uploadLink.name}"? This action cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
@@ -234,19 +263,19 @@ export default function UploadLinkDetailsScreen() {
     );
   };
 
+  const parseUtc = (dateString: string | undefined): Date => {
+    if (!dateString || typeof dateString !== 'string') return new Date(NaN);
+    const s = dateString.trim();
+    if (!s) return new Date(NaN);
+    if (!/Z|[-+]\d{2}:?\d{2}$/.test(s)) return new Date(s + 'Z');
+    return new Date(s);
+  };
+
   const formatDate = (dateString: string | undefined) => {
     if (!dateString) return 'Unknown date';
-    try {
-      const date = new Date(dateString);
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        return 'Invalid date';
-      }
-      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (error) {
-      console.error('Date formatting error:', error, 'for dateString:', dateString);
-      return 'Invalid date';
-    }
+    const date = parseUtc(dateString);
+    if (isNaN(date.getTime())) return 'Invalid date';
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const formatFileSize = (bytes: number) => {
@@ -259,7 +288,7 @@ export default function UploadLinkDetailsScreen() {
 
   const isExpired = (expiresAt?: string) => {
     if (!expiresAt) return false;
-    return new Date(expiresAt) < new Date();
+    return parseUtc(expiresAt).getTime() < Date.now();
   };
 
   const getFileTypeFromFilename = (filename: string): string => {
@@ -391,6 +420,10 @@ export default function UploadLinkDetailsScreen() {
       fontWeight: '600',
       color: colors.text,
       flex: 1,
+    },
+    renameButton: {
+      padding: 4,
+      marginLeft: 4,
     },
     statusBadge: {
       backgroundColor: '#FF3B30',
@@ -715,6 +748,9 @@ export default function UploadLinkDetailsScreen() {
             <View style={dynamicStyles.linkCard}>
               <View style={dynamicStyles.linkHeader}>
                 <Text style={dynamicStyles.linkName} numberOfLines={1} ellipsizeMode="tail">{uploadLink.name}</Text>
+                <TouchableOpacity onPress={openRenameModal} style={dynamicStyles.renameButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="pencil" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
                 {(!uploadLink.is_active || expired || limitReached) && (
                   <View style={dynamicStyles.statusBadge}>
                     <Text style={dynamicStyles.statusText}>
@@ -760,15 +796,18 @@ export default function UploadLinkDetailsScreen() {
                 <Text style={dynamicStyles.actionText}>Copy Link</Text>
               </TouchableOpacity>
               
-              <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleShareLink}>
-                <Ionicons name="share" size={20} color="#007AFF" />
-                <Text style={dynamicStyles.actionText}>Share</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleEmailShare}>
-                <Ionicons name="mail" size={20} color="#007AFF" />
-                <Text style={dynamicStyles.actionText}>Email</Text>
-              </TouchableOpacity>
+              {uploadLink.is_active && !expired && !limitReached && (
+                <>
+                  <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleShareLink}>
+                    <Ionicons name="share" size={20} color="#007AFF" />
+                    <Text style={dynamicStyles.actionText}>Share</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleEmailShare}>
+                    <Ionicons name="mail" size={20} color="#007AFF" />
+                    <Text style={dynamicStyles.actionText}>Email</Text>
+                  </TouchableOpacity>
+                </>
+              )}
               
               <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleToggleActive}>
                 <Ionicons 
@@ -846,6 +885,40 @@ export default function UploadLinkDetailsScreen() {
                 placeholderTextColor={colors.textLight}
                 multiline
                 numberOfLines={4}
+              />
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Rename File Request Modal */}
+      <Modal
+        visible={renameModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setRenameModalVisible(false)}
+      >
+        <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
+            <TouchableOpacity onPress={() => setRenameModalVisible(false)}>
+              <Text style={dynamicStyles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={dynamicStyles.modalTitle}>Rename</Text>
+            <TouchableOpacity onPress={handleRenameSave}>
+              <Text style={dynamicStyles.modalSendText}>Save</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={dynamicStyles.modalContent}>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Name</Text>
+              <TextInput
+                style={dynamicStyles.input}
+                value={renameValue}
+                onChangeText={setRenameValue}
+                placeholder="File request name"
+                placeholderTextColor={colors.textLight}
+                maxLength={100}
+                autoFocus
               />
             </View>
           </View>

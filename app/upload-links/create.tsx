@@ -28,7 +28,7 @@ export default function CreateUploadLinkScreen() {
 
   const handleCreate = async () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'Please enter a link name');
+      Alert.alert('Error', 'Please enter a name for the file request');
       return;
     }
 
@@ -64,7 +64,7 @@ export default function CreateUploadLinkScreen() {
       if (response.success) {
         Alert.alert(
           'Success',
-          'Upload link created successfully!',
+          'File request created successfully!',
           [
             {
               text: 'OK',
@@ -281,7 +281,7 @@ export default function CreateUploadLinkScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={dynamicStyles.title}>Create Upload Link</Text>
+        <Text style={dynamicStyles.title}>Create File Request</Text>
         <View style={dynamicStyles.placeholder} />
       </View>
 
@@ -291,7 +291,7 @@ export default function CreateUploadLinkScreen() {
           
           <View style={dynamicStyles.inputGroup}>
             <Text style={dynamicStyles.label}>
-              Link Name <Text style={dynamicStyles.required}>*</Text>
+              Name <Text style={dynamicStyles.required}>*</Text>
             </Text>
             <TextInput
               style={dynamicStyles.input}
@@ -450,7 +450,7 @@ export default function CreateUploadLinkScreen() {
           disabled={loading}
         >
           <Text style={dynamicStyles.createButtonText}>
-            {loading ? 'Creating...' : 'Create Upload Link'}
+            {loading ? 'Creating...' : 'Create File Request'}
           </Text>
         </TouchableOpacity>
       </View>
