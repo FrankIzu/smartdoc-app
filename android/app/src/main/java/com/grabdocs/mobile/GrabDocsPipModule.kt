@@ -25,7 +25,7 @@ class GrabDocsPipModule(reactContext: ReactApplicationContext) :
       promise.resolve(false)
       return
     }
-    val activity = currentActivity ?: run {
+    val activity = reactApplicationContext.currentActivity ?: run {
       Log.d(TAG, "enterPipForMeeting: no current activity")
       promise.resolve(false)
       return
@@ -54,7 +54,7 @@ class GrabDocsPipModule(reactContext: ReactApplicationContext) :
       promise.resolve(false)
       return
     }
-    val activity = currentActivity ?: run {
+    val activity = reactApplicationContext.currentActivity ?: run {
       promise.resolve(false)
       return
     }
