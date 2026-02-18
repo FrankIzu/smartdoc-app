@@ -4309,31 +4309,43 @@ class ApiService {
     }
   }
 
-  async endMeeting(meetingId: string): Promise<ApiResponse> {
+  async endMeeting(meetingId: string, forceEnd: boolean = false): Promise<ApiResponse> {
     try {
-      console.log('Attempting to end meeting with ID:', meetingId);
+      console.log('Attempting to end meeting with ID:', meetingId, 'forceEnd:', forceEnd);
       console.log('Using endpoint: /api/v1/video/room/' + meetingId + '/end');
       
-      // Use string ID as confirmed by web backend logs
-      const response = await this.client.post(`/api/v1/video/room/${meetingId}/end`, {});
+      const body = forceEnd ? { force: true } : {};
+      const response = await this.client.post(`/api/v1/video/room/${meetingId}/end`, body);
       console.log('End meeting response:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('End meeting failed:', error);
       console.error('Meeting ID was:', meetingId);
-      console.error('Full error response:', error.response?.data);
-      
+      const data = error.response?.data;
+      const status = error.response?.status;
+
       // If room not found, return success anyway since the meeting is effectively ended
-      if (error.response?.status === 404) {
+      if (status === 404) {
         console.log('Room not found - treating as success since meeting is effectively ended');
-        return { 
-          success: true, 
+        return {
+          success: true,
           message: 'Meeting ended successfully (room was not found in backend)',
-          data: { meetingId }
+          data: { meetingId },
         };
       }
-      
-      throw new Error(error.response?.data?.message || 'Failed to end meeting');
+
+      // 400 with active participants: backend requires confirmation before force-ending
+      if (status === 400 && (data?.error === 'active_participants' || data?.requires_confirmation)) {
+        return {
+          success: false,
+          requires_confirmation: true,
+          message: data?.message || 'Meeting is still active. End it anyway?',
+          participants: data?.participants,
+          active_participants_count: data?.active_participants_count,
+        } as ApiResponse;
+      }
+
+      throw new Error(data?.message || 'Failed to end meeting');
     }
   }
 

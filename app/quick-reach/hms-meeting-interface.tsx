@@ -1,13 +1,11 @@
 // 100ms Prebuilt Interface Implementation
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
-import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import Toast from 'react-native-toast-message';
 import {
     Alert,
     AppState,
@@ -22,16 +20,14 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import MeetingFloatingBubble from '../components/MeetingFloatingBubble';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useAuth } from '../context/auth';
 import { hmsBackendService } from './hmsBackendService';
 
-const HINT_KEY = 'reach_meeting_minimized_hint_seen';
-const AUTO_EXPAND_KEY = 'reach_meeting_auto_expand';
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
+export const REACH_CURRENT_MEETING_KEY = 'reach_current_meeting_id';
 
 // HMS package - enabled for local testing
 // All HMS functionality is handled via backend API calls
@@ -137,15 +133,8 @@ export default function HMSMeetingInterfaceScreen() {
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingNotificationShownRef = useRef(false);
 
-  // Minimize-to-bubble: when user hits back or switches app, show floating bubble instead of leaving
-  const [isMinimized, setIsMinimized] = useState(false);
-  const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationDisplayedRef = useRef(false);
   const pipFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Bubble: meeting start time for duration display; local mute state (HMS SDK doesn't expose mute in prebuilt)
-  const [meetingStartTime, setMeetingStartTime] = useState<string | undefined>(undefined);
-  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
 
   // Debug logging
       console.log('📱 GrabDocs Meeting Interface - Received params:', {
@@ -451,28 +440,8 @@ export default function HMSMeetingInterfaceScreen() {
     };
   }, [meetingId, user]);
 
-  // Minimize-to-bubble: helper to minimize with haptic, hint, notification
-  const minimizeToBubble = useCallback(async () => {
-    setIsMinimized(true);
-    try {
-      if (Platform.OS !== 'web') {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (_) {}
-    // First-time hint: one-time toast when user first minimizes to bubble ("Tap the bubble to return")
-    try {
-      const seen = await AsyncStorage.getItem(HINT_KEY);
-      if (!seen) {
-        Toast.show({
-          type: 'info',
-          text1: "You're still in the meeting",
-          text2: 'Tap the bubble to return.',
-          visibilityTime: 4000,
-        });
-        await AsyncStorage.setItem(HINT_KEY, '1');
-      }
-    } catch (_) {}
-    // "In meeting" notification on both iOS and Android: tap to return to meeting
+  // Show "In meeting" notification only (no in-app bubble). Used when PiP fallback is needed.
+  const showMeetingNotification = useCallback(async () => {
     try {
       if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('meeting', {
@@ -497,15 +466,14 @@ export default function HMSMeetingInterfaceScreen() {
       });
       notificationDisplayedRef.current = true;
     } catch (err) {
-      console.warn('⚠️ [BUBBLE] Could not show notification:', err);
+      console.warn('⚠️ [HMS] Could not show meeting notification:', err);
     }
   }, [meetingId, title, userName]);
 
-  // Back returns to the rest of the app: show in-app bubble and push return screen (call stays connected)
+  // Back: navigate to meeting list (call stays connected; user can return via active meeting card).
   const goBackToApp = useCallback(() => {
-    minimizeToBubble();
     router.push(returnPath as any);
-  }, [minimizeToBubble, returnPath, router]);
+  }, [returnPath, router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !authToken || !meetingId) return;
@@ -521,12 +489,10 @@ export default function HMSMeetingInterfaceScreen() {
     if (!authToken || !meetingId) return;
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       e.preventDefault();
-      if (!isMinimized) {
-        goBackToApp();
-      }
+      goBackToApp();
     });
     return unsubscribe;
-  }, [navigation, authToken, meetingId, isMinimized, goBackToApp]);
+  }, [navigation, authToken, meetingId, goBackToApp]);
 
   // Bubble vs PiP (both iOS and Android):
   // - In-app: back/minimize -> show bubble only (user stays in app).
@@ -544,24 +510,20 @@ export default function HMSMeetingInterfaceScreen() {
               console.log('GrabDocsPiP: entered PiP via native module (Phase 2 Option B)');
             }
           }).catch(() => {});
-          // Option C fallback: if PiP did not activate, show bubble/notification so user is not left with nothing
+          // Option C fallback: if PiP did not activate, show notification only (no bubble)
           if (pipFallbackTimerRef.current) clearTimeout(pipFallbackTimerRef.current);
           pipFallbackTimerRef.current = setTimeout(() => {
             pipFallbackTimerRef.current = null;
             pipModule.isInPipMode?.().then((inPip: boolean) => {
               if (!inPip && authToken && meetingId) {
-                minimizeToBubble();
-                console.log('GrabDocsPiP: PiP did not activate, fell back to bubble/notification');
+                showMeetingNotification();
+                console.log('GrabDocsPiP: PiP did not activate, fell back to notification');
               }
             }).catch(() => {});
           }, PIP_FALLBACK_DELAY_MS);
         }
         if (authToken && meetingId && !pipEnabled) {
-          minimizeToBubble();
-        }
-        if (autoExpandTimerRef.current) {
-          clearTimeout(autoExpandTimerRef.current);
-          autoExpandTimerRef.current = null;
+          showMeetingNotification();
         }
       } else if (nextState === 'active') {
         if (pipFallbackTimerRef.current) {
@@ -572,55 +534,35 @@ export default function HMSMeetingInterfaceScreen() {
           Notifications.dismissNotificationAsync(MEETING_NOTIFICATION_ID).catch(() => {});
           notificationDisplayedRef.current = false;
         }
-        if (isMinimized) {
-          const doAutoExpand = async () => {
-            try {
-              const val = await AsyncStorage.getItem(AUTO_EXPAND_KEY);
-              if (val === 'false') return;
-            } catch (_) {}
-            autoExpandTimerRef.current = setTimeout(() => {
-              setIsMinimized(false);
-              autoExpandTimerRef.current = null;
-            }, 1000);
-          };
-          doAutoExpand();
-        }
       }
     };
     const sub = AppState.addEventListener('change', handleAppStateChange);
     return () => {
       sub.remove();
-      if (autoExpandTimerRef.current) {
-        clearTimeout(autoExpandTimerRef.current);
-      }
       if (pipFallbackTimerRef.current) {
         clearTimeout(pipFallbackTimerRef.current);
         pipFallbackTimerRef.current = null;
       }
     };
-  }, [authToken, meetingId, isMinimized, minimizeToBubble, pipEnabled, pipModule]);
+  }, [authToken, meetingId, showMeetingNotification, pipEnabled, pipModule]);
 
-  // Screen wake lock: activate when in full meeting, deactivate when minimized
+  // Screen wake lock: activate when in meeting
   useEffect(() => {
-    if (authToken && meetingId && !isMinimized) {
+    if (authToken && meetingId) {
       activateKeepAwake();
     } else {
       deactivateKeepAwake();
     }
     return () => deactivateKeepAwake();
-  }, [authToken, meetingId, isMinimized]);
+  }, [authToken, meetingId]);
 
-  // When user taps the "In meeting" notification, expand
+  // Track current meeting for "one meeting at a time" and return-via-active-card
   useEffect(() => {
-    if (Platform.OS === 'web') return;
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
-      if (data?.type === 'meeting_minimized') {
-        setIsMinimized(false);
-      }
-    });
-    return () => sub.remove();
-  }, []);
+    if (authToken && meetingId) {
+      AsyncStorage.setItem(REACH_CURRENT_MEETING_KEY, String(meetingId)).catch(() => {});
+    }
+    return () => {};
+  }, [authToken, meetingId]);
 
   const initializePrebuiltInterface = async () => {
     try {
@@ -670,7 +612,6 @@ export default function HMSMeetingInterfaceScreen() {
         }
         
         setAuthToken(token);
-        setMeetingStartTime(new Date().toISOString());
 
         // HARD LOGGING - Right before joining (as suggested by ChatGPT)
         const displayUserName = (userName as string) || user?.name || 'Mobile User';
@@ -813,6 +754,9 @@ export default function HMSMeetingInterfaceScreen() {
                 console.log('💓 [HEARTBEAT] Stopped heartbeat before leaving');
               }
 
+              try {
+                await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
+              } catch (_) {}
               // Call backend to leave meeting (clears ActiveParticipant table)
               if (meetingId) {
                 console.log('📱 [LEAVE] Calling leave endpoint for meeting:', meetingId);
@@ -1124,36 +1068,8 @@ export default function HMSMeetingInterfaceScreen() {
           {HMSPrebuilt && (
             <MeetingJoinSound enabled={!!authToken && !!meetingId} />
           )}
-          {isMinimized && (
-            <MeetingFloatingBubble
-              participantName={displayUserName}
-              onExpand={() => {
-                router.back();
-                setIsMinimized(false);
-              }}
-              onLeave={handleLeaveMeeting}
-              meetingTitle={meetingTitleStr}
-              meetingStartTime={meetingStartTime}
-              isAudioEnabled={isAudioEnabled}
-              onToggleMute={() => setIsAudioEnabled((prev) => !prev)}
-            />
-          )}
-          <SafeAreaView style={[styles.container, isMinimized && styles.containerMinimized]}>
-            <View
-              style={[
-                isMinimized
-                  ? {
-                      opacity: 0,
-                      position: 'absolute' as const,
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      bottom: 0,
-                      pointerEvents: 'none' as const,
-                    }
-                  : styles.meetingContentWrapper,
-              ]}
-            >
+          <SafeAreaView style={styles.container}>
+            <View style={styles.meetingContentWrapper}>
           {hmsError || hmsInitTimeout ? (
             <View style={styles.errorContainer}>
               <Text style={styles.errorTitle}>HMS Error</Text>
@@ -1276,6 +1192,10 @@ export default function HMSMeetingInterfaceScreen() {
                         setHmsInitializing(false);
                         setIsLoading(false);
                         
+                        // Clear "current meeting" so user can join another
+                        try {
+                          await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
+                        } catch (_) {}
                         // Call backend to leave meeting (clears ActiveParticipant table)
                         try {
                           if (meetingId) {

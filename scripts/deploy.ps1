@@ -230,13 +230,15 @@ function Update-BuildNumber {
     }
 }
 
-# Function to update LATEST_APP_VERSION and UPDATE_REASON in render.yaml (for production deploys)
+# Function to update LATEST_APP_VERSION, LATEST_APP_VERSION_CODE_ANDROID, and UPDATE_REASON in render.yaml (for production deploys)
+# Android versionCode is read from app.json (already updated by Update-BuildNumber) so backend can use it as min without MIN_* in Render.
 function Update-RenderAppConfig {
     param(
         [string]$Version,
         [string]$UpdateReason
     )
     $renderPath = "$PSScriptRoot\..\manager-francis\render.yaml"
+    $appJsonPath = "$PSScriptRoot\..\app.json"
     if (-not (Test-Path $renderPath)) {
         Write-Host "⚠️  render.yaml not found at $renderPath. Skipping app config update." -ForegroundColor Yellow
         return
@@ -246,12 +248,28 @@ function Update-RenderAppConfig {
         $UpdateReason = "feature"
         Write-Host "⚠️  Invalid UpdateReason. Defaulting to 'feature'." -ForegroundColor Yellow
     }
+    $androidVersionCode = ""
+    if (Test-Path $appJsonPath) {
+        try {
+            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+            if ($appJson.expo.android.versionCode) {
+                $androidVersionCode = $appJson.expo.android.versionCode.ToString()
+            }
+        } catch {
+            Write-Host "⚠️  Could not read Android versionCode from app.json" -ForegroundColor Yellow
+        }
+    }
     try {
         $content = Get-Content $renderPath -Raw -Encoding UTF8
         $content = $content -replace '(- key: LATEST_APP_VERSION\s+value: )["'']?[^"'']*["'']?', "`${1}`"$Version`""
+        if ($androidVersionCode -ne "") {
+            $content = $content -replace '(- key: LATEST_APP_VERSION_CODE_ANDROID\s+value: )["'']?[^"'']*["'']?', "`${1}`"$androidVersionCode`""
+        }
         $content = $content -replace '(- key: UPDATE_REASON\s+value: )["'']?[^"'']*["'']?', "`${1}$UpdateReason"
         Set-Content $renderPath $content -Encoding UTF8
-        Write-Host "✅ Updated render.yaml: LATEST_APP_VERSION=$Version, UPDATE_REASON=$UpdateReason" -ForegroundColor Green
+        $msg = "LATEST_APP_VERSION=$Version, UPDATE_REASON=$UpdateReason"
+        if ($androidVersionCode -ne "") { $msg += ", LATEST_APP_VERSION_CODE_ANDROID=$androidVersionCode" }
+        Write-Host "✅ Updated render.yaml: $msg" -ForegroundColor Green
     } catch {
         Write-Host "❌ Error updating render.yaml: $($_.Exception.Message)" -ForegroundColor Red
         exit 1

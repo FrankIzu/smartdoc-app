@@ -11,13 +11,14 @@ Add these in your Render service → Environment:
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `MIN_SUPPORTED_APP_VERSION` | `1.0.6` | Semver; app version below this → "Update required". **iOS uses only this** (build number is not checked). |
-| `MIN_SUPPORTED_BUILD_IOS` | `2` | Optional; **not used by the app** (iOS gate is version-only). Kept for reference or future use. |
-| `MIN_SUPPORTED_VERSION_CODE_ANDROID` | `32` | (Optional) Android versionCode; app below → "Update required" |
-| `LATEST_APP_VERSION` | `1.0.7` | Latest version for soft update prompts. **Set by deploy.ps1** on production deploy. |
-| `UPDATE_REASON` | `feature` | `security` \| `breaking` \| `feature`. Defaults to `feature` if empty. **Set by deploy.ps1**. |
+| `LATEST_APP_VERSION` | `1.0.7` | Latest semver; also used as **min supported** (iOS and Android semver gate) when `MIN_SUPPORTED_APP_VERSION` is not set. **Set by deploy.ps1**. |
+| `LATEST_APP_VERSION_CODE_ANDROID` | `47` | Android versionCode from app.json; used as **min versionCode** when `MIN_SUPPORTED_VERSION_CODE_ANDROID` is not set so Android updates are enforced by versionCode. **Set by deploy.ps1** from app.json on production deploy. |
+| `UPDATE_REASON` | `feature` | `security` \| `breaking` \| `feature`. **Set by deploy.ps1**. |
+| `MIN_SUPPORTED_APP_VERSION` | `1.0.6` | Optional override. If not set, backend uses `LATEST_APP_VERSION` as min. |
+| `MIN_SUPPORTED_VERSION_CODE_ANDROID` | `32` | Optional override. If not set, backend uses `LATEST_APP_VERSION_CODE_ANDROID` as min Android versionCode. |
+| `MIN_SUPPORTED_BUILD_IOS` | `2` | Optional; app uses only semver for iOS, so not needed. |
 
-You can use only `MIN_SUPPORTED_APP_VERSION`, or add the build/code fields for stricter control. `LATEST_APP_VERSION` and `UPDATE_REASON` are updated automatically when running `scripts/deploy.ps1` for production.
+You do **not** maintain any MIN_* in Render. deploy.ps1 updates **LATEST_APP_VERSION**, **LATEST_APP_VERSION_CODE_ANDROID** (from app.json), and **UPDATE_REASON**; the backend derives min supported from these.
 
 ## Response shape
 

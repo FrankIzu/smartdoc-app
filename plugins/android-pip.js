@@ -15,6 +15,11 @@ function withAndroidPip(config) {
     mainActivity.$ = mainActivity.$ || {};
     mainActivity.$['android:supportsPictureInPicture'] = 'true';
     mainActivity.$['android:resizeableActivity'] = 'true';
+    // configChanges: include smallestScreenSize for PiP view visibility (100ms docs)
+    const configChanges = mainActivity.$['android:configChanges'] || 'keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode';
+    if (!configChanges.includes('smallestScreenSize')) {
+      mainActivity.$['android:configChanges'] = configChanges.replace('screenSize|', 'screenSize|smallestScreenSize|');
+    }
 
     return config;
   });

@@ -1,25 +1,28 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useAuth } from '../context/auth';
+import { REACH_CURRENT_MEETING_KEY } from './hms-meeting-interface';
 
 interface Meeting {
   id: string;
@@ -370,6 +373,20 @@ export default function MeetingCallScreen() {
 
   const joinMeeting = async (meeting: Meeting, forceJoin: boolean = false) => {
     if (isJoining) return;
+    // One meeting at a time: block joining another meeting if already in one
+    if (!forceJoin) {
+      try {
+        const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+        if (currentId && currentId.trim() !== '' && currentId !== meeting.meetingId) {
+          Alert.alert(
+            'Already in a meeting',
+            'You can only be in one meeting at a time. Please leave the current meeting first, then join this one.',
+            [{ text: 'OK', style: 'cancel' }]
+          );
+          return;
+        }
+      } catch (_) {}
+    }
     setIsJoining(true);
     try {
       const response = await apiClient.joinMeeting({
@@ -485,8 +502,20 @@ export default function MeetingCallScreen() {
       Alert.alert('Error', 'Please enter a meeting ID');
       return;
     }
-    setIsJoining(true);
     const savedMeetingId = meetingId.trim();
+    // One meeting at a time
+    try {
+      const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+      if (currentId && currentId.trim() !== '' && currentId !== savedMeetingId) {
+        Alert.alert(
+          'Already in a meeting',
+          'You can only be in one meeting at a time. Please leave the current meeting first, then join this one.',
+          [{ text: 'OK', style: 'cancel' }]
+        );
+        return;
+      }
+    } catch (_) {}
+    setIsJoining(true);
     const savedPassword = meetingPassword.trim();
     try {
       const response = await apiClient.joinMeeting({
@@ -564,27 +593,59 @@ export default function MeetingCallScreen() {
       'Are you sure you want to end this meeting?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'End Meeting', 
+        {
+          text: 'End Meeting',
           style: 'destructive',
           onPress: async () => {
+            const roomId = meeting.id || meeting.meetingId;
             try {
-              // Try using the id field instead of meetingId since backend expects room_id
-              const roomId = meeting.id || meeting.meetingId;
-              console.log('Ending meeting with ID:', roomId, 'from meeting:', meeting);
               const response = await apiClient.endMeeting(roomId);
               if (response.success) {
                 Alert.alert('Success', 'Meeting ended successfully');
-                loadMeetings(); // Refresh the list
-              } else {
-                Alert.alert('Error', response.message || 'Failed to end meeting');
+                loadMeetings();
+                return;
               }
-            } catch (error) {
+              if ((response as any).requires_confirmation) {
+                Toast.show({
+                  type: 'info',
+                  text1: 'Meeting still active',
+                  text2: (response as any).message,
+                  visibilityTime: 4000,
+                });
+                Alert.alert(
+                  'End meeting anyway?',
+                  (response as any).message + '\n\nDo you want to end the meeting for everyone?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'End meeting',
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          const forceResponse = await apiClient.endMeeting(roomId, true);
+                          if (forceResponse.success) {
+                            Alert.alert('Success', 'Meeting ended successfully.');
+                            loadMeetings();
+                          } else {
+                            Alert.alert('Error', (forceResponse as any).message || 'Failed to end meeting');
+                          }
+                        } catch (err: any) {
+                          console.error('Force end meeting failed:', err);
+                          Alert.alert('Error', err?.message || 'Failed to end meeting');
+                        }
+                      },
+                    },
+                  ]
+                );
+                return;
+              }
+              Alert.alert('Error', (response as any).message || 'Failed to end meeting');
+            } catch (error: any) {
               console.error('Failed to end meeting:', error);
-              Alert.alert('Error', 'Failed to end meeting');
+              Alert.alert('Error', error?.message || 'Failed to end meeting');
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -863,6 +924,7 @@ export default function MeetingCallScreen() {
     horizontalList: {
       paddingRight: 20,
     },
+    // Same border for live and recent meetings (user can only be in one at a time)
     meetingCard: {
       backgroundColor: colors.card,
       borderRadius: 12,
@@ -877,10 +939,6 @@ export default function MeetingCallScreen() {
       shadowRadius: 2,
       elevation: 1,
       minWidth: 280,
-    },
-    ongoingMeeting: {
-      borderColor: '#34C759',
-      borderWidth: 2,
     },
     meetingHeader: {
       flexDirection: 'row',
@@ -1206,8 +1264,20 @@ export default function MeetingCallScreen() {
 
   const renderMeetingCard = ({ item }: { item: Meeting }) => (
     <TouchableOpacity
-      style={[dynamicStyles.meetingCard, item.status === 'active' && dynamicStyles.ongoingMeeting]}
-      onPress={() => viewMeetingAssets(item)}
+      style={dynamicStyles.meetingCard}
+      onPress={() => {
+        // Active meeting: return to meeting UI. Others: go to assets.
+        if (item.status === 'active') {
+          navigateToMeetingScreen({
+            meetingId: item.meetingId,
+            title: item.title,
+            userName: user?.name || user?.email || 'Mobile User',
+            passcode: item.passcode
+          });
+        } else {
+          viewMeetingAssets(item);
+        }
+      }}
       onLongPress={() => {
         if (isJoining) return;
         const isLive = item.status === 'active';
@@ -1440,9 +1510,7 @@ export default function MeetingCallScreen() {
                   data={ongoingMeetings}
                   renderItem={renderMeetingCard}
                   keyExtractor={(item) => item.id}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={dynamicStyles.horizontalList}
+                  scrollEnabled={false}
                 />
               </View>
             )}
