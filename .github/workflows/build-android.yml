@@ -264,7 +264,12 @@ jobs:
           trap 'mv -f app.config.js.bak app.config.js' EXIT
           echo "Submitting Android app to Google Play Store..."
           SERVICE_ACCOUNT_PATH="/tmp/play-service-account.json"
-          echo "$ANDROID_SERVICE_ACCOUNT_JSON" > "$SERVICE_ACCOUNT_PATH"
+          node -e "
+            const fs = require('fs');
+            let json = process.env.ANDROID_SERVICE_ACCOUNT_JSON || '';
+            json = json.replace(/^\uFEFF/, '').trim();
+            fs.writeFileSync('$SERVICE_ACCOUNT_PATH', json, 'utf8');
+          "
           PLAY_TRACK="${{ github.event.inputs.play_track || 'alpha' }}"
           echo "Submitting to Google Play track: $PLAY_TRACK"
           node -e "
