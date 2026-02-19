@@ -9,7 +9,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { apiClient } from '../../services/api';
+import { apiClient } from '../services/api';
 
 export default function JoinMeetingScreen() {
   const router = useRouter();
