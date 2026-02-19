@@ -104,17 +104,7 @@
             {
               "scheme": "https",
               "host": "api.grabdocs.com",
-              "pathPrefix": "/join-meeting"
-            },
-            {
-              "scheme": "https",
-              "host": "api.grabdocs.com",
               "pathPrefix": "/meeting"
-            },
-            {
-              "scheme": "https",
-              "host": "app.grabdocs.com",
-              "pathPrefix": "/join-meeting"
             },
             {
               "scheme": "https",

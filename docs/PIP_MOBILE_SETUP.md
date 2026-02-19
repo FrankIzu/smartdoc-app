@@ -4,12 +4,16 @@ This doc summarizes what is implemented for meeting PiP and how to verify/fix Pi
 
 ## Showing camera/video in PiP (avoiding black screen)
 
-If the PiP window shows a black screen with only the user's name (no camera or video):
+If the PiP window shows a black screen with only the participant name (no video):
 
-- **iOS:** The 100ms Room Kit uses `useActiveSpeaker: true` by default so the active speaker's video (or your camera) should appear. Ensure:
-  1. **Multitasking Camera Access** entitlement is approved and in your provisioning profile (see [Request Multitasking Camera Access](https://developer.apple.com/contact/request/multitasking-camera-access/)).
-  2. The app is built with a profile that includes this capability; without it, the system may not allow camera access in PiP and you may see a placeholder (e.g. name only) or black screen.
-- **Android:** PiP captures the activity content. Ensure `android:configChanges` on the activity includes `screenSize|smallestScreenSize|screenLayout` so the SDK can manage view visibility when entering PiP. The 100ms SDK should keep the video surface visible in PiP; if you see black, check that you are on a supported device (e.g. physical device, API 26+) and that no custom logic is hiding the video view when entering PiP.
+- **iOS**
+  1. **Multitasking Camera Access** must be approved and in your provisioning profile: [Request Multitasking Camera Access](https://developer.apple.com/contact/request/multitasking-camera-access/). Without it, the system blocks camera in PiP and you get a placeholder or black screen.
+  2. Build with a profile that includes this capability.
+  3. The 100ms Room Kit uses `useActiveSpeaker: true` by default; video in PiP is controlled by the SDK and the above entitlement.
+- **Android**
+  1. Activity must have `android:configChanges` including `screenSize|smallestScreenSize|screenLayout` (see [plugins/android-pip.js](../plugins/android-pip.js) and [AndroidManifest](../android/app/src/main/AndroidManifest.xml)).
+  2. Test on a **physical** device (API 26+); many emulators show black or placeholder in PiP.
+  3. PiP content is drawn by the 100ms SDK; if you still see black after the above, check [100ms React Native PiP docs](https://www.100ms.live/docs/react-native/v2/how-to-guides/set-up-video-conferencing/render-video/pip-mode) and your SDK version—there is no app-level override to force video in PiP.
 
 ## Android
 

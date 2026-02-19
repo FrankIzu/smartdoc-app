@@ -598,45 +598,70 @@ export default function MeetingCallScreen() {
           style: 'destructive',
           onPress: async () => {
             const roomId = meeting.id || meeting.meetingId;
+            Toast.show({ type: 'info', text1: 'Ending meeting...', visibilityTime: 2000 });
+            const clearCurrentMeetingKey = () => {
+              AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY).catch(() => {});
+            };
             try {
               const response = await apiClient.endMeeting(roomId);
               if (response.success) {
+                clearCurrentMeetingKey();
                 Alert.alert('Success', 'Meeting ended successfully');
                 loadMeetings();
                 return;
               }
               if ((response as any).requires_confirmation) {
-                Toast.show({
-                  type: 'info',
-                  text1: 'Meeting still active',
-                  text2: (response as any).message,
-                  visibilityTime: 4000,
-                });
-                Alert.alert(
-                  'End meeting anyway?',
-                  (response as any).message + '\n\nDo you want to end the meeting for everyone?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'End meeting',
-                      style: 'destructive',
-                      onPress: async () => {
-                        try {
-                          const forceResponse = await apiClient.endMeeting(roomId, true);
-                          if (forceResponse.success) {
-                            Alert.alert('Success', 'Meeting ended successfully.');
-                            loadMeetings();
-                          } else {
-                            Alert.alert('Error', (forceResponse as any).message || 'Failed to end meeting');
+                const count = (response as any).active_participants_count ?? 0;
+                if (count > 1) {
+                  Toast.show({
+                    type: 'info',
+                    text1: 'Others still in meeting',
+                    text2: 'Do you want to end the meeting for everyone?',
+                    visibilityTime: 4000,
+                  });
+                  Alert.alert(
+                    'End meeting anyway?',
+                    'Others are still in the meeting. Do you want to end the meeting for everyone?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'End meeting',
+                        style: 'destructive',
+                        onPress: async () => {
+                          Toast.show({ type: 'info', text1: 'Ending meeting...', visibilityTime: 2000 });
+                          try {
+                            const forceResponse = await apiClient.endMeeting(roomId, true);
+                            if (forceResponse.success) {
+                              clearCurrentMeetingKey();
+                              Alert.alert('Success', 'Meeting ended successfully.');
+                              loadMeetings();
+                            } else {
+                              Alert.alert('Error', (forceResponse as any).message || 'Failed to end meeting');
+                            }
+                          } catch (err: any) {
+                            console.error('Force end meeting failed:', err);
+                            Alert.alert('Error', err?.message || 'Failed to end meeting');
                           }
-                        } catch (err: any) {
-                          console.error('Force end meeting failed:', err);
-                          Alert.alert('Error', err?.message || 'Failed to end meeting');
-                        }
+                        },
                       },
-                    },
-                  ]
-                );
+                    ]
+                  );
+                } else {
+                  Toast.show({ type: 'info', text1: 'Ending meeting...', visibilityTime: 2000 });
+                  try {
+                    const forceResponse = await apiClient.endMeeting(roomId, true);
+                    if (forceResponse.success) {
+                      clearCurrentMeetingKey();
+                      Alert.alert('Success', 'Meeting ended successfully.');
+                      loadMeetings();
+                    } else {
+                      Alert.alert('Error', (forceResponse as any).message || 'Failed to end meeting');
+                    }
+                  } catch (err: any) {
+                    console.error('Force end meeting failed:', err);
+                    Alert.alert('Error', err?.message || 'Failed to end meeting');
+                  }
+                }
                 return;
               }
               Alert.alert('Error', (response as any).message || 'Failed to end meeting');
@@ -1266,13 +1291,16 @@ export default function MeetingCallScreen() {
     <TouchableOpacity
       style={dynamicStyles.meetingCard}
       onPress={() => {
-        // Active meeting: return to meeting UI. Others: go to assets.
+        // Active meeting: return to meeting (push with same params as join so meeting screen opens correctly).
         if (item.status === 'active') {
-          navigateToMeetingScreen({
-            meetingId: item.meetingId,
-            title: item.title,
-            userName: user?.name || user?.email || 'Mobile User',
-            passcode: item.passcode
+          router.push({
+            pathname: './hms-meeting-interface',
+            params: {
+              meetingId: item.meetingId,
+              title: item.title,
+              userName: user?.name || user?.email || 'Mobile User',
+              passcode: item.passcode ?? undefined
+            }
           });
         } else {
           viewMeetingAssets(item);

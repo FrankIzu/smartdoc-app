@@ -674,8 +674,16 @@ export default function HMSMeetingInterfaceScreen() {
             userId: user?.id,
           });
         } else {
+          const errMsg = tokenError?.response?.data?.message || tokenError?.message || 'Unknown error';
+          const isRoomNotReady =
+            /room not found/i.test(errMsg) ||
+            /does not have an HMS room/i.test(errMsg) ||
+            /NO_HMS_ROOM/i.test(String(tokenError?.response?.data?.error_code || ''));
+          const friendlyMsg = isRoomNotReady
+            ? 'Meeting not started yet. Try opening the link in your browser first, or ask the host to start the meeting.'
+            : `Failed to generate auth token: ${errMsg}`;
           console.error('Failed to generate HMS auth token:', tokenError?.message || tokenError);
-          setError(`Failed to generate auth token: ${tokenError?.message || 'Unknown error'}`);
+          setError(friendlyMsg);
           errorLogger.logError(tokenError, {
             severity: 'error',
             screenName: 'HMSMeetingInterface',
@@ -1126,7 +1134,16 @@ export default function HMSMeetingInterfaceScreen() {
                 onError={(error) => {
                   console.error('📱 [HMS] Prebuilt Error Boundary:', error);
                   setHmsInitializing(false);
-                  setHmsError(error?.message || 'Failed to join meeting. Please try again.');
+                  const rawMessage = error?.message || '';
+                  // Intercept 100ms "room not found" / 400 INIT - show friendly message
+                  const isRoomNotFound =
+                    /room not found/i.test(rawMessage) ||
+                    /400\s*\[?INIT\]?/i.test(rawMessage) ||
+                    /room.*not.*exist/i.test(rawMessage);
+                  const friendlyMessage = isRoomNotFound
+                    ? 'Meeting not started yet. Try opening the link in your browser first, or ask the host to start the meeting.'
+                    : rawMessage || 'Failed to join meeting. Please try again.';
+                  setHmsError(friendlyMessage);
                   errorLogger.logError(error, {
                     severity: 'error',
                     screenName: 'HMSMeetingInterface',
