@@ -2,13 +2,15 @@
 
 This doc summarizes what is implemented for meeting PiP and how to verify/fix PiP on Android and iOS.
 
+**Video preview in PiP:** The 100ms Room Kit (HMSPrebuilt) enables PiP video by default: when `autoEnterPipMode` is true, it configures PiP with `useActiveSpeaker: true` (iOS) so the **active speaker’s video** is shown in the PiP window. On Android, the same meeting view is shown in the PiP window. No extra app code is required for video preview; if you see a black PiP window, use the steps below.
+
 ## Showing camera/video in PiP (avoiding black screen)
 
 If the PiP window shows a black screen with only the participant name (no video):
 
 - **iOS**
   1. **Multitasking Camera Access** must be approved and in your provisioning profile: [Request Multitasking Camera Access](https://developer.apple.com/contact/request/multitasking-camera-access/). Without it, the system blocks camera in PiP and you get a placeholder or black screen.
-  2. Build with a profile that includes this capability.
+  2. **“Build with a profile that includes this capability”** means: the **provisioning profile** used to sign your app must allow this entitlement. In practice: (a) In [Apple Developer → Identifiers](https://developer.apple.com/account/resources/identifiers/list) open your **App ID** (e.g. `com.grabdocs.mobile`), enable the **Multitasking Camera Access** capability, and save. (b) Use a **provisioning profile** that was generated for that App ID (after the capability was enabled). EAS Build and Xcode usually pull or create such a profile when your project’s entitlements include Multitasking Camera Access; just ensure the App ID in the Developer portal has the capability so any new profile includes it.
   3. The 100ms Room Kit uses `useActiveSpeaker: true` by default; video in PiP is controlled by the SDK and the above entitlement.
 - **Android**
   1. Activity must have `android:configChanges` including `screenSize|smallestScreenSize|screenLayout` (see [plugins/android-pip.js](../plugins/android-pip.js) and [AndroidManifest](../android/app/src/main/AndroidManifest.xml)).
@@ -47,10 +49,10 @@ If the PiP window shows a black screen with only the participant name (no video)
 
 iOS PiP for camera/meetings is more restricted than Android. Confirm:
 
-1. **Entitlement**
+1. **Entitlement and provisioning profile**
    - Request **Multitasking Camera Access** from Apple if not already granted:  
      [Request Multitasking Camera Access](https://developer.apple.com/contact/request/multitasking-camera-access/).
-   - In Apple Developer: ensure the App ID has this capability and that the **provisioning profile** used for the build includes it. Without approval, PiP can silently fail.
+   - In [Apple Developer → Identifiers](https://developer.apple.com/account/resources/identifiers/list), select your app’s **App ID**, enable **Multitasking Camera Access**, and save. The **provisioning profile** is the file that ties your App ID (and its capabilities) to a build; when you build with EAS or Xcode, the profile used for signing must be for that App ID so it “includes” this capability. Without the capability on the App ID (and thus in the profile), PiP can silently fail.
 
 2. **AVAudioSession**
    - 100ms should set the audio session to `AVAudioSessionCategoryPlayAndRecord` with options such as `.allowBluetooth`, `.defaultToSpeaker`, `.mixWithOthers`. If 100ms does not configure this correctly, iOS may not allow PiP. Check 100ms React Native / iOS docs or their SDK for the required audio session setup.

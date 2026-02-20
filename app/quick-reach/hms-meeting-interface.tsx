@@ -4,7 +4,7 @@ import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
-import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
@@ -24,7 +24,6 @@ import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useAuth } from '../context/auth';
-import { hmsBackendService } from './hmsBackendService';
 
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
 export const REACH_CURRENT_MEETING_KEY = 'reach_current_meeting_id';
@@ -109,17 +108,17 @@ class HMSErrorBoundary extends Component<
 // Minimal bottom inset for Android so prebuilt toolbar clears system nav (kept small to avoid moving UI up too much)
 const ANDROID_NAV_INSET = 24;
 
-const DEFAULT_RETURN_TO = '/quick-reach';
-
 export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
-  const navigation = useNavigation();
   const params = useLocalSearchParams();
-  const { meetingId, title, userName, returnTo } = params;
-  const returnPath = (returnTo && typeof returnTo === 'string') ? String(returnTo) : DEFAULT_RETURN_TO;
+  const { meetingId, title, userName, passcode, passcode_token: passcodeToken } = params;
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
+
+  const goToAppHome = useCallback(() => {
+    router.replace('/(tabs)' as any);
+  }, [router]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -470,10 +469,10 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, [meetingId, title, userName]);
 
-  // Back: navigate to meeting list (call stays connected; user can return via active meeting card).
+  // Back / swipe: pop to previous screen (meeting list or home). Call stays connected; user can return via active meeting card.
   const goBackToApp = useCallback(() => {
-    router.push(returnPath as any);
-  }, [returnPath, router]);
+    router.back();
+  }, [router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !authToken || !meetingId) return;
@@ -485,14 +484,8 @@ export default function HMSMeetingInterfaceScreen() {
     return () => BackHandler.removeEventListener('hardwareBackPress', handler);
   }, [authToken, meetingId, goBackToApp]);
 
-  useEffect(() => {
-    if (!authToken || !meetingId) return;
-    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
-      e.preventDefault();
-      goBackToApp();
-    });
-    return unsubscribe;
-  }, [navigation, authToken, meetingId, goBackToApp]);
+  // Let swipe-back and header back arrow do default pop (no intercept) so user goes to previous screen without an extra stack entry.
+  // (Removed beforeRemove listener that was preventing default and pushing returnPath, which caused "taken back to meeting" on next back.)
 
   // Bubble vs PiP (both iOS and Android):
   // - In-app: back/minimize -> show bubble only (user stays in app).
@@ -586,37 +579,31 @@ export default function HMSMeetingInterfaceScreen() {
       }
 
       console.log('📱 Initializing GrabDocs Meeting Interface with meeting ID:', meetingId);
-      
-      // Generate auth token from backend
+
+      // Same as web: get token via join-by-id (one join path for both web and mobile)
+      const displayUserName = (userName as string) || user?.name || 'Mobile User';
       try {
-        // Don't specify role - let backend determine based on creator_id
-        // Backend will check if user is meeting creator and assign 'host' or 'guest' accordingly
-        const token = await hmsBackendService.generateAuthToken({
-          roomCode: meetingId as string,
-          userName: (userName as string) || user?.name || 'Mobile User',
-          // role: not specified - backend will determine based on creator_id (same as web)
-          userId: user?.id?.toString()
+        const joinRes = await apiClient.client.post('/api/v1/video/room/join-by-id', {
+          meeting_id: (meetingId as string).trim(),
+          participant_name: displayUserName,
+          enable_audio: true,
+          enable_video: false,
+          viewer_type: 'near-realtime',
+          ...(passcodeToken ? { passcode_token: passcodeToken } : ((passcode as string)?.trim() ? { passcode: (passcode as string).trim() } : {})),
         });
-        if (!token) {
-          throw new Error('Token generation returned empty token');
-        }
-        // Validate token format (should be a JWT)
+        const raw = joinRes?.data || {};
+        const data = (raw && typeof (raw as any).data === 'object' && (raw as any).data != null) ? (raw as any).data : raw;
+        const token = (data as any).token;
         if (!token || typeof token !== 'string' || token.trim().length === 0) {
-          throw new Error('Token is empty or invalid');
+          throw new Error('Join did not return a token');
         }
-        
-        // Basic JWT validation (should have 3 parts separated by dots)
         const tokenParts = token.split('.');
         if (tokenParts.length !== 3) {
           console.warn('⚠️ [HMS] Token does not appear to be a valid JWT (expected 3 parts, got ' + tokenParts.length + ')');
         }
-        
         setAuthToken(token);
-
-        // HARD LOGGING - Right before joining (as suggested by ChatGPT)
-        const displayUserName = (userName as string) || user?.name || 'Mobile User';
         const joinConfigData = {
-          token: token,
+          token,
           tokenLength: token.length,
           tokenPreview: token.substring(0, 50) + '...',
           tokenParts: tokenParts.length,
@@ -625,74 +612,40 @@ export default function HMSMeetingInterfaceScreen() {
           userName: displayUserName,
           userNameLength: displayUserName.length,
           userId: user?.id?.toString(),
-          role: 'auto-determined-by-backend', // Backend determines host/guest based on creator_id
+          role: 'auto-determined-by-backend',
           platform: Platform.OS,
           permissionsGranted: permissionsGranted,
           timestamp: new Date().toISOString(),
         };
-        
         setJoinConfig(joinConfigData);
-        
-        console.log('🚀 [HMS] JOINING GRABDOCS MEETING WITH:');
-        console.log('=====================================');
-        console.log('Token Length:', token.length);
-        console.log('Token Preview:', token.substring(0, 50) + '...');
-        console.log('Token Parts (JWT):', tokenParts.length);
-        console.log('Room ID:', meetingId);
-        console.log('Room ID Length:', (meetingId as string)?.length || 0);
-        console.log('User Name:', displayUserName);
-        console.log('User Name Length:', displayUserName.length);
-        console.log('User ID:', user?.id?.toString());
-        console.log('Role: auto-determined by backend (host if creator, guest otherwise)');
-        console.log('Platform:', Platform.OS);
-        console.log('Permissions Granted:', permissionsGranted);
-        console.log('HMSPrebuilt Available:', !!HMSPrebuilt);
-        console.log('=====================================');
-        
-        // Log to backend for debugging
+        console.log('🚀 [HMS] Joined via join-by-id (same as web), token length:', token.length);
         errorLogger.logError(
           new Error('HMS Join Attempt - Diagnostic Log'),
-          {
-            severity: 'warning',
-            screenName: 'HMSMeetingInterface',
-            userAction: 'HMS Join Attempt',
-            errorType: 'HMSJoinDiagnostic',
-            userId: user?.id,
-          }
+          { severity: 'warning', screenName: 'HMSMeetingInterface', userAction: 'HMS Join Attempt', errorType: 'HMSJoinDiagnostic', userId: user?.id }
         );
-      } catch (tokenError: any) {
-        // 405 means endpoint doesn't exist - backend needs to implement it
-        if (tokenError?.response?.status === 405) {
-          console.warn('⚠️ HMS token endpoint not implemented (405): /api/v1/mobile/meetings/hms-token');
-          console.warn('⚠️ Backend needs to implement this endpoint for HMS to work');
-          setError('HMS token endpoint not available. Please contact support.');
-          errorLogger.logError(tokenError, {
-            severity: 'error',
-            screenName: 'HMSMeetingInterface',
-            userAction: 'Generate HMS Token',
-            errorType: 'HMSTokenEndpointMissing',
-            userId: user?.id,
-          });
+      } catch (joinError: any) {
+        const status = joinError?.response?.status;
+        const errData = joinError?.response?.data || {};
+        const errMsg = errData.message || errData.error || joinError?.message || 'Unknown error';
+        if (status === 409) {
+          setError('You are already in this meeting. Leave the other session and try again.');
+        } else if (status === 403) {
+          setError(errMsg || 'This meeting requires host approval to join.');
         } else {
-          const errMsg = tokenError?.response?.data?.message || tokenError?.message || 'Unknown error';
           const isRoomNotReady =
             /room not found/i.test(errMsg) ||
             /does not have an HMS room/i.test(errMsg) ||
-            /NO_HMS_ROOM/i.test(String(tokenError?.response?.data?.error_code || ''));
-          const friendlyMsg = isRoomNotReady
-            ? 'Meeting not started yet. Try opening the link in your browser first, or ask the host to start the meeting.'
-            : `Failed to generate auth token: ${errMsg}`;
-          console.error('Failed to generate HMS auth token:', tokenError?.message || tokenError);
-          setError(friendlyMsg);
-          errorLogger.logError(tokenError, {
-            severity: 'error',
-            screenName: 'HMSMeetingInterface',
-            userAction: 'Generate HMS Token',
-            errorType: 'HMSTokenGenerationFailed',
-            userId: user?.id,
-          });
+            /NO_HMS_ROOM/i.test(String(errData?.error_code || ''));
+          setError(isRoomNotReady ? 'Meeting not started yet. Contact host' : errMsg);
         }
-        // Don't continue without token - it's required
+        errorLogger.logError(joinError, {
+          severity: 'error',
+          screenName: 'HMSMeetingInterface',
+          userAction: 'Join by ID',
+          errorType: 'HMSJoinByIdFailed',
+          userId: user?.id,
+        });
+        setIsLoading(false);
         return;
       }
       
@@ -793,7 +746,7 @@ export default function HMSMeetingInterfaceScreen() {
           <Text style={styles.errorMessage}>
             No meeting ID was provided. Please try joining the meeting again from the meeting list.
           </Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
@@ -828,10 +781,7 @@ export default function HMSMeetingInterfaceScreen() {
         <View style={styles.errorContainer}>
           <Text style={styles.errorTitle}>GrabDocs Meeting</Text>
           <Text style={styles.errorMessage}>{error}</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={initializePrebuiltInterface}>
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
@@ -879,7 +829,7 @@ export default function HMSMeetingInterfaceScreen() {
             <Text style={styles.errorMessage}>
               Missing required information: {!roomCode ? 'roomCode' : ''} {!token ? 'token' : ''}
             </Text>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
               <Text style={styles.backButtonText}>Go Back</Text>
             </TouchableOpacity>
           </View>
@@ -910,12 +860,7 @@ export default function HMSMeetingInterfaceScreen() {
           <View style={styles.errorContainer}>
             <Text style={styles.errorTitle}>Configuration Error</Text>
             <Text style={styles.errorMessage}>Invalid room code. Please try joining the meeting again.</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={() => {
-              initializePrebuiltInterface();
-            }}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
               <Text style={styles.backButtonText}>Go Back</Text>
             </TouchableOpacity>
           </View>
@@ -948,12 +893,7 @@ export default function HMSMeetingInterfaceScreen() {
                 </Text>
               </View>
             )}
-            <TouchableOpacity style={styles.retryButton} onPress={() => {
-              initializePrebuiltInterface();
-            }}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
               <Text style={styles.backButtonText}>Go Back</Text>
             </TouchableOpacity>
           </View>
@@ -995,7 +935,7 @@ export default function HMSMeetingInterfaceScreen() {
                 <Text style={styles.retryButtonText}>Open Settings</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
               <Text style={styles.backButtonText}>Go Back</Text>
             </TouchableOpacity>
           </View>
@@ -1107,15 +1047,7 @@ export default function HMSMeetingInterfaceScreen() {
                 </View>
               )}
               
-              <TouchableOpacity style={styles.retryButton} onPress={() => {
-                setHmsError(null);
-                setHmsInitTimeout(false);
-                setHmsInitializing(false);
-                initializePrebuiltInterface();
-              }}>
-                <Text style={styles.retryButtonText}>Retry</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+              <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
                 <Text style={styles.backButtonText}>Go Back</Text>
               </TouchableOpacity>
             </View>
@@ -1141,7 +1073,7 @@ export default function HMSMeetingInterfaceScreen() {
                     /400\s*\[?INIT\]?/i.test(rawMessage) ||
                     /room.*not.*exist/i.test(rawMessage);
                   const friendlyMessage = isRoomNotFound
-                    ? 'Meeting not started yet. Try opening the link in your browser first, or ask the host to start the meeting.'
+                    ? 'Meeting not started yet. Contact host'
                     : rawMessage || 'Failed to join meeting. Please try again.';
                   setHmsError(friendlyMessage);
                   errorLogger.logError(error, {
@@ -1187,7 +1119,7 @@ export default function HMSMeetingInterfaceScreen() {
                         <Text style={styles.retryButtonText}>Open Settings</Text>
                       </TouchableOpacity>
                     )}
-                    <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+                    <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
                       <Text style={styles.backButtonText}>Go Back</Text>
                     </TouchableOpacity>
                   </View>
@@ -1197,7 +1129,7 @@ export default function HMSMeetingInterfaceScreen() {
                   </View>
                 ) : (
                   <View style={[styles.prebuiltWrapper, { paddingBottom: bottomInset }]}>
-                    {/* PiP: iOS needs app.json UIBackgroundModes ["voip"] + plugins/ios-pip (Multitasking Camera Access); Android uses plugins/android-pip */}
+                    {/* PiP: Video preview in PiP is enabled by 100ms Room Kit (useActiveSpeaker: true). iOS: UIBackgroundModes ["voip"] + plugins/ios-pip (Multitasking Camera Access). Android: plugins/android-pip. See docs/PIP_MOBILE_SETUP.md if PiP shows black. */}
                     <HMSPrebuilt 
                       token={hmsProps.token}
                       roomCode={hmsProps.roomCode}
@@ -1258,13 +1190,7 @@ export default function HMSMeetingInterfaceScreen() {
           <View style={styles.errorContainer}>
             <Text style={styles.errorTitle}>Initialization Error</Text>
             <Text style={styles.errorMessage}>{renderError?.message || 'Failed to initialize meeting interface.'}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={() => {
-              setHmsError(null);
-              initializePrebuiltInterface();
-            }}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
               <Text style={styles.backButtonText}>Go Back</Text>
             </TouchableOpacity>
           </View>

@@ -7,11 +7,18 @@
 # Keep android folder to use our custom Gradle config that fixes entry point resolution
 # /android
 
+# Dependencies (EAS runs npm install on server - don't upload)
+node_modules/
+
 # Development files
 node_modules/.cache
 .expo
 dist
 web-build
+
+# Python virtual env (often 200-500MB)
+venv/
+.venv/
 
 # Documentation
 *.md
@@ -35,12 +42,14 @@ SUBMISSION_CHECKLIST.md
 USER_GUIDE.md
 ACCOUNT_MIGRATION_GUIDE.md
 
-# Test files
+# Test files and coverage (can be 100MB+)
 test-*
 *_test.*
 __tests__/
 *.test.*
 test-files/
+coverage/
+.nyc_output/
 
 # Logs
 *.log
@@ -104,3 +113,12 @@ Thumbs.db
 # Large files and directories
 dev-files/
 %USERPROFILE%/
+
+# Archives and packages
+*.tar.gz
+*.zip
+*.tgz
+
+# Optional: Add /ios to use EAS Prebuild (regenerates native from config)
+# Only if you don't need custom native code in ios/
+# /ios

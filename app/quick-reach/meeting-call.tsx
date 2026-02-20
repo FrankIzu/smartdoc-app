@@ -361,7 +361,7 @@ export default function MeetingCallScreen() {
 
   const navigateToMeetingScreen = (params: { meetingId: string; title: string; userName?: string; passcode?: string }) => {
     router.replace({
-      pathname: './hms-meeting-interface',
+      pathname: '/quick-reach/hms-meeting-interface',
       params: {
         meetingId: params.meetingId,
         title: params.title,
@@ -1294,7 +1294,7 @@ export default function MeetingCallScreen() {
         // Active meeting: return to meeting (push with same params as join so meeting screen opens correctly).
         if (item.status === 'active') {
           router.push({
-            pathname: './hms-meeting-interface',
+            pathname: '/quick-reach/hms-meeting-interface',
             params: {
               meetingId: item.meetingId,
               title: item.title,

@@ -10,12 +10,31 @@ export const EXPO_DEV_PORT = 8081; // Metro bundler default port
 export const LOCAL_DEV_URL = `http://${LOCAL_DEV_IP}:${LOCAL_DEV_PORT}`;
 
 // API Configuration - Auto-detect based on environment
+const PRODUCTION_API_URL = 'https://api.grabdocs.com';
+
 export const API_BASE_URL = (() => {
-  // 1. Check explicit environment variable (highest priority)
+  const appOwnership = Constants.appOwnership;
+  const isStandalone = appOwnership !== 'expo'; // Expo Go = 'expo'; dev/prod builds = 'standalone' or undefined
+
+  // For standalone apps (dev builds, production builds, EAS updates): ALWAYS use production.
+  // EAS Update can accidentally bake in local .env (e.g. EXPO_PUBLIC_API_URL=http://192.168.x.x)
+  // when run locally. Ignore env for standalone to avoid "app not connecting" after updates.
+  if (isStandalone) {
+    return PRODUCTION_API_URL;
+  }
+
+  // 1. For Expo Go only: check explicit environment variable
   const raw = process.env.EXPO_PUBLIC_API_URL;
   const envApiUrl = typeof raw === 'string' ? raw.trim() : '';
   if (envApiUrl !== '') {
-    // Ensure HTTPS for production URLs (not localhost)
+    const isLocalUrl =
+      envApiUrl.includes('192.168.') ||
+      envApiUrl.includes('10.') ||
+      envApiUrl.includes('localhost') ||
+      envApiUrl.includes('127.0.0.1');
+    if (isLocalUrl) {
+      return PRODUCTION_API_URL;
+    }
     let finalUrl = envApiUrl;
     if (finalUrl.includes('api.grabdocs.com') && !finalUrl.startsWith('https://')) {
       finalUrl = finalUrl.replace(/^http:\/\//, 'https://');
@@ -26,13 +45,8 @@ export const API_BASE_URL = (() => {
   // 2. Check if running on web platform
   const isWeb = Platform.OS === 'web';
   
-  // 3. Check if we're in Expo Go (local testing only)
-  // Expo Go = local testing, use localhost
-  // Standalone app (dev or prod build) = use production
-  const appOwnership = Constants.appOwnership;
+  // 3. Expo Go = local testing, use localhost
   const isExpoGo = appOwnership === 'expo';
-  // For standalone apps, appOwnership can be 'standalone', null, or undefined
-  // Any value that's not 'expo' means it's a standalone app
 
   // For web platform in development, use localhost (requires CORS configuration on backend)
   if (isWeb && __DEV__) {
@@ -53,8 +67,7 @@ export const API_BASE_URL = (() => {
   // IMPORTANT: iOS dev builds installed on physical devices are standalone apps
   // and should ALWAYS use production backend unless explicitly overridden
   // CRITICAL: Always use HTTPS for production - iOS requires it
-  const productionUrl = 'https://api.grabdocs.com';
-  return productionUrl; // Production Render backend - MUST be HTTPS
+  return PRODUCTION_API_URL;
 })();
 
 export const ENVIRONMENT = process.env.EXPO_PUBLIC_ENVIRONMENT || (__DEV__ ? 'development' : 'production');
