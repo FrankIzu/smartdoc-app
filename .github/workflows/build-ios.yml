@@ -19,91 +19,9 @@ on:
           - production
           - preview
           - development
-      force_prebuild:
-        description: 'Regenerate ios folder (run prebuild) before building. Use after changing app config or plugins.'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
-  ensure-ios:
-    runs-on: macos-latest
-    permissions:
-      contents: write
-    outputs:
-      did_prebuild: ${{ steps.need_prebuild.outputs.need }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: false
-          sparse-checkout: |
-            /*
-            !manager-francis
-          sparse-checkout-cone-mode: false
-
-      - name: Remove manager-francis submodule entry
-        run: |
-          set +e
-          git config -f .gitmodules --remove-section submodule.manager-francis 2>/dev/null || true
-          git submodule deinit -f manager-francis 2>/dev/null || true
-          git rm --cached manager-francis 2>/dev/null || true
-          rm -rf .git/modules/manager-francis manager-francis 2>/dev/null || true
-          git reset --hard HEAD 2>/dev/null || true
-          git clean -fd 2>/dev/null || true
-        continue-on-error: true
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check if prebuild needed
-        id: need_prebuild
-        run: |
-          if [ "${{ github.event.inputs.force_prebuild }}" = "true" ]; then
-            echo "need=true" >> $GITHUB_OUTPUT
-            echo "Force prebuild requested"
-            exit 0
-          fi
-          if [ ! -d "ios" ] || [ ! -f "ios/GrabDocs.xcodeproj/project.pbxproj" ]; then
-            echo "need=true" >> $GITHUB_OUTPUT
-            echo "ios folder missing or incomplete"
-            exit 0
-          fi
-          echo "need=false" >> $GITHUB_OUTPUT
-          echo "ios folder present, skipping prebuild"
-
-      - name: Run prebuild and push ios
-        if: steps.need_prebuild.outputs.need == 'true'
-        run: |
-          npx expo prebuild --platform ios --clean --no-install
-          node scripts/patch-ios-podfile-broadcast.js
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ios/
-          if git diff --staged --quiet; then
-            echo "No ios changes to commit"
-            exit 0
-          fi
-          git commit -m "chore(ios): regenerate ios folder via prebuild"
-          BRANCH="${GITHUB_REF#refs/heads/}"
-          git pull origin "$BRANCH" --rebase
-          git push origin "$BRANCH"
-
   build:
-    needs: ensure-ios
     runs-on: macos-latest
     steps:
       - name: Checkout (exclude manager-francis; app build does not use it)
@@ -115,10 +33,6 @@ jobs:
             /*
             !manager-francis
           sparse-checkout-cone-mode: false
-
-      - name: Pull latest (get prebuilt ios if ensure-ios pushed)
-        run: |
-          git pull origin ${{ github.ref_name }} --ff-only || true
 
       - name: Remove manager-francis submodule entry so git cleanup does not fail
         run: |
@@ -150,35 +64,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prebuild ios if missing (EAS would run it but we need to patch first)
+      - name: Prebuild and verify Podfile (runs on macOS; ios/ in .easignore so EAS will prebuild again)
         run: |
-          if [ ! -d "ios" ] || [ ! -f "ios/GrabDocs.xcodeproj/project.pbxproj" ]; then
-            echo "ios folder missing, running prebuild before patch..."
-            npx expo prebuild --platform ios --clean --no-install
+          rm -rf ios
+          npx expo prebuild --platform ios --no-install
+          echo "--- Podfile (first 80 lines) ---"
+          head -80 ios/Podfile
+          if grep -q "target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
+            echo "✅ Podfile contains nested GrabDocsBroadcastUpload target"
+          else
+            echo "::error::Podfile missing nested broadcast extension target"
+            exit 1
           fi
 
-      - name: Patch Podfile for broadcast extension host target
-        run: node scripts/patch-ios-podfile-broadcast.js
-
-      - name: Verify Podfile has nested broadcast target
-        run: |
-          if [ -f ios/Podfile ]; then
-            if ! grep -q "target 'GrabDocsBroadcastUpload' do" ios/Podfile || ! grep -q "inherit! :search_paths" ios/Podfile; then
-              echo "::error::Podfile missing nested GrabDocsBroadcastUpload target (host target). Run with force_prebuild=true or ensure patch ran."
-              grep -n "target " ios/Podfile || true
-              exit 1
-            fi
-            echo "Podfile contains nested broadcast extension target."
-          fi
-
-      - name: Commit patched Podfile so EAS archive includes it
-        run: |
-          if [ -f ios/Podfile ] && ! git diff --quiet ios/Podfile 2>/dev/null; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add ios/Podfile
-            git commit -m "chore(ios): patch Podfile for broadcast extension host target" --no-verify
-          fi
+      - name: Upload Podfile for verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-podfile-verify
+          path: ios/Podfile
 
       - name: EAS Build (local)
         run: |
