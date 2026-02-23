@@ -228,23 +228,57 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 }
 
 /**
+ * Returns true only if the extension target appears NESTED (indented), not as a sibling.
+ * CocoaPods requires the extension to be inside the main app target; a top-level
+ * "target 'GrabDocsBroadcastUpload' do" causes "Unable to find host target(s)".
+ */
+function isExtensionProperlyNested(podfile, extensionName) {
+  return new RegExp('\\n\\s+target\\s+[\'"]' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\b').test(podfile);
+}
+
+/**
+ * If the extension target exists as a top-level (sibling) block, remove it so we can
+ * insert it in the correct nested place. Finds the block by indentation and removes
+ * from that line through its matching `end`.
+ */
+function removeTopLevelExtensionBlock(podfile, extensionName) {
+  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+  const lines = podfile.split(/\r?\n/);
+  let extLine = -1;
+  let extIndent = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[2] === extensionName) {
+      extLine = i;
+      extIndent = m[1].length;
+      break;
+    }
+  }
+  if (extLine === -1) return podfile;
+  let endLine = -1;
+  for (let i = extLine + 1; i < lines.length; i++) {
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= extIndent) {
+      endLine = i;
+      break;
+    }
+  }
+  if (endLine === -1) return podfile;
+  const before = lines.slice(0, extLine).join(lineEnding);
+  const after  = lines.slice(endLine + 1).join(lineEnding);
+  return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
+}
+
+/**
  * Insert the extension target before the main app target's closing `end`.
- *
- * Strategy: find the main `target 'X' do` at any indentation level, then find
- * the first `end` whose indentation is <= the target's indentation.  That is
- * always the target's own closing `end`, regardless of how many if/else/post_install
- * blocks live inside it (they are all MORE indented).
- *
- * Works whether the target is at column 0 or inside an abstract_target.
- * Does NOT use do/end depth counting (broken for if/unless/case which use end
- * without do).
- *
- * Returns the original string unchanged if already patched or if the main target
- * cannot be found (caller should handle that).
+ * If the extension exists but as a sibling (top-level), remove it first then insert nested.
  */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
-    return podfile;
+    if (isExtensionProperlyNested(podfile, extensionName)) {
+      return podfile;
+    }
+    podfile = removeTopLevelExtensionBlock(podfile, extensionName);
   }
 
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
@@ -264,8 +298,6 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (mainTargetLine === -1) return podfile;
 
   // Find first `end` whose indentation is <= the target's indentation.
-  // Every end INSIDE the target block is MORE indented (post_install end,
-  // if/else end, use_react_native! end, etc.).
   let closingLine = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
     const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
@@ -276,7 +308,6 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   }
   if (closingLine === -1) return podfile;
 
-  // Build extension block indented one level deeper than the main target.
   const ind  = ' '.repeat(targetIndent + 2);
   const ind2 = ' '.repeat(targetIndent + 4);
   const extensionBlock = [
@@ -338,8 +369,8 @@ function withPodfileDangerousPatch(config, { extensionName }) {
 
       const contents = fs.readFileSync(podfilePath, 'utf8');
 
-      // Already correctly patched by withPodfile — nothing to do.
-      if (contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths')) {
+      // Already correctly patched only if the extension is NESTED (indented), not a sibling.
+      if (contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths') && isExtensionProperlyNested(contents, extensionName)) {
         console.log('[ios-hms-screenshare] ✅ Podfile already contains nested ' + extensionName + ' target');
         return config;
       }

@@ -15,15 +15,40 @@ const path = require('path');
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
 const PODFILE_PATH = path.join(__dirname, '..', 'ios', 'Podfile');
 
+function isExtensionProperlyNested(podfile, extensionName) {
+  return new RegExp('\\n\\s+target\\s+[\'"]' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\b').test(podfile);
+}
+
+function removeTopLevelExtensionBlock(podfile, extensionName) {
+  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+  const lines = podfile.split(/\r?\n/);
+  let extLine = -1;
+  let extIndent = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[2] === extensionName) { extLine = i; extIndent = m[1].length; break; }
+  }
+  if (extLine === -1) return podfile;
+  let endLine = -1;
+  for (let i = extLine + 1; i < lines.length; i++) {
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= extIndent) { endLine = i; break; }
+  }
+  if (endLine === -1) return podfile;
+  const before = lines.slice(0, extLine).join(lineEnding);
+  const after  = lines.slice(endLine + 1).join(lineEnding);
+  return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
+}
+
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
-    return podfile;
+    if (isExtensionProperlyNested(podfile, extensionName)) return podfile;
+    podfile = removeTopLevelExtensionBlock(podfile, extensionName);
   }
 
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
 
-  // Find main app target at any indentation level.
   let mainTargetLine = -1;
   let targetIndent = 0;
   for (let i = 0; i < lines.length; i++) {
@@ -36,7 +61,6 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   }
   if (mainTargetLine === -1) return podfile;
 
-  // First `end` with indentation <= target's indentation = the target's closing `end`.
   let closingLine = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
     const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
@@ -81,7 +105,7 @@ function main() {
   const newContents = insertExtensionBeforeMainTargetEnd(contents, EXTENSION_NAME);
 
   if (newContents === contents) {
-    if (contents.includes("target '" + EXTENSION_NAME + "' do") && contents.includes('inherit! :search_paths')) {
+    if (contents.includes("target '" + EXTENSION_NAME + "' do") && contents.includes('inherit! :search_paths') && isExtensionProperlyNested(contents, EXTENSION_NAME)) {
       console.log('Podfile already has nested GrabDocsBroadcastUpload target.');
       process.exit(0);
     }

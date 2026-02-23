@@ -6,42 +6,51 @@
 
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
 
-// Inline the same logic as patch-ios-podfile.js / plugin (indentation-aware).
+// Inline same logic as plugin (indentation-aware + remove sibling block).
+function isExtensionProperlyNested(podfile, extensionName) {
+  return new RegExp('\\n\\s+target\\s+[\'"]' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\b').test(podfile);
+}
+function removeTopLevelExtensionBlock(podfile, extensionName) {
+  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+  const lines = podfile.split(/\r?\n/);
+  let extLine = -1, extIndent = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[2] === extensionName) { extLine = i; extIndent = m[1].length; break; }
+  }
+  if (extLine === -1) return podfile;
+  let endLine = -1;
+  for (let i = extLine + 1; i < lines.length; i++) {
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= extIndent) { endLine = i; break; }
+  }
+  if (endLine === -1) return podfile;
+  const before = lines.slice(0, extLine).join(lineEnding);
+  const after  = lines.slice(endLine + 1).join(lineEnding);
+  return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
+}
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
-    return podfile;
+    if (isExtensionProperlyNested(podfile, extensionName)) return podfile;
+    podfile = removeTopLevelExtensionBlock(podfile, extensionName);
   }
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
-
-  // Find main app target at any indentation level.
-  let mainTargetLine = -1;
-  let targetIndent = 0;
+  let mainTargetLine = -1, targetIndent = 0;
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
     if (m && m[2] !== extensionName) { mainTargetLine = i; targetIndent = m[1].length; break; }
   }
   if (mainTargetLine === -1) return podfile;
-
-  // First `end` with indentation <= target's = target's closing `end`.
   let closingLine = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
     const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
     if (em && em[1].length <= targetIndent) { closingLine = i; break; }
   }
   if (closingLine === -1) return podfile;
-
   const ind  = ' '.repeat(targetIndent + 2);
   const ind2 = ' '.repeat(targetIndent + 4);
-  const block = [
-    '',
-    ind  + "target '" + extensionName + "' do",
-    ind2 + 'inherit! :search_paths',
-    ind2 + 'use_modular_headers!',
-    ind2 + "pod 'HMSBroadcastExtensionSDK'",
-    ind  + 'end',
-  ].join(lineEnding);
-
+  const block = ['', ind + "target '" + extensionName + "' do", ind2 + 'inherit! :search_paths', ind2 + 'use_modular_headers!', ind2 + "pod 'HMSBroadcastExtensionSDK'", ind + 'end'].join(lineEnding);
   const before = lines.slice(0, closingLine).join(lineEnding);
   const after  = lines.slice(closingLine).join(lineEnding);
   return before + block + lineEnding + after;
@@ -171,5 +180,30 @@ const grabDocsEndIdx4 = result4.indexOf('\n  end\nend'); // GrabDocs target clos
 assert(extIdx4 < grabDocsEndIdx4 + 100, 'Test4: extension nested inside GrabDocs target');
 console.log('\nTest 4 output (last 15 lines):');
 console.log(result4.split('\n').slice(-15).join('\n'));
+
+// --- Test 5: extension as SIBLING (wrong) — should remove and insert nested ---
+const PODFILE_SIBLING = `platform :ios, '16.0'
+
+target 'GrabDocs' do
+  use_expo_modules!
+  use_react_native!(:path => '../node_modules/react-native')
+end
+
+target 'GrabDocsBroadcastUpload' do
+  inherit! :search_paths
+  use_modular_headers!
+  pod 'HMSBroadcastExtensionSDK'
+end
+`;
+
+const afterRemoval = removeTopLevelExtensionBlock(PODFILE_SIBLING, EXTENSION_NAME);
+assert(afterRemoval.split('\n').length < PODFILE_SIBLING.split('\n').length, 'Test5a: removal shortens podfile');
+assert(!afterRemoval.includes("target 'GrabDocsBroadcastUpload' do"), 'Test5a: extension block removed');
+
+const result5 = insertExtensionBeforeMainTargetEnd(PODFILE_SIBLING, EXTENSION_NAME);
+assert(result5.length > afterRemoval.length, 'Test5: result is longer than after-removal (block was inserted)');
+assert(/\n\s+target\s+['"]GrabDocsBroadcastUpload['"]\s+do\b/.test(result5), 'Test5: extension now nested (indented line present)');
+assert(isExtensionProperlyNested(result5, EXTENSION_NAME), 'Test5: isExtensionProperlyNested true');
+console.log('\nTest 5: sibling block removed and nested block added ✓');
 
 console.log('\n✅ All tests passed.');
