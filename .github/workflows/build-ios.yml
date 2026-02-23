@@ -68,12 +68,13 @@ jobs:
         run: |
           rm -rf ios
           npx expo prebuild --platform ios --no-install
-          echo "--- Podfile (first 80 lines) ---"
-          head -80 ios/Podfile
-          if grep -q "target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
-            echo "✅ Podfile contains nested GrabDocsBroadcastUpload target"
+          echo "===== FULL PODFILE (for debugging) ====="
+          cat ios/Podfile
+          echo "========================================"
+          if grep -q "  target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
+            echo "✅ Podfile contains nested GrabDocsBroadcastUpload target (indented under main app)"
           else
-            echo "::error::Podfile missing nested broadcast extension target"
+            echo "::error::Podfile missing nested broadcast extension target (must be indented inside main target)"
             exit 1
           fi
 

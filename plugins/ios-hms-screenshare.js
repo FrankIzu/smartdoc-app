@@ -227,64 +227,44 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
   });
 }
 
-/**
- * Find the first host app target in the Podfile (first target that is not the extension).
- * Expo may use app name, slug, or other; this avoids depending on a specific name.
- */
-function findMainTargetInPodfile(podfile, extensionName) {
-  const targetRegex = /target\s+['"]([^'"]+)['"]\s+do\b/g;
-  let m;
-  while ((m = targetRegex.exec(podfile)) !== null) {
-    if (m[1] !== extensionName) return m[1];
-  }
-  return null;
-}
-
-/**
- * Replace the first occurrence of target 'mainTargetName' do with the same block
- * plus a nested target for the extension. Returns new contents or podfile if no match.
- */
-function applyPodfilePatch(podfile, extensionName, mainTargetName) {
-  const mainTargetRegex = new RegExp(
-    "target\\s+['\"]" + mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\b"
-  );
-  const replacement = `target '${mainTargetName}' do
-
-  target '${extensionName}' do
+/** Extension block to nest inside the main app target (exact CocoaPods requirement). */
+const EXTENSION_PODFILE_BLOCK = `
+  target 'GrabDocsBroadcastUpload' do
     inherit! :search_paths
     use_modular_headers!
     pod 'HMSBroadcastExtensionSDK'
   end`;
-  return podfile.replace(mainTargetRegex, replacement);
+
+/**
+ * Insert the extension target inside the main app target by placing it right before
+ * the main target's closing "end". Does not depend on main target name. In Expo's
+ * Podfile the main target is the only top-level target, so the last "end" in the
+ * file is the main target's closing end.
+ */
+function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
+  if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
+    return podfile;
+  }
+  const block = EXTENSION_PODFILE_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
+  const lastEnd = podfile.lastIndexOf('\nend');
+  if (lastEnd === -1) return podfile;
+  return podfile.slice(0, lastEnd) + block + podfile.slice(lastEnd);
 }
 
 /**
  * Add the extension as a nested target inside the main app target so CocoaPods
  * has a host target for the app extension (required for "Unable to find host target(s)").
+ * Uses insert-before-closing-end so we never depend on the main target name (GrabDocs vs grabdocs etc).
  */
-function withPodfileEntry(config, { extensionName, mainTargetName, slug }) {
+function withPodfileEntry(config, { extensionName }) {
   return withPodfile(config, (config) => {
     const data = config.modResults;
     const podfile = typeof data === 'string' ? data : (data?.contents ?? '');
 
-    if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
-      return config;
-    }
-
-    let newContents = applyPodfilePatch(podfile, extensionName, mainTargetName);
-    if (newContents === podfile && slug && slug !== mainTargetName) {
-      newContents = applyPodfilePatch(podfile, extensionName, slug);
-    }
-    if (newContents === podfile) {
-      const detected = findMainTargetInPodfile(podfile, extensionName);
-      if (detected) {
-        newContents = applyPodfilePatch(podfile, extensionName, detected);
-      }
-    }
-
+    const newContents = insertExtensionBeforeMainTargetEnd(podfile, extensionName);
     if (newContents === podfile) {
       if (process.env.EXPO_DEBUG_PODFILE) {
-        console.log('[ios-hms-screenshare] Podfile modResults (first 500 chars):', podfile.slice(0, 500));
+        console.log('[ios-hms-screenshare] Podfile unchanged (first 500 chars):', podfile.slice(0, 500));
       }
       return config;
     }
@@ -301,29 +281,17 @@ function withPodfileEntry(config, { extensionName, mainTargetName, slug }) {
 /**
  * Fallback: patch Podfile on disk. withPodfile may not apply in EAS prebuild context.
  * Runs during prebuild and directly writes to ios/Podfile.
+ * Inserts extension block before the main target's closing "end" (no target-name dependency).
  */
-function withPodfileDangerousPatch(config, { extensionName, mainTargetName, slug }) {
+function withPodfileDangerousPatch(config, { extensionName }) {
   return withDangerousMod(config, [
     'ios',
     async (config) => {
       const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
       if (!fs.existsSync(podfilePath)) return config;
 
-      let contents = fs.readFileSync(podfilePath, 'utf8');
-      if (contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths')) {
-        return config;
-      }
-
-      let newContents = applyPodfilePatch(contents, extensionName, mainTargetName);
-      if (newContents === contents && slug && slug !== mainTargetName) {
-        newContents = applyPodfilePatch(contents, extensionName, slug);
-      }
-      if (newContents === contents) {
-        const detected = findMainTargetInPodfile(contents, extensionName);
-        if (detected) {
-          newContents = applyPodfilePatch(contents, extensionName, detected);
-        }
-      }
+      const contents = fs.readFileSync(podfilePath, 'utf8');
+      const newContents = insertExtensionBeforeMainTargetEnd(contents, extensionName);
       if (newContents !== contents) {
         fs.writeFileSync(podfilePath, newContents);
       }
@@ -348,9 +316,7 @@ function withHmsScreenshareExtension(config, options = {}) {
   const appGroup = options.appGroup || process.env.EXPO_PUBLIC_HMS_IOS_APP_GROUP?.trim() || DEFAULT_APP_GROUP;
   const extensionName = options.extensionName || process.env.EXPO_PUBLIC_HMS_IOS_PREFERRED_EXTENSION?.trim() || DEFAULT_EXTENSION_NAME;
 
-  const mainTargetName = config.expo?.name || 'GrabDocs';
-  const slug = config.expo?.slug || 'grabdocs';
-  const podfileOpts = { extensionName, mainTargetName, slug };
+  const podfileOpts = { extensionName };
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
   config = withPodfileEntry(config, podfileOpts);
