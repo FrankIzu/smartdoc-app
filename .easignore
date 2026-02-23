@@ -119,6 +119,9 @@ dev-files/
 *.zip
 *.tgz
 
+# NOTE: /ios removed - EAS prebuild does not persist the GrabDocsBroadcastUpload target
+# from our config plugin, causing "Unable to find target" at pod install.
+# Workaround: run `npx expo prebuild --platform ios` locally (Mac), commit ios/, then build.
 # Optional: Add /ios to use EAS Prebuild (regenerates native from config)
 # Only if you don't need custom native code in ios/
-/ios
+# /ios

@@ -187,14 +187,19 @@ jobs:
           echo "Old artifacts cleaned"
 
       # Production: bump Android versionCode so every submit has a new version (avoids "You've already submitted this version").
-      # Commit and push so the repo stays in sync; EAS build reads from app.json.
+      # Must update BOTH app.json AND build.gradle - Gradle reads versionCode from build.gradle; EAS prebuild uses app.json.
       - name: Bump Android version code (production)
         if: github.event.inputs.profile == 'production'
         run: |
           set -e
           APP_JSON="app.json"
+          BUILD_GRADLE="android/app/build.gradle"
           if [ ! -f "$APP_JSON" ]; then
             echo "::error::app.json not found"
+            exit 1
+          fi
+          if [ ! -f "$BUILD_GRADLE" ]; then
+            echo "::error::build.gradle not found at $BUILD_GRADLE"
             exit 1
           fi
           CODE=$(node -e "
@@ -212,11 +217,12 @@ jobs:
             app.expo.android.versionCode = $NEXT;
             fs.writeFileSync('$APP_JSON', JSON.stringify(app, null, 2) + '\n');
           "
+          sed -i "s/versionCode [0-9]*/versionCode $NEXT/" "$BUILD_GRADLE"
           echo "ANDROID_VERSION_CODE=$NEXT" >> $GITHUB_ENV
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$APP_JSON"
-          git diff --staged --quiet && echo "No change to app.json (versionCode already $NEXT?)" || true
+          git add "$APP_JSON" "$BUILD_GRADLE"
+          git diff --staged --quiet && echo "No change (versionCode already $NEXT?)" || true
           git diff --staged --quiet || (git commit -m "chore(android): bump versionCode to $NEXT for Play submit" && git push)
 
       - name: EAS Build (local)
