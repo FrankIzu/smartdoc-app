@@ -227,48 +227,71 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
   });
 }
 
-/** Extension block to nest inside the main app target (exact CocoaPods requirement). */
-const EXTENSION_PODFILE_BLOCK = `
-  target 'GrabDocsBroadcastUpload' do
-    inherit! :search_paths
-    use_modular_headers!
-    pod 'HMSBroadcastExtensionSDK'
-  end`;
-
 /**
- * Find the index where we should insert the extension block: right before the main
- * target's closing "end". In Expo's Podfile the main target is the only top-level
- * target. We find the last line that is only "end" (with optional leading/trailing
- * whitespace) so we work with any indentation and line endings (\n or \r\n).
- */
-function findMainTargetClosingEndIndex(podfile) {
-  const lines = podfile.split(/\r?\n/);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (/^\s*end\s*$/.test(lines[i])) {
-      const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
-      const beforeThisLine = lines.slice(0, i).join(lineEnding);
-      return beforeThisLine.length;
-    }
-  }
-  return -1;
-}
-
-/**
- * Insert the extension target inside the main app target by placing it right before
- * the main target's closing "end". Does not depend on main target name.
+ * Insert the extension target inside the main app target using do/end depth tracking.
+ *
+ * Expo's Podfile looks like:
+ *   target 'GrabDocs' do    ← depth 0→1
+ *     use_expo_modules!
+ *     use_react_native!(...)
+ *     post_install do |i|   ← depth 1→2
+ *       ...
+ *     end                   ← depth 2→1
+ *   end                     ← depth 1→0  ← INSERT BEFORE HERE
+ *
+ * "Find last end" was wrong: post_install may live OUTSIDE the target block in some
+ * RN versions, making the last "end" in the file belong to post_install, not the
+ * target.  Depth tracking is the only correct approach.
  */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
     return podfile;
   }
-  const block = EXTENSION_PODFILE_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
+
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
-  let insertAt = findMainTargetClosingEndIndex(podfile);
-  if (insertAt === -1) {
-    insertAt = podfile.lastIndexOf('\nend');
-    if (insertAt === -1) return podfile;
+  const lines = podfile.split(/\r?\n/);
+
+  // Find the first app target line (not the extension itself).
+  let mainTargetLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[1] !== extensionName) {
+      mainTargetLine = i;
+      break;
+    }
   }
-  return podfile.slice(0, insertAt) + block + lineEnding + podfile.slice(insertAt);
+  if (mainTargetLine === -1) return podfile;
+
+  // Walk forward tracking depth; every `do` opens, every bare `end` closes.
+  let depth = 0;
+  let closingLine = -1;
+  for (let i = mainTargetLine; i < lines.length; i++) {
+    const stripped = lines[i].trim();
+    // Count `do` openers (block openers end with `do` or `do |...|`).
+    if (/\bdo\b/.test(stripped)) depth++;
+    // A line that is only `end` (optionally with inline comment) closes a block.
+    if (/^end(\s*#.*)?$/.test(stripped)) {
+      depth--;
+      if (depth === 0) {
+        closingLine = i;
+        break;
+      }
+    }
+  }
+  if (closingLine === -1) return podfile;
+
+  const extensionBlock = [
+    '',
+    "  target '" + extensionName + "' do",
+    '    inherit! :search_paths',
+    '    use_modular_headers!',
+    "    pod 'HMSBroadcastExtensionSDK'",
+    '  end',
+  ].join(lineEnding);
+
+  const before = lines.slice(0, closingLine).join(lineEnding);
+  const after  = lines.slice(closingLine).join(lineEnding);
+  return before + extensionBlock + lineEnding + after;
 }
 
 /**

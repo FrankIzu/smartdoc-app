@@ -9,7 +9,7 @@
       "distribution": "internal",
       "channel": "development",
       "node": "20.18.1",
-      "prebuildCommand": "npx expo prebuild --platform ios --no-install && node scripts/patch-ios-podfile.js",
+      "prebuildCommand": "sh scripts/prebuild-ios.sh",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "development",
         "EXPO_PUBLIC_API_URL": "https://api.grabdocs.com",
@@ -30,7 +30,7 @@
     "preview": {
       "distribution": "store",
       "node": "20.18.1",
-      "prebuildCommand": "npx expo prebuild --platform ios --no-install && node scripts/patch-ios-podfile.js",
+      "prebuildCommand": "sh scripts/prebuild-ios.sh",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "staging",
         "EXPO_PUBLIC_API_URL": "https://api.grabdocs.com",
@@ -51,7 +51,7 @@
     },
     "production": {
       "node": "20.18.1",
-      "prebuildCommand": "npx expo prebuild --platform ios --no-install && node scripts/patch-ios-podfile.js",
+      "prebuildCommand": "sh scripts/prebuild-ios.sh",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "NODE_ENV": "production",
@@ -75,7 +75,7 @@
       }
     },
     "minimal": {
-      "prebuildCommand": "npx expo prebuild --platform ios --no-install && node scripts/patch-ios-podfile.js",
+      "prebuildCommand": "sh scripts/prebuild-ios.sh",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "NODE_ENV": "production"
@@ -90,7 +90,7 @@
       }
     },
     "test": {
-      "prebuildCommand": "npx expo prebuild --platform ios --no-install && node scripts/patch-ios-podfile.js",
+      "prebuildCommand": "sh scripts/prebuild-ios.sh",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "NODE_ENV": "development"
@@ -101,7 +101,7 @@
       }
     },
     "simple": {
-      "prebuildCommand": "npx expo prebuild --platform ios --no-install && node scripts/patch-ios-podfile.js",
+      "prebuildCommand": "sh scripts/prebuild-ios.sh",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production"
       },

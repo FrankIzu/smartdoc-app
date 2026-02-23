@@ -67,8 +67,7 @@ jobs:
       - name: Pre-verify Podfile patch (early failure if plugin is broken)
         run: |
           rm -rf ios
-          npx expo prebuild --platform ios --no-install
-          node scripts/patch-ios-podfile.js
+          sh scripts/prebuild-ios.sh
           echo "===== FULL PODFILE ====="
           cat ios/Podfile
           echo "========================"
