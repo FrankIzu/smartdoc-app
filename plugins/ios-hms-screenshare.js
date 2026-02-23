@@ -11,6 +11,7 @@
  */
 const {
   withDangerousMod,
+  withXcodeProject,
   withPodfile,
   withEntitlementsPlist,
   withPlugins,
@@ -101,13 +102,64 @@ function withBroadcastExtensionFiles(config, { appGroup, extensionName }) {
   ]);
 }
 
-function withBroadcastExtensionTarget(config) {
-  // All Xcode project modifications are handled by scripts/patch-ios-broadcast-target.js
-  // which runs after prebuild. Using the xcode API here partially writes target objects and
-  // leaves orphaned UUID references that cause "Cannot read properties of undefined" errors
-  // during EAS / pod install. The patch script does all project edits via string replacement
-  // on the serialised project.pbxproj so it is fully deterministic.
-  return config;
+/**
+ * Add the Broadcast Upload Extension target using only the xcode project API.
+ * No string/regex patching of pbxproj - all UUIDs and references are wired by the library.
+ */
+function withBroadcastExtensionTarget(config, { extensionName }) {
+  return withXcodeProject(config, async (config) => {
+    const project = config.modResults;
+    const bundleId = config.ios?.bundleIdentifier || 'com.grabdocs.mobile';
+    const extBundleId = `${bundleId}.${extensionName}`;
+
+    if (typeof project.addTarget !== 'function') {
+      return config;
+    }
+    if (project.pbxNativeTargetSection && Object.keys(project.pbxNativeTargetSection()).length > 1) {
+      return config;
+    }
+
+    const target = project.addTarget(extensionName, 'app_extension', extensionName, extBundleId);
+    if (!target || !target.uuid) {
+      return config;
+    }
+
+    project.addBuildPhase(
+      [`${extensionName}/SampleHandler.swift`],
+      'PBXSourcesBuildPhase',
+      'Sources',
+      target.uuid
+    );
+    project.addBuildPhase(
+      [],
+      'PBXResourcesBuildPhase',
+      'Resources',
+      target.uuid
+    );
+
+    const replayKitFile = project.addFramework('ReplayKit.framework', {
+      target: target.uuid,
+      link: false,
+    });
+    if (replayKitFile) {
+      project.addBuildPhase(
+        [replayKitFile.path || 'ReplayKit.framework'],
+        'PBXFrameworksBuildPhase',
+        'Frameworks',
+        target.uuid
+      );
+    }
+
+    if (typeof project.updateBuildProperty === 'function') {
+      const infoplist = `"${extensionName}/Info.plist"`;
+      const entitlements = `"${extensionName}/${extensionName}.entitlements"`;
+      project.updateBuildProperty('INFOPLIST_FILE', infoplist, undefined, `"${extensionName}"`);
+      project.updateBuildProperty('CODE_SIGN_ENTITLEMENTS', entitlements, undefined, `"${extensionName}"`);
+      project.updateBuildProperty('IPHONEOS_DEPLOYMENT_TARGET', '"14.0"', undefined, `"${extensionName}"`);
+    }
+
+    return config;
+  });
 }
 
 function withPodfileEntry(config, { extensionName }) {
