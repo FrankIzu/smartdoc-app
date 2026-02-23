@@ -18,7 +18,8 @@ const {
 } = require('expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
-const plist = require('@expo/plist');
+// @expo/plist exports { default: { parse, build } }; use .default for CommonJS
+const plist = require('@expo/plist').default || require('@expo/plist');
 
 const DEFAULT_APP_GROUP = 'group.com.grabdocs.mobile';
 const DEFAULT_EXTENSION_NAME = 'GrabDocsBroadcastUpload';
