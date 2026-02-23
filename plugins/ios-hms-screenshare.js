@@ -327,21 +327,34 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
 /**
  * Add the extension as a nested target inside the main app target so CocoaPods
  * has a host target for the app extension (required for "Unable to find host target(s)").
- * Uses insert-before-closing-end so we never depend on the main target name (GrabDocs vs grabdocs etc).
  */
 function withPodfileEntry(config, { extensionName }) {
   return withPodfile(config, (config) => {
     const data = config.modResults;
     const podfile = typeof data === 'string' ? data : (data?.contents ?? '');
 
-    const newContents = insertExtensionBeforeMainTargetEnd(podfile, extensionName);
-    if (newContents === podfile) {
-      if (process.env.EXPO_DEBUG_PODFILE) {
-        console.log('[ios-hms-screenshare] Podfile unchanged (first 500 chars):', podfile.slice(0, 500));
-      }
+    console.log('[ios-hms-screenshare] withPodfile: content length=' + podfile.length + ' lines=' + podfile.split('\n').length);
+    // Show the target lines so we can confirm what target name Expo is using.
+    podfile.split('\n').filter(l => /target\s+['"]/.test(l)).forEach(l => console.log('[ios-hms-screenshare] target line:', JSON.stringify(l)));
+
+    if (podfile.length === 0) {
+      console.warn('[ios-hms-screenshare] withPodfile received empty Podfile — will rely on withDangerousMod');
       return config;
     }
 
+    const newContents = insertExtensionBeforeMainTargetEnd(podfile, extensionName);
+
+    if (newContents === podfile) {
+      if (isExtensionProperlyNested(podfile, extensionName)) {
+        console.log('[ios-hms-screenshare] ✅ withPodfile: already properly nested');
+        return config;
+      }
+      // Patch failed — print the Podfile so it appears in EAS build logs, then throw.
+      console.error('[ios-hms-screenshare] ❌ withPodfile: could not patch. Full Podfile:\n' + podfile);
+      throw new Error('[ios-hms-screenshare] withPodfile: failed to nest ' + extensionName + ' — main target not found. See Podfile above.');
+    }
+
+    console.log('[ios-hms-screenshare] ✅ withPodfile: Podfile patched successfully');
     if (typeof data === 'string') {
       config.modResults = newContents;
     } else {
@@ -353,43 +366,39 @@ function withPodfileEntry(config, { extensionName }) {
 
 /**
  * Fallback / safety net: patch the Podfile on disk after withPodfile has run.
- * Also acts as the diagnostic layer: if patching still fails here, it throws so
- * the build fails immediately with the full Podfile printed to the log — far more
- * useful than a cryptic CocoaPods error later.
+ * Throws with the full Podfile in the log if it still can't be patched, so the
+ * build fails immediately with useful diagnostics instead of a cryptic CocoaPods error.
  */
 function withPodfileDangerousPatch(config, { extensionName }) {
   return withDangerousMod(config, [
     'ios',
     async (config) => {
       const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
+      console.log('[ios-hms-screenshare] withDangerousMod: checking Podfile at', podfilePath);
+
       if (!fs.existsSync(podfilePath)) {
-        console.warn('[ios-hms-screenshare] Podfile not found at', podfilePath, '— skipping patch');
+        console.warn('[ios-hms-screenshare] withDangerousMod: Podfile not found — will be created by withPodfile later (this is normal)');
         return config;
       }
 
       const contents = fs.readFileSync(podfilePath, 'utf8');
+      console.log('[ios-hms-screenshare] withDangerousMod: Podfile exists, length=' + contents.length);
+      contents.split('\n').filter(l => /target\s+['"]/.test(l)).forEach(l => console.log('[ios-hms-screenshare] withDangerousMod target line:', JSON.stringify(l)));
 
-      // Already correctly patched only if the extension is NESTED (indented), not a sibling.
-      if (contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths') && isExtensionProperlyNested(contents, extensionName)) {
-        console.log('[ios-hms-screenshare] ✅ Podfile already contains nested ' + extensionName + ' target');
+      if (isExtensionProperlyNested(contents, extensionName)) {
+        console.log('[ios-hms-screenshare] ✅ withDangerousMod: already properly nested');
         return config;
       }
 
       const newContents = insertExtensionBeforeMainTargetEnd(contents, extensionName);
 
       if (newContents === contents) {
-        // Could not find the main target — print the full Podfile so it appears in
-        // the build log, then throw so the build fails fast with a useful message.
-        console.error('[ios-hms-screenshare] ❌ Failed to patch Podfile. Full contents:\n');
-        console.error(contents);
-        throw new Error(
-          '[ios-hms-screenshare] Could not find main app target in Podfile to nest ' +
-          extensionName + '. See the Podfile printed above.'
-        );
+        console.error('[ios-hms-screenshare] ❌ withDangerousMod: could not patch. Full Podfile:\n' + contents);
+        throw new Error('[ios-hms-screenshare] withDangerousMod: failed to nest ' + extensionName + '. See Podfile above.');
       }
 
       fs.writeFileSync(podfilePath, newContents);
-      console.log('[ios-hms-screenshare] ✅ Podfile patched — nested ' + extensionName + ' inside main app target');
+      console.log('[ios-hms-screenshare] ✅ withDangerousMod: Podfile patched — nested ' + extensionName);
       return config;
     },
   ]);
@@ -410,6 +419,7 @@ function withAppGroupEntitlements(config, { appGroup }) {
 function withHmsScreenshareExtension(config, options = {}) {
   const appGroup = options.appGroup || process.env.EXPO_PUBLIC_HMS_IOS_APP_GROUP?.trim() || DEFAULT_APP_GROUP;
   const extensionName = options.extensionName || process.env.EXPO_PUBLIC_HMS_IOS_PREFERRED_EXTENSION?.trim() || DEFAULT_EXTENSION_NAME;
+  console.log('[ios-hms-screenshare] Plugin invoked: extensionName=' + extensionName + ' appGroup=' + appGroup);
 
   const podfileOpts = { extensionName };
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
