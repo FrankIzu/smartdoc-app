@@ -64,28 +64,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prebuild and verify Podfile (ios/ NOT in .easignore so EAS uses this output)
+      - name: Pre-verify Podfile patch (early failure if plugin is broken)
         run: |
           rm -rf ios
           npx expo prebuild --platform ios --no-install
           node scripts/patch-ios-podfile.js
-          echo "===== FULL PODFILE (for debugging) ====="
+          echo "===== FULL PODFILE ====="
           cat ios/Podfile
-          echo "========================================"
+          echo "========================"
           if grep -q "  target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
-            echo "✅ Podfile contains nested GrabDocsBroadcastUpload target (indented under main app)"
+            echo "✅ Podfile contains nested GrabDocsBroadcastUpload target"
           else
-            echo "::error::Podfile missing nested broadcast extension target (must be indented inside main target)"
+            echo "::error::Podfile missing nested broadcast extension target (must be indented inside main app target)"
             exit 1
           fi
+          # Remove ios/ so EAS re-runs prebuildCommand fresh (no stale state)
+          rm -rf ios
 
       - name: Upload Podfile for verification
         uses: actions/upload-artifact@v4
         with:
           name: ios-podfile-verify
           path: ios/Podfile
+        if: always()
 
-      - name: EAS Build (local)
+      - name: EAS Build (local) — prebuildCommand in eas.json handles prebuild+patch
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
           eas build --platform ios --profile "$PROFILE" --local --non-interactive
