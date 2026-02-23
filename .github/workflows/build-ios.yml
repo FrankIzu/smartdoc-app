@@ -100,12 +100,30 @@ jobs:
           path: ios/Podfile
         if: always()
 
-      - name: EAS Build (local) — prebuildCommand in eas.json handles prebuild+patch
+      - name: EAS Build (local)
+        id: eas_build
+        continue-on-error: true
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
           eas build --platform ios --profile "$PROFILE" --local --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Dump Podfile used by EAS (diagnosis — always runs)
+        if: always()
+        run: |
+          echo "===== PODFILE AFTER EAS PREBUILD ====="
+          if [ -f ios/Podfile ]; then
+            cat ios/Podfile
+          else
+            echo "(ios/Podfile not found — EAS may have cleaned up or run in a different directory)"
+            find /Users/runner /Users/expo /tmp -name "Podfile" -not -path "*/node_modules/*" 2>/dev/null | head -10 || true
+          fi
+          echo "======================================"
+
+      - name: Fail if EAS build failed
+        if: steps.eas_build.outcome == 'failure'
+        run: exit 1
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4

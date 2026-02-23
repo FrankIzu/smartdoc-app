@@ -230,15 +230,17 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 /**
  * Insert the extension target before the main app target's closing `end`.
  *
- * KEY INSIGHT: In Expo's generated Podfile the main `target 'X' do` block is the
- * ONLY top-level block, opening at column 0.  Its closing `end` is therefore the
- * FIRST unindented `end` (i.e. `/^end/`) found AFTER the target's opening line.
- * Every `end` inside the target — from `if/else`, `post_install do`, `use_react_native!`
- * blocks etc. — is indented by at least one space and will NOT match `^end`.
+ * Strategy: find the main `target 'X' do` at any indentation level, then find
+ * the first `end` whose indentation is <= the target's indentation.  That is
+ * always the target's own closing `end`, regardless of how many if/else/post_install
+ * blocks live inside it (they are all MORE indented).
  *
- * Depth-tracking was wrong because `if/unless/case` in Ruby do NOT use `do`; their
- * `end` decremented depth prematurely, causing insertion inside the `if` block rather
- * than the target block.
+ * Works whether the target is at column 0 or inside an abstract_target.
+ * Does NOT use do/end depth counting (broken for if/unless/case which use end
+ * without do).
+ *
+ * Returns the original string unchanged if already patched or if the main target
+ * cannot be found (caller should handle that).
  */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
@@ -248,35 +250,42 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
 
-  // The main app target opens at column 0: `target 'Name' do`
+  // Find main app target at ANY indentation level.
   let mainTargetLine = -1;
+  let targetIndent = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^target\s+['"]([^'"]+)['"]\s+do\b/);
-    if (m && m[1] !== extensionName) {
+    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[2] !== extensionName) {
       mainTargetLine = i;
+      targetIndent = m[1].length;
       break;
     }
   }
   if (mainTargetLine === -1) return podfile;
 
-  // First unindented `end` after the target opener = the target's closing `end`.
-  // All `end`s for blocks inside the target (if, post_install, etc.) are indented.
+  // Find first `end` whose indentation is <= the target's indentation.
+  // Every end INSIDE the target block is MORE indented (post_install end,
+  // if/else end, use_react_native! end, etc.).
   let closingLine = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
-    if (/^end(\s*(#.*)?)$/.test(lines[i])) {
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= targetIndent) {
       closingLine = i;
       break;
     }
   }
   if (closingLine === -1) return podfile;
 
+  // Build extension block indented one level deeper than the main target.
+  const ind  = ' '.repeat(targetIndent + 2);
+  const ind2 = ' '.repeat(targetIndent + 4);
   const extensionBlock = [
     '',
-    "  target '" + extensionName + "' do",
-    '    inherit! :search_paths',
-    '    use_modular_headers!',
-    "    pod 'HMSBroadcastExtensionSDK'",
-    '  end',
+    ind  + "target '" + extensionName + "' do",
+    ind2 + 'inherit! :search_paths',
+    ind2 + 'use_modular_headers!',
+    ind2 + "pod 'HMSBroadcastExtensionSDK'",
+    ind  + 'end',
   ].join(lineEnding);
 
   const before = lines.slice(0, closingLine).join(lineEnding);
@@ -312,22 +321,44 @@ function withPodfileEntry(config, { extensionName }) {
 }
 
 /**
- * Fallback: patch Podfile on disk. withPodfile may not apply in EAS prebuild context.
- * Runs during prebuild and directly writes to ios/Podfile.
- * Inserts extension block before the main target's closing "end" (no target-name dependency).
+ * Fallback / safety net: patch the Podfile on disk after withPodfile has run.
+ * Also acts as the diagnostic layer: if patching still fails here, it throws so
+ * the build fails immediately with the full Podfile printed to the log — far more
+ * useful than a cryptic CocoaPods error later.
  */
 function withPodfileDangerousPatch(config, { extensionName }) {
   return withDangerousMod(config, [
     'ios',
     async (config) => {
       const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
-      if (!fs.existsSync(podfilePath)) return config;
+      if (!fs.existsSync(podfilePath)) {
+        console.warn('[ios-hms-screenshare] Podfile not found at', podfilePath, '— skipping patch');
+        return config;
+      }
 
       const contents = fs.readFileSync(podfilePath, 'utf8');
-      const newContents = insertExtensionBeforeMainTargetEnd(contents, extensionName);
-      if (newContents !== contents) {
-        fs.writeFileSync(podfilePath, newContents);
+
+      // Already correctly patched by withPodfile — nothing to do.
+      if (contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths')) {
+        console.log('[ios-hms-screenshare] ✅ Podfile already contains nested ' + extensionName + ' target');
+        return config;
       }
+
+      const newContents = insertExtensionBeforeMainTargetEnd(contents, extensionName);
+
+      if (newContents === contents) {
+        // Could not find the main target — print the full Podfile so it appears in
+        // the build log, then throw so the build fails fast with a useful message.
+        console.error('[ios-hms-screenshare] ❌ Failed to patch Podfile. Full contents:\n');
+        console.error(contents);
+        throw new Error(
+          '[ios-hms-screenshare] Could not find main app target in Podfile to nest ' +
+          extensionName + '. See the Podfile printed above.'
+        );
+      }
+
+      fs.writeFileSync(podfilePath, newContents);
+      console.log('[ios-hms-screenshare] ✅ Podfile patched — nested ' + extensionName + ' inside main app target');
       return config;
     },
   ]);

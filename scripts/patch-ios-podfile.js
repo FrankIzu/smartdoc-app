@@ -4,8 +4,7 @@
  * so CocoaPods finds a host target. Run from repo root when you see:
  *   "[!] Unable to find host target(s) for GrabDocsBroadcastUpload"
  *
- * Uses insert-before-closing-end (same as the Expo plugin) so it works
- * regardless of main target name. Safe to run after prebuild.
+ * Uses indentation-aware insert (same logic as the Expo plugin).
  *
  * Usage: node scripts/patch-ios-podfile.js
  */
@@ -16,13 +15,6 @@ const path = require('path');
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
 const PODFILE_PATH = path.join(__dirname, '..', 'ios', 'Podfile');
 
-const EXTENSION_BLOCK = `
-  target 'GrabDocsBroadcastUpload' do
-    inherit! :search_paths
-    use_modular_headers!
-    pod 'HMSBroadcastExtensionSDK'
-  end`;
-
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
     return podfile;
@@ -31,28 +23,41 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
 
-  // Main app target opens at column 0: `target 'Name' do`
+  // Find main app target at any indentation level.
   let mainTargetLine = -1;
+  let targetIndent = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^target\s+['"]([^'"]+)['"]\s+do\b/);
-    if (m && m[1] !== extensionName) {
+    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[2] !== extensionName) {
       mainTargetLine = i;
+      targetIndent = m[1].length;
       break;
     }
   }
   if (mainTargetLine === -1) return podfile;
 
-  // First unindented `end` after the target opener = the target's closing `end`.
+  // First `end` with indentation <= target's indentation = the target's closing `end`.
   let closingLine = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
-    if (/^end(\s*(#.*)?)$/.test(lines[i])) {
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= targetIndent) {
       closingLine = i;
       break;
     }
   }
   if (closingLine === -1) return podfile;
 
-  const block = EXTENSION_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
+  const ind  = ' '.repeat(targetIndent + 2);
+  const ind2 = ' '.repeat(targetIndent + 4);
+  const block = [
+    '',
+    ind  + "target '" + extensionName + "' do",
+    ind2 + 'inherit! :search_paths',
+    ind2 + 'use_modular_headers!',
+    ind2 + "pod 'HMSBroadcastExtensionSDK'",
+    ind  + 'end',
+  ].join(lineEnding);
+
   const before = lines.slice(0, closingLine).join(lineEnding);
   const after  = lines.slice(closingLine).join(lineEnding);
   return before + block + lineEnding + after;
@@ -76,12 +81,18 @@ function main() {
   const newContents = insertExtensionBeforeMainTargetEnd(contents, EXTENSION_NAME);
 
   if (newContents === contents) {
-    console.log('Podfile already has nested GrabDocsBroadcastUpload target.');
-    process.exit(0);
+    if (contents.includes("target '" + EXTENSION_NAME + "' do") && contents.includes('inherit! :search_paths')) {
+      console.log('Podfile already has nested GrabDocsBroadcastUpload target.');
+      process.exit(0);
+    }
+    console.error('❌ Failed to patch Podfile — could not find main app target.');
+    console.error('Full Podfile contents:');
+    console.error(contents);
+    process.exit(1);
   }
 
   fs.writeFileSync(PODFILE_PATH, newContents);
-  console.log('Patched ios/Podfile: nested GrabDocsBroadcastUpload inside main app target.');
+  console.log('✅ Patched ios/Podfile: nested GrabDocsBroadcastUpload inside main app target.');
   console.log('Run: cd ios && pod install');
 }
 

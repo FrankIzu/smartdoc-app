@@ -6,32 +6,42 @@
 
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
 
-// Inline the same logic as patch-ios-podfile.js / plugin
-const EXTENSION_BLOCK = `
-  target '${EXTENSION_NAME}' do
-    inherit! :search_paths
-    use_modular_headers!
-    pod 'HMSBroadcastExtensionSDK'
-  end`;
-
+// Inline the same logic as patch-ios-podfile.js / plugin (indentation-aware).
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
     return podfile;
   }
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
+
+  // Find main app target at any indentation level.
   let mainTargetLine = -1;
+  let targetIndent = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^target\s+['"]([^'"]+)['"]\s+do\b/);
-    if (m && m[1] !== extensionName) { mainTargetLine = i; break; }
+    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[2] !== extensionName) { mainTargetLine = i; targetIndent = m[1].length; break; }
   }
   if (mainTargetLine === -1) return podfile;
+
+  // First `end` with indentation <= target's = target's closing `end`.
   let closingLine = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
-    if (/^end(\s*(#.*)?)$/.test(lines[i])) { closingLine = i; break; }
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= targetIndent) { closingLine = i; break; }
   }
   if (closingLine === -1) return podfile;
-  const block = EXTENSION_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
+
+  const ind  = ' '.repeat(targetIndent + 2);
+  const ind2 = ' '.repeat(targetIndent + 4);
+  const block = [
+    '',
+    ind  + "target '" + extensionName + "' do",
+    ind2 + 'inherit! :search_paths',
+    ind2 + 'use_modular_headers!',
+    ind2 + "pod 'HMSBroadcastExtensionSDK'",
+    ind  + 'end',
+  ].join(lineEnding);
+
   const before = lines.slice(0, closingLine).join(lineEnding);
   const after  = lines.slice(closingLine).join(lineEnding);
   return before + block + lineEnding + after;
@@ -129,5 +139,37 @@ console.log(result2.split('\n').slice(-20).join('\n'));
 // --- Test 3: idempotent (already patched) ---
 const result3 = insertExtensionBeforeMainTargetEnd(result1, EXTENSION_NAME);
 assert(result3 === result1, 'Test3: idempotent - no double-insertion');
+
+// --- Test 4: target inside abstract_target (indented) ---
+const PODFILE_ABSTRACT_TARGET = `\
+require 'something'
+
+platform :ios, '16.0'
+
+abstract_target 'defaults' do
+  use_expo_modules!
+
+  target 'GrabDocs' do
+    if ENV['SOME_FLAG']
+      config_command = ['node']
+    else
+      config_command = ['node', '--eval']
+    end
+    use_react_native!(
+      :path => '../node_modules/react-native',
+    )
+  end
+end
+`;
+
+const result4 = insertExtensionBeforeMainTargetEnd(PODFILE_ABSTRACT_TARGET, EXTENSION_NAME);
+assert(result4.includes("target 'GrabDocsBroadcastUpload' do"), 'Test4: extension in abstract_target case');
+assert(result4.includes('inherit! :search_paths'), 'Test4: inherit! present');
+// Extension should be inside the GrabDocs target (before its end), not inside abstract_target
+const extIdx4 = result4.indexOf("target 'GrabDocsBroadcastUpload' do");
+const grabDocsEndIdx4 = result4.indexOf('\n  end\nend'); // GrabDocs target closes with `  end`
+assert(extIdx4 < grabDocsEndIdx4 + 100, 'Test4: extension nested inside GrabDocs target');
+console.log('\nTest 4 output (last 15 lines):');
+console.log(result4.split('\n').slice(-15).join('\n'));
 
 console.log('\n✅ All tests passed.');
