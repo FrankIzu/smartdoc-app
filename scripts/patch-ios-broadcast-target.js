@@ -27,30 +27,36 @@ function findPbxproj(iosRoot) {
 }
 
 /**
- * Remove PBXTargetDependency and PBXContainerItemProxy entries that reference
- * the extension target but the target was never persisted (plugin partial write).
+ * Build a set of all defined UUIDs in the project (object definitions).
+ */
+function collectDefinedUuids(content) {
+  const defined = new Set();
+  const defRegex = /^[\t ]*([A-F0-9]{24}) \/\* [^*]+ \*\/ = \{\s*isa = /gm;
+  let m;
+  while ((m = defRegex.exec(content)) !== null) {
+    defined.add(m[1]);
+  }
+  return defined;
+}
+
+/**
+ * Remove any orphaned references: objects that are referenced but not defined.
  * This prevents "Cannot read properties of undefined (reading 'UUID')" during build.
  */
-function removeOrphanedExtensionDependencies(content) {
-  const nativeTargetUuids = new Set();
-  const match = content.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
-  if (match) {
-    const uuids = match[0].matchAll(/([A-F0-9]{24}) \/\* [^*]+ \*\/ = \{\s*isa = PBXNativeTarget/g);
-    for (const m of uuids) nativeTargetUuids.add(m[1]);
-  }
+function removeOrphanedReferences(content) {
+  const defined = collectDefinedUuids(content);
 
+  // Remove PBXTargetDependency and PBXContainerItemProxy for undefined targets
   const orphanDepUuids = new Set();
   const depRegex = /([A-F0-9]{24}) \/\* PBXTargetDependency \*\/ = \{\s*isa = PBXTargetDependency;\s*target = ([A-F0-9]{24})[^}]*\}/g;
   let m;
   while ((m = depRegex.exec(content)) !== null) {
     const depUuid = m[1];
     const targetUuid = m[2];
-    if (!nativeTargetUuids.has(targetUuid)) {
+    if (!defined.has(targetUuid)) {
       orphanDepUuids.add(depUuid);
     }
   }
-
-  if (orphanDepUuids.size === 0) return content;
 
   for (const depUuid of orphanDepUuids) {
     content = content.replace(new RegExp(`\\t\\t${depUuid} /\\* PBXTargetDependency \\*/ = \\{[^}]*\\};?\\n?`, 'g'), '');
@@ -64,12 +70,32 @@ function removeOrphanedExtensionDependencies(content) {
   while ((m = proxyRegex.exec(content)) !== null) {
     const proxyUuid = m[1];
     const targetUuid = m[2];
-    if (!nativeTargetUuids.has(targetUuid)) {
+    if (!defined.has(targetUuid)) {
       orphanProxyUuids.add(proxyUuid);
     }
   }
   for (const proxyUuid of orphanProxyUuids) {
     content = content.replace(new RegExp(`\\t\\t${proxyUuid} /\\* PBXContainerItemProxy \\*/ = \\{[^}]*\\};?\\n?`, 'g'), '');
+  }
+
+  // Remove orphaned target refs from PBXProject targets array (causes same error)
+  const nativeTargetUuids = new Set();
+  const ntMatch = content.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
+  if (ntMatch) {
+    for (const u of ntMatch[0].matchAll(/([A-F0-9]{24}) \/\* [^*]+ \*\/ = \{\s*isa = PBXNativeTarget/g)) {
+      nativeTargetUuids.add(u[1]);
+    }
+  }
+  const projectTargetsRegex = /(targets = \()([\s\S]*?)(\);\s*\n)/;
+  const ptMatch = content.match(projectTargetsRegex);
+  if (ptMatch && nativeTargetUuids.size > 0) {
+    const targetLines = ptMatch[2].match(/\s*([A-F0-9]{24}) \/\* [^*]+ \*\/,?/g) || [];
+    const validLines = targetLines.filter((line) => {
+      const uuidMatch = line.match(/([A-F0-9]{24})/);
+      return uuidMatch && nativeTargetUuids.has(uuidMatch[1]);
+    });
+    const newTargets = validLines.length > 0 ? validLines.join('\n') + '\n\t\t\t' : '';
+    content = content.replace(projectTargetsRegex, `$1${newTargets}$3`);
   }
 
   return content;
@@ -82,9 +108,8 @@ function patchProject(pbxPath) {
     return;
   }
 
-  // Remove orphaned dependencies: plugin may add PBXTargetDependency/PBXContainerItemProxy
-  // pointing to a target UUID that was never persisted, causing "Cannot read properties of undefined"
-  content = removeOrphanedExtensionDependencies(content);
+  // Remove orphaned references that cause "Cannot read properties of undefined" during build
+  content = removeOrphanedReferences(content);
 
   const targetUuid = generateUuid();
   const configListUuid = generateUuid();
