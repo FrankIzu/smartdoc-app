@@ -55,6 +55,9 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Patch GrabDocsBroadcastUpload target into project
+        run: node scripts/patch-ios-broadcast-target.js
+
       - name: Commit and push ios folder
         run: |
           git config user.name "github-actions[bot]"
