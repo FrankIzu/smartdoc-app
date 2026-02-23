@@ -14,6 +14,7 @@ node_modules/
 node_modules/.cache
 .expo
 dist
+dist_expo
 web-build
 
 # Python virtual env (often 200-500MB)
@@ -109,6 +110,15 @@ Thumbs.db
 *.temp
 *.aab
 *.apk
+*.ipa
+
+# Build artifacts and extracted content (often 100MB+)
+ipa-extract/
+build.zip
+build.ipa
+android/app/build
+android/build
+ios/build
 
 # Large files and directories
 dev-files/
