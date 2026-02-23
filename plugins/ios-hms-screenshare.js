@@ -199,8 +199,12 @@ function withBroadcastExtensionTarget(config, { appGroup, extensionName }) {
         productType: quoted('com.apple.product-type.app-extension'),
       },
     };
-    project.addToPbxNativeTargetSection(target);
-    project.addToPbxProjectSection(target);
+    if (typeof project.addToPbxNativeTargetSection === 'function') {
+      project.addToPbxNativeTargetSection(target);
+    }
+    if (typeof project.addToPbxProjectSection === 'function') {
+      project.addToPbxProjectSection(target);
+    }
 
     if (!project.hash.project.objects['PBXTargetDependency']) {
       project.hash.project.objects['PBXTargetDependency'] = {};
@@ -255,6 +259,19 @@ function withBroadcastExtensionTarget(config, { appGroup, extensionName }) {
         project.addToPbxGroup(productFile, key);
       }
     });
+
+    // Ensure extension target is in project so CocoaPods can find it (fallback when addToPbx* don't persist)
+    const objects = project.hash?.project?.objects || {};
+    if (!objects['PBXNativeTarget']) objects['PBXNativeTarget'] = {};
+    objects['PBXNativeTarget'][targetUuid] = target.pbxNativeTarget;
+    const projectSection = objects['PBXProject'] || {};
+    for (const key of Object.keys(projectSection)) {
+      if (key === 'undefined' || projectSection[key].isa !== 'PBXProject') continue;
+      const proj = projectSection[key];
+      if (!proj.targets) proj.targets = [];
+      if (!proj.targets.includes(targetUuid)) proj.targets.push(targetUuid);
+      break;
+    }
 
     return config;
   });
