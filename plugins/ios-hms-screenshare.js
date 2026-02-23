@@ -228,28 +228,52 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
   });
 }
 
-function withPodfileEntry(config, { extensionName }) {
+/**
+ * Add the extension as a nested target inside the main app target so CocoaPods
+ * has a host target for the app extension (required for "Unable to find host target(s)").
+ */
+function withPodfileEntry(config, { extensionName, mainTargetName }) {
   return withPodfile(config, (config) => {
     const data = config.modResults;
-    // In Expo 54+, modResults is a plain string. Older versions used { contents: string }.
     const isString = typeof data === 'string';
-    const contents = isString ? data : (data.contents || '');
-    const podBlock = `
-target '${extensionName}' do
-  use_modular_headers!
-  pod 'HMSBroadcastExtensionSDK'
-end
+    let contents = isString ? data : (data.contents || '');
 
+    const nestedBlock = `
+  target '${extensionName}' do
+    inherit! :search_paths
+    use_modular_headers!
+    pod 'HMSBroadcastExtensionSDK'
+  end
 `;
-    if (!contents.includes(`target '${extensionName}'`)) {
-      const insertPoint = contents.indexOf('target ');
-      const newContents =
-        insertPoint >= 0
-          ? contents.slice(0, insertPoint) + podBlock + contents.slice(insertPoint)
-          : podBlock + contents;
-      // Preserve the original type so the mod compiler isn't confused
-      config.modResults = isString ? newContents : { ...data, contents: newContents };
+
+    const alreadyNested = contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths');
+    if (alreadyNested) {
+      return config;
     }
+
+    const standalonePattern = new RegExp(
+      "\\n?target\\s+'" + extensionName.replace(/'/g, "\\\\'") + "'\\s+do\\s*\\n\\s*use_modular_headers![\\s\\S]*?\\nend\\s*\\n?",
+      'g'
+    );
+    contents = contents.replace(standalonePattern, '');
+
+    const postInstallIndex = contents.indexOf('post_install do');
+    if (postInstallIndex >= 0) {
+      contents = contents.slice(0, postInstallIndex) + nestedBlock + '\n' + contents.slice(postInstallIndex);
+    } else {
+      const mainTargetMatch = contents.match(new RegExp(`(target\\s+'${mainTargetName.replace(/'/g, "\\\\'")}'\\s+do\\s+\\n)([\\s\\S]*?)(\\nend)`, 'm'));
+      if (mainTargetMatch) {
+        contents = contents.replace(mainTargetMatch[0], mainTargetMatch[1] + mainTargetMatch[2] + nestedBlock + mainTargetMatch[3]);
+      } else {
+        const firstTargetEnd = contents.indexOf('target ');
+        if (firstTargetEnd >= 0) {
+          const afterTarget = contents.indexOf('\n', firstTargetEnd) + 1;
+          contents = contents.slice(0, afterTarget) + nestedBlock + contents.slice(afterTarget);
+        }
+      }
+    }
+
+    config.modResults = isString ? contents : { ...data, contents };
     return config;
   });
 }
@@ -270,9 +294,10 @@ function withHmsScreenshareExtension(config, options = {}) {
   const appGroup = options.appGroup || process.env.EXPO_PUBLIC_HMS_IOS_APP_GROUP?.trim() || DEFAULT_APP_GROUP;
   const extensionName = options.extensionName || process.env.EXPO_PUBLIC_HMS_IOS_PREFERRED_EXTENSION?.trim() || DEFAULT_EXTENSION_NAME;
 
+  const mainTargetName = config.expo?.name || 'GrabDocs';
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
-  config = withPodfileEntry(config, { extensionName });
+  config = withPodfileEntry(config, { extensionName, mainTargetName });
   config = withAppGroupEntitlements(config, { appGroup });
 
   // Do NOT add appExtensions to extra.eas.build.experimental.ios - EAS tries to resolve
