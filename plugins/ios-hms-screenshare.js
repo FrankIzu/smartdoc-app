@@ -228,20 +228,17 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 }
 
 /**
- * Insert the extension target inside the main app target using do/end depth tracking.
+ * Insert the extension target before the main app target's closing `end`.
  *
- * Expo's Podfile looks like:
- *   target 'GrabDocs' do    ← depth 0→1
- *     use_expo_modules!
- *     use_react_native!(...)
- *     post_install do |i|   ← depth 1→2
- *       ...
- *     end                   ← depth 2→1
- *   end                     ← depth 1→0  ← INSERT BEFORE HERE
+ * KEY INSIGHT: In Expo's generated Podfile the main `target 'X' do` block is the
+ * ONLY top-level block, opening at column 0.  Its closing `end` is therefore the
+ * FIRST unindented `end` (i.e. `/^end/`) found AFTER the target's opening line.
+ * Every `end` inside the target — from `if/else`, `post_install do`, `use_react_native!`
+ * blocks etc. — is indented by at least one space and will NOT match `^end`.
  *
- * "Find last end" was wrong: post_install may live OUTSIDE the target block in some
- * RN versions, making the last "end" in the file belong to post_install, not the
- * target.  Depth tracking is the only correct approach.
+ * Depth-tracking was wrong because `if/unless/case` in Ruby do NOT use `do`; their
+ * `end` decremented depth prematurely, causing insertion inside the `if` block rather
+ * than the target block.
  */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
@@ -251,10 +248,10 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
 
-  // Find the first app target line (not the extension itself).
+  // The main app target opens at column 0: `target 'Name' do`
   let mainTargetLine = -1;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^\s*target\s+['"]([^'"]+)['"]\s+do\b/);
+    const m = lines[i].match(/^target\s+['"]([^'"]+)['"]\s+do\b/);
     if (m && m[1] !== extensionName) {
       mainTargetLine = i;
       break;
@@ -262,20 +259,13 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   }
   if (mainTargetLine === -1) return podfile;
 
-  // Walk forward tracking depth; every `do` opens, every bare `end` closes.
-  let depth = 0;
+  // First unindented `end` after the target opener = the target's closing `end`.
+  // All `end`s for blocks inside the target (if, post_install, etc.) are indented.
   let closingLine = -1;
-  for (let i = mainTargetLine; i < lines.length; i++) {
-    const stripped = lines[i].trim();
-    // Count `do` openers (block openers end with `do` or `do |...|`).
-    if (/\bdo\b/.test(stripped)) depth++;
-    // A line that is only `end` (optionally with inline comment) closes a block.
-    if (/^end(\s*#.*)?$/.test(stripped)) {
-      depth--;
-      if (depth === 0) {
-        closingLine = i;
-        break;
-      }
+  for (let i = mainTargetLine + 1; i < lines.length; i++) {
+    if (/^end(\s*(#.*)?)$/.test(lines[i])) {
+      closingLine = i;
+      break;
     }
   }
   if (closingLine === -1) return podfile;

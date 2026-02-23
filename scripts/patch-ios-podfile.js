@@ -23,29 +23,39 @@ const EXTENSION_BLOCK = `
     pod 'HMSBroadcastExtensionSDK'
   end`;
 
-function findMainTargetClosingEndIndex(podfile) {
-  const lines = podfile.split(/\r?\n/);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (/^\s*end\s*$/.test(lines[i])) {
-      const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
-      return lines.slice(0, i).join(lineEnding).length;
-    }
-  }
-  return -1;
-}
-
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
     return podfile;
   }
-  const block = EXTENSION_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
+
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
-  let insertAt = findMainTargetClosingEndIndex(podfile);
-  if (insertAt === -1) {
-    insertAt = podfile.lastIndexOf('\nend');
-    if (insertAt === -1) return podfile;
+  const lines = podfile.split(/\r?\n/);
+
+  // Main app target opens at column 0: `target 'Name' do`
+  let mainTargetLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^target\s+['"]([^'"]+)['"]\s+do\b/);
+    if (m && m[1] !== extensionName) {
+      mainTargetLine = i;
+      break;
+    }
   }
-  return podfile.slice(0, insertAt) + block + lineEnding + podfile.slice(insertAt);
+  if (mainTargetLine === -1) return podfile;
+
+  // First unindented `end` after the target opener = the target's closing `end`.
+  let closingLine = -1;
+  for (let i = mainTargetLine + 1; i < lines.length; i++) {
+    if (/^end(\s*(#.*)?)$/.test(lines[i])) {
+      closingLine = i;
+      break;
+    }
+  }
+  if (closingLine === -1) return podfile;
+
+  const block = EXTENSION_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
+  const before = lines.slice(0, closingLine).join(lineEnding);
+  const after  = lines.slice(closingLine).join(lineEnding);
+  return before + block + lineEnding + after;
 }
 
 function main() {

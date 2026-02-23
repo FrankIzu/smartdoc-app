@@ -64,21 +64,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Pre-verify Podfile patch (early failure if plugin is broken)
+      - name: Prebuild iOS and verify Podfile patch
         run: |
           rm -rf ios
           npx expo prebuild --platform ios --no-install
-          node scripts/patch-ios-podfile.js
-          echo "===== FULL PODFILE ====="
+
+          echo "===== FULL PODFILE (after plugin, before patch script) ====="
           cat ios/Podfile
-          echo "========================"
+          echo "============================================================"
+
+          # Check if the plugin alone patched correctly
           if grep -q "  target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
-            echo "✅ Podfile contains nested GrabDocsBroadcastUpload target"
+            echo "✅ Plugin correctly nested GrabDocsBroadcastUpload"
           else
-            echo "::error::Podfile missing nested broadcast extension target (must be indented inside main app target)"
-            exit 1
+            echo "⚠️  Plugin did NOT nest GrabDocsBroadcastUpload — applying patch script as safety net"
+            node scripts/patch-ios-podfile.js
+            echo "===== FULL PODFILE (after patch script) ====="
+            cat ios/Podfile
+            echo "============================================="
+            if grep -q "  target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
+              echo "✅ Patch script fixed the Podfile"
+            else
+              echo "::error::Neither plugin nor patch script produced a nested GrabDocsBroadcastUpload target"
+              exit 1
+            fi
           fi
-          # EAS runs its own prebuild internally using our plugin — clean up so it starts fresh
+
+          # EAS runs its own internal prebuild; wipe ios/ so it starts clean
           rm -rf ios
 
       - name: Upload Podfile for verification
