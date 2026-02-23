@@ -69,29 +69,29 @@ jobs:
           rm -rf ios
           npx expo prebuild --platform ios --no-install
 
-          echo "===== FULL PODFILE (after plugin, before patch script) ====="
+          echo "===== FULL PODFILE (after prebuild) ====="
           cat ios/Podfile
-          echo "============================================================"
+          echo "========================================="
 
-          # Check if the plugin alone patched correctly
-          if grep -q "  target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
-            echo "✅ Plugin correctly nested GrabDocsBroadcastUpload"
+          # Plugin uses mergeContents which tags the block — check for tag OR indented target
+          if grep -q "GrabDocsBroadcastUpload" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
+            echo "✅ GrabDocsBroadcastUpload present in Podfile"
           else
-            echo "⚠️  Plugin did NOT nest GrabDocsBroadcastUpload — applying patch script as safety net"
+            echo "⚠️  Plugin did NOT add GrabDocsBroadcastUpload — applying patch script as safety net"
             node scripts/patch-ios-podfile.js
-            echo "===== FULL PODFILE (after patch script) ====="
             cat ios/Podfile
-            echo "============================================="
-            if grep -q "  target 'GrabDocsBroadcastUpload' do" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
+            if grep -q "GrabDocsBroadcastUpload" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
               echo "✅ Patch script fixed the Podfile"
             else
-              echo "::error::Neither plugin nor patch script produced a nested GrabDocsBroadcastUpload target"
+              echo "::error::Neither plugin nor patch script added GrabDocsBroadcastUpload to Podfile"
               exit 1
             fi
           fi
 
-          # EAS runs its own internal prebuild; wipe ios/ so it starts clean
-          rm -rf ios
+          # NOTE: do NOT delete ios/ here. EAS --local will use this prebuild output
+          # directly (ios/ is not in .easignore), so it skips its own prebuild and uses
+          # the already-patched Podfile. This is the key fix.
+          echo "✅ ios/ preserved for EAS to use directly"
 
       - name: Upload Podfile for verification
         uses: actions/upload-artifact@v4

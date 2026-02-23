@@ -15,6 +15,7 @@ const {
   withPodfile,
   withEntitlementsPlist,
 } = require('expo/config-plugins');
+const { mergeContents } = require('@expo/config-plugins/build/utils/generateCode');
 const fs = require('fs');
 const path = require('path');
 // @expo/plist exports { default: { parse, build } }; use .default for CommonJS
@@ -228,177 +229,119 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 }
 
 /**
- * Returns true only if the extension target appears NESTED (indented), not as a sibling.
- * CocoaPods requires the extension to be inside the main app target; a top-level
- * "target 'GrabDocsBroadcastUpload' do" causes "Unable to find host target(s)".
- */
-function isExtensionProperlyNested(podfile, extensionName) {
-  return new RegExp('\\n\\s+target\\s+[\'"]' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\b').test(podfile);
-}
-
-/**
- * If the extension target exists as a top-level (sibling) block, remove it so we can
- * insert it in the correct nested place. Finds the block by indentation and removes
- * from that line through its matching `end`.
- */
-function removeTopLevelExtensionBlock(podfile, extensionName) {
-  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
-  const lines = podfile.split(/\r?\n/);
-  let extLine = -1;
-  let extIndent = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
-    if (m && m[2] === extensionName) {
-      extLine = i;
-      extIndent = m[1].length;
-      break;
-    }
-  }
-  if (extLine === -1) return podfile;
-  let endLine = -1;
-  for (let i = extLine + 1; i < lines.length; i++) {
-    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
-    if (em && em[1].length <= extIndent) {
-      endLine = i;
-      break;
-    }
-  }
-  if (endLine === -1) return podfile;
-  const before = lines.slice(0, extLine).join(lineEnding);
-  const after  = lines.slice(endLine + 1).join(lineEnding);
-  return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
-}
-
-/**
- * Insert the extension target before the main app target's closing `end`.
- * If the extension exists but as a sibling (top-level), remove it first then insert nested.
- */
-function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
-  if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
-    if (isExtensionProperlyNested(podfile, extensionName)) {
-      return podfile;
-    }
-    podfile = removeTopLevelExtensionBlock(podfile, extensionName);
-  }
-
-  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
-  const lines = podfile.split(/\r?\n/);
-
-  // Find main app target at ANY indentation level.
-  let mainTargetLine = -1;
-  let targetIndent = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
-    if (m && m[2] !== extensionName) {
-      mainTargetLine = i;
-      targetIndent = m[1].length;
-      break;
-    }
-  }
-  if (mainTargetLine === -1) return podfile;
-
-  // Find first `end` whose indentation is <= the target's indentation.
-  let closingLine = -1;
-  for (let i = mainTargetLine + 1; i < lines.length; i++) {
-    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
-    if (em && em[1].length <= targetIndent) {
-      closingLine = i;
-      break;
-    }
-  }
-  if (closingLine === -1) return podfile;
-
-  const ind  = ' '.repeat(targetIndent + 2);
-  const ind2 = ' '.repeat(targetIndent + 4);
-  const extensionBlock = [
-    '',
-    ind  + "target '" + extensionName + "' do",
-    ind2 + 'inherit! :search_paths',
-    ind2 + 'use_modular_headers!',
-    ind2 + "pod 'HMSBroadcastExtensionSDK'",
-    ind  + 'end',
-  ].join(lineEnding);
-
-  const before = lines.slice(0, closingLine).join(lineEnding);
-  const after  = lines.slice(closingLine).join(lineEnding);
-  return before + extensionBlock + lineEnding + after;
-}
-
-/**
- * Add the extension as a nested target inside the main app target so CocoaPods
- * has a host target for the app extension (required for "Unable to find host target(s)").
+ * Add the extension target nested inside the main app target using Expo's official
+ * mergeContents utility. This is idempotent (tagged), battle-tested, and does NOT
+ * depend on main target name or indentation heuristics.
+ *
+ * Anchor: the first unindented `end` in the Podfile = closing end of the main target.
+ * The extension block is inserted BEFORE that line (offset: 0).
  */
 function withPodfileEntry(config, { extensionName }) {
   return withPodfile(config, (config) => {
     const data = config.modResults;
-    const podfile = typeof data === 'string' ? data : (data?.contents ?? '');
+    const src  = typeof data === 'string' ? data : (data?.contents ?? '');
 
-    console.log('[ios-hms-screenshare] withPodfile: content length=' + podfile.length + ' lines=' + podfile.split('\n').length);
-    // Show the target lines so we can confirm what target name Expo is using.
-    podfile.split('\n').filter(l => /target\s+['"]/.test(l)).forEach(l => console.log('[ios-hms-screenshare] target line:', JSON.stringify(l)));
-
-    if (podfile.length === 0) {
-      console.warn('[ios-hms-screenshare] withPodfile received empty Podfile — will rely on withDangerousMod');
+    if (src.length === 0) {
+      console.warn('[ios-hms-screenshare] withPodfile: empty content — skipping');
       return config;
     }
 
-    const newContents = insertExtensionBeforeMainTargetEnd(podfile, extensionName);
-
-    if (newContents === podfile) {
-      if (isExtensionProperlyNested(podfile, extensionName)) {
-        console.log('[ios-hms-screenshare] ✅ withPodfile: already properly nested');
-        return config;
-      }
-      // Patch failed — print the Podfile so it appears in EAS build logs, then throw.
-      console.error('[ios-hms-screenshare] ❌ withPodfile: could not patch. Full Podfile:\n' + podfile);
-      throw new Error('[ios-hms-screenshare] withPodfile: failed to nest ' + extensionName + ' — main target not found. See Podfile above.');
+    const tag = 'ios-hms-screenshare-' + extensionName;
+    // If already merged (tag present), skip.
+    if (src.includes('# @generated begin ' + tag)) {
+      console.log('[ios-hms-screenshare] ✅ withPodfile: already merged');
+      return config;
     }
 
-    console.log('[ios-hms-screenshare] ✅ withPodfile: Podfile patched successfully');
+    const newSrc = [
+      "  target '" + extensionName + "' do",
+      '    inherit! :search_paths',
+      '    use_modular_headers!',
+      "    pod 'HMSBroadcastExtensionSDK'",
+      '  end',
+    ].join('\n');
+
+    let result;
+    try {
+      result = mergeContents({
+        tag,
+        src,
+        newSrc,
+        // Anchor = first unindented `end` = main target's closing end.
+        anchor: /^end$/m,
+        // offset: 0 inserts BEFORE the anchor line.
+        offset: 0,
+        comment: '#',
+      });
+    } catch (e) {
+      console.error('[ios-hms-screenshare] ❌ mergeContents failed:', e.message);
+      console.error('[ios-hms-screenshare] Full Podfile:\n' + src);
+      throw e;
+    }
+
+    if (!result.didMerge) {
+      console.error('[ios-hms-screenshare] ❌ mergeContents anchor not found. Full Podfile:\n' + src);
+      throw new Error('[ios-hms-screenshare] Could not find anchor `^end$` in Podfile to insert ' + extensionName + '.');
+    }
+
+    console.log('[ios-hms-screenshare] ✅ withPodfile: mergeContents applied');
     if (typeof data === 'string') {
-      config.modResults = newContents;
+      config.modResults = result.contents;
     } else {
-      config.modResults = { ...data, contents: newContents };
+      config.modResults = { ...data, contents: result.contents };
     }
     return config;
   });
 }
 
 /**
- * Fallback / safety net: patch the Podfile on disk after withPodfile has run.
- * Throws with the full Podfile in the log if it still can't be patched, so the
- * build fails immediately with useful diagnostics instead of a cryptic CocoaPods error.
+ * Safety net: if mergeContents in withPodfile didn't apply (e.g. Podfile written
+ * after withPodfile runs), write the patch directly to disk. Throws with the full
+ * Podfile if it still can't be patched so the build fails fast with useful diagnostics.
  */
 function withPodfileDangerousPatch(config, { extensionName }) {
   return withDangerousMod(config, [
     'ios',
     async (config) => {
       const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
-      console.log('[ios-hms-screenshare] withDangerousMod: checking Podfile at', podfilePath);
 
       if (!fs.existsSync(podfilePath)) {
-        console.warn('[ios-hms-screenshare] withDangerousMod: Podfile not found — will be created by withPodfile later (this is normal)');
+        console.warn('[ios-hms-screenshare] withDangerousMod: Podfile not found at', podfilePath, '— normal if withPodfile writes it later');
         return config;
       }
 
       const contents = fs.readFileSync(podfilePath, 'utf8');
-      console.log('[ios-hms-screenshare] withDangerousMod: Podfile exists, length=' + contents.length);
-      contents.split('\n').filter(l => /target\s+['"]/.test(l)).forEach(l => console.log('[ios-hms-screenshare] withDangerousMod target line:', JSON.stringify(l)));
+      const tag = 'ios-hms-screenshare-' + extensionName;
 
-      if (isExtensionProperlyNested(contents, extensionName)) {
-        console.log('[ios-hms-screenshare] ✅ withDangerousMod: already properly nested');
+      if (contents.includes('# @generated begin ' + tag)) {
+        console.log('[ios-hms-screenshare] ✅ withDangerousMod: already merged');
         return config;
       }
 
-      const newContents = insertExtensionBeforeMainTargetEnd(contents, extensionName);
+      const newSrc = [
+        "  target '" + extensionName + "' do",
+        '    inherit! :search_paths',
+        '    use_modular_headers!',
+        "    pod 'HMSBroadcastExtensionSDK'",
+        '  end',
+      ].join('\n');
 
-      if (newContents === contents) {
-        console.error('[ios-hms-screenshare] ❌ withDangerousMod: could not patch. Full Podfile:\n' + contents);
-        throw new Error('[ios-hms-screenshare] withDangerousMod: failed to nest ' + extensionName + '. See Podfile above.');
+      let result;
+      try {
+        result = mergeContents({ tag, src: contents, newSrc, anchor: /^end$/m, offset: 0, comment: '#' });
+      } catch (e) {
+        console.error('[ios-hms-screenshare] ❌ withDangerousMod mergeContents failed:', e.message);
+        console.error('[ios-hms-screenshare] Full Podfile:\n' + contents);
+        throw e;
       }
 
-      fs.writeFileSync(podfilePath, newContents);
-      console.log('[ios-hms-screenshare] ✅ withDangerousMod: Podfile patched — nested ' + extensionName);
+      if (!result.didMerge) {
+        console.error('[ios-hms-screenshare] ❌ withDangerousMod anchor not found. Full Podfile:\n' + contents);
+        throw new Error('[ios-hms-screenshare] withDangerousMod: anchor not found in Podfile for ' + extensionName);
+      }
+
+      fs.writeFileSync(podfilePath, result.contents);
+      console.log('[ios-hms-screenshare] ✅ withDangerousMod: Podfile patched on disk');
       return config;
     },
   ]);
