@@ -262,7 +262,9 @@ function withBroadcastExtensionTarget(config, { appGroup, extensionName }) {
 function withPodfileEntry(config, { extensionName }) {
   return withPodfile(config, (config) => {
     const data = config.modResults;
-    const contents = typeof data === 'string' ? data : (data.contents || '');
+    // In Expo 54+, modResults is a plain string. Older versions used { contents: string }.
+    const isString = typeof data === 'string';
+    const contents = isString ? data : (data.contents || '');
     const podBlock = `
 target '${extensionName}' do
   use_modular_headers!
@@ -270,13 +272,14 @@ target '${extensionName}' do
 end
 
 `;
-    if (typeof contents === 'string' && !contents.includes(`target '${extensionName}'`)) {
+    if (!contents.includes(`target '${extensionName}'`)) {
       const insertPoint = contents.indexOf('target ');
       const newContents =
         insertPoint >= 0
           ? contents.slice(0, insertPoint) + podBlock + contents.slice(insertPoint)
           : podBlock + contents;
-      config.modResults = { ...(typeof data === 'object' ? data : {}), contents: newContents };
+      // Preserve the original type so the mod compiler isn't confused
+      config.modResults = isString ? newContents : { ...data, contents: newContents };
     }
     return config;
   });
