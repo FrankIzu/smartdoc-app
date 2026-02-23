@@ -55,7 +55,7 @@ function patchProject(pbxPath) {
   // Add PBXBuildFile for the extension
   const buildFileMatch = content.match(/(\/\* Begin PBXBuildFile section \*\/)/);
   if (buildFileMatch) {
-    const buildFileEntry = `\t\t${buildFileUuid} /* ${EXTENSION_NAME}.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = ${productRefUuid} /* ${EXTENSION_NAME}.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };\n`;
+    const buildFileEntry = `\t\t${buildFileUuid} /* ${EXTENSION_NAME}.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = ${productRefUuid} /* ${EXTENSION_NAME}.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy); }; };\n`;
     content = content.replace(buildFileMatch[1], buildFileMatch[1] + '\n' + buildFileEntry);
   }
 
@@ -66,7 +66,7 @@ function patchProject(pbxPath) {
 			buildPhases = (
 				${sourcesPhaseUuid} /* Sources */,
 				${frameworksPhaseUuid} /* Frameworks */,
-				${resourcesPhaseUuid} /* Resources */,
+				${resourcesPhaseUuid} /* Resources */
 			);
 			buildRules = (
 			);
@@ -95,8 +95,8 @@ function patchProject(pbxPath) {
   // Add our build file to main app's "Embed App Extensions" phase if it exists
   if (content.includes('Embed App Extensions')) {
     content = content.replace(
-      /(name = "Embed App Extensions";\s*\n\s*files = )\((\s*)\)/,
-      `$1(\n\t\t\t\t\t${buildFileUuid} /* ${EXTENSION_NAME}.appex in Embed App Extensions */,$2)`
+      /(name = "Embed App Extensions";\s*\n\s*files = )\(\s*\)/,
+      `$1(\n\t\t\t\t\t${buildFileUuid} /* ${EXTENSION_NAME}.appex in Embed App Extensions */\n\t\t\t\t)`
     );
   }
 
@@ -119,7 +119,7 @@ function patchProject(pbxPath) {
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
+					"@executable_path/../../Frameworks"
 				);
 				MARKETING_VERSION = 1.0;
 				MTL_FAST_MATH = YES;
@@ -152,7 +152,7 @@ function patchProject(pbxPath) {
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
+					"@executable_path/../../Frameworks"
 				);
 				MARKETING_VERSION = 1.0;
 				MTL_FAST_MATH = YES;
@@ -178,7 +178,7 @@ function patchProject(pbxPath) {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				${debugConfigUuid} /* Debug */,
-				${releaseConfigUuid} /* Release */,
+				${releaseConfigUuid} /* Release */
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -204,7 +204,7 @@ function patchProject(pbxPath) {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				${swiftBuildFileUuid} /* SampleHandler.swift in Sources */,
+				${swiftBuildFileUuid} /* SampleHandler.swift in Sources */
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -222,7 +222,7 @@ function patchProject(pbxPath) {
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				${buildFileUuid} /* ${EXTENSION_NAME}.appex in Embed App Extensions */,
+				${buildFileUuid} /* ${EXTENSION_NAME}.appex in Embed App Extensions */
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -237,13 +237,14 @@ function patchProject(pbxPath) {
   const mainTargetMatch = content.match(/([A-F0-9]{24}) \/\* GrabDocs \*\/ = \{\s*isa = PBXNativeTarget;[^}]*buildPhases = \(\s*([^)]+)\)/s);
   if (mainTargetMatch) {
     const mainTargetId = mainTargetMatch[1];
-    const existingPhases = mainTargetMatch[2];
+    let existingPhases = mainTargetMatch[2].trim().replace(/,\s*$/, '');
     if (!existingPhases.includes(copyPhaseUuid)) {
+      const phasesList = existingPhases ? `${existingPhases},\n\t\t\t\t${copyPhaseUuid} /* Embed App Extensions */` : `${copyPhaseUuid} /* Embed App Extensions */`;
       content = content.replace(
         mainTargetMatch[0],
         mainTargetMatch[0].replace(
-          'buildPhases = (\n\t\t\t\t' + existingPhases.trim() + '\n\t\t\t)',
-          `buildPhases = (\n\t\t\t\t${existingPhases.trim()},\n\t\t\t\t${copyPhaseUuid} /* Embed App Extensions */\n\t\t\t)`
+          mainTargetMatch[2],
+          phasesList + '\n\t\t\t'
         )
       );
     }
@@ -263,7 +264,7 @@ function patchProject(pbxPath) {
     if (!content.includes(depUuid)) {
       content = content.replace(
         /(dependencies = \(\s*)(\);\s*\n\s*name = GrabDocs;)/,
-        `$1\n\t\t\t\t${depUuid} /* PBXTargetDependency */,$2`
+        `$1\n\t\t\t\t${depUuid} /* PBXTargetDependency */\n\t\t\t\t$2`
       );
     }
   }
@@ -309,21 +310,26 @@ function patchProject(pbxPath) {
 }
 
 function main() {
-  const iosRoot = path.join(process.cwd(), 'ios');
-  if (!fs.existsSync(iosRoot)) {
-    console.error('ios/ folder not found. Run prebuild first.');
+  try {
+    const iosRoot = path.join(process.cwd(), 'ios');
+    if (!fs.existsSync(iosRoot)) {
+      console.error('ios/ folder not found. Run prebuild first.');
+      process.exit(1);
+    }
+    const pbxPath = findPbxproj(iosRoot);
+    if (!pbxPath) {
+      console.error('project.pbxproj not found in ios/');
+      process.exit(1);
+    }
+    if (!fs.existsSync(path.join(iosRoot, EXTENSION_NAME, 'SampleHandler.swift'))) {
+      console.error(`${EXTENSION_NAME} extension files not found. Run prebuild with plugin first.`);
+      process.exit(1);
+    }
+    patchProject(pbxPath);
+  } catch (err) {
+    console.error('Patch failed:', err.message);
     process.exit(1);
   }
-  const pbxPath = findPbxproj(iosRoot);
-  if (!pbxPath) {
-    console.error('project.pbxproj not found in ios/');
-    process.exit(1);
-  }
-  if (!fs.existsSync(path.join(iosRoot, EXTENSION_NAME, 'SampleHandler.swift'))) {
-    console.error(`${EXTENSION_NAME} extension files not found. Run prebuild with plugin first.`);
-    process.exit(1);
-  }
-  patchProject(pbxPath);
 }
 
 main();
