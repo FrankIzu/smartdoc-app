@@ -1,13 +1,13 @@
-// Load base config from app.json. In CI (e.g. GitHub Actions submit step),
-// exclude expo-dev-client from plugins so EAS doesn't need to resolve it
-// (avoids "Failed to resolve plugin for module expo-dev-client" during submit).
-// Use !!process.env.CI so we catch CI=true, CI=1, or any set value (GHA can use 1).
+// Load base config from app.json. Exclude expo-dev-client when:
+// 1. CI (e.g. GitHub Actions submit) - avoids "Failed to resolve plugin for module expo-dev-client"
+// 2. EAS build profile is "development" - dev builds should be standalone (no Metro), avoid "download" screen on open
 const appJson = require("./app.json");
 
 const isCI = !!process.env.CI;
+const isDevProfile = process.env.EAS_BUILD_PROFILE === "development";
 const basePlugins = appJson.expo.plugins || [];
 
-const plugins = isCI
+const plugins = isCI || isDevProfile
   ? basePlugins.filter((p) => {
       const name = Array.isArray(p) ? p[0] : p;
       return name !== "expo-dev-client";
