@@ -228,10 +228,41 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 }
 
 /**
+ * Find the first host app target in the Podfile (first target that is not the extension).
+ * Expo may use app name, slug, or other; this avoids depending on a specific name.
+ */
+function findMainTargetInPodfile(podfile, extensionName) {
+  const targetRegex = /target\s+['"]([^'"]+)['"]\s+do\b/g;
+  let m;
+  while ((m = targetRegex.exec(podfile)) !== null) {
+    if (m[1] !== extensionName) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Replace the first occurrence of target 'mainTargetName' do with the same block
+ * plus a nested target for the extension. Returns new contents or podfile if no match.
+ */
+function applyPodfilePatch(podfile, extensionName, mainTargetName) {
+  const mainTargetRegex = new RegExp(
+    "target\\s+['\"]" + mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\b"
+  );
+  const replacement = `target '${mainTargetName}' do
+
+  target '${extensionName}' do
+    inherit! :search_paths
+    use_modular_headers!
+    pod 'HMSBroadcastExtensionSDK'
+  end`;
+  return podfile.replace(mainTargetRegex, replacement);
+}
+
+/**
  * Add the extension as a nested target inside the main app target so CocoaPods
  * has a host target for the app extension (required for "Unable to find host target(s)").
  */
-function withPodfileEntry(config, { extensionName, mainTargetName }) {
+function withPodfileEntry(config, { extensionName, mainTargetName, slug }) {
   return withPodfile(config, (config) => {
     const data = config.modResults;
     const podfile = typeof data === 'string' ? data : (data?.contents ?? '');
@@ -240,19 +271,16 @@ function withPodfileEntry(config, { extensionName, mainTargetName }) {
       return config;
     }
 
-    const mainTargetRegex = new RegExp(
-      "target\\s+['\"]" + mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\b"
-    );
-
-    const replacement = `target '${mainTargetName}' do
-
-  target '${extensionName}' do
-    inherit! :search_paths
-    use_modular_headers!
-    pod 'HMSBroadcastExtensionSDK'
-  end`;
-
-    const newContents = podfile.replace(mainTargetRegex, replacement);
+    let newContents = applyPodfilePatch(podfile, extensionName, mainTargetName);
+    if (newContents === podfile && slug && slug !== mainTargetName) {
+      newContents = applyPodfilePatch(podfile, extensionName, slug);
+    }
+    if (newContents === podfile) {
+      const detected = findMainTargetInPodfile(podfile, extensionName);
+      if (detected) {
+        newContents = applyPodfilePatch(podfile, extensionName, detected);
+      }
+    }
 
     if (newContents === podfile) {
       if (process.env.EXPO_DEBUG_PODFILE) {
@@ -274,7 +302,7 @@ function withPodfileEntry(config, { extensionName, mainTargetName }) {
  * Fallback: patch Podfile on disk. withPodfile may not apply in EAS prebuild context.
  * Runs during prebuild and directly writes to ios/Podfile.
  */
-function withPodfileDangerousPatch(config, { extensionName, mainTargetName }) {
+function withPodfileDangerousPatch(config, { extensionName, mainTargetName, slug }) {
   return withDangerousMod(config, [
     'ios',
     async (config) => {
@@ -286,18 +314,16 @@ function withPodfileDangerousPatch(config, { extensionName, mainTargetName }) {
         return config;
       }
 
-      const mainTargetRegex = new RegExp(
-        "target\\s+['\"]" + mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\b"
-      );
-      const replacement = `target '${mainTargetName}' do
-
-  target '${extensionName}' do
-    inherit! :search_paths
-    use_modular_headers!
-    pod 'HMSBroadcastExtensionSDK'
-  end`;
-
-      const newContents = contents.replace(mainTargetRegex, replacement);
+      let newContents = applyPodfilePatch(contents, extensionName, mainTargetName);
+      if (newContents === contents && slug && slug !== mainTargetName) {
+        newContents = applyPodfilePatch(contents, extensionName, slug);
+      }
+      if (newContents === contents) {
+        const detected = findMainTargetInPodfile(contents, extensionName);
+        if (detected) {
+          newContents = applyPodfilePatch(contents, extensionName, detected);
+        }
+      }
       if (newContents !== contents) {
         fs.writeFileSync(podfilePath, newContents);
       }
@@ -323,10 +349,12 @@ function withHmsScreenshareExtension(config, options = {}) {
   const extensionName = options.extensionName || process.env.EXPO_PUBLIC_HMS_IOS_PREFERRED_EXTENSION?.trim() || DEFAULT_EXTENSION_NAME;
 
   const mainTargetName = config.expo?.name || 'GrabDocs';
+  const slug = config.expo?.slug || 'grabdocs';
+  const podfileOpts = { extensionName, mainTargetName, slug };
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
-  config = withPodfileEntry(config, { extensionName, mainTargetName });
-  config = withPodfileDangerousPatch(config, { extensionName, mainTargetName });
+  config = withPodfileEntry(config, podfileOpts);
+  config = withPodfileDangerousPatch(config, podfileOpts);
   config = withAppGroupEntitlements(config, { appGroup });
 
   // Do NOT add appExtensions to extra.eas.build.experimental.ios - EAS tries to resolve
