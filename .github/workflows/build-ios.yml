@@ -150,6 +150,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Prebuild ios if missing (EAS would run it but we need to patch first)
+        run: |
+          if [ ! -d "ios" ] || [ ! -f "ios/GrabDocs.xcodeproj/project.pbxproj" ]; then
+            echo "ios folder missing, running prebuild before patch..."
+            npx expo prebuild --platform ios --clean --no-install
+          fi
+
       - name: Patch Podfile for broadcast extension host target
         run: node scripts/patch-ios-podfile-broadcast.js
 

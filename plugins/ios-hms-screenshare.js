@@ -274,6 +274,54 @@ function withPodfileEntry(config, { extensionName, mainTargetName }) {
   });
 }
 
+/**
+ * Fallback: directly patch ios/Podfile on disk during prebuild.
+ * withPodfile mod may not apply in all contexts; this ensures the nested target is present.
+ */
+function withPodfileDangerousPatch(config, { extensionName, mainTargetName }) {
+  return withDangerousMod(config, [
+    'ios',
+    async (config) => {
+      const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
+      if (!fs.existsSync(podfilePath)) return config;
+
+      let contents = fs.readFileSync(podfilePath, 'utf8');
+      const NL = /\r\n|\r|\n/;
+      const newline = contents.match(NL)?.[0] || '\n';
+
+      const nestedBlock = `${newline}  target '${extensionName}' do${newline}    inherit! :search_paths${newline}    use_modular_headers!${newline}    pod 'HMSBroadcastExtensionSDK'${newline}  end${newline}`;
+
+      if (contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths')) {
+        return config;
+      }
+
+      const standalonePattern = new RegExp(
+        "(?:\\r?\\n)?target\\s+'" + extensionName.replace(/'/g, "\\\\'") + "'\\s+do\\s*(?:\\r?\\n)\\s*use_modular_headers![\\s\\S]*?(?:\\r?\\n)end\\s*(?:\\r?\\n)?",
+        'g'
+      );
+      contents = contents.replace(standalonePattern, '');
+
+      const escapedMain = mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const mainTargetRegex = new RegExp(
+        "(target\\s+['\"]" + escapedMain + "['\"]\\s+do\\s*(?:\\r?\\n))",
+        'm'
+      );
+      const mainTargetMatch = contents.match(mainTargetRegex);
+      if (mainTargetMatch) {
+        contents = contents.replace(mainTargetMatch[1], mainTargetMatch[1] + nestedBlock);
+      } else {
+        const firstTargetMatch = contents.match(/(target\s+['"][^'"]+['"]\s+do\s*(?:\r?\n))/m);
+        if (firstTargetMatch) {
+          contents = contents.replace(firstTargetMatch[1], firstTargetMatch[1] + nestedBlock);
+        }
+      }
+
+      fs.writeFileSync(podfilePath, contents);
+      return config;
+    },
+  ]);
+}
+
 function withAppGroupEntitlements(config, { appGroup }) {
   return withEntitlementsPlist(config, (config) => {
     const ents = config.modResults;
@@ -294,6 +342,7 @@ function withHmsScreenshareExtension(config, options = {}) {
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
   config = withPodfileEntry(config, { extensionName, mainTargetName });
+  config = withPodfileDangerousPatch(config, { extensionName, mainTargetName });
   config = withAppGroupEntitlements(config, { appGroup });
 
   // Do NOT add appExtensions to extra.eas.build.experimental.ios - EAS tries to resolve
