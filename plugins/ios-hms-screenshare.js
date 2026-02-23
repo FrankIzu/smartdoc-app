@@ -237,14 +237,10 @@ function withPodfileEntry(config, { extensionName, mainTargetName }) {
     const data = config.modResults;
     const isString = typeof data === 'string';
     let contents = isString ? data : (data.contents || '');
+    const NL = /\r\n|\r|\n/;
+    const newline = contents.match(NL)?.[0] || '\n';
 
-    const nestedBlock = `
-  target '${extensionName}' do
-    inherit! :search_paths
-    use_modular_headers!
-    pod 'HMSBroadcastExtensionSDK'
-  end
-`;
+    const nestedBlock = `${newline}  target '${extensionName}' do${newline}    inherit! :search_paths${newline}    use_modular_headers!${newline}    pod 'HMSBroadcastExtensionSDK'${newline}  end${newline}`;
 
     const alreadyNested = contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths');
     if (alreadyNested) {
@@ -252,24 +248,24 @@ function withPodfileEntry(config, { extensionName, mainTargetName }) {
     }
 
     const standalonePattern = new RegExp(
-      "\\n?target\\s+'" + extensionName.replace(/'/g, "\\\\'") + "'\\s+do\\s*\\n\\s*use_modular_headers![\\s\\S]*?\\nend\\s*\\n?",
+      "(?:\\r?\\n)?target\\s+'" + extensionName.replace(/'/g, "\\\\'") + "'\\s+do\\s*(?:\\r?\\n)\\s*use_modular_headers![\\s\\S]*?(?:\\r?\\n)end\\s*(?:\\r?\\n)?",
       'g'
     );
     contents = contents.replace(standalonePattern, '');
 
-    const postInstallIndex = contents.indexOf('post_install do');
-    if (postInstallIndex >= 0) {
-      contents = contents.slice(0, postInstallIndex) + nestedBlock + '\n' + contents.slice(postInstallIndex);
+    const escapedMain = mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const mainTargetRegex = new RegExp(
+      "(target\\s+['\"]" + escapedMain + "['\"]\\s+do\\s*(?:\\r?\\n))",
+      'm'
+    );
+    const mainTargetMatch = contents.match(mainTargetRegex);
+    if (mainTargetMatch) {
+      contents = contents.replace(mainTargetMatch[1], mainTargetMatch[1] + nestedBlock);
     } else {
-      const mainTargetMatch = contents.match(new RegExp(`(target\\s+'${mainTargetName.replace(/'/g, "\\\\'")}'\\s+do\\s+\\n)([\\s\\S]*?)(\\nend)`, 'm'));
-      if (mainTargetMatch) {
-        contents = contents.replace(mainTargetMatch[0], mainTargetMatch[1] + mainTargetMatch[2] + nestedBlock + mainTargetMatch[3]);
-      } else {
-        const firstTargetEnd = contents.indexOf('target ');
-        if (firstTargetEnd >= 0) {
-          const afterTarget = contents.indexOf('\n', firstTargetEnd) + 1;
-          contents = contents.slice(0, afterTarget) + nestedBlock + contents.slice(afterTarget);
-        }
+      const firstTargetRegex = /(target\s+['"][^'"]+['"]\s+do\s*(?:\r?\n))/m;
+      const firstTargetMatch = contents.match(firstTargetRegex);
+      if (firstTargetMatch) {
+        contents = contents.replace(firstTargetMatch[1], firstTargetMatch[1] + nestedBlock);
       }
     }
 
