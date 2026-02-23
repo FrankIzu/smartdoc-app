@@ -17,6 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           submodules: false
           sparse-checkout: |
             /*
@@ -64,4 +65,6 @@ jobs:
             exit 0
           fi
           git commit -m "chore(ios): regenerate ios folder via prebuild (GrabDocsBroadcastUpload target)"
-          git push
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          git pull origin "$BRANCH" --rebase
+          git push origin "$BRANCH"
