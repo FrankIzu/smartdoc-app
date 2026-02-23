@@ -11,7 +11,6 @@
  */
 const {
   withDangerousMod,
-  withXcodeProject,
   withPodfile,
   withEntitlementsPlist,
   withPlugins,
@@ -102,179 +101,13 @@ function withBroadcastExtensionFiles(config, { appGroup, extensionName }) {
   ]);
 }
 
-function withBroadcastExtensionTarget(config, { appGroup, extensionName }) {
-  return withXcodeProject(config, async (config) => {
-    const project = config.modResults;
-    const projectName = config.modRequest.projectName || 'grabdocs';
-    const bundleId = config.ios?.bundleIdentifier || 'com.grabdocs.mobile';
-    const extBundleId = `${bundleId}.${extensionName}`;
-    const buildNumber = config.ios?.buildNumber || '1';
-    const version = config.version || '1.0.0';
-
-    if (project.pbxNativeTargetSection && Object.keys(project.pbxNativeTargetSection()).length > 1) {
-      return config;
-    }
-
-    const targetUuid = project.generateUuid();
-    const groupName = 'Embed App Extensions';
-    const quoted = (s) => `"${s}"`;
-
-    const commonBuildSettings = {
-      CLANG_ANALYZER_NONNULL: 'YES',
-      CLANG_CXX_LANGUAGE_STANDARD: quoted('gnu++17'),
-      CLANG_ENABLE_OBJC_WEAK: 'YES',
-      CODE_SIGN_STYLE: 'Automatic',
-      CURRENT_PROJECT_VERSION: buildNumber,
-      GCC_C_LANGUAGE_STANDARD: 'gnu11',
-      GENERATE_INFOPLIST_FILE: 'YES',
-      INFOPLIST_FILE: `${extensionName}/Info.plist`,
-      INFOPLIST_KEY_CFBundleDisplayName: extensionName,
-      INFOPLIST_KEY_NSHumanReadableCopyright: quoted(''),
-      IPHONEOS_DEPLOYMENT_TARGET: '14.0',
-      LD_RUNPATH_SEARCH_PATHS: quoted('$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'),
-      MARKETING_VERSION: version,
-      MTL_FAST_MATH: 'YES',
-      PRODUCT_BUNDLE_IDENTIFIER: quoted(extBundleId),
-      PRODUCT_NAME: quoted('$(TARGET_NAME)'),
-      SKIP_INSTALL: 'YES',
-      SWIFT_VERSION: '5.0',
-      TARGETED_DEVICE_FAMILY: quoted('1,2'),
-      CODE_SIGN_ENTITLEMENTS: `${extensionName}/${extensionName}.entitlements`,
-    };
-
-    const buildConfigs = [
-      {
-        name: 'Debug',
-        isa: 'XCBuildConfiguration',
-        buildSettings: {
-          ...commonBuildSettings,
-          DEBUG_INFORMATION_FORMAT: 'dwarf',
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: 'DEBUG',
-          SWIFT_OPTIMIZATION_LEVEL: quoted('-Onone'),
-        },
-      },
-      {
-        name: 'Release',
-        isa: 'XCBuildConfiguration',
-        buildSettings: {
-          ...commonBuildSettings,
-          COPY_PHASE_STRIP: 'NO',
-          DEBUG_INFORMATION_FORMAT: quoted('dwarf-with-dsym'),
-          SWIFT_OPTIMIZATION_LEVEL: quoted('-Owholemodule'),
-        },
-      },
-    ];
-
-    const xcConfigList = project.addXCConfigurationList(
-      buildConfigs,
-      'Release',
-      `Build configuration list for PBXNativeTarget ${quoted(extensionName)}`
-    );
-
-    const productFile = {
-      basename: `${extensionName}.appex`,
-      fileRef: project.generateUuid(),
-      uuid: project.generateUuid(),
-      group: groupName,
-      explicitFileType: 'wrapper.app-extension',
-      settings: { ATTRIBUTES: ['RemoveHeadersOnCopy'] },
-      includeInIndex: 0,
-      path: `${extensionName}.appex`,
-      sourceTree: 'BUILT_PRODUCTS_DIR',
-    };
-    project.addToPbxFileReferenceSection(productFile);
-    project.addToPbxBuildFileSection(productFile);
-
-    const target = {
-      uuid: targetUuid,
-      pbxNativeTarget: {
-        isa: 'PBXNativeTarget',
-        buildConfigurationList: xcConfigList.uuid,
-        buildPhases: [],
-        buildRules: [],
-        dependencies: [],
-        name: extensionName,
-        productName: extensionName,
-        productReference: productFile.fileRef,
-        productType: quoted('com.apple.product-type.app-extension'),
-      },
-    };
-    if (typeof project.addToPbxNativeTargetSection === 'function') {
-      project.addToPbxNativeTargetSection(target);
-    }
-    if (typeof project.addToPbxProjectSection === 'function') {
-      project.addToPbxProjectSection(target);
-    }
-
-    if (!project.hash.project.objects['PBXTargetDependency']) {
-      project.hash.project.objects['PBXTargetDependency'] = {};
-    }
-    if (!project.hash.project.objects['PBXContainerItemProxy']) {
-      project.hash.project.objects['PBXContainerItemProxy'] = {};
-    }
-    project.addTargetDependency(project.getFirstTarget().uuid, [target.uuid]);
-
-    const replayKitFile = project.addFramework('ReplayKit.framework', {
-      target: target.uuid,
-      link: false,
-    });
-
-    const buildPath = quoted('');
-    project.addBuildPhase(
-      [`${extensionName}/SampleHandler.swift`],
-      'PBXSourcesBuildPhase',
-      'Sources',
-      target.uuid,
-      'app_extension',
-      buildPath
-    );
-    project.addBuildPhase(
-      [productFile.path],
-      'PBXCopyFilesBuildPhase',
-      groupName,
-      project.getFirstTarget().uuid,
-      'app_extension',
-      buildPath
-    );
-    project.addBuildPhase(
-      [replayKitFile.path],
-      'PBXFrameworksBuildPhase',
-      'Frameworks',
-      target.uuid,
-      'app_extension',
-      buildPath
-    );
-    project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', target.uuid, 'app_extension', buildPath);
-
-    const { uuid: pbxGroupUuid } = project.addPbxGroup(
-      [`${extensionName}/SampleHandler.swift`, `${extensionName}/Info.plist`, `${extensionName}/${extensionName}.entitlements`],
-      extensionName,
-      extensionName
-    );
-    const groups = project.hash.project.objects['PBXGroup'] || {};
-    Object.keys(groups).forEach((key) => {
-      if (groups[key].name === undefined && groups[key].path === undefined) {
-        project.addToPbxGroup(pbxGroupUuid, key);
-      } else if (groups[key].name === 'Products') {
-        project.addToPbxGroup(productFile, key);
-      }
-    });
-
-    // Ensure extension target is in project so CocoaPods can find it (fallback when addToPbx* don't persist)
-    const objects = project.hash?.project?.objects || {};
-    if (!objects['PBXNativeTarget']) objects['PBXNativeTarget'] = {};
-    objects['PBXNativeTarget'][targetUuid] = target.pbxNativeTarget;
-    const projectSection = objects['PBXProject'] || {};
-    for (const key of Object.keys(projectSection)) {
-      if (key === 'undefined' || projectSection[key].isa !== 'PBXProject') continue;
-      const proj = projectSection[key];
-      if (!proj.targets) proj.targets = [];
-      if (!proj.targets.includes(targetUuid)) proj.targets.push(targetUuid);
-      break;
-    }
-
-    return config;
-  });
+function withBroadcastExtensionTarget(config) {
+  // All Xcode project modifications are handled by scripts/patch-ios-broadcast-target.js
+  // which runs after prebuild. Using the xcode API here partially writes target objects and
+  // leaves orphaned UUID references that cause "Cannot read properties of undefined" errors
+  // during EAS / pod install. The patch script does all project edits via string replacement
+  // on the serialised project.pbxproj so it is fully deterministic.
+  return config;
 }
 
 function withPodfileEntry(config, { extensionName }) {
