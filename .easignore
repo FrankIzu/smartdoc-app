@@ -129,7 +129,6 @@ dev-files/
 *.zip
 *.tgz
 
-# Exclude ios so EAS always runs prebuild. Our config plugin (ios-hms-screenshare) patches
-# the Podfile during prebuild to nest GrabDocsBroadcastUpload inside the main target.
-# Without this, CocoaPods fails with "Unable to find host target(s) for GrabDocsBroadcastUpload".
-ios/
+# NOTE: Do NOT add ios/ here. Our workflow runs prebuild, verifies the Podfile has the
+# nested GrabDocsBroadcastUpload target, then EAS uses that ios. If ios/ were ignored,
+# EAS would run its own prebuild and the Podfile mod might not apply correctly.

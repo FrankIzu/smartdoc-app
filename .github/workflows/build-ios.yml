@@ -64,7 +64,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prebuild and verify Podfile (runs on macOS; ios/ in .easignore so EAS will prebuild again)
+      - name: Prebuild and verify Podfile (ios/ NOT in .easignore so EAS uses this output)
         run: |
           rm -rf ios
           npx expo prebuild --platform ios --no-install
