@@ -230,7 +230,6 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 /**
  * Add the extension as a nested target inside the main app target so CocoaPods
  * has a host target for the app extension (required for "Unable to find host target(s)").
- * Uses ONLY withPodfile - no dangerous mods. Must run during prebuild.
  */
 function withPodfileEntry(config, { extensionName, mainTargetName }) {
   return withPodfile(config, (config) => {
@@ -271,6 +270,42 @@ function withPodfileEntry(config, { extensionName, mainTargetName }) {
   });
 }
 
+/**
+ * Fallback: patch Podfile on disk. withPodfile may not apply in EAS prebuild context.
+ * Runs during prebuild and directly writes to ios/Podfile.
+ */
+function withPodfileDangerousPatch(config, { extensionName, mainTargetName }) {
+  return withDangerousMod(config, [
+    'ios',
+    async (config) => {
+      const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
+      if (!fs.existsSync(podfilePath)) return config;
+
+      let contents = fs.readFileSync(podfilePath, 'utf8');
+      if (contents.includes("target '" + extensionName + "' do") && contents.includes('inherit! :search_paths')) {
+        return config;
+      }
+
+      const mainTargetRegex = new RegExp(
+        "target\\s+['\"]" + mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\b"
+      );
+      const replacement = `target '${mainTargetName}' do
+
+  target '${extensionName}' do
+    inherit! :search_paths
+    use_modular_headers!
+    pod 'HMSBroadcastExtensionSDK'
+  end`;
+
+      const newContents = contents.replace(mainTargetRegex, replacement);
+      if (newContents !== contents) {
+        fs.writeFileSync(podfilePath, newContents);
+      }
+      return config;
+    },
+  ]);
+}
+
 function withAppGroupEntitlements(config, { appGroup }) {
   return withEntitlementsPlist(config, (config) => {
     const ents = config.modResults;
@@ -291,6 +326,7 @@ function withHmsScreenshareExtension(config, options = {}) {
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
   config = withPodfileEntry(config, { extensionName, mainTargetName });
+  config = withPodfileDangerousPatch(config, { extensionName, mainTargetName });
   config = withAppGroupEntitlements(config, { appGroup });
 
   // Do NOT add appExtensions to extra.eas.build.experimental.ios - EAS tries to resolve
