@@ -2,7 +2,7 @@
   "expo": {
     "name": "GrabDocs",
     "slug": "grabdocs",
-    "version": "1.0.11",
+    "version": "1.0.12",
     "orientation": "portrait",
     "icon": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light.png",
     "userInterfaceStyle": "automatic",
@@ -39,7 +39,8 @@
         "NSBiometricUsageDescription": "GrabDocs uses biometric authentication (Face ID or Touch ID) for secure and convenient access to your account and documents.",
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
-          "voip"
+          "voip",
+          "audio"
         ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true,
@@ -71,6 +72,7 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.RECORD_AUDIO",
         "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.READ_EXTERNAL_STORAGE",
@@ -127,6 +129,13 @@
     "plugins": [
       "./plugins/android-pip",
       "./plugins/ios-pip",
+      [
+        "./plugins/ios-hms-screenshare",
+        {
+          "appGroup": "group.com.grabdocs.mobile",
+          "extensionName": "GrabDocsBroadcastUpload"
+        }
+      ],
       "expo-dev-client",
       "expo-router",
       "expo-web-browser",

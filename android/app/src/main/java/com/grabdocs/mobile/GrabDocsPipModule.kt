@@ -35,9 +35,19 @@ class GrabDocsPipModule(reactContext: ReactApplicationContext) :
       promise.resolve(false)
       return
     }
+    // Guard: if already in PiP mode, resolve true immediately without re-entering.
+    // Re-calling enterPictureInPictureMode() while already in PiP resets the video
+    // surface and causes a black screen. This guard makes it safe to call from AppState
+    // as a fallback even if HMS autoEnterPipMode already entered PiP first.
+    if (activity.isInPictureInPictureMode) {
+      Log.d(TAG, "enterPipForMeeting: already in PiP mode, skipping re-entry")
+      promise.resolve(true)
+      return
+    }
     try {
+      // Square PiP window, smaller footprint. Aspect ratio must be in [1:2.39, 2.39:1].
       val params = PictureInPictureParams.Builder()
-        .setAspectRatio(Rational(9, 16))
+        .setAspectRatio(Rational(1, 1))
         .build()
       val entered = activity.enterPictureInPictureMode(params)
       Log.d(TAG, "enterPipForMeeting: enterPictureInPictureMode result=$entered")

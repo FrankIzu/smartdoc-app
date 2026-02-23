@@ -21,6 +21,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Toast from 'react-native-toast-message';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { formatMeetingTimeToLocal } from '../../utils/timeFormatting';
 import { useAuth } from '../context/auth';
 import { REACH_CURRENT_MEETING_KEY } from './hms-meeting-interface';
 
@@ -250,9 +251,31 @@ export default function MeetingCallScreen() {
           return false;
         });
         
-        const ongoing = uniqueMeetings.filter((m: Meeting) => 
+        let ongoing = uniqueMeetings.filter((m: Meeting) => 
           m.status === 'active'
         );
+        // If user is in a meeting (local key set), that meeting MUST appear in active section
+        const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+        if (currentId && currentId.trim() !== '') {
+          const inOngoing = ongoing.some((m: Meeting) => (m.meetingId || m.id) === currentId.trim());
+          if (!inOngoing) {
+            const fromList = uniqueMeetings.find((m: Meeting) => (m.meetingId || m.id) === currentId.trim());
+            if (fromList) {
+              ongoing = [{ ...fromList, status: 'active' as const }, ...ongoing];
+            } else {
+              ongoing = [{
+                id: currentId.trim(),
+                meetingId: currentId.trim(),
+                title: 'Active meeting',
+                host: 'You',
+                participants: 0,
+                startTime: '',
+                status: 'active',
+              }, ...ongoing];
+            }
+            console.log('📱 Included current meeting in active section:', currentId.trim());
+          }
+        }
         
         setUpcomingMeetings(upcoming);
         setOngoingMeetings(ongoing);
@@ -293,14 +316,25 @@ export default function MeetingCallScreen() {
           };
         }));
       } else {
-        // No meetings found or failed to load - show empty state
-        // (Timeout is already logged above if it occurred)
+        // No meetings found or failed to load - show empty state (unless user has current meeting)
         console.log('📱 No meetings found or failed to load');
-        
-        // Show empty state for any failure or no meetings
         setMeetings([]);
         setUpcomingMeetings([]);
-        setOngoingMeetings([]);
+        const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+        if (currentId && currentId.trim() !== '') {
+          setOngoingMeetings([{
+            id: currentId.trim(),
+            meetingId: currentId.trim(),
+            title: 'Active meeting',
+            host: 'You',
+            participants: 0,
+            startTime: '',
+            status: 'active',
+          }]);
+          console.log('📱 Showing current meeting in active section (no list from API):', currentId.trim());
+        } else {
+          setOngoingMeetings([]);
+        }
       }
     } catch (error: any) {
       // This catch block should rarely be hit now since we use allSettled
@@ -360,15 +394,13 @@ export default function MeetingCallScreen() {
   };
 
   const navigateToMeetingScreen = (params: { meetingId: string; title: string; userName?: string; passcode?: string }) => {
-    router.replace({
-      pathname: '/quick-reach/hms-meeting-interface',
-      params: {
-        meetingId: params.meetingId,
-        title: params.title,
-        userName: params.userName || 'Mobile User',
-        passcode: params.passcode ?? undefined
-      }
+    const q = new URLSearchParams({
+      meetingId: params.meetingId,
+      title: params.title,
+      userName: params.userName || 'Mobile User'
     });
+    if (params.passcode) q.set('passcode', params.passcode);
+    router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
   };
 
   const joinMeeting = async (meeting: Meeting, forceJoin: boolean = false) => {
@@ -776,16 +808,6 @@ export default function MeetingCallScreen() {
     }
   };
 
-  const formatMeetingTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString([], { 
-      month: 'short', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-  };
-
   const copyMeetingDetails = async (meeting: Meeting) => {
     try {
       // Use the same backend endpoint as web to get the properly formatted invitation text
@@ -821,43 +843,13 @@ export default function MeetingCallScreen() {
     setMeetingInfoData(null);
     
     try {
-      // Fetch detailed meeting info from backend (includes participants)
-      console.log('📋 Fetching meeting info for:', meeting.meetingId);
       const response = await apiClient.getMeetingInfo(meeting.meetingId);
-      console.log('📋 Meeting info response:', JSON.stringify(response, null, 2));
-      
       if (response.success) {
-        // Mobile endpoint returns: { success: true, data: room_object, platform: 'mobile' }
-        // API client returns response.data, which is the entire response object
-        // So response.data.data is the room object
         const roomData = response.data?.data || response.data || response;
         setMeetingInfoData(roomData);
-        
-        // Detailed logging to debug participant loading
-        console.log('📋 [MEETING-INFO] Full response:', JSON.stringify(response, null, 2));
-        console.log('📋 [MEETING-INFO] Response.data:', response.data);
-        console.log('📋 [MEETING-INFO] Response.data.data:', response.data?.data);
-        console.log('📋 [MEETING-INFO] Room data (final):', JSON.stringify(roomData, null, 2));
-        console.log('📋 [MEETING-INFO] Participant check:', {
-          hasData: !!roomData,
-          hasActiveParticipants: !!roomData.active_participants,
-          activeParticipantsType: typeof roomData.active_participants,
-          activeParticipantsIsArray: Array.isArray(roomData.active_participants),
-          participantCount: roomData.active_participants?.length || 0,
-          activeParticipants: roomData.active_participants,
-          roomKeys: roomData ? Object.keys(roomData) : [],
-          roomDataKeys: roomData ? Object.keys(roomData).join(', ') : 'none'
-        });
-      } else {
-        console.warn('Failed to load meeting info:', response.message);
       }
-    } catch (error: any) {
-      console.error('Error loading meeting info:', error);
-      console.error('Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        stack: error.stack
-      });
+    } catch (_error) {
+      // Non-fatal: info modal will show loading/empty state
     } finally {
       setLoadingInfo(false);
     }
@@ -1291,17 +1283,15 @@ export default function MeetingCallScreen() {
     <TouchableOpacity
       style={dynamicStyles.meetingCard}
       onPress={() => {
-        // Active meeting: return to meeting (push with same params as join so meeting screen opens correctly).
+        // Active meeting: return to meeting. Use string href so path is not lost (avoids grabdocs:/// unmatched route).
         if (item.status === 'active') {
-          router.push({
-            pathname: '/quick-reach/hms-meeting-interface',
-            params: {
-              meetingId: item.meetingId,
-              title: item.title,
-              userName: user?.name || user?.email || 'Mobile User',
-              passcode: item.passcode ?? undefined
-            }
+          const q = new URLSearchParams({
+            meetingId: String(item.meetingId ?? ''),
+            title: String(item.title ?? ''),
+            userName: String(user?.name || user?.email || 'Mobile User')
           });
+          if (item.passcode) q.set('passcode', String(item.passcode));
+          router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
         } else {
           viewMeetingAssets(item);
         }
@@ -1323,7 +1313,7 @@ export default function MeetingCallScreen() {
         
         Alert.alert(
           'Meeting Options',
-          `Host: ${item.host}\nParticipants: ${item.participants}\nStart Time: ${formatMeetingTime(item.startTime)}`,
+          `Host: ${item.host}\nParticipants: ${item.participants}\nStart Time: ${formatMeetingTimeToLocal(item.startTime)}`,
           buttons as any
         );
       }}
@@ -1348,7 +1338,7 @@ export default function MeetingCallScreen() {
       <View style={dynamicStyles.meetingDetails}>
         <Text style={dynamicStyles.meetingHost} numberOfLines={1}>Host: {item.host}</Text>
         <View style={dynamicStyles.meetingMetaCompact}>
-          <Text style={dynamicStyles.meetingTimeCompact}>{formatMeetingTime(item.startTime)}</Text>
+          <Text style={dynamicStyles.meetingTimeCompact}>{formatMeetingTimeToLocal(item.startTime)}</Text>
           <Text style={dynamicStyles.detailTextCompact}>👥 {item.participants}</Text>
           <Text style={dynamicStyles.detailTextCompact} numberOfLines={1}>ID: {item.meetingId}</Text>
         </View>
@@ -1797,12 +1787,12 @@ export default function MeetingCallScreen() {
                 <View style={dynamicStyles.infoRow}>
                   <View style={dynamicStyles.infoItem}>
                     <Text style={dynamicStyles.infoLabel}>Start Time</Text>
-                    <Text style={dynamicStyles.infoValue}>{formatMeetingTime(infoMeeting.startTime)}</Text>
+                    <Text style={dynamicStyles.infoValue}>{formatMeetingTimeToLocal(infoMeeting.startTime)}</Text>
                   </View>
                   {infoMeeting.endTime && (
                     <View style={dynamicStyles.infoItem}>
                       <Text style={dynamicStyles.infoLabel}>End Time</Text>
-                      <Text style={dynamicStyles.infoValue}>{formatMeetingTime(infoMeeting.endTime)}</Text>
+                      <Text style={dynamicStyles.infoValue}>{formatMeetingTimeToLocal(infoMeeting.endTime)}</Text>
                     </View>
                   )}
                 </View>
@@ -1840,7 +1830,7 @@ export default function MeetingCallScreen() {
                   {infoMeeting.createdAt && (
                     <View style={dynamicStyles.infoItem}>
                       <Text style={dynamicStyles.infoLabel}>Created</Text>
-                      <Text style={dynamicStyles.infoValue}>{formatMeetingTime(infoMeeting.createdAt)}</Text>
+                      <Text style={dynamicStyles.infoValue}>{formatMeetingTimeToLocal(infoMeeting.createdAt)}</Text>
                     </View>
                   )}
                   <View style={dynamicStyles.infoItem}>

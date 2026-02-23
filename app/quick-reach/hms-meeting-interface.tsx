@@ -7,22 +7,23 @@ import * as Notifications from 'expo-notifications';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Alert,
-    AppState,
-    AppStateStatus,
-    BackHandler,
-    Linking,
-    NativeModules,
-    Platform,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  Alert,
+  AppState,
+  AppStateStatus,
+  BackHandler,
+  Linking,
+  NativeModules,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MeetingJoinSound } from '../components/MeetingJoinSound';
+import { HMS_IOS_SCREENSHARE } from '../../constants/Config';
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
+import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
 
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
@@ -51,9 +52,8 @@ if (Platform.OS !== 'web') {
       // Try to import HMS Room Kit (prebuilt UI) - requires native module
       // For localhost testing, you need a development build
       const roomKitPackage = require('@100mslive/react-native-room-kit');
-      if (roomKitPackage && roomKitPackage.HMSPrebuilt) {
+        if (roomKitPackage && roomKitPackage.HMSPrebuilt) {
         HMSPrebuilt = roomKitPackage.HMSPrebuilt;
-        console.log('📱 HMS Room Kit (Prebuilt) loaded successfully');
       }
       
       // HMS SDK is a peer dependency of room-kit but not required for prebuilt UI
@@ -130,23 +130,37 @@ export default function HMSMeetingInterfaceScreen() {
   const [joinConfig, setJoinConfig] = useState<any>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingNotificationShownRef = useRef(false);
 
   const notificationDisplayedRef = useRef(false);
   const pipFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [joinSoundReady, setJoinSoundReady] = useState(false);
 
-  // Debug logging
-      console.log('📱 GrabDocs Meeting Interface - Received params:', {
-    meetingId,
-    title,
-    userName,
-    allParams: params
-  });
+  // Delay mounting MeetingJoinSound until after HMSPrebuilt has joined (useHMSPeerUpdates can crash without room context)
+  useEffect(() => {
+    if (!joinConfig || Platform.OS === 'web') return;
+    setJoinSoundReady(false);
+    const t = setTimeout(() => setJoinSoundReady(true), 5000);
+    return () => clearTimeout(t);
+  }, [joinConfig]);
+
+  // Configure 100ms room-kit join behavior: skip preview and join with camera off to avoid
+  // camera orientation bug (shows landscape for ~30s before correcting to portrait). User can
+  // enable camera after joining; the delay patch gives orientation time to stabilize.
+  useEffect(() => {
+    if (Platform.OS !== 'web' && typeof global !== 'undefined') {
+      (global as any).joinConfig = {
+        mutedAudio: false,
+        mutedVideo: true,
+        skipPreview: true,
+      };
+    }
+  }, []);
 
   useEffect(() => {
     // Check permissions first, then initialize
     const init = async () => {
-      console.log('📱 [HMS] Starting initialization sequence...');
       try {
         // Check permissions and get result directly
         let permissionsOk = false;
@@ -157,7 +171,7 @@ export default function HMSMeetingInterfaceScreen() {
           // Check permissions directly
           try {
             const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
-            let audioStatus = { status: 'granted' as const };
+            let audioStatus: { status: string } = { status: 'granted' };
             try {
               const audioPermission = await Audio.requestPermissionsAsync();
               audioStatus = audioPermission;
@@ -168,11 +182,6 @@ export default function HMSMeetingInterfaceScreen() {
             permissionsOk = cameraStatus.status === 'granted' && audioStatus.status === 'granted';
             setPermissionsGranted(permissionsOk);
             
-            console.log('📱 [HMS] Permissions check result:', {
-              camera: cameraStatus.status,
-              audio: audioStatus.status,
-              granted: permissionsOk
-            });
           } catch (permError) {
             console.error('📱 [HMS] Error checking permissions:', permError);
             permissionsOk = false;
@@ -182,7 +191,6 @@ export default function HMSMeetingInterfaceScreen() {
         
         // Initialize based on permissions
         if (permissionsOk) {
-          console.log('✅ [HMS] Permissions granted, initializing...');
           // Small delay to ensure state is set
           setTimeout(() => {
     initializePrebuiltInterface();
@@ -213,7 +221,7 @@ export default function HMSMeetingInterfaceScreen() {
     try {
       if (Platform.OS !== 'web') {
         const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
-        let audioStatus = { status: 'granted' as const };
+        let audioStatus: { status: string } = { status: 'granted' };
         
         // Request audio permissions using expo-av
         try {
@@ -226,12 +234,6 @@ export default function HMSMeetingInterfaceScreen() {
         
         const granted = cameraStatus.status === 'granted' && audioStatus.status === 'granted';
         setPermissionsGranted(granted);
-        
-        console.log('📱 [HMS] Permissions check:', {
-          camera: cameraStatus.status,
-          audio: audioStatus.status,
-          allGranted: granted
-        });
         
         if (!granted) {
           console.warn('⚠️ [HMS] Camera or microphone permission not granted');
@@ -271,15 +273,12 @@ export default function HMSMeetingInterfaceScreen() {
     if (hmsInitializing && authToken) {
       // Stage 1: Clear loading overlay after 2s so user sees preview screen (audio/video controls, name)
       const successTimeoutId = setTimeout(() => {
-        console.log('✅ [HMS] Hiding overlay so preview screen is visible');
         setHmsInitializing(false); // Clear loading overlay
         setIsLoading(false);
       }, 2000);
       
       // Stage 2: Error timeout after 20 seconds
       const errorTimeoutId = setTimeout(() => {
-        console.warn('📱 [HMS] Initialization timeout after 20 seconds - component may be stuck');
-        console.warn('📱 [HMS] This usually means HMS Prebuilt failed to join');
         setHmsInitTimeout(true);
         setHmsInitializing(false);
         setIsLoading(false);
@@ -309,34 +308,23 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, [hmsInitializing, authToken, meetingId, user?.id]);
 
-  // Get room_id from meeting info and set up heartbeat
+  // Get room_id from meeting info and set up heartbeat. Defer by 3s so we don't parse a large response on the same frame as mounting HMSPrebuilt (can cause crash).
   useEffect(() => {
     let mounted = true;
-
-    const getRoomIdAndStartHeartbeat = async () => {
+    const timeoutId = setTimeout(async () => {
       if (!meetingId || !user) return;
-
       try {
-        // Get meeting info to retrieve room_id
         const meetingInfo = await apiClient.getMeetingInfo(meetingId as string);
-        if (meetingInfo.success && meetingInfo.data?.id) {
-          const dbRoomId = meetingInfo.data.id;
-          if (mounted) {
-            setRoomId(dbRoomId);
-            console.log('💓 [HEARTBEAT] Got room_id:', dbRoomId, 'Starting heartbeat...');
-          }
-        } else {
-          console.warn('⚠️ [HEARTBEAT] Could not get room_id from meeting info');
+        if (mounted && meetingInfo.success && meetingInfo.data?.id) {
+          setRoomId(meetingInfo.data.id);
         }
-      } catch (error) {
-        console.error('❌ [HEARTBEAT] Error getting meeting info:', error);
+      } catch {
+        // Non-fatal: heartbeat won't run
       }
-    };
-
-    getRoomIdAndStartHeartbeat();
-
+    }, 3000);
     return () => {
       mounted = false;
+      clearTimeout(timeoutId);
     };
   }, [meetingId, user]);
 
@@ -353,10 +341,8 @@ export default function HMSMeetingInterfaceScreen() {
     const sendHeartbeat = async () => {
       try {
         await apiClient.sendMeetingHeartbeat(roomId);
-        console.log('💓 [HEARTBEAT] Sent heartbeat for room_id:', roomId);
-      } catch (error) {
+      } catch {
         // Silently fail - heartbeat errors shouldn't break the app
-        console.warn('⚠️ [HEARTBEAT] Failed to send heartbeat:', error);
       }
     };
 
@@ -368,23 +354,21 @@ export default function HMSMeetingInterfaceScreen() {
       sendHeartbeat();
     }, 25000);
 
-    console.log('💓 [HEARTBEAT] Started heartbeat interval for room_id:', roomId);
-
-    // Cleanup on unmount
     return () => {
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;
-        console.log('💓 [HEARTBEAT] Stopped heartbeat interval for room_id:', roomId);
       }
     };
   }, [roomId]);
 
-  // Poll recording status - notify user when recording starts (mobile doesn't have websocket for real-time)
+  // Poll recording status only after user has joined - notify when joining a meeting that is already being recorded.
+  // Do not run while initializing or before first "in call" delay, so we never show the popup when just starting a meeting.
   useEffect(() => {
-    if (!roomId || Platform.OS === 'web') return;
+    if (!roomId || Platform.OS === 'web' || hmsInitializing) return;
 
     const RECORDING_POLL_INTERVAL = 6000; // 6 seconds
+    const FIRST_CHECK_DELAY_MS = 5000;   // Only check after user has been in the call for 5s (avoids showing when clicking "Start meeting")
 
     const checkRecording = async () => {
       try {
@@ -406,19 +390,29 @@ export default function HMSMeetingInterfaceScreen() {
       }
     };
 
-    checkRecording(); // Check immediately
-    const interval = setInterval(checkRecording, RECORDING_POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [roomId]);
+    const timeoutId = setTimeout(() => {
+      checkRecording();
+      recordingPollIntervalRef.current = setInterval(checkRecording, RECORDING_POLL_INTERVAL);
+    }, FIRST_CHECK_DELAY_MS);
 
-  // Cleanup heartbeat and call leave endpoint on component unmount (e.g., user navigates away)
+    return () => {
+      clearTimeout(timeoutId);
+      if (recordingPollIntervalRef.current) {
+        clearInterval(recordingPollIntervalRef.current);
+        recordingPollIntervalRef.current = null;
+      }
+    };
+  }, [roomId, hmsInitializing]);
+
+  // Cleanup on unmount (e.g., user swipes back). Do NOT call leave endpoint here.
+  // Meeting must stay connected so user can return via active meeting card. Leave is only
+  // called when user explicitly taps "Leave Meeting" and confirms (handleLeaveMeeting).
   useEffect(() => {
     return () => {
       // Stop heartbeat
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;
-        console.log('💓 [HEARTBEAT] Cleaned up heartbeat on unmount');
       }
 
       // Dismiss meeting notification on unmount
@@ -428,16 +422,8 @@ export default function HMSMeetingInterfaceScreen() {
 
       // Deactivate keep-awake
       deactivateKeepAwake();
-
-      // Call leave endpoint if we have meetingId (async, don't await - component is unmounting)
-      if (meetingId && user) {
-        apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`).catch((error) => {
-          // Silently fail - component is already unmounting
-          console.warn('⚠️ [LEAVE] Error calling leave endpoint on unmount:', error);
-        });
-      }
     };
-  }, [meetingId, user]);
+  }, []);
 
   // Show "In meeting" notification only (no in-app bubble). Used when PiP fallback is needed.
   const showMeetingNotification = useCallback(async () => {
@@ -465,13 +451,12 @@ export default function HMSMeetingInterfaceScreen() {
       });
       notificationDisplayedRef.current = true;
     } catch (err) {
-      console.warn('⚠️ [HMS] Could not show meeting notification:', err);
     }
   }, [meetingId, title, userName]);
 
-  // Back / swipe: pop to previous screen (meeting list or home). Call stays connected; user can return via active meeting card.
+  // Back / swipe: go to meeting list (Reach). Using replace avoids popping to (tabs)/Home first and keeps path correct (avoids grabdocs:/// unmatched route when tapping active meeting later).
   const goBackToApp = useCallback(() => {
-    router.back();
+    router.replace('/quick-reach/meeting-call' as any);
   }, [router]);
 
   useEffect(() => {
@@ -480,42 +465,75 @@ export default function HMSMeetingInterfaceScreen() {
       goBackToApp();
       return true;
     };
-    BackHandler.addEventListener('hardwareBackPress', handler);
-    return () => BackHandler.removeEventListener('hardwareBackPress', handler);
+    const subscription = BackHandler.addEventListener('hardwareBackPress', handler);
+    return () => subscription.remove();
   }, [authToken, meetingId, goBackToApp]);
 
   // Let swipe-back and header back arrow do default pop (no intercept) so user goes to previous screen without an extra stack entry.
   // (Removed beforeRemove listener that was preventing default and pushing returnPath, which caused "taken back to meeting" on next back.)
 
-  // Bubble vs PiP (both iOS and Android):
-  // - In-app: back/minimize -> show bubble only (user stays in app).
-  // - App backgrounded: do NOT minimize to bubble; let system PiP take over so meeting shows outside the app.
+  // PiP strategy (both platforms):
+  //
+  // Android:
+  //   Primary:  HMS autoEnterPipMode via onUserLeaveHint() in MainActivity — fires for
+  //             Home button and Recents button ONLY.
+  //   Problem:  onUserLeaveHint does NOT fire for screen-off, notification shade, incoming
+  //             calls, or gesture-based app switches — so PiP silently fails in those cases.
+  //   Fix:      After 500 ms (letting HMS try first), call GrabDocsPipModule.enterPipForMeeting()
+  //             ourselves. GrabDocsPipModule now guards against re-entry — if HMS already
+  //             entered PiP it returns immediately without touching the video surface.
+  //             Trigger on both 'inactive' AND 'background': Android only ever fires
+  //             'background', but catching both is harmless (the timer is restarted each time
+  //             and only fires once).
+  //
+  // iOS:
+  //   Primary:  HMS autoEnterPipMode — handles PiP entry when app backgrounds.
+  //   Fallback: We have no native PiP module for iOS, so after 2.5 s we show a notification
+  //             if PiP did not activate (cannot check isInPipMode on iOS without native code).
+  //   'inactive' on iOS fires during app-switcher animation before 'background' — we handle
+  //             it with a delay so the timer is simply restarted when 'background' follows.
   const pipEnabled = Platform.OS !== 'web';
-  // Phase 2 Option B: explicitly enter PiP when app goes to background and meeting is active (Android)
   const pipModule = Platform.OS === 'android' ? NativeModules.GrabDocsPipModule : null;
-  const PIP_FALLBACK_DELAY_MS = 450;
+  // How long to wait before our fallback kicks in, giving HMS first chance.
+  const HMS_PIP_SETTLE_MS = 500;   // let HMS enter PiP, then we check/enter
+  const NOTIFICATION_FALLBACK_MS = 2500; // if still no PiP, show notification
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
-        if (authToken && meetingId && pipEnabled && pipModule) {
-          pipModule.enterPipForMeeting?.().then((entered: boolean) => {
-            if (entered) {
-              console.log('GrabDocsPiP: entered PiP via native module (Phase 2 Option B)');
-            }
-          }).catch(() => {});
-          // Option C fallback: if PiP did not activate, show notification only (no bubble)
-          if (pipFallbackTimerRef.current) clearTimeout(pipFallbackTimerRef.current);
+        if (!authToken || !meetingId) return;
+
+        // Always restart the timer so rapid state changes (inactive→background) don't
+        // double-fire — the last event wins.
+        if (pipFallbackTimerRef.current) clearTimeout(pipFallbackTimerRef.current);
+
+        if (pipEnabled && pipModule) {
+          // Android path — two-stage fallback.
           pipFallbackTimerRef.current = setTimeout(() => {
             pipFallbackTimerRef.current = null;
-            pipModule.isInPipMode?.().then((inPip: boolean) => {
-              if (!inPip && authToken && meetingId) {
-                showMeetingNotification();
-                console.log('GrabDocsPiP: PiP did not activate, fell back to notification');
+            // Stage 1 (500 ms): enter PiP if HMS did not already do so.
+            // GrabDocsPipModule guards against re-entry: if already in PiP it returns
+            // true immediately without resetting the video surface.
+            pipModule.enterPipForMeeting?.().then((entered: boolean) => {
+              if (!entered) {
+                // Stage 2: PiP truly unavailable — show notification.
+                setTimeout(() => {
+                  pipModule.isInPipMode?.().then((inPip: boolean) => {
+                    if (!inPip && authToken && meetingId) {
+                      showMeetingNotification();
+                    }
+                  }).catch(() => {});
+                }, NOTIFICATION_FALLBACK_MS - HMS_PIP_SETTLE_MS);
               }
             }).catch(() => {});
-          }, PIP_FALLBACK_DELAY_MS);
-        }
-        if (authToken && meetingId && !pipEnabled) {
+          }, HMS_PIP_SETTLE_MS);
+        } else if (pipEnabled && !pipModule) {
+          // iOS path — HMS handles PiP, we only show notification as last resort.
+          pipFallbackTimerRef.current = setTimeout(() => {
+            pipFallbackTimerRef.current = null;
+            showMeetingNotification();
+          }, NOTIFICATION_FALLBACK_MS);
+        } else {
+          // Web / unsupported — just notify.
           showMeetingNotification();
         }
       } else if (nextState === 'active') {
@@ -546,7 +564,9 @@ export default function HMSMeetingInterfaceScreen() {
     } else {
       deactivateKeepAwake();
     }
-    return () => deactivateKeepAwake();
+    return () => {
+      deactivateKeepAwake();
+    };
   }, [authToken, meetingId]);
 
   // Track current meeting for "one meeting at a time" and return-via-active-card
@@ -570,15 +590,11 @@ export default function HMSMeetingInterfaceScreen() {
         return;
       }
 
-      // Check if meetingId is provided
       if (!meetingId) {
-        console.error('❌ No meetingId provided to GrabDocs Meeting Interface');
         setError('No meeting ID provided. Please try joining the meeting again from the meeting list.');
         setIsLoading(false);
         return;
       }
-
-      console.log('📱 Initializing GrabDocs Meeting Interface with meeting ID:', meetingId);
 
       // Same as web: get token via join-by-id (one join path for both web and mobile)
       const displayUserName = (userName as string) || user?.name || 'Mobile User';
@@ -598,9 +614,6 @@ export default function HMSMeetingInterfaceScreen() {
           throw new Error('Join did not return a token');
         }
         const tokenParts = token.split('.');
-        if (tokenParts.length !== 3) {
-          console.warn('⚠️ [HMS] Token does not appear to be a valid JWT (expected 3 parts, got ' + tokenParts.length + ')');
-        }
         setAuthToken(token);
         const joinConfigData = {
           token,
@@ -618,11 +631,6 @@ export default function HMSMeetingInterfaceScreen() {
           timestamp: new Date().toISOString(),
         };
         setJoinConfig(joinConfigData);
-        console.log('🚀 [HMS] Joined via join-by-id (same as web), token length:', token.length);
-        errorLogger.logError(
-          new Error('HMS Join Attempt - Diagnostic Log'),
-          { severity: 'warning', screenName: 'HMSMeetingInterface', userAction: 'HMS Join Attempt', errorType: 'HMSJoinDiagnostic', userId: user?.id }
-        );
       } catch (joinError: any) {
         const status = joinError?.response?.status;
         const errData = joinError?.response?.data || {};
@@ -649,39 +657,18 @@ export default function HMSMeetingInterfaceScreen() {
         return;
       }
       
-      // Check if HMS Prebuilt is available
       if (!HMSPrebuilt) {
-        console.log('📱 GrabDocs Meeting not available - showing development mode');
-        console.log('📱 To test with full functionality:');
-        console.log('   1. Install HMS package: npm install @100mslive/react-native-hms');
-        console.log('   2. Create a development build (not Expo Go)');
-        console.log('   3. Ensure backend HMS endpoints are configured');
-        console.log('💡 TIP: You can test token generation and UI without rebuilding!');
-        // Don't set error - show development mode UI instead
         setIsLoading(false);
         return;
       }
 
-      // Log that we're about to render HMS (this requires native module)
-      console.log('📱 HMS Prebuilt is available - will render native component');
-      console.log('💡 NOTE: Changes to this component logic can use Fast Refresh');
-      console.log('💡 NOTE: Only native module changes require rebuilds');
-      
       // Set flag that HMS is initializing
       // Note: React Native HMSPrebuilt doesn't have onJoin callback
       // It will automatically join when mounted, so we use a timeout to detect if it fails
       setHmsInitializing(true);
       setIsLoading(false); // Clear initial loading, but keep hmsInitializing for overlay
       
-      // React Native HMSPrebuilt automatically joins when mounted with valid token/roomCode
-      // Since there's no onJoin callback, we rely on timeout to detect failures
-      console.log('✅ [HMS] Initialization complete, HMS Prebuilt will automatically join...');
-      console.log('✅ [HMS] Note: React Native HMSPrebuilt uses "token" prop (not "authToken")');
-      console.log('✅ [HMS] Note: React Native HMSPrebuilt does NOT have onJoin callback');
-      console.log('✅ [HMS] Using timeout to detect if join succeeds (component will render when joined)');
-      
     } catch (error: any) {
-      console.error('❌ Failed to initialize GrabDocs Meeting Interface:', error);
       setError('Failed to initialize meeting interface. Please try again.');
       setHmsInitializing(false);
       setIsLoading(false);
@@ -712,7 +699,6 @@ export default function HMSMeetingInterfaceScreen() {
               if (heartbeatIntervalRef.current) {
                 clearInterval(heartbeatIntervalRef.current);
                 heartbeatIntervalRef.current = null;
-                console.log('💓 [HEARTBEAT] Stopped heartbeat before leaving');
               }
 
               try {
@@ -720,17 +706,15 @@ export default function HMSMeetingInterfaceScreen() {
               } catch (_) {}
               // Call backend to leave meeting (clears ActiveParticipant table)
               if (meetingId) {
-                console.log('📱 [LEAVE] Calling leave endpoint for meeting:', meetingId);
                 await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
-                console.log('✅ [LEAVE] Successfully left meeting via backend');
               }
             } catch (error: any) {
               // Log error but don't block navigation - user is leaving anyway
               console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
               console.error('⚠️ [LEAVE] Continuing with navigation despite error');
             }
-            // Navigate back regardless of API call result
-            router.back();
+            // Navigate to meeting list (same as swipe-back) so stack/path stay correct
+            router.replace('/quick-reach/meeting-call' as any);
           }
         }
       ]
@@ -789,39 +773,12 @@ export default function HMSMeetingInterfaceScreen() {
     );
   }
 
-  // 100ms Prebuilt Interface
-  // Note: HMSConfig is not required - HMSPrebuilt works without it
-  console.log('📱 [HMS] Render check:', {
-    hasHMSPrebuilt: !!HMSPrebuilt,
-    hasAuthToken: !!authToken,
-    authTokenLength: authToken?.length || 0,
-    hasMeetingId: !!meetingId,
-    meetingId: meetingId
-  });
-  
   if (HMSPrebuilt && authToken && meetingId) {
-    // Validate required props before rendering
     const roomCode = meetingId as string;
     const token = authToken;
-    const userName = (userName as string) || user?.name || 'Mobile User';
-    
-    console.log('📱 [HMS] Props validation:', {
-      roomCode: roomCode,
-      roomCodeType: typeof roomCode,
-      roomCodeLength: roomCode?.length || 0,
-      token: token ? token.substring(0, 20) + '...' : 'MISSING',
-      tokenType: typeof token,
-      tokenLength: token?.length || 0,
-      userName: userName
-    });
+    const displayUserName = (userName as string) || user?.name || 'Mobile User';
     
     if (!roomCode || !token) {
-      console.error('📱 [HMS] Missing required props:', { 
-        roomCode: !!roomCode, 
-        token: !!token,
-        roomCodeValue: roomCode,
-        tokenValue: token ? 'present' : 'missing'
-      });
       return (
         <SafeAreaView style={styles.container}>
           <View style={styles.errorContainer}>
@@ -840,20 +797,10 @@ export default function HMSMeetingInterfaceScreen() {
     // Validate all required props
     const validRoomCode = roomCode && typeof roomCode === 'string' && roomCode.trim().length > 0;
     const validToken = token && typeof token === 'string' && token.trim().length > 0;
-    const validUserName = userName && typeof userName === 'string' && userName.trim().length > 0;
-    
-    console.log('📱 Rendering HMSPrebuilt with:', {
-      roomCode: validRoomCode ? roomCode.substring(0, 10) + '...' : 'INVALID',
-      roomCodeLength: roomCode?.length || 0,
-      tokenLength: token?.length || 0,
-      tokenPreview: validToken ? token.substring(0, 20) + '...' : 'INVALID',
-      userName: validUserName ? userName : 'INVALID',
-      HMSPrebuiltAvailable: !!HMSPrebuilt
-    });
+    const validUserName = displayUserName && typeof displayUserName === 'string' && displayUserName.trim().length > 0;
     
     // Verify all required props
     if (!validRoomCode) {
-      console.error('📱 Invalid roomCode:', roomCode);
       setError('Invalid room code. Please try joining the meeting again.');
       return (
         <SafeAreaView style={styles.container}>
@@ -869,7 +816,6 @@ export default function HMSMeetingInterfaceScreen() {
     }
     
     if (!validToken) {
-      console.error('📱 Invalid token:', token ? 'empty' : 'missing');
       setError('Authentication token is missing or invalid.');
       return (
         <SafeAreaView style={styles.container}>
@@ -901,10 +847,8 @@ export default function HMSMeetingInterfaceScreen() {
       );
     }
     
-    // Check permissions BEFORE rendering HMS
     if (Platform.OS !== 'web' && permissionsGranted === false) {
-      console.warn('⚠️ [HMS] Cannot render - permissions denied');
-    return (
+      return (
       <SafeAreaView style={styles.container}>
           <View style={styles.errorContainer}>
             <Text style={styles.errorTitle}>Permissions Required</Text>
@@ -945,15 +889,6 @@ export default function HMSMeetingInterfaceScreen() {
 
     try {
       // Final validation before rendering
-      console.log('🔍 [HMS] FINAL VALIDATION BEFORE RENDERING:');
-      console.log('=====================================');
-      console.log('✅ Room Code Valid:', validRoomCode, '- Value:', roomCode);
-      console.log('✅ Token Valid:', validToken, '- Length:', token.length);
-      console.log('✅ User Name Valid:', validUserName, '- Value:', userName);
-      console.log('✅ HMSPrebuilt Available:', !!HMSPrebuilt);
-      console.log('✅ Permissions Granted:', permissionsGranted);
-      console.log('=====================================');
-      
       // Prepare props object with only valid values
       // According to React Native docs: HMSPrebuilt uses:
       // - roomCode OR token (not authToken!)
@@ -976,44 +911,32 @@ export default function HMSMeetingInterfaceScreen() {
       // React Native HMSPrebuilt props format:
       // - token (not authToken) - required if using token-based join
       // - roomCode - required if using roomCode-based join
-      // - options: { userName, userId } - optional
+      // - options: { userName, userId, ios?: { appGroup, preferredExtension } } - optional
       // - onLeave - callback when leaving
+      // iOS screenshare: pass appGroup + preferredExtension so prebuilt can start screen share (see docs/MOBILE_SCREENSHARE_WHITEBOARD.md)
       const hmsProps = {
         token: token.trim(), // React Native uses 'token', not 'authToken'
         roomCode: finalRoomCode, // Can use either token OR roomCode
         options: {
-          ...(validUserName && { userName: userName.trim() }),
+          ...(validUserName && { userName: displayUserName.trim() }),
           ...(user?.id && { userId: user.id.toString() }),
+          ...(Platform.OS === 'ios' && HMS_IOS_SCREENSHARE && {
+            ios: {
+              appGroup: HMS_IOS_SCREENSHARE.appGroup,
+              preferredExtension: HMS_IOS_SCREENSHARE.preferredExtension,
+            },
+          }),
         },
         onLeave: handleLeaveMeeting,
         style: styles.prebuiltContainer
       };
       
-      console.log('📱 [HMS] Final roomCode after processing:', finalRoomCode);
-      console.log('📱 [HMS] Using token prop (React Native format), not authToken');
-      
-      console.log('📱 [HMS] HMSPrebuilt props prepared:', {
-        roomCode: hmsProps.roomCode.substring(0, 10) + '...',
-        roomCodeFull: hmsProps.roomCode,
-        tokenLength: hmsProps.token.length,
-        tokenPreview: hmsProps.token.substring(0, 30) + '...',
-        options: hmsProps.options,
-        hasOnLeave: !!hmsProps.onLeave,
-        note: 'React Native uses "token" prop, not "authToken"'
-      });
-      
-      // Log join config one more time right before render
-      if (joinConfig) {
-        console.log('📋 [HMS] Join Config:', JSON.stringify(joinConfig, null, 2));
-      }
-      
-      const displayUserName = (userName as string) || user?.name || 'Mobile User';
       const meetingTitleStr = (title as string) || undefined;
 
       return (
         <>
-          {/* Play sound when someone joins - only when HMS is available (not Expo Go) */}
-          {HMSPrebuilt && (
+          {/* Mount join sound only after room is likely joined (useHMSPeerUpdates can crash without room context) */}
+          {HMSPrebuilt && joinSoundReady && (
             <MeetingJoinSound enabled={!!authToken && !!meetingId} />
           )}
           <SafeAreaView style={styles.container}>
@@ -1129,15 +1052,14 @@ export default function HMSMeetingInterfaceScreen() {
                   </View>
                 ) : (
                   <View style={[styles.prebuiltWrapper, { paddingBottom: bottomInset }]}>
-                    {/* PiP: Video preview in PiP is enabled by 100ms Room Kit (useActiveSpeaker: true). iOS: UIBackgroundModes ["voip"] + plugins/ios-pip (Multitasking Camera Access). Android: plugins/android-pip. See docs/PIP_MOBILE_SETUP.md if PiP shows black. */}
+                    {/* PiP: Square, smaller window on both platforms. Video preview enabled by 100ms (useActiveSpeaker: true). iOS: UIBackgroundModes ["voip"] + plugins/ios-pip. Android: plugins/android-pip + GrabDocsPipModule (1:1). See docs/PIP_MOBILE_SETUP.md if PiP shows black. */}
                     <HMSPrebuilt 
                       token={hmsProps.token}
                       roomCode={hmsProps.roomCode}
                       options={hmsProps.options}
                       autoEnterPipMode={Platform.OS !== 'web'}
+                      pipConfig={Platform.OS !== 'web' ? { aspectRatio: [1, 1] } : undefined}
                       onLeave={async (data?: any) => {
-                        console.log('👋 [HMS] onLeave callback fired');
-                        console.log('👋 [HMS] Leave data:', data);
                         setHmsInitializing(false);
                         setIsLoading(false);
                         
@@ -1148,9 +1070,7 @@ export default function HMSMeetingInterfaceScreen() {
                         // Call backend to leave meeting (clears ActiveParticipant table)
                         try {
                           if (meetingId) {
-                            console.log('📱 [LEAVE] Calling leave endpoint for meeting:', meetingId);
                             await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
-                            console.log('✅ [LEAVE] Successfully left meeting via backend');
                           }
                         } catch (error: any) {
                           // Log error but don't block navigation - user is leaving anyway
@@ -1158,8 +1078,8 @@ export default function HMSMeetingInterfaceScreen() {
                           console.error('⚠️ [LEAVE] Continuing with navigation despite error');
                         }
                         
-                        // Navigate back regardless of API call result
-                        router.back();
+                        // Navigate to meeting list (same as swipe-back) so stack/path stay correct
+                        router.replace('/quick-reach/meeting-call' as any);
                       }}
                       style={hmsProps.style}
                       // Note: React Native HMSPrebuilt does NOT support onJoin callback

@@ -129,6 +129,19 @@ export const STORE_URLS = {
   android: 'https://play.google.com/store/apps/details?id=com.grabdocs.mobile',
 } as const;
 
+/**
+ * 100ms iOS screenshare: required for screen share from iPhone/iPad.
+ * The Expo plugin (plugins/ios-hms-screenshare.js) adds the Broadcast Extension automatically.
+ * Set in EAS/Env: EXPO_PUBLIC_HMS_IOS_APP_GROUP, EXPO_PUBLIC_HMS_IOS_PREFERRED_EXTENSION
+ * (defaults: group.com.grabdocs.mobile, GrabDocsBroadcastUpload).
+ * See docs/MOBILE_SCREENSHARE_WHITEBOARD.md.
+ */
+export const HMS_IOS_SCREENSHARE = (() => {
+  const appGroup = process.env.EXPO_PUBLIC_HMS_IOS_APP_GROUP?.trim() || 'group.com.grabdocs.mobile';
+  const preferredExtension = process.env.EXPO_PUBLIC_HMS_IOS_PREFERRED_EXTENSION?.trim() || 'GrabDocsBroadcastUpload';
+  return { appGroup, preferredExtension };
+})();
+
 // API Endpoints
 export const API_ENDPOINTS = {
   // Authentication

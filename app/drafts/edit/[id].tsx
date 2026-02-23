@@ -241,6 +241,9 @@ export default function DraftEditScreen() {
   const contentToInjectRef = useRef<string>('');
   const selectionRef = useRef({ start: 0, end: 0 });
   const formatSelectionRef = useRef({ start: 0, end: 0 });
+  const lastKnownVersionRef = useRef<number | null>(null);
+  const lastKnownUpdatedAtRef = useRef<string | null>(null);
+  const refetchDraftContentRef = useRef<((version: number, updatedAt: string) => Promise<void>) | null>(null);
   hasUnsavedRef.current = hasUnsavedChanges;
   contentTextRef.current = contentText;
   contentHtmlRef.current = contentHtml;
@@ -281,6 +284,10 @@ export default function DraftEditScreen() {
           setContentHtml(html);
           setInitialEditorHtml(html || '<p><br></p>');
           contentToInjectRef.current = html || '<p><br></p>';
+          const ver = (res as any).version ?? data?.version;
+          const updatedAt = (res as any).updated_at ?? data?.updated_at;
+          if (ver != null) lastKnownVersionRef.current = Number(ver);
+          if (updatedAt != null) lastKnownUpdatedAtRef.current = String(updatedAt);
           // Ignore first empty message from WebView (avoids overwriting loaded content with spurious empty)
           ignoreFirstEmptyMessageRef.current = !!(html && stripHtmlToText(html).trim());
         } else {
@@ -350,6 +357,23 @@ export default function DraftEditScreen() {
           });
         });
 
+        socket.on('draft_saved', (data: { draft_id: number; version: number; updated_at: string }) => {
+          if (data.draft_id !== draftId) return;
+          if (data.version <= (lastKnownVersionRef.current ?? 0)) return;
+          if (hasUnsavedRef.current) {
+            Alert.alert(
+              'Draft updated elsewhere',
+              'This draft was updated on another device. Reload?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Reload', onPress: () => refetchDraftContentRef.current?.(data.version, data.updated_at) },
+              ]
+            );
+            return;
+          }
+          refetchDraftContentRef.current?.(data.version, data.updated_at);
+        });
+
         socketRef.current = socket;
       } catch (e: any) {
         console.warn('Draft socket init failed:', typeof e?.message === 'string' ? e.message : 'Unknown error');
@@ -357,14 +381,17 @@ export default function DraftEditScreen() {
     })();
 
     return () => {
-      if (socket?.connected) {
-        socket.emit('leave_document_room', {
-          doc_type: 'file',
-          doc_id: draftId,
-          user_id: currentUserId,
-          display_name: displayName,
-        });
-        socket.disconnect();
+      if (socket) {
+        socket.off('draft_saved');
+        if (socket.connected) {
+          socket.emit('leave_document_room', {
+            doc_type: 'file',
+            doc_id: draftId,
+            user_id: currentUserId,
+            display_name: displayName,
+          });
+          socket.disconnect();
+        }
       }
       socketRef.current = null;
     };
@@ -409,8 +436,11 @@ export default function DraftEditScreen() {
         const hasLists = /<(ul|ol|li)>/i.test(html);
         console.log('Formatting check:', { hasBold, hasItalic, hasLinks, hasLists });
       }
-      await apiClient.saveDraft(draftId, html, plainText);
+      const res = await apiClient.saveDraft(draftId, html, plainText);
       setHasUnsavedChanges(false);
+      const file = (res as any)?.file ?? (res as any)?.data?.file;
+      if (file?.version != null) lastKnownVersionRef.current = Number(file.version);
+      if (file?.updated_at != null) lastKnownUpdatedAtRef.current = String(file.updated_at);
     } catch (e: any) {
       if (e?.message?.includes('409') || (e?.response?.status === 409)) {
         Alert.alert('Someone else is editing', 'Your changes were not saved. Someone else is editing this draft.');
@@ -421,6 +451,35 @@ export default function DraftEditScreen() {
       setSaving(false);
     }
   }, [draftId, normalizeHtml]);
+
+  const refetchDraftContent = useCallback(async (version: number, updatedAt: string) => {
+    if (!draftId || isNaN(draftId)) return;
+    try {
+      const res = await apiClient.getDraftContent(draftId);
+      if (!(res as any)?.success) return;
+      const data = (res as any).data ?? res;
+      const html = (res as any).content_html ?? data?.content_html ?? '';
+      const safeHtml = html || '<p><br></p>';
+      setContentHtml(safeHtml);
+      setContentText(stripHtmlToText(safeHtml));
+      contentHtmlRef.current = safeHtml;
+      contentTextRef.current = stripHtmlToText(safeHtml);
+      setInitialEditorHtml(safeHtml);
+      contentToInjectRef.current = safeHtml;
+      lastKnownVersionRef.current = version;
+      lastKnownUpdatedAtRef.current = updatedAt;
+      setHasUnsavedChanges(false);
+      const script = `(function(){ var el=document.getElementById('content'); if(el) el.innerHTML=${JSON.stringify(safeHtml)}; })(); true;`;
+      webViewRef.current?.injectJavaScript(script);
+    } catch (_) {
+      // ignore refetch errors
+    }
+  }, [draftId]);
+
+  useEffect(() => {
+    refetchDraftContentRef.current = refetchDraftContent;
+    return () => { refetchDraftContentRef.current = null; };
+  }, [refetchDraftContent]);
 
   const handleContentChange = useCallback((text: string) => {
     setContentText(text);

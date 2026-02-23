@@ -1,7 +1,360 @@
+diff --git a/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts b/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts
+index 9805ef5..7129179 100644
+--- a/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts
++++ b/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts
+@@ -16,6 +16,7 @@ import {
+ import { useCallback } from 'react';
+ import type { HMSPeer } from '@100mslive/react-native-hms';
+ import { HMSRecordingState } from '@100mslive/react-native-hms';
++import Toast from 'react-native-simple-toast';
+ 
+ export const useAllowedTracksToPublish = () => {
+   return useSelector(selectAllowedTracksToPublish);
+@@ -78,6 +79,12 @@ export const useHMSActions = () => {
+         'Local Peer Video Track Instance is not available!'
+       );
+     }
++    // When enabling video (enable=false), delay 5s so device orientation metadata can stabilize.
++    // Fixes camera showing landscape for ~30s before correcting to portrait (WebRTC orientation bug).
++    if (enable === false) {
++      Toast.show('Initializing camera...');
++      await new Promise((r) => setTimeout(r, 5000));
++    }
+     try {
+       dispatch(setIsLocalVideoMutedState(enable));
+       localVideoTrack.setMute(enable);
 diff --git a/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts b/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts
-index 4d107f0..c0823f9 100644
+index 4d107f0..5aa875f 100644
 --- a/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts
 +++ b/node_modules/@100mslive/react-native-room-kit/src/hooks-util.ts
+@@ -1,176 +1,176 @@
+ import type {
+-  HMSHLSPlayer,
+-  HMSPIPConfig,
+-  HMSRole,
+-  HMSSessionStore,
+-  HMSSpeaker,
+-  JsonValue,
++    HMSHLSPlayer,
++    HMSPIPConfig,
++    HMSRole,
++    HMSSessionStore,
++    HMSSpeaker,
++    JsonValue,
+ } from '@100mslive/react-native-hms';
+ import {
+-  getSoftInputMode,
+-  HMSChangeTrackStateRequest,
+-  HMSConfig,
+-  HMSHLSPlayerPlaybackState,
+-  HMSLocalPeer,
+-  HMSMessage,
+-  HMSMessageRecipient,
+-  HMSMessageRecipientType,
+-  HMSPeer,
+-  HMSPeerUpdate,
+-  HMSPIPListenerActions,
+-  HMSPollUpdateType,
+-  HMSRoleChangeRequest,
+-  HMSRoom,
+-  HMSRoomUpdate,
+-  HMSSDK,
+-  HMSTrack,
+-  HMSTrackSource,
+-  HMSTrackType,
+-  HMSTrackUpdate,
+-  HMSUpdateListenerActions,
+-  HMSVideoViewMode,
+-  setSoftInputMode,
+-  SoftInputModes,
+-  TranscriptionsMode,
+-  TranscriptionState,
+-  useHMSHLSPlayerCue,
+-  useHMSHLSPlayerPlaybackState,
+-  useHMSHLSPlayerResolution,
+-  useHmsViewsResolutionsState,
+-  WindowController,
++    getSoftInputMode,
++    HMSChangeTrackStateRequest,
++    HMSConfig,
++    HMSHLSPlayerPlaybackState,
++    HMSLocalPeer,
++    HMSMessage,
++    HMSMessageRecipient,
++    HMSMessageRecipientType,
++    HMSPeer,
++    HMSPeerUpdate,
++    HMSPIPListenerActions,
++    HMSPollUpdateType,
++    HMSRoleChangeRequest,
++    HMSRoom,
++    HMSRoomUpdate,
++    HMSSDK,
++    HMSTrack,
++    HMSTrackSource,
++    HMSTrackType,
++    HMSTrackUpdate,
++    HMSUpdateListenerActions,
++    HMSVideoViewMode,
++    setSoftInputMode,
++    SoftInputModes,
++    TranscriptionsMode,
++    TranscriptionState,
++    useHMSHLSPlayerCue,
++    useHMSHLSPlayerPlaybackState,
++    useHMSHLSPlayerResolution,
++    useHmsViewsResolutionsState,
++    WindowController,
+ } from '@100mslive/react-native-hms';
+-import type { Chat as ChatConfig } from '@100mslive/types-prebuilt/elements/chat';
+ import type {
+-  ColorPalette,
+-  DefaultConferencingScreen,
+-  HLSLiveStreamingScreen,
+-  Layout,
+-  Theme,
+-  Typography,
++    ColorPalette,
++    DefaultConferencingScreen,
++    HLSLiveStreamingScreen,
++    Layout,
++    Theme,
++    Typography,
+ } from '@100mslive/types-prebuilt';
+-import Toast from 'react-native-simple-toast';
++import type { Chat as ChatConfig } from '@100mslive/types-prebuilt/elements/chat';
+ import type { DependencyList } from 'react';
+ import {
+-  useCallback,
+-  useContext,
+-  useEffect,
+-  useMemo,
+-  useRef,
+-  useState,
++    useCallback,
++    useContext,
++    useEffect,
++    useMemo,
++    useRef,
++    useState,
+ } from 'react';
++import Toast from 'react-native-simple-toast';
+ 
+-import type { OnLeaveHandler, PeerTrackNode } from './utils/types';
++import { NavigationContext } from '@react-navigation/native';
++import type { ImageStyle, StyleProp, TextStyle, ViewStyle } from 'react-native';
+ import {
+-  ChatBroadcastFilter,
+-  MaxTilesInOnePage,
+-  ModalTypes,
+-  OnLeaveReason,
+-  PeerListRefreshInterval,
+-  PipModes,
+-} from './utils/types';
+-import { createPeerTrackNode, parseMetadata } from './utils/functions';
++    BackHandler,
++    InteractionManager,
++    Keyboard,
++    Platform,
++} from 'react-native';
++import { KeyboardState, useSharedValue } from 'react-native-reanimated';
+ import {
+-  batch,
+-  shallowEqual,
+-  useDispatch,
+-  useSelector,
+-  useStore,
++    useSafeAreaFrame,
++    useSafeAreaInsets,
++} from 'react-native-safe-area-context';
++import {
++    batch,
++    shallowEqual,
++    useDispatch,
++    useSelector,
++    useStore,
+ } from 'react-redux';
+-import type { AppDispatch, RootState } from './redux';
++import type { GridViewRefAttrs } from './components/GridView';
+ import {
+-  addCuedPollId,
+-  addMessage,
+-  addNotification,
+-  addParticipant,
+-  addParticipants,
+-  addPinnedMessages,
+-  addScreenshareTile,
+-  addUpdateParticipant,
+-  changeMeetingState,
+-  changePipModeStatus,
+-  changeStartingHLSStream,
+-  clearStore,
+-  filterOutMsgsFromBlockedPeers,
+-  removeNotification,
+-  removeParticipant,
+-  removeParticipants,
+-  removeScreenshareTile,
+-  replaceParticipantsList,
+-  saveUserData,
+-  setActiveChatBottomSheetTab,
+-  setActiveSpeakers,
+-  setAndroidHLSStreamPaused,
+-  setAutoEnterPipMode,
+-  setChatPeerBlacklist,
+-  setChatState,
+-  setEditUsernameDisabled,
+-  setFullScreenPeerTrackNode,
+-  setHandleBackButton,
+-  setHMSLocalPeerState,
+-  setHMSRoleState,
+-  setHMSRoomState,
+-  setIsLocalAudioMutedState,
+-  setIsLocalVideoMutedState,
+-  setLayoutConfig,
+-  setLocalPeerTrackNode,
+-  setMiniViewPeerTrackNode,
+-  setModalType,
+-  setOnLeaveHandler,
+-  setPrebuiltData,
+-  setReconnecting,
+-  setRoleChangeRequest,
+-  setStartingOrStoppingRecording,
+-  updateFullScreenPeerTrackNode,
+-  updateLocalPeerTrackNode,
+-  updateMiniViewPeerTrackNode,
+-  updateScreenshareTile,
+-} from './redux/actions';
++    useCanPublishAudio,
++    useCanPublishScreen,
++    useCanPublishVideo,
++    useHMSActions,
++} from './hooks-sdk';
+ import {
+-  createPeerTrackNodeUniqueId,
+-  degradeOrRestorePeerTrackNodes,
+-  peerTrackNodeExistForPeer,
+-  peerTrackNodeExistForPeerAndTrack,
+-  removePeerTrackNodes,
+-  removePeerTrackNodesWithTrack,
+-  replacePeerTrackNodes,
+-  replacePeerTrackNodesWithTrack,
++    selectChatLayoutConfig,
++    selectConferencingScreenConfig,
++    selectIsHLSViewer,
++    selectLayoutConfigForRole,
++    selectShouldGoLive,
++    selectVideoTileLayoutConfig,
++} from './hooks-util-selectors';
++import { getRoomLayout } from './modules/HMSManager';
++import {
++    createPeerTrackNodeUniqueId,
++    degradeOrRestorePeerTrackNodes,
++    peerTrackNodeExistForPeer,
++    peerTrackNodeExistForPeerAndTrack,
++    removePeerTrackNodes,
++    removePeerTrackNodesWithTrack,
++    replacePeerTrackNodes,
++    replacePeerTrackNodesWithTrack,
+ } from './peerTrackNodeUtils';
++import type { AppDispatch, RootState } from './redux';
++import {
++    addCuedPollId,
++    addMessage,
++    addNotification,
++    addParticipant,
++    addParticipants,
++    addPinnedMessages,
++    addScreenshareTile,
++    addUpdateParticipant,
++    changeMeetingState,
++    changePipModeStatus,
++    changeStartingHLSStream,
++    clearStore,
++    filterOutMsgsFromBlockedPeers,
++    removeNotification,
++    removeParticipant,
++    removeParticipants,
++    removeScreenshareTile,
++    replaceParticipantsList,
++    saveUserData,
++    setActiveChatBottomSheetTab,
++    setActiveSpeakers,
++    setAndroidHLSStreamPaused,
++    setAutoEnterPipMode,
++    setChatPeerBlacklist,
++    setChatState,
++    setEditUsernameDisabled,
++    setFullScreenPeerTrackNode,
++    setHandleBackButton,
++    setHMSLocalPeerState,
++    setHMSRoleState,
++    setHMSRoomState,
++    setIsLocalAudioMutedState,
++    setIsLocalVideoMutedState,
++    setLayoutConfig,
++    setLocalPeerTrackNode,
++    setMiniViewPeerTrackNode,
++    setModalType,
++    setOnLeaveHandler,
++    setPrebuiltData,
++    setReconnecting,
++    setRoleChangeRequest,
++    setStartingOrStoppingRecording,
++    updateFullScreenPeerTrackNode,
++    updateLocalPeerTrackNode,
++    updateMiniViewPeerTrackNode,
++    updateScreenshareTile,
++} from './redux/actions';
+ import type { ChatState, HMSPrebuiltProps, PinnedMessage } from './types';
+ import { MeetingState, NotificationTypes } from './types';
+-import type { ImageStyle, StyleProp, TextStyle, ViewStyle } from 'react-native';
+-import {
+-  BackHandler,
+-  InteractionManager,
+-  Keyboard,
+-  Platform,
+-} from 'react-native';
+-import { NavigationContext } from '@react-navigation/native';
+ import {
+-  useIsLandscapeOrientation,
+-  useIsPortraitOrientation,
++    useIsLandscapeOrientation,
++    useIsPortraitOrientation,
+ } from './utils/dimension';
+-import {
+-  selectChatLayoutConfig,
+-  selectConferencingScreenConfig,
+-  selectIsHLSViewer,
+-  selectLayoutConfigForRole,
+-  selectShouldGoLive,
+-  selectVideoTileLayoutConfig,
+-} from './hooks-util-selectors';
+-import type { GridViewRefAttrs } from './components/GridView';
+-import { getRoomLayout } from './modules/HMSManager';
++import { createPeerTrackNode, parseMetadata } from './utils/functions';
+ import { DEFAULT_THEME, DEFAULT_TYPOGRAPHY } from './utils/theme';
+-import { KeyboardState, useSharedValue } from 'react-native-reanimated';
+-import {
+-  useCanPublishAudio,
+-  useCanPublishScreen,
+-  useCanPublishVideo,
+-  useHMSActions,
+-} from './hooks-sdk';
++import type { OnLeaveHandler, PeerTrackNode } from './utils/types';
+ import {
+-  useSafeAreaFrame,
+-  useSafeAreaInsets,
+-} from 'react-native-safe-area-context';
++    ChatBroadcastFilter,
++    MaxTilesInOnePage,
++    ModalTypes,
++    OnLeaveReason,
++    PeerListRefreshInterval,
++    PipModes,
++} from './utils/types';
+ 
+ export const useHMSListeners = (
+   setPeerTrackNodes: React.Dispatch<React.SetStateAction<PeerTrackNode[]>>
 @@ -1653,8 +1653,14 @@ export const useAutoPip = (oneToOneCall: boolean) => {
      return room && room.peerCount !== null ? room.peerCount > 1 : false; // `peerCount` includes local peer
    });

@@ -195,13 +195,9 @@ export default function JoinMeetingScreen() {
         }
 
         setCheckState('ready');
-        router.replace({
-          pathname: '/quick-reach/hms-meeting-interface',
-          params: {
-            meetingId: meetingId.trim(),
-            ...(params.passcode_token && { passcode_token: params.passcode_token }),
-          },
-        });
+        const q = new URLSearchParams({ meetingId: meetingId.trim() });
+        if (params.passcode_token) q.set('passcode_token', params.passcode_token);
+        router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
       } catch (err: any) {
         const msg = err?.response?.data?.error || err?.message || 'Could not load meeting.';
         setErrorMessage(msg);
@@ -216,14 +212,10 @@ export default function JoinMeetingScreen() {
     if (hasNavigatedRef.current || !isMountedRef.current) return;
     hasNavigatedRef.current = true;
     clearPersistedWaiting();
-    router.replace({
-      pathname: '/quick-reach/hms-meeting-interface',
-      params: {
-        meetingId: meetingId.trim(),
-        ...(params.passcode_token && { passcode_token: params.passcode_token }),
-        ...(!params.passcode_token && passcode && { passcode }),
-      },
-    });
+    const q = new URLSearchParams({ meetingId: meetingId.trim() });
+    if (params.passcode_token) q.set('passcode_token', params.passcode_token);
+    else if (passcode) q.set('passcode', passcode);
+    router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
   }, [meetingId, passcode, params.passcode_token, router, clearPersistedWaiting]);
 
   const submitJoinRequest = useCallback(async () => {
@@ -252,14 +244,10 @@ export default function JoinMeetingScreen() {
       if (res.status >= 200 && res.status < 300 && ((data as any).token || (data as any).success)) {
         clearPersistedWaiting();
         hasNavigatedRef.current = true;
-        router.replace({
-          pathname: '/quick-reach/hms-meeting-interface',
-          params: {
-            meetingId: meetingId.trim(),
-            ...(params.passcode_token && { passcode_token: params.passcode_token }),
-            ...(!params.passcode_token && pc && { passcode: pc }),
-          },
-        });
+        const q = new URLSearchParams({ meetingId: meetingId.trim() });
+        if (params.passcode_token) q.set('passcode_token', params.passcode_token);
+        else if (pc) q.set('passcode', pc);
+        router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
         return;
       }
     } catch (err: any) {

@@ -4355,12 +4355,12 @@ class ApiService {
       console.log('🔍 Meeting ID type:', typeof meetingId, 'Value:', meetingId);
       console.log('🔍 Force delete:', forceDelete);
       
-      // Use the correct endpoint that deletes the meeting record
+      // Use the correct endpoint that deletes the meeting record (backend expects POST, not DELETE)
       // Use delete-confirmed endpoint when user has already confirmed
       const url = forceDelete 
         ? `/api/v1/video/room/${meetingId}/delete-confirmed`
         : `/api/v1/video/room/${meetingId}/delete`;
-      const response = await this.client.delete(url);
+      const response = await this.client.post(url, {});
       console.log('✅ Meeting delete response:', response.data);
       
       // Check if confirmation is required

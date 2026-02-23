@@ -16,8 +16,9 @@ export interface ErrorLogData {
   screenName?: string;
   userAction?: string;
   url?: string;
-  userId?: number;
+  userId?: number | string;
   workspaceId?: number;
+  metadata?: Record<string, unknown>;
   deviceInfo?: {
     platform: string;
     osVersion?: string;
@@ -69,9 +70,10 @@ class ErrorLoggerService {
       screenName?: string;
       userAction?: string;
       url?: string;
-      userId?: number;
+      userId?: number | string;
       workspaceId?: number;
       errorType?: string;
+      metadata?: Record<string, unknown>;
     } = {}
   ): Promise<void> {
     if (!this.isEnabled) {
@@ -98,6 +100,7 @@ class ErrorLoggerService {
         url: options.url,
         userId: options.userId,
         workspaceId: options.workspaceId,
+        metadata: options.metadata,
         deviceInfo: this.getDeviceInfo(),
       };
 

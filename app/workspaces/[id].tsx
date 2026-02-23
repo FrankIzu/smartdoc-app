@@ -686,14 +686,12 @@ export default function WorkspaceDetailsScreen() {
                         { 
                           text: 'Join Meeting', 
                           onPress: () => {
-                            router.push({
-                              pathname: '/quick-reach/hms-meeting-interface',
-                              params: {
-                                meetingId: activeMeeting?.meetingId || activeMeeting?.id,
-                                title: activeMeeting?.name || 'Active Meeting',
-                                userName: user?.name || user?.email?.split('@')[0] || 'Mobile User'
-                              }
+                            const q = new URLSearchParams({
+                              meetingId: String(activeMeeting?.meetingId || activeMeeting?.id || ''),
+                              title: String(activeMeeting?.name || 'Active Meeting'),
+                              userName: String(user?.name || user?.email?.split('@')[0] || 'Mobile User')
                             });
+                            router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
                           }
                         }
                       ]

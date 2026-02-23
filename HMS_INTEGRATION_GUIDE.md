@@ -392,14 +392,22 @@ The following permissions are already configured in `app.json`:
 3. **Network Optimization**: Efficient token caching
 4. **Battery Optimization**: Optimized for mobile battery usage
 
+## Mobile: Screenshare, Whiteboard & Host Controls
+
+Screenshare, whiteboard, and host mute/unmute work on web; on mobile they need dashboard permissions and (for iOS screenshare) optional native setup. See **[docs/MOBILE_SCREENSHARE_WHITEBOARD.md](docs/MOBILE_SCREENSHARE_WHITEBOARD.md)** for:
+
+- **Host mute/unmute:** If the host can mute but not unmute participants, enable the **Unmute** permission for the host role in the 100ms Dashboard (no app change needed).
+- **Android:** Screenshare activity and permission (already added in this repo); ensure the mobile role has screenshare in the 100ms dashboard.
+- **iOS:** Screenshare is optional and requires Xcode to add a Broadcast Upload Extension; if you don’t use Xcode, skip it—all other meeting options work on iOS without it.
+- **Whiteboard:** Enable in the dashboard for the mobile template/role; display on mobile may require a WebView (see 100ms React Native whiteboard docs).
+- **All options:** Checklist in the doc for mute, unmute, screenshare, whiteboard, chat, recording, and change role so everything works on web and mobile.
+
 ## Future Enhancements
 
 Potential improvements for the HMS integration:
-- Screen sharing functionality
 - Chat integration
 - Recording capabilities
 - Breakout rooms
-- Whiteboard integration
 - Custom UI themes
 - Advanced participant controls
 
