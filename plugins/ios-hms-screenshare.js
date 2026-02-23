@@ -103,59 +103,125 @@ function withBroadcastExtensionFiles(config, { appGroup, extensionName }) {
 }
 
 /**
- * Add the Broadcast Upload Extension target using only the xcode project API.
- * No string/regex patching of pbxproj - all UUIDs and references are wired by the library.
+ * Add the Broadcast Upload Extension target using the xcode project API.
+ * Uses addTarget when available; otherwise builds the target via addToPbxNativeTargetSection
+ * and related APIs so the target persists and CocoaPods can find it.
  */
 function withBroadcastExtensionTarget(config, { extensionName }) {
   return withXcodeProject(config, async (config) => {
     const project = config.modResults;
     const bundleId = config.ios?.bundleIdentifier || 'com.grabdocs.mobile';
     const extBundleId = `${bundleId}.${extensionName}`;
+    const quoted = (s) => `"${s}"`;
 
-    if (typeof project.addTarget !== 'function') {
-      return config;
-    }
-    if (project.pbxNativeTargetSection && Object.keys(project.pbxNativeTargetSection()).length > 1) {
+    const nativeTargets = project.pbxNativeTargetSection && project.pbxNativeTargetSection();
+    if (nativeTargets && Object.keys(nativeTargets).filter((k) => !/comment$/.test(k)).length > 1) {
       return config;
     }
 
-    const target = project.addTarget(extensionName, 'app_extension', extensionName, extBundleId);
-    if (!target || !target.uuid) {
-      return config;
+    let targetUuid;
+    let target;
+
+    if (typeof project.addTarget === 'function') {
+      target = project.addTarget(extensionName, 'app_extension', extensionName, extBundleId);
+      if (target && target.uuid) {
+        targetUuid = target.uuid;
+      }
     }
+
+    if (!targetUuid && typeof project.addToPbxNativeTargetSection === 'function') {
+      const mainTarget = project.getFirstTarget && project.getFirstTarget();
+      if (!mainTarget || !mainTarget.uuid) return config;
+
+      targetUuid = project.generateUuid();
+      const configListUuid = project.generateUuid();
+      const debugConfigUuid = project.generateUuid();
+      const releaseConfigUuid = project.generateUuid();
+
+      const buildConfigs = [
+        {
+          name: 'Debug',
+          isa: 'XCBuildConfiguration',
+          buildSettings: {
+            INFOPLIST_FILE: quoted(`${extensionName}/Info.plist`),
+            LD_RUNPATH_SEARCH_PATHS: quoted('$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'),
+            PRODUCT_NAME: quoted(extensionName),
+            SKIP_INSTALL: 'YES',
+            PRODUCT_BUNDLE_IDENTIFIER: quoted(extBundleId),
+            CODE_SIGN_ENTITLEMENTS: quoted(`${extensionName}/${extensionName}.entitlements`),
+            IPHONEOS_DEPLOYMENT_TARGET: '"14.0"',
+          },
+        },
+        {
+          name: 'Release',
+          isa: 'XCBuildConfiguration',
+          buildSettings: {
+            INFOPLIST_FILE: quoted(`${extensionName}/Info.plist`),
+            LD_RUNPATH_SEARCH_PATHS: quoted('$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'),
+            PRODUCT_NAME: quoted(extensionName),
+            SKIP_INSTALL: 'YES',
+            PRODUCT_BUNDLE_IDENTIFIER: quoted(extBundleId),
+            CODE_SIGN_ENTITLEMENTS: quoted(`${extensionName}/${extensionName}.entitlements`),
+            IPHONEOS_DEPLOYMENT_TARGET: '"14.0"',
+          },
+        },
+      ];
+      const xcConfigList = project.addXCConfigurationList(buildConfigs, 'Release', `Build configuration list for PBXNativeTarget "${extensionName}"`);
+      if (!xcConfigList || !xcConfigList.uuid) return config;
+
+      const productFile = project.addProductFile(`${extensionName}.appex`, {
+        group: 'Copy Files',
+        target: mainTarget.uuid,
+        explicitFileType: 'wrapper.app-extension',
+      });
+      if (!productFile) return config;
+      project.addToPbxBuildFileSection(productFile);
+
+      target = {
+        uuid: targetUuid,
+        pbxNativeTarget: {
+          isa: 'PBXNativeTarget',
+          name: quoted(extensionName),
+          productName: quoted(extensionName),
+          productReference: productFile.fileRef,
+          productType: '"com.apple.product-type.app-extension"',
+          buildConfigurationList: xcConfigList.uuid,
+          buildPhases: [],
+          buildRules: [],
+          dependencies: [],
+        },
+      };
+      project.addToPbxNativeTargetSection(target);
+      project.addBuildPhase([], 'PBXCopyFilesBuildPhase', 'Copy Files', mainTarget.uuid, 'app_extension');
+      project.addToPbxCopyfilesBuildPhase(productFile);
+      project.addToPbxProjectSection(target);
+      project.addTargetDependency(mainTarget.uuid, [targetUuid]);
+    }
+
+    if (!targetUuid) return config;
 
     project.addBuildPhase(
       [`${extensionName}/SampleHandler.swift`],
       'PBXSourcesBuildPhase',
       'Sources',
-      target.uuid
+      targetUuid
     );
-    project.addBuildPhase(
-      [],
-      'PBXResourcesBuildPhase',
-      'Resources',
-      target.uuid
-    );
+    project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', targetUuid);
 
-    const replayKitFile = project.addFramework('ReplayKit.framework', {
-      target: target.uuid,
-      link: false,
-    });
+    const replayKitFile = project.addFramework('ReplayKit.framework', { target: targetUuid, link: false });
     if (replayKitFile) {
       project.addBuildPhase(
         [replayKitFile.path || 'ReplayKit.framework'],
         'PBXFrameworksBuildPhase',
         'Frameworks',
-        target.uuid
+        targetUuid
       );
     }
 
     if (typeof project.updateBuildProperty === 'function') {
-      const infoplist = `"${extensionName}/Info.plist"`;
-      const entitlements = `"${extensionName}/${extensionName}.entitlements"`;
-      project.updateBuildProperty('INFOPLIST_FILE', infoplist, undefined, `"${extensionName}"`);
-      project.updateBuildProperty('CODE_SIGN_ENTITLEMENTS', entitlements, undefined, `"${extensionName}"`);
-      project.updateBuildProperty('IPHONEOS_DEPLOYMENT_TARGET', '"14.0"', undefined, `"${extensionName}"`);
+      project.updateBuildProperty('INFOPLIST_FILE', quoted(`${extensionName}/Info.plist`), undefined, quoted(extensionName));
+      project.updateBuildProperty('CODE_SIGN_ENTITLEMENTS', quoted(`${extensionName}/${extensionName}.entitlements`), undefined, quoted(extensionName));
+      project.updateBuildProperty('IPHONEOS_DEPLOYMENT_TARGET', '"14.0"', undefined, quoted(extensionName));
     }
 
     return config;
