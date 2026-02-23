@@ -68,6 +68,7 @@ jobs:
         run: |
           rm -rf ios
           npx expo prebuild --platform ios --no-install
+          node scripts/patch-ios-podfile.js
           echo "===== FULL PODFILE (for debugging) ====="
           cat ios/Podfile
           echo "========================================"

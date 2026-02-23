@@ -236,19 +236,39 @@ const EXTENSION_PODFILE_BLOCK = `
   end`;
 
 /**
+ * Find the index where we should insert the extension block: right before the main
+ * target's closing "end". In Expo's Podfile the main target is the only top-level
+ * target. We find the last line that is only "end" (with optional leading/trailing
+ * whitespace) so we work with any indentation and line endings (\n or \r\n).
+ */
+function findMainTargetClosingEndIndex(podfile) {
+  const lines = podfile.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*end\s*$/.test(lines[i])) {
+      const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+      const beforeThisLine = lines.slice(0, i).join(lineEnding);
+      return beforeThisLine.length;
+    }
+  }
+  return -1;
+}
+
+/**
  * Insert the extension target inside the main app target by placing it right before
- * the main target's closing "end". Does not depend on main target name. In Expo's
- * Podfile the main target is the only top-level target, so the last "end" in the
- * file is the main target's closing end.
+ * the main target's closing "end". Does not depend on main target name.
  */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
     return podfile;
   }
   const block = EXTENSION_PODFILE_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
-  const lastEnd = podfile.lastIndexOf('\nend');
-  if (lastEnd === -1) return podfile;
-  return podfile.slice(0, lastEnd) + block + podfile.slice(lastEnd);
+  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+  let insertAt = findMainTargetClosingEndIndex(podfile);
+  if (insertAt === -1) {
+    insertAt = podfile.lastIndexOf('\nend');
+    if (insertAt === -1) return podfile;
+  }
+  return podfile.slice(0, insertAt) + block + lineEnding + podfile.slice(insertAt);
 }
 
 /**

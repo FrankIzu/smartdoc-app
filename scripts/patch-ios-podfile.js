@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 /**
- * One-time patch for ios/Podfile: nest GrabDocsBroadcastUpload inside the main app target
+ * Patch ios/Podfile: nest GrabDocsBroadcastUpload inside the main app target
  * so CocoaPods finds a host target. Run from repo root when you see:
  *   "[!] Unable to find host target(s) for GrabDocsBroadcastUpload"
+ *
+ * Uses insert-before-closing-end (same as the Expo plugin) so it works
+ * regardless of main target name. Safe to run after prebuild.
  *
  * Usage: node scripts/patch-ios-podfile.js
  */
@@ -13,28 +16,36 @@ const path = require('path');
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
 const PODFILE_PATH = path.join(__dirname, '..', 'ios', 'Podfile');
 
-function findMainTargetInPodfile(podfile, extensionName) {
-  const targetRegex = /target\s+['"]([^'"]+)['"]\s+do\b/g;
-  let m;
-  while ((m = targetRegex.exec(podfile)) !== null) {
-    if (m[1] !== extensionName) return m[1];
-  }
-  return null;
-}
-
-function applyPodfilePatch(podfile, extensionName, mainTargetName) {
-  const escaped = mainTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const mainTargetRegex = new RegExp(
-    "target\\s+['\"]" + escaped + "['\"]\\s+do\\b"
-  );
-  const replacement = `target '${mainTargetName}' do
-
-  target '${extensionName}' do
+const EXTENSION_BLOCK = `
+  target 'GrabDocsBroadcastUpload' do
     inherit! :search_paths
     use_modular_headers!
     pod 'HMSBroadcastExtensionSDK'
   end`;
-  return podfile.replace(mainTargetRegex, replacement);
+
+function findMainTargetClosingEndIndex(podfile) {
+  const lines = podfile.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*end\s*$/.test(lines[i])) {
+      const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+      return lines.slice(0, i).join(lineEnding).length;
+    }
+  }
+  return -1;
+}
+
+function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
+  if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
+    return podfile;
+  }
+  const block = EXTENSION_BLOCK.replace(/GrabDocsBroadcastUpload/g, extensionName);
+  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+  let insertAt = findMainTargetClosingEndIndex(podfile);
+  if (insertAt === -1) {
+    insertAt = podfile.lastIndexOf('\nend');
+    if (insertAt === -1) return podfile;
+  }
+  return podfile.slice(0, insertAt) + block + lineEnding + podfile.slice(insertAt);
 }
 
 function main() {
@@ -51,30 +62,16 @@ function main() {
     process.exit(1);
   }
 
-  let contents = fs.readFileSync(PODFILE_PATH, 'utf8');
+  const contents = fs.readFileSync(PODFILE_PATH, 'utf8');
+  const newContents = insertExtensionBeforeMainTargetEnd(contents, EXTENSION_NAME);
 
-  if (
-    contents.includes("target '" + EXTENSION_NAME + "' do") &&
-    contents.includes('inherit! :search_paths')
-  ) {
+  if (newContents === contents) {
     console.log('Podfile already has nested GrabDocsBroadcastUpload target.');
     process.exit(0);
   }
 
-  const mainTarget = findMainTargetInPodfile(contents, EXTENSION_NAME);
-  if (!mainTarget) {
-    console.error('Could not find main app target in Podfile.');
-    process.exit(1);
-  }
-
-  const newContents = applyPodfilePatch(contents, EXTENSION_NAME, mainTarget);
-  if (newContents === contents) {
-    console.error('Patch did not change Podfile (target name not found?).');
-    process.exit(1);
-  }
-
   fs.writeFileSync(PODFILE_PATH, newContents);
-  console.log('Patched ios/Podfile: nested GrabDocsBroadcastUpload under target "' + mainTarget + '".');
+  console.log('Patched ios/Podfile: nested GrabDocsBroadcastUpload inside main app target.');
   console.log('Run: cd ios && pod install');
 }
 
