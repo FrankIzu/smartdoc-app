@@ -157,21 +157,10 @@ function withHmsScreenshareExtension(config, options = {}) {
   config = withPodfileEntry(config, { extensionName });
   config = withAppGroupEntitlements(config, { appGroup });
 
-  if (!config.extra) config.extra = {};
-  if (!config.extra.eas) config.extra.eas = {};
-  if (!config.extra.eas.build) config.extra.eas.build = {};
-  if (!config.extra.eas.build.experimental) config.extra.eas.build.experimental = {};
-  if (!config.extra.eas.build.experimental.ios) config.extra.eas.build.experimental.ios = {};
-  config.extra.eas.build.experimental.ios.appExtensions = [
-    ...(config.extra.eas.build.experimental.ios.appExtensions || []),
-    {
-      targetName: extensionName,
-      bundleIdentifier: `${config.ios?.bundleIdentifier || 'com.grabdocs.mobile'}.${extensionName}`,
-      entitlements: {
-        'com.apple.security.application-groups': [appGroup],
-      },
-    },
-  ];
+  // Do NOT add appExtensions to extra.eas.build.experimental.ios - EAS tries to resolve
+  // extension targets by UUID and fails with "Cannot read properties of undefined" when
+  // the project was patched via string replacement. For prebuild+bare workflow, EAS
+  // auto-detects app extensions from the Xcode project.
 
   return config;
 }

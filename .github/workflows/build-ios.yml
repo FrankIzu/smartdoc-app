@@ -150,6 +150,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Patch iOS broadcast target
+        run: |
+          if [ -d ios ] && [ -f "ios/GrabDocs.xcodeproj/project.pbxproj" ]; then
+            node scripts/patch-ios-broadcast-target.js
+          else
+            echo "ios folder missing, skipping patch (prebuild will run in ensure-ios)"
+          fi
+
       - name: EAS Build (local)
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
