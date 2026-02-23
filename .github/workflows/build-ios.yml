@@ -153,6 +153,26 @@ jobs:
       - name: Patch Podfile for broadcast extension host target
         run: node scripts/patch-ios-podfile-broadcast.js
 
+      - name: Verify Podfile has nested broadcast target
+        run: |
+          if [ -f ios/Podfile ]; then
+            if ! grep -q "target 'GrabDocsBroadcastUpload' do" ios/Podfile || ! grep -q "inherit! :search_paths" ios/Podfile; then
+              echo "::error::Podfile missing nested GrabDocsBroadcastUpload target (host target). Run with force_prebuild=true or ensure patch ran."
+              grep -n "target " ios/Podfile || true
+              exit 1
+            fi
+            echo "Podfile contains nested broadcast extension target."
+          fi
+
+      - name: Commit patched Podfile so EAS archive includes it
+        run: |
+          if [ -f ios/Podfile ] && ! git diff --quiet ios/Podfile 2>/dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add ios/Podfile
+            git commit -m "chore(ios): patch Podfile for broadcast extension host target" --no-verify
+          fi
+
       - name: EAS Build (local)
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"

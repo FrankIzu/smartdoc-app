@@ -12,8 +12,19 @@ const fs = require('fs');
 const path = require('path');
 
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
-const MAIN_TARGET = 'GrabDocs';
 const PODFILE = path.join(__dirname, '..', 'ios', 'Podfile');
+const APP_JSON = path.join(__dirname, '..', 'app.json');
+
+function getMainTarget() {
+  try {
+    const appJson = JSON.parse(fs.readFileSync(APP_JSON, 'utf8'));
+    const name = appJson?.expo?.name;
+    if (name && typeof name === 'string') return name;
+  } catch (_) {}
+  return 'GrabDocs';
+}
+
+const MAIN_TARGET = getMainTarget();
 
 function patch() {
   if (!fs.existsSync(PODFILE)) {
