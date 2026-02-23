@@ -2,14 +2,6 @@ const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 const fs = require('fs');
 
-// Debug: Log the current directory and check for index.js
-console.log('=== METRO CONFIG DEBUG ===');
-console.log('__dirname:', __dirname);
-console.log('process.cwd():', process.cwd());
-console.log('index.js exists:', fs.existsSync(path.join(__dirname, 'index.js')));
-console.log('package.json main:', require('./package.json').main);
-console.log('========================');
-
 // Use the current directory as project root
 // EAS Build places the project in /home/expo/workingdir/build/
 // and index.js should be there

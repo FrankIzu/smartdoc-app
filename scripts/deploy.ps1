@@ -691,7 +691,7 @@ try {
                     }
                 }
             } else {
-r                Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
+                Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
             }
             
             # Switch back to francis branch for continued work
