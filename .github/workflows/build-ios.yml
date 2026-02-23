@@ -67,7 +67,8 @@ jobs:
       - name: Pre-verify Podfile patch (early failure if plugin is broken)
         run: |
           rm -rf ios
-          sh scripts/prebuild-ios.sh
+          npx expo prebuild --platform ios --no-install
+          node scripts/patch-ios-podfile.js
           echo "===== FULL PODFILE ====="
           cat ios/Podfile
           echo "========================"
@@ -77,7 +78,7 @@ jobs:
             echo "::error::Podfile missing nested broadcast extension target (must be indented inside main app target)"
             exit 1
           fi
-          # Remove ios/ so EAS re-runs prebuildCommand fresh (no stale state)
+          # EAS runs its own prebuild internally using our plugin — clean up so it starts fresh
           rm -rf ios
 
       - name: Upload Podfile for verification
