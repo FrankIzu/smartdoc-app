@@ -215,7 +215,8 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
         },
       };
       project.addToPbxNativeTargetSection(target);
-      project.addBuildPhase([], 'PBXCopyFilesBuildPhase', 'Copy Files', mainTarget.uuid, 'app_extension');
+      // CocoaPods finds the host by inspecting the main target's "Embed App Extensions" phase; name must match.
+      project.addBuildPhase([], 'PBXCopyFilesBuildPhase', 'Embed App Extensions', mainTarget.uuid, 'app_extension');
       project.addToPbxCopyfilesBuildPhase(productFile);
       project.addToPbxProjectSection(target);
       project.addTargetDependency(mainTarget.uuid, [targetUuid]);
@@ -389,6 +390,57 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
 }
 
 /**
+ * Inject APPLICATION_EXTENSION_API_ONLY for the extension target into the existing post_install block.
+ * CocoaPods and Xcode expect app extensions to have this set.
+ */
+function podfileInjectPostInstallExtensionApiOnly(contents, extensionName) {
+  if (contents.includes('APPLICATION_EXTENSION_API_ONLY') && contents.includes(extensionName)) {
+    return contents;
+  }
+  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
+  const lines = contents.split(/\r?\n/);
+  const postInstallRe = /post_install\s+do\s+\|installer\|/;
+  let postInstallLineIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (postInstallRe.test(lines[i])) {
+      postInstallLineIndex = i;
+      break;
+    }
+  }
+  if (postInstallLineIndex === -1) return contents;
+  // Find the "end" that closes this post_install (depth from postInstallLineIndex)
+  let depth = 1;
+  let closingIndex = -1;
+  for (let i = postInstallLineIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*end\s*$/.test(line)) {
+      depth--;
+      if (depth === 0) {
+        closingIndex = i;
+        break;
+      }
+    } else if (/\s+do\s*$/.test(line)) {
+      depth++;
+    }
+  }
+  if (closingIndex === -1) return contents;
+  const indent = (lines[closingIndex].match(/^(\s*)/) || ['', ''])[1] || '  ';
+  const block = [
+    indent + '# ios-hms-screenshare: app extension must use APPLICATION_EXTENSION_API_ONLY',
+    indent + 'installer.pods_project.targets.each do |target|',
+    indent + '  if target.name == \'' + extensionName + '\'',
+    indent + '    target.build_configurations.each do |config|',
+    indent + '      config.build_settings[\'APPLICATION_EXTENSION_API_ONLY\'] = \'YES\'',
+    indent + '    end',
+    indent + '  end',
+    indent + 'end',
+  ].join(lineEnding);
+  const before = lines.slice(0, closingIndex).join(lineEnding);
+  const after = lines.slice(closingIndex).join(lineEnding);
+  return before + lineEnding + block + lineEnding + after;
+}
+
+/**
  * After all mods, patch the Podfile on disk so the extension target is nested inside the main app target.
  * EAS/Expo can overwrite the Podfile after withPodfile runs; this ensures the final file on disk is correct.
  */
@@ -411,13 +463,14 @@ function withPodfilePatchOnDisk(config, { extensionName }) {
         console.log('[ios-hms-screenshare] ✅ Podfile on disk: extension already nested inside main target');
         return config;
       }
-      const resultContents = podfileInsertExtensionBlock(contents, extensionName, tag);
+      let resultContents = podfileInsertExtensionBlock(contents, extensionName, tag);
       if (resultContents === contents) {
         console.error('[ios-hms-screenshare] ❌ Podfile (disk): could not find main target "' + MAIN_APP_TARGET_NAME + '" or insertion point.');
         throw new Error('[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile. Check that the main app target is named "' + MAIN_APP_TARGET_NAME + '".');
       }
+      resultContents = podfileInjectPostInstallExtensionApiOnly(resultContents, extensionName);
       fs.writeFileSync(podfilePath, resultContents);
-      console.log('[ios-hms-screenshare] ✅ Podfile patched on disk: extension nested inside main target');
+      console.log('[ios-hms-screenshare] ✅ Podfile patched on disk: extension nested inside main target + post_install APPLICATION_EXTENSION_API_ONLY');
       return config;
     },
   ]);

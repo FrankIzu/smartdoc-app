@@ -123,13 +123,6 @@ const baseExpo = {
   plugins: [
     "./plugins/android-pip",
     "./plugins/ios-pip",
-    [
-      "./plugins/ios-hms-screenshare",
-      {
-        appGroup: "group.com.grabdocs.mobile",
-        extensionName: "GrabDocsBroadcastUpload",
-      },
-    ],
     "expo-dev-client",
     "expo-router",
     "expo-web-browser",
@@ -173,6 +166,15 @@ const baseExpo = {
       },
     ],
     "expo-secure-store",
+    // Must be last: patches Podfile on disk so GrabDocsBroadcastUpload is nested in main target.
+    // Other plugins (expo-build-properties, etc.) can overwrite Podfile; running last ensures our patch sticks.
+    [
+      "./plugins/ios-hms-screenshare",
+      {
+        appGroup: "group.com.grabdocs.mobile",
+        extensionName: "GrabDocsBroadcastUpload",
+      },
+    ],
   ],
   experiments: { typedRoutes: true },
   extra: {
