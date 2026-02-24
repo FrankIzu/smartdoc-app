@@ -1,29 +1,27 @@
 #!/bin/bash
-# Runs after pod install (eas-build-post-install hook).
-# Checks if EAS already installed the extension profile (it should if credentials are set up).
-# If not, installs it from the EXT_PROVISIONING_PROFILE file-type env var.
+# Installs the correct extension provisioning profile (with App Groups) by its UUID
+# so Xcode's UUID-based lookup finds our profile, not EAS's auto-generated one.
+# Runs via eas-build-post-install (after npm install, before EAS installs credentials).
 
 PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
 EXT_UUID="f5a9c6da-0810-4a56-8963-3cb9894f83a1"
-EXT_PROFILE_PATH="$PROFILE_DIR/$EXT_UUID.mobileprovision"
 
-echo "[install-extension-profile] Provisioning profiles directory:"
-ls -la "$PROFILE_DIR" 2>/dev/null || echo "  (directory does not exist yet)"
+mkdir -p "$PROFILE_DIR"
 
-if [ -f "$EXT_PROFILE_PATH" ]; then
-  echo "[install-extension-profile] Extension profile already installed by EAS: $EXT_PROFILE_PATH"
+if [ -z "$EXT_PROVISIONING_PROFILE" ]; then
+  echo "[install-extension-profile] EXT_PROVISIONING_PROFILE not set"
   exit 0
 fi
 
-echo "[install-extension-profile] Extension profile NOT found at $EXT_PROFILE_PATH"
-
-if [ -n "$EXT_PROVISIONING_PROFILE" ] && [ -f "$EXT_PROVISIONING_PROFILE" ]; then
-  mkdir -p "$PROFILE_DIR"
-  cp "$EXT_PROVISIONING_PROFILE" "$EXT_PROFILE_PATH"
-  echo "[install-extension-profile] Installed from EXT_PROVISIONING_PROFILE env var: $EXT_PROFILE_PATH"
+if [ ! -f "$EXT_PROVISIONING_PROFILE" ]; then
+  echo "[install-extension-profile] File not found: $EXT_PROVISIONING_PROFILE"
   exit 0
 fi
 
-echo "[install-extension-profile] WARNING: Could not install extension profile - EXT_PROVISIONING_PROFILE not set or file missing"
-echo "[install-extension-profile] Listing all installed profiles:"
-ls -la "$PROFILE_DIR" 2>/dev/null
+# Always install our profile at its UUID path — overrides whatever EAS puts there
+DEST="$PROFILE_DIR/$EXT_UUID.mobileprovision"
+cp "$EXT_PROVISIONING_PROFILE" "$DEST"
+echo "[install-extension-profile] Installed: $DEST"
+
+echo "[install-extension-profile] All installed profiles:"
+ls -la "$PROFILE_DIR"
