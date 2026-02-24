@@ -64,39 +64,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set up iOS local credentials from secrets
-        run: |
-          mkdir -p credentials/ios
-          echo "$IOS_DIST_CERT_P12_BASE64" | base64 --decode > credentials/ios/dist-cert.p12
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > credentials/ios/profile.mobileprovision
-          echo "$IOS_EXT_PROVISIONING_PROFILE_BASE64" | base64 --decode > credentials/ios/ext-profile.mobileprovision
-          cat > credentials.json << EOF
-          {
-            "ios": {
-              "com.grabdocs.mobile": {
-                "distributionCertificate": {
-                  "path": "credentials/ios/dist-cert.p12",
-                  "password": "$IOS_DIST_CERT_PASSWORD"
-                },
-                "provisioningProfilePath": "credentials/ios/profile.mobileprovision"
-              },
-              "com.grabdocs.mobile.GrabDocsBroadcastUpload": {
-                "distributionCertificate": {
-                  "path": "credentials/ios/dist-cert.p12",
-                  "password": "$IOS_DIST_CERT_PASSWORD"
-                },
-                "provisioningProfilePath": "credentials/ios/ext-profile.mobileprovision"
-              }
-            }
-          }
-          EOF
-          echo "✅ credentials.json written"
-        env:
-          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
-          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          IOS_EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_EXT_PROVISIONING_PROFILE_BASE64 }}
-
       - name: Verify EAS credentials include extension target
         run: |
           # Fetch the credentials list from EAS and confirm that the broadcast extension

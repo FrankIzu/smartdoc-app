@@ -49,7 +49,6 @@
     },
     "production": {
       "node": "20.18.1",
-      "credentialsSource": "local",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "NODE_ENV": "production",
