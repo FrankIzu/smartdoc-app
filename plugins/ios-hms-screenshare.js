@@ -412,6 +412,69 @@ function withPodfileDangerousPatch(config, { extensionName }) {
   ]);
 }
 
+/**
+ * Add a Run Script build phase to the extension target that installs the
+ * EXT_PROVISIONING_PROFILE (EAS file-type env var) into the provisioning profiles
+ * directory. This runs DURING xcodebuild, when EAS has already set env vars and
+ * credentials — so the profile is available when the extension target is signed.
+ */
+function withExtensionProfileInstallPhase(config, { extensionName }) {
+  return withDangerousMod(config, [
+    'ios',
+    async (config) => {
+      const iosRoot = config.modRequest.platformProjectRoot;
+      const xcodeprojDir = fs.readdirSync(iosRoot).find((f) => f.endsWith('.xcodeproj'));
+      if (!xcodeprojDir) return config;
+
+      const pbxPath = path.join(iosRoot, xcodeprojDir, 'project.pbxproj');
+      if (!fs.existsSync(pbxPath)) return config;
+
+      let pbx = fs.readFileSync(pbxPath, 'utf8');
+
+      if (pbx.includes('Install Extension Profile')) {
+        return config;
+      }
+
+      const phaseId = 'A1B2C3D4E5F60718293A4B5C6D7E8F90';
+      const phaseBlock = `
+		${phaseId} /* Install Extension Profile */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Install Extension Profile";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/${extensionName}.mobileprovision\\"\\\\nfi\\\\n";
+		};
+`;
+
+      pbx = pbx.replace(
+        /(\/\* Begin PBXShellScriptBuildPhase section \*\/)/,
+        `$1${phaseBlock}`
+      );
+
+      // Add our phase as the first build phase of the extension target.
+      // Extension target has Sources then Resources (main app has other phases in between).
+      const extPattern = new RegExp(
+        `(buildPhases = \\(\\s*\\n\\s*)([A-F0-9]+) /\\* Sources \\*/,(\\s*\\n\\s*[A-F0-9]+ /\\* Resources \\*/)`
+      );
+      const extMatch = pbx.match(extPattern);
+      if (extMatch) {
+        pbx = pbx.replace(extMatch[0], `$1${phaseId} /* Install Extension Profile */,\n\t\t\t\t$2 /* Sources */,$3`);
+      }
+
+      fs.writeFileSync(pbxPath, pbx);
+      console.log('[ios-hms-screenshare] ✅ Added Install Extension Profile run script phase');
+      return config;
+    },
+  ]);
+}
+
 function withAppGroupEntitlements(config, { appGroup }) {
   return withEntitlementsPlist(config, (config) => {
     const ents = config.modResults;
@@ -432,6 +495,7 @@ function withHmsScreenshareExtension(config, options = {}) {
   const podfileOpts = { extensionName };
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
+  config = withExtensionProfileInstallPhase(config, { extensionName });
   config = withPodfileEntry(config, podfileOpts);
   config = withPodfileDangerousPatch(config, podfileOpts);
   config = withAppGroupEntitlements(config, { appGroup });
