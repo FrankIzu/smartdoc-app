@@ -329,15 +329,17 @@ function withPodfileEntry(config, { extensionName }) {
       '  end',
     ].join('\n');
 
+    // Anchor = the LAST unindented `end` in the Podfile (= main target's closing end).
+    // The first ^end$ is the def ccache_enabled? method's end — we must not insert there.
+    const anchor = /^end\s*$(?=\n?\s*$)/m;
+
     let result;
     try {
       result = mergeContents({
         tag,
         src,
         newSrc,
-        // Anchor = first unindented `end` = main target's closing end.
-        anchor: /^end$/m,
-        // offset: 0 inserts BEFORE the anchor line.
+        anchor,
         offset: 0,
         comment: '#',
       });
@@ -349,7 +351,7 @@ function withPodfileEntry(config, { extensionName }) {
 
     if (!result.didMerge) {
       console.error('[ios-hms-screenshare] ❌ mergeContents anchor not found. Full Podfile:\n' + src);
-      throw new Error('[ios-hms-screenshare] Could not find anchor `^end$` in Podfile to insert ' + extensionName + '.');
+      throw new Error('[ios-hms-screenshare] Could not find main target closing `end` in Podfile to insert ' + extensionName + '.');
     }
 
     console.log('[ios-hms-screenshare] ✅ withPodfile: mergeContents applied');
@@ -381,9 +383,26 @@ function withPodfileDangerousPatch(config, { extensionName }) {
       const contents = fs.readFileSync(podfilePath, 'utf8');
       const tag = 'ios-hms-screenshare-' + extensionName;
 
-      if (contents.includes('# @generated begin ' + tag)) {
-        console.log('[ios-hms-screenshare] ✅ withDangerousMod: already merged');
+      // If already merged in the right place (inside main target), skip.
+      const mainTargetStart = contents.indexOf("target 'GrabDocs' do");
+      const extBlockStart = contents.indexOf("  target '" + extensionName + "' do");
+      const alreadyCorrect =
+        contents.includes('# @generated begin ' + tag) &&
+        mainTargetStart >= 0 &&
+        extBlockStart > mainTargetStart;
+      if (alreadyCorrect) {
+        console.log('[ios-hms-screenshare] ✅ withPodfileDangerousPatch: already merged');
         return config;
+      }
+      // If tag exists but in wrong place (e.g. inside def ccache_enabled?), remove it then re-insert.
+      if (contents.includes('# @generated begin ' + tag)) {
+        contents = contents.replace(
+          new RegExp(
+            '# @generated begin ' + tag + '[\\s\\S]*?# @generated end ' + tag + '\\s*\\n?',
+            'g'
+          ),
+          ''
+        );
       }
 
       const newSrc = [
@@ -394,9 +413,10 @@ function withPodfileDangerousPatch(config, { extensionName }) {
         '  end',
       ].join('\n');
 
+      const anchor = /^end\s*$(?=\n?\s*$)/m;
       let result;
       try {
-        result = mergeContents({ tag, src: contents, newSrc, anchor: /^end$/m, offset: 0, comment: '#' });
+        result = mergeContents({ tag, src: contents, newSrc, anchor, offset: 0, comment: '#' });
       } catch (e) {
         console.error('[ios-hms-screenshare] ❌ withDangerousMod mergeContents failed:', e.message);
         console.error('[ios-hms-screenshare] Full Podfile:\n' + contents);
