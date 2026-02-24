@@ -54,13 +54,13 @@ function Prompt-WithValidation {
     return $response.ToLower()
 }
 
-# Function to get current version from app.json
+# Function to get current version from app.versions.json (app.config.js reads this)
 function Get-CurrentVersion {
     try {
-        $appJsonPath = "$PSScriptRoot\..\app.json"
-        if (Test-Path $appJsonPath) {
-            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-            return $appJson.expo.version
+        $versionsPath = "$PSScriptRoot\..\app.versions.json"
+        if (Test-Path $versionsPath) {
+            $v = Get-Content $versionsPath -Raw | ConvertFrom-Json
+            return $v.version
         }
     }
     catch {
@@ -80,23 +80,14 @@ function Get-CurrentBuildNumber {
     $Platform = $Platform.ToLower()
 
     try {
+        $versionsPath = "$PSScriptRoot\..\app.versions.json"
+        if (-not (Test-Path $versionsPath)) { return $null }
+        $v = Get-Content $versionsPath -Raw | ConvertFrom-Json
         if ($Platform -eq "ios") {
-            # Get iOS buildNumber from app.json
-            $appJsonPath = "$PSScriptRoot\..\app.json"
-            if (Test-Path $appJsonPath) {
-                $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-                return $appJson.expo.ios.buildNumber
-            }
+            if ($v.ios -and $v.ios.buildNumber) { return $v.ios.buildNumber }
         }
         elseif ($Platform -eq "android") {
-            # Get Android versionCode from app.json (EAS reads from here)
-            $appJsonPath = "$PSScriptRoot\..\app.json"
-            if (Test-Path $appJsonPath) {
-                $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-                if ($appJson.expo.android -and $appJson.expo.android.versionCode) {
-                    return $appJson.expo.android.versionCode.ToString()
-                }
-            }
+            if ($v.android -and $v.android.versionCode) { return $v.android.versionCode.ToString() }
         }
     }
     catch {
@@ -106,7 +97,7 @@ function Get-CurrentBuildNumber {
     return $null
 }
 
-# Function to update version in app.json
+# Function to update version in app.versions.json (app.config.js reads this)
 function Update-Version {
     param(
         [string]$Version
@@ -115,11 +106,11 @@ function Update-Version {
     Write-Host "📝 Updating version to $Version..." -ForegroundColor Yellow
 
     try {
-        $appJsonPath = "$PSScriptRoot\..\app.json"
-        $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-        $appJson.expo.version = $Version
-        $appJson | ConvertTo-Json -Depth 10 | Set-Content $appJsonPath -Encoding UTF8
-        Write-Host "✅ Updated version in app.json" -ForegroundColor Green
+        $versionsPath = "$PSScriptRoot\..\app.versions.json"
+        $v = Get-Content $versionsPath -Raw | ConvertFrom-Json
+        $v.version = $Version
+        $v | ConvertTo-Json -Depth 5 | Set-Content $versionsPath -Encoding UTF8
+        Write-Host "✅ Updated version in app.versions.json" -ForegroundColor Green
     }
     catch {
         Write-Host "❌ Error updating version: $($_.Exception.Message)" -ForegroundColor Red
@@ -140,58 +131,36 @@ function Update-BuildNumber {
     Write-Host "📝 Updating build number to $BuildNumber for $Platform..." -ForegroundColor Yellow
 
     try {
+        $versionsPath = "$PSScriptRoot\..\app.versions.json"
+        if (-not (Test-Path $versionsPath)) {
+            throw "app.versions.json not found at $versionsPath"
+        }
+        $v = Get-Content $versionsPath -Raw | ConvertFrom-Json
         if ($Platform -eq "ios") {
-            # Update iOS buildNumber in app.json
-            $appJsonPath = "$PSScriptRoot\..\app.json"
-            if (-not (Test-Path $appJsonPath)) {
-                throw "app.json not found at $appJsonPath"
-            }
-            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-            if (-not $appJson.expo.ios) {
-                throw "expo.ios section not found in app.json"
-            }
-            $appJson.expo.ios.buildNumber = $BuildNumber
-            $appJson | ConvertTo-Json -Depth 10 | Set-Content $appJsonPath -Encoding UTF8
-            Write-Host "✅ Updated iOS buildNumber in app.json" -ForegroundColor Green
+            if (-not $v.ios) { $v | Add-Member -MemberType NoteProperty -Name "ios" -Value @{} -Force }
+            $v.ios.buildNumber = $BuildNumber
+            $v | ConvertTo-Json -Depth 5 | Set-Content $versionsPath -Encoding UTF8
+            Write-Host "✅ Updated iOS buildNumber in app.versions.json" -ForegroundColor Green
         }
         elseif ($Platform -eq "android") {
-            # Update Android versionCode in app.json (EAS reads from here)
-            $appJsonPath = "$PSScriptRoot\..\app.json"
-            if (-not (Test-Path $appJsonPath)) {
-                throw "app.json not found at $appJsonPath"
+            if (-not $v.android) { $v | Add-Member -MemberType NoteProperty -Name "android" -Value @{} -Force }
+            $v.android.versionCode = [int]$BuildNumber
+            $tempPath = "$versionsPath.tmp"
+            $v | ConvertTo-Json -Depth 5 | Set-Content $tempPath -Encoding UTF8
+            Move-Item -Path $tempPath -Destination $versionsPath -Force
+            Start-Sleep -Milliseconds 100
+            $verifyV = Get-Content $versionsPath -Raw | ConvertFrom-Json
+            if (-not $verifyV.android -or $null -eq $verifyV.android.versionCode) {
+                throw "Failed to verify versionCode was written to app.versions.json"
             }
-            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-            if (-not $appJson.expo.android) {
-                throw "expo.android section not found in app.json"
-            }
-            # Ensure android section exists
-            if (-not $appJson.expo.android) {
-                $appJson.expo | Add-Member -MemberType NoteProperty -Name "android" -Value @{} -Force
-            }
-            
-            # Convert BuildNumber to int for app.json (it should be a number, not string)
-            $appJson.expo.android.versionCode = [int]$BuildNumber
-            
-            # Write to temp file first, then move to ensure atomic write
-            $tempPath = "$appJsonPath.tmp"
-            $appJson | ConvertTo-Json -Depth 10 | Set-Content $tempPath -Encoding UTF8
-            Move-Item -Path $tempPath -Destination $appJsonPath -Force
-            
-            # Verify the update was successful
-            Start-Sleep -Milliseconds 100  # Brief pause to ensure file is written
-            $verifyJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-            if (-not $verifyJson.expo.android -or -not $verifyJson.expo.android.versionCode) {
-                throw "Failed to verify versionCode was written to app.json"
-            }
-            $actualVersionCode = $verifyJson.expo.android.versionCode
+            $actualVersionCode = $verifyV.android.versionCode
             if ([int]$actualVersionCode -eq [int]$BuildNumber) {
-                Write-Host "✅ Updated Android versionCode in app.json to $actualVersionCode" -ForegroundColor Green
+                Write-Host "✅ Updated Android versionCode in app.versions.json to $actualVersionCode" -ForegroundColor Green
             } else {
-                throw "Expected versionCode $BuildNumber but found $actualVersionCode in app.json"
+                throw "Expected versionCode $BuildNumber but found $actualVersionCode in app.versions.json"
             }
             
-            # Also update Android versionCode in build.gradle (for local builds)
-            # Note: For EAS Build, Expo prebuild will sync from app.json, so this is mainly for local builds
+            # Also update Android versionCode in build.gradle (for local builds when android/ exists)
             $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
             if (-not (Test-Path $buildGradlePath)) {
                 throw "build.gradle not found at $buildGradlePath"
@@ -219,7 +188,7 @@ function Update-BuildNumber {
                 }
             } else {
                 Write-Host "⚠️  Could not find versionCode pattern in build.gradle to update" -ForegroundColor Yellow
-                Write-Host "   EAS Build will use versionCode from app.json during prebuild" -ForegroundColor Gray
+                Write-Host "   EAS Build will use versionCode from app.versions.json (app.config.js) during prebuild" -ForegroundColor Gray
             }
         } else {
             throw "Invalid platform: $Platform"
@@ -231,14 +200,14 @@ function Update-BuildNumber {
 }
 
 # Function to update LATEST_APP_VERSION, LATEST_APP_VERSION_CODE_ANDROID, and UPDATE_REASON in render.yaml (for production deploys)
-# Android versionCode is read from app.json (already updated by Update-BuildNumber) so backend can use it as min without MIN_* in Render.
+# Android versionCode is read from app.versions.json (already updated by Update-BuildNumber) so backend can use it as min without MIN_* in Render.
 function Update-RenderAppConfig {
     param(
         [string]$Version,
         [string]$UpdateReason
     )
     $renderPath = "$PSScriptRoot\..\manager-francis\render.yaml"
-    $appJsonPath = "$PSScriptRoot\..\app.json"
+    $versionsPath = "$PSScriptRoot\..\app.versions.json"
     if (-not (Test-Path $renderPath)) {
         Write-Host "⚠️  render.yaml not found at $renderPath. Skipping app config update." -ForegroundColor Yellow
         return
@@ -249,14 +218,14 @@ function Update-RenderAppConfig {
         Write-Host "⚠️  Invalid UpdateReason. Defaulting to 'feature'." -ForegroundColor Yellow
     }
     $androidVersionCode = ""
-    if (Test-Path $appJsonPath) {
+    if (Test-Path $versionsPath) {
         try {
-            $appJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
-            if ($appJson.expo.android.versionCode) {
-                $androidVersionCode = $appJson.expo.android.versionCode.ToString()
+            $v = Get-Content $versionsPath -Raw | ConvertFrom-Json
+            if ($v.android.versionCode) {
+                $androidVersionCode = $v.android.versionCode.ToString()
             }
         } catch {
-            Write-Host "⚠️  Could not read Android versionCode from app.json" -ForegroundColor Yellow
+            Write-Host "⚠️  Could not read Android versionCode from app.versions.json" -ForegroundColor Yellow
         }
     }
     try {
@@ -718,19 +687,19 @@ try {
         $buildLabel = if ($Platform -eq "ios") { "Build number" } else { "Version code" }
         Write-Host "   ${buildLabel}: $BuildNumber" -ForegroundColor White
         
-        # Verify values in app.json match what we expect
-        Write-Host "`n🔍 Verifying app.json values:" -ForegroundColor Cyan
-        $appJsonPath = "$PSScriptRoot\..\app.json"
-        $verifyJson = Get-Content $appJsonPath -Raw | ConvertFrom-Json
+        # Verify values in app.versions.json match what we expect
+        Write-Host "`n🔍 Verifying app.versions.json values:" -ForegroundColor Cyan
+        $versionsPath = "$PSScriptRoot\..\app.versions.json"
+        $verifyV = Get-Content $versionsPath -Raw | ConvertFrom-Json
         if ($Platform -eq "android") {
-            $actualVersionCode = $verifyJson.expo.android.versionCode
-            Write-Host "   Android versionCode in app.json: $actualVersionCode" -ForegroundColor $(if ([int]$actualVersionCode -eq [int]$BuildNumber) { "Green" } else { "Red" })
+            $actualVersionCode = $verifyV.android.versionCode
+            Write-Host "   Android versionCode in app.versions.json: $actualVersionCode" -ForegroundColor $(if ([int]$actualVersionCode -eq [int]$BuildNumber) { "Green" } else { "Red" })
             if ([int]$actualVersionCode -ne [int]$BuildNumber) {
                 Write-Host "   ⚠️  WARNING: Mismatch! Expected $BuildNumber but found $actualVersionCode" -ForegroundColor Red
             }
         } else {
-            $actualBuildNumber = $verifyJson.expo.ios.buildNumber
-            Write-Host "   iOS buildNumber in app.json: $actualBuildNumber" -ForegroundColor $(if ($actualBuildNumber -eq $BuildNumber) { "Green" } else { "Red" })
+            $actualBuildNumber = $verifyV.ios.buildNumber
+            Write-Host "   iOS buildNumber in app.versions.json: $actualBuildNumber" -ForegroundColor $(if ($actualBuildNumber -eq $BuildNumber) { "Green" } else { "Red" })
             if ($actualBuildNumber -ne $BuildNumber) {
                 Write-Host "   ⚠️  WARNING: Mismatch! Expected $BuildNumber but found $actualBuildNumber" -ForegroundColor Red
             }

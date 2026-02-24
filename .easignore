@@ -129,6 +129,6 @@ dev-files/
 *.zip
 *.tgz
 
-# iOS native folder: ignored so EAS always runs prebuild (CNG). The plugin
-# plugins/ios-hms-screenshare creates the Broadcast Upload Extension and patches the Podfile.
+# Native folders: ignored so EAS always runs prebuild (CNG).
 ios/
+android/

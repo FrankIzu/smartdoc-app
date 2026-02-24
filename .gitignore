@@ -28,7 +28,11 @@ Thumbs.db
 web-build/
 dist/
 
-# Native
+# Native (prebuild generates these; do not commit)
+/ios
+/android
+
+# Native secrets / artifacts
 *.orig.*
 *.jks
 *.p8
