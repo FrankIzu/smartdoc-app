@@ -373,9 +373,21 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   }
   if (insertLineIndex === -1) return contents;
 
+  // When use_frameworks! is active in the main target, CocoaPods requires the extension target
+  // to use the same framework linkage; otherwise it refuses to attach the extension to the host.
+  const useFrameworksRe = /use_frameworks!\s*(.*)/;
+  const frameworkLines = [];
+  for (let i = mainTargetLineIndex + 1; i < insertLineIndex; i++) {
+    const line = filteredLines[i];
+    if (useFrameworksRe.test(line)) {
+      frameworkLines.push('    ' + line.trim());
+    }
+  }
+
   const extensionBlock = [
     '  target \'' + extensionName + '\' do',
     '    inherit! :search_paths',
+    ...frameworkLines,
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
     '  end',
