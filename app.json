@@ -23,7 +23,9 @@
           "targetName": "GrabDocsBroadcastUpload",
           "bundleIdentifier": "com.grabdocs.mobile.GrabDocsBroadcastUpload",
           "entitlements": {
-            "com.apple.security.application-groups": ["group.com.grabdocs.mobile"]
+            "com.apple.security.application-groups": [
+              "group.com.grabdocs.mobile"
+            ]
           }
         }
       ],
