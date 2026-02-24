@@ -129,17 +129,25 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Dump Podfile used by EAS (diagnosis — always runs)
-        if: always()
+      - name: Dump Podfile and pod logs on failure (diagnosis)
+        if: failure() && steps.eas_build.outcome == 'failure'
         run: |
-          echo "===== PODFILE AFTER EAS PREBUILD ====="
+          echo "===== PODFILE (from repo or EAS build dir) ====="
           if [ -f ios/Podfile ]; then
             cat ios/Podfile
           else
-            echo "(ios/Podfile not found — EAS may have cleaned up or run in a different directory)"
-            find /Users/runner /Users/expo /tmp -name "Podfile" -not -path "*/node_modules/*" 2>/dev/null | head -10 || true
+            PODFILE_PATH=$(find /var/folders /Users/runner /tmp -name "Podfile" -path "*/ios/Podfile" -not -path "*/node_modules/*" 2>/dev/null | head -1)
+            if [ -n "$PODFILE_PATH" ]; then
+              echo "Found: $PODFILE_PATH"
+              cat "$PODFILE_PATH"
+            else
+              echo "(ios/Podfile not found — EAS runs prebuild in a temp dir; repo has ios/ in .easignore)"
+              find /var/folders /Users/runner /tmp -name "Podfile" 2>/dev/null | head -5 || true
+            fi
           fi
-          echo "======================================"
+          echo "===== EAS build logs (pod install phase) ====="
+          find /var/folders /Users/runner /tmp -path "*eas-build*" -name "*.log" 2>/dev/null | head -5 | while read f; do echo "--- $f ---"; tail -200 "$f" 2>/dev/null | grep -A 5 -B 2 -i "pod\|CocoaPods\|error\|Unable" || tail -50 "$f"; done || true
+          echo "=============================================="
 
       - name: Upload Xcode build logs
         if: always()

@@ -344,9 +344,10 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   }
 
   // Capture: [preamble][target line][body until last end][closing end] — preserve preamble so require/platform stay intact
+  // Closing: allow \r\n and trailing newlines so we match Expo-generated Podfiles on any OS
   const escapedName = MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const mainTargetRegex = new RegExp(
-    '^([\\s\\S]*?)(target\\s+[\'"]' + escapedName + '[\'"]\\s+do)([\\s\\S]*)(\\n\\s*end\\s*)$'
+    '^([\\s\\S]*?)(target\\s+[\'"]' + escapedName + '[\'"]\\s+do)([\\s\\S]*)(\\r?\\n\\s*end\\s*)(?:\\r?\\n)*$'
   );
   const match = contents.match(mainTargetRegex);
   if (match) {
