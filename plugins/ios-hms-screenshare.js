@@ -308,7 +308,10 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     '  end',
     '# @generated end ' + tag,
   ].join('\n');
-  return contents.replace(PODFILE_MAIN_TARGET_END, newBlock + '\n  end\nend');
+  // Replace "  end\nend" (post_install close + main target close) with
+  //   "  end\n[extension block]\nend"
+  // so the extension target is AFTER post_install but still INSIDE the main target.
+  return contents.replace(PODFILE_MAIN_TARGET_END, '  end\n' + newBlock + '\nend');
 }
 
 /**

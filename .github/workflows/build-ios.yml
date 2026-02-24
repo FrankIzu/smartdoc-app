@@ -98,19 +98,16 @@ jobs:
           cat ios/Podfile
           echo "========================================="
 
-          # Plugin uses mergeContents which tags the block — check for tag OR indented target
-          if grep -q "GrabDocsBroadcastUpload" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
-            echo "✅ GrabDocsBroadcastUpload present in Podfile"
+          # Verify extension block is present AND comes after "target 'GrabDocs' do" (correct nesting)
+          MAIN_LINE=$(grep -n "^target 'GrabDocs' do" ios/Podfile | head -1 | cut -d: -f1)
+          EXT_LINE=$(grep -n "target 'GrabDocsBroadcastUpload' do" ios/Podfile | head -1 | cut -d: -f1)
+          if [ -n "$MAIN_LINE" ] && [ -n "$EXT_LINE" ] && [ "$EXT_LINE" -gt "$MAIN_LINE" ]; then
+            echo "✅ GrabDocsBroadcastUpload correctly nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
           else
-            echo "⚠️  Plugin did NOT add GrabDocsBroadcastUpload — applying patch script as safety net"
-            node scripts/patch-ios-podfile.js
+            echo "::error::GrabDocsBroadcastUpload missing or not nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
+            echo "--- Podfile ---"
             cat ios/Podfile
-            if grep -q "GrabDocsBroadcastUpload" ios/Podfile && grep -q "inherit! :search_paths" ios/Podfile; then
-              echo "✅ Patch script fixed the Podfile"
-            else
-              echo "::error::Neither plugin nor patch script added GrabDocsBroadcastUpload to Podfile"
-              exit 1
-            fi
+            exit 1
           fi
 
           # NOTE: do NOT delete ios/ here. EAS --local will use this prebuild output
