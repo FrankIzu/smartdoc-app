@@ -1,0 +1,28 @@
+build:
+  name: iOS Production (with extension profile)
+  steps:
+    - eas/checkout
+    - eas/install_node_modules
+    - eas/prebuild
+    - eas/ios/install_pods
+    - run:
+        name: Install GrabDocsBroadcastUpload provisioning profile
+        command: |
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+
+          echo "$EXT_PROVISIONING_PROFILE" | base64 --decode > /tmp/ext.mobileprovision
+
+          # Extract the UUID embedded inside the .mobileprovision plist
+          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null \
+            | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null)
+
+          if [ -n "$UUID" ]; then
+            cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
+            echo "✅ Installed extension profile: $UUID"
+          else
+            # Fallback — use a fixed name; Xcode reads the embedded UUID regardless of filename
+            cp /tmp/ext.mobileprovision "$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
+            echo "⚠️  Could not extract UUID, installed with fixed name"
+          fi
+    - eas/ios/build
