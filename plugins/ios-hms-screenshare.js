@@ -17,7 +17,6 @@ const {
 } = require('expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
 // @expo/plist exports { default: { parse, build } }; use .default for CommonJS
 const plist = require('@expo/plist').default || require('@expo/plist');
 
@@ -317,42 +316,50 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
   });
 }
 
-/**
- * Unique anchor: the "  post_install do" line inside the main target.
- * We insert the extension block BEFORE post_install so CocoaPods sees it
- * unambiguously as a nested sibling target, not a call after a DSL hook.
- * Falls back to "  end\nend" at end of file if post_install is absent.
- */
-const PODFILE_PRE_POST_INSTALL_2 = /\n  post_install\b/;
-const PODFILE_PRE_POST_INSTALL_4 = /\n    post_install\b/;
-const PODFILE_MAIN_TARGET_END  = /  end\s*\r?\nend\s*$/;
+const MAIN_APP_TARGET_NAME = 'GrabDocs';
 
+/**
+ * Insert extension target INSIDE the main app target, immediately before its closing `end`.
+ * Uses regex: match from "target 'GrabDocs' do" to the LAST "end" in the file — that final
+ * "end" closes the main target, so we insert the extension block right before it.
+ * This works regardless of post_install indentation or Expo Podfile format changes.
+ */
 function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const newBlock = [
-    '# @generated begin ' + tag + ' - expo prebuild (DO NOT MODIFY) sync-f159178a1fba6c4b1532a9d27cbb08ddbe3d5827',
-    "  target '" + extensionName + "' do",
+    '',
+    '  target \'' + extensionName + '\' do',
     '    inherit! :search_paths',
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'",
     '  end',
-    '# @generated end ' + tag,
   ].join('\n');
 
-  if (PODFILE_PRE_POST_INSTALL_2.test(contents)) {
-    return contents.replace(PODFILE_PRE_POST_INSTALL_2, '\n' + newBlock + '\n\n  post_install');
+  // Remove any existing generated block (wrong place or duplicate)
+  const tagStart = '# @generated begin ' + tag;
+  const tagEnd = '# @generated end ' + tag;
+  if (contents.includes(tagStart)) {
+    contents = contents.replace(
+      new RegExp('\\s*' + tagStart.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?' + tagEnd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\n?', 'g'),
+      ''
+    );
   }
-  if (PODFILE_PRE_POST_INSTALL_4.test(contents)) {
-    return contents.replace(PODFILE_PRE_POST_INSTALL_4, '\n' + newBlock + '\n\n    post_install');
-  }
-  if (PODFILE_MAIN_TARGET_END.test(contents)) {
-    return contents.replace(PODFILE_MAIN_TARGET_END, '  end\n' + newBlock + '\nend');
+
+  // Match main target and everything up to the final "end" — insert extension before that "end"
+  const escapedName = MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const mainTargetRegex = new RegExp(
+    "(target\\s+['\"]" + escapedName + "['\"]\\s+do)([\\s\\S]*)(\\n\\s*end\\s*)$"
+  );
+  const match = contents.match(mainTargetRegex);
+  if (match) {
+    const [, open, middle, closing] = match;
+    return open + middle + newBlock + closing;
   }
   return contents;
 }
 
 /**
  * Add the extension target nested inside the main app target.
- * Uses the unique "  end\nend" at end of Podfile (post_install + target close) so we never insert inside def ccache_enabled?.
+ * Inserts immediately before the main target's closing `end` so CocoaPods sees the host relationship.
  */
 function withPodfileEntry(config, { extensionName }) {
   return withPodfile(config, (config) => {
@@ -365,29 +372,19 @@ function withPodfileEntry(config, { extensionName }) {
     }
 
     const tag = 'ios-hms-screenshare-' + extensionName;
-    let srcToPatch = src;
-    if (src.includes('# @generated begin ' + tag)) {
-      const mainTargetStart = src.indexOf("target 'GrabDocs' do");
-      const extBlockStart = src.indexOf("  target '" + extensionName + "' do");
-      if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
-        console.log('[ios-hms-screenshare] ✅ withPodfile: already merged');
-        return config;
-      }
-      // Tag present but in wrong place — remove block then re-insert below.
-      srcToPatch = src.replace(
-        new RegExp('# @generated begin ' + tag + '[\\s\\S]*?# @generated end ' + tag + '\\s*\\n?', 'g'),
-        ''
-      );
+    const mainTargetStart = src.indexOf("target '" + MAIN_APP_TARGET_NAME + "' do");
+    const extBlockStart = src.indexOf("target '" + extensionName + "' do");
+    if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
+      console.log('[ios-hms-screenshare] ✅ withPodfile: extension already nested inside main target');
+      return config;
     }
 
-    const hasAnchor = PODFILE_PRE_POST_INSTALL_2.test(srcToPatch) || PODFILE_PRE_POST_INSTALL_4.test(srcToPatch) || PODFILE_MAIN_TARGET_END.test(srcToPatch);
-    if (!hasAnchor) {
-      console.error('[ios-hms-screenshare] ❌ Podfile missing "post_install" or "  end\\nend" anchors.');
-      throw new Error('[ios-hms-screenshare] Could not find insertion point in Podfile for ' + extensionName + '.');
+    const resultContents = podfileInsertExtensionBlock(src, extensionName, tag);
+    if (resultContents === src) {
+      console.error('[ios-hms-screenshare] ❌ Podfile: could not find main target "' + MAIN_APP_TARGET_NAME + '" or insertion point.');
+      throw new Error('[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile. Check that the main app target is named "' + MAIN_APP_TARGET_NAME + '".');
     }
-
-    const resultContents = podfileInsertExtensionBlock(srcToPatch, extensionName, tag);
-    console.log('[ios-hms-screenshare] ✅ withPodfile: extension block inserted (before post_install).');
+    console.log('[ios-hms-screenshare] ✅ withPodfile: extension block nested inside main target');
     if (typeof data === 'string') {
       config.modResults = resultContents;
     } else {
@@ -399,7 +396,7 @@ function withPodfileEntry(config, { extensionName }) {
 
 /**
  * Safety net: if withPodfile didn't run or Podfile was written later, patch on disk.
- * Uses same "  end\nend" pattern so extension is always inside main target.
+ * Uses same logic as withPodfileEntry: insert extension before main target's closing `end`.
  */
 function withPodfileDangerousPatch(config, { extensionName }) {
   return withDangerousMod(config, [
@@ -412,48 +409,23 @@ function withPodfileDangerousPatch(config, { extensionName }) {
         return config;
       }
 
-      const contents = fs.readFileSync(podfilePath, 'utf8');
+      let contents = fs.readFileSync(podfilePath, 'utf8');
       const tag = 'ios-hms-screenshare-' + extensionName;
 
-      // If already merged in the right place (inside main target), skip.
-      const mainTargetStart = contents.indexOf("target 'GrabDocs' do");
-      const extBlockStart = contents.indexOf("  target '" + extensionName + "' do");
-      const alreadyCorrect =
-        contents.includes('# @generated begin ' + tag) &&
-        mainTargetStart >= 0 &&
-        extBlockStart > mainTargetStart;
-      if (alreadyCorrect) {
-        console.log('[ios-hms-screenshare] ✅ withPodfileDangerousPatch: already merged');
+      const mainTargetStart = contents.indexOf("target '" + MAIN_APP_TARGET_NAME + "' do");
+      const extBlockStart = contents.indexOf("target '" + extensionName + "' do");
+      if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
+        console.log('[ios-hms-screenshare] ✅ withPodfileDangerousPatch: extension already nested');
         return config;
       }
-      // If tag exists but in wrong place (e.g. inside def ccache_enabled?), remove it then re-insert.
-      let contentsToPatch = contents;
-      if (contents.includes('# @generated begin ' + tag)) {
-        contentsToPatch = contents.replace(
-          new RegExp('# @generated begin ' + tag + '[\\s\\S]*?# @generated end ' + tag + '\\s*\\n?', 'g'),
-          ''
-        );
-      }
 
-      const hasAnchor = PODFILE_PRE_POST_INSTALL_2.test(contentsToPatch) || PODFILE_PRE_POST_INSTALL_4.test(contentsToPatch) || PODFILE_MAIN_TARGET_END.test(contentsToPatch);
-      if (!hasAnchor) {
-        console.error('[ios-hms-screenshare] ❌ withDangerousMod: Podfile missing anchors.\n' + contentsToPatch);
-        throw new Error('[ios-hms-screenshare] withDangerousMod: anchor not found in Podfile for ' + extensionName);
+      const resultContents = podfileInsertExtensionBlock(contents, extensionName, tag);
+      if (resultContents === contents) {
+        console.error('[ios-hms-screenshare] ❌ withDangerousMod: could not find main target "' + MAIN_APP_TARGET_NAME + '" in Podfile.');
+        throw new Error('[ios-hms-screenshare] withDangerousMod: could not nest ' + extensionName + ' in Podfile.');
       }
-
-      const resultContents = podfileInsertExtensionBlock(contentsToPatch, extensionName, tag);
       fs.writeFileSync(podfilePath, resultContents);
-      console.log('[ios-hms-screenshare] ✅ withDangerousMod: Podfile patched on disk');
-      // Guarantee nesting by running patch-ios-podfile.js (idempotent).
-      const projectRoot = config.modRequest.projectRoot;
-      const patchScript = path.join(projectRoot, 'scripts', 'patch-ios-podfile.js');
-      if (fs.existsSync(patchScript)) {
-        try {
-          execSync(`node "${patchScript}"`, { cwd: projectRoot, stdio: 'inherit' });
-        } catch (e) {
-          console.warn('[ios-hms-screenshare] patch-ios-podfile.js failed (non-fatal):', e.message);
-        }
-      }
+      console.log('[ios-hms-screenshare] ✅ withPodfileDangerousPatch: Podfile patched on disk');
       return config;
     },
   ]);
