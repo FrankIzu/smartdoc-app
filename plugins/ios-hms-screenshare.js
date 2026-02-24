@@ -295,8 +295,14 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
   });
 }
 
-/** Unique pattern at end of Podfile: post_install's "  end" then main target's "end". Insert extension block before it. */
-const PODFILE_MAIN_TARGET_END = /  end\s*\r?\nend\s*$/;
+/**
+ * Unique anchor: the "  post_install do" line inside the main target.
+ * We insert the extension block BEFORE post_install so CocoaPods sees it
+ * unambiguously as a nested sibling target, not a call after a DSL hook.
+ * Falls back to "  end\nend" at end of file if post_install is absent.
+ */
+const PODFILE_PRE_POST_INSTALL = /\n  post_install\b/;
+const PODFILE_MAIN_TARGET_END  = /  end\s*\r?\nend\s*$/;
 
 function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const newBlock = [
@@ -308,9 +314,12 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     '  end',
     '# @generated end ' + tag,
   ].join('\n');
-  // Replace "  end\nend" (post_install close + main target close) with
-  //   "  end\n[extension block]\nend"
-  // so the extension target is AFTER post_install but still INSIDE the main target.
+
+  // Primary: insert BEFORE post_install so extension is an unambiguous nested sibling target.
+  if (PODFILE_PRE_POST_INSTALL.test(contents)) {
+    return contents.replace(PODFILE_PRE_POST_INSTALL, '\n' + newBlock + '\n\n  post_install');
+  }
+  // Fallback: insert between "  end\nend" at end of file (post_install + main target close).
   return contents.replace(PODFILE_MAIN_TARGET_END, '  end\n' + newBlock + '\nend');
 }
 
@@ -344,13 +353,13 @@ function withPodfileEntry(config, { extensionName }) {
       );
     }
 
-    if (!PODFILE_MAIN_TARGET_END.test(srcToPatch)) {
-      console.error('[ios-hms-screenshare] ❌ Podfile missing main target end pattern "  end\\nend" at end.');
-      throw new Error('[ios-hms-screenshare] Could not find main target end in Podfile to insert ' + extensionName + '.');
+    if (!PODFILE_PRE_POST_INSTALL.test(srcToPatch) && !PODFILE_MAIN_TARGET_END.test(srcToPatch)) {
+      console.error('[ios-hms-screenshare] ❌ Podfile missing both "post_install" and "  end\\nend" anchors.');
+      throw new Error('[ios-hms-screenshare] Could not find insertion point in Podfile for ' + extensionName + '.');
     }
 
     const resultContents = podfileInsertExtensionBlock(srcToPatch, extensionName, tag);
-    console.log('[ios-hms-screenshare] ✅ withPodfile: extension block inserted');
+    console.log('[ios-hms-screenshare] ✅ withPodfile: extension block inserted (before post_install).');
     if (typeof data === 'string') {
       config.modResults = resultContents;
     } else {
@@ -398,8 +407,8 @@ function withPodfileDangerousPatch(config, { extensionName }) {
         );
       }
 
-      if (!PODFILE_MAIN_TARGET_END.test(contentsToPatch)) {
-        console.error('[ios-hms-screenshare] ❌ withDangerousMod: Podfile missing "  end\\nend" at end.\n' + contentsToPatch);
+      if (!PODFILE_PRE_POST_INSTALL.test(contentsToPatch) && !PODFILE_MAIN_TARGET_END.test(contentsToPatch)) {
+        console.error('[ios-hms-screenshare] ❌ withDangerousMod: Podfile missing both anchors.\n' + contentsToPatch);
         throw new Error('[ios-hms-screenshare] withDangerousMod: anchor not found in Podfile for ' + extensionName);
       }
 

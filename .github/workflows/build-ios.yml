@@ -102,11 +102,21 @@ jobs:
           MAIN_LINE=$(grep -n "^target 'GrabDocs' do" ios/Podfile | head -1 | cut -d: -f1)
           EXT_LINE=$(grep -n "target 'GrabDocsBroadcastUpload' do" ios/Podfile | head -1 | cut -d: -f1)
           if [ -n "$MAIN_LINE" ] && [ -n "$EXT_LINE" ] && [ "$EXT_LINE" -gt "$MAIN_LINE" ]; then
-            echo "✅ GrabDocsBroadcastUpload correctly nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
+            echo "✅ Podfile: GrabDocsBroadcastUpload correctly nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
           else
-            echo "::error::GrabDocsBroadcastUpload missing or not nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
+            echo "::error::Podfile: GrabDocsBroadcastUpload missing or not nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
             echo "--- Podfile ---"
             cat ios/Podfile
+            exit 1
+          fi
+
+          # Also verify the extension target exists in the Xcode project — CocoaPods requires it.
+          PBXPROJ=$(find ios -name "project.pbxproj" | head -1)
+          if [ -n "$PBXPROJ" ] && grep -q "GrabDocsBroadcastUpload" "$PBXPROJ"; then
+            echo "✅ project.pbxproj: GrabDocsBroadcastUpload target found"
+          else
+            echo "::error::project.pbxproj: GrabDocsBroadcastUpload target NOT found — plugin may have failed"
+            [ -n "$PBXPROJ" ] && grep "PBXNativeTarget" "$PBXPROJ" | head -10
             exit 1
           fi
 
