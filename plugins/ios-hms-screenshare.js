@@ -321,9 +321,11 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 const MAIN_APP_TARGET_NAME = 'GrabDocs';
 
 /**
- * Insert extension target INSIDE the main app target, immediately before its closing `end`.
- * Uses line-by-line parsing and block depth so we always find the correct closing `end`
- * regardless of Podfile formatting (Expo can change require order, indentation, etc.).
+ * Insert extension target INSIDE the main app target, immediately BEFORE use_react_native!(.
+ * We do not use "insert before closing end" because Ruby has if/else/case blocks whose
+ * end would be found first by naive depth counting, putting the extension inside the
+ * wrong block. Anchoring on use_react_native! guarantees we are inside the main target
+ * and outside any if/else, so CocoaPods sees a proper host relationship.
  */
 function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
@@ -349,7 +351,7 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     filteredLines = out;
   }
 
-  // Find first "target 'GrabDocs' do" or "target \"GrabDocs\" do" (not the extension)
+  // Find first "target 'GrabDocs' do" or "target \"GrabDocs\" do"
   const targetDoRe = new RegExp("^\\s*target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\s*$");
   let mainTargetLineIndex = -1;
   for (let i = 0; i < filteredLines.length; i++) {
@@ -360,33 +362,26 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   }
   if (mainTargetLineIndex === -1) return contents;
 
-  // Find the matching "end" by block depth: each " do" line +1, each "end" line -1; at 0 we have main target's end
-  let depth = 1;
-  let closingLineIndex = -1;
+  // Insert immediately BEFORE use_react_native!( — safe anchor inside main target, outside if/else
+  const useReactNativeRe = /use_react_native!\s*\(/;
+  let insertLineIndex = -1;
   for (let i = mainTargetLineIndex + 1; i < filteredLines.length; i++) {
-    const line = filteredLines[i];
-    if (/^\s*end\s*$/.test(line)) {
-      depth--;
-      if (depth === 0) {
-        closingLineIndex = i;
-        break;
-      }
-    } else if (/\s+do\s*$/.test(line)) {
-      depth++;
+    if (useReactNativeRe.test(filteredLines[i])) {
+      insertLineIndex = i;
+      break;
     }
   }
-  if (closingLineIndex === -1) return contents;
+  if (insertLineIndex === -1) return contents;
 
   const extensionBlock = [
     '  target \'' + extensionName + '\' do',
     '    inherit! :search_paths',
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
-    "    host_targets '" + MAIN_APP_TARGET_NAME + "'",
     '  end',
   ];
-  const before = filteredLines.slice(0, closingLineIndex).join(lineEnding);
-  const after = filteredLines.slice(closingLineIndex).join(lineEnding);
+  const before = filteredLines.slice(0, insertLineIndex).join(lineEnding);
+  const after = filteredLines.slice(insertLineIndex).join(lineEnding);
   return before + lineEnding + extensionBlock.join(lineEnding) + lineEnding + after;
 }
 
