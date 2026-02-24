@@ -281,11 +281,9 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.CODE_SIGN_STYLE = isRelease ? '"Manual"' : '"Automatic"';
               if (isRelease) {
                 buildConfig.buildSettings.CODE_SIGN_IDENTITY = '"Apple Distribution"';
-                // Specifier can be profile name or UUID. EAS uploaded profile:
-                // Name: "GrabDocsBroadcastUpload AppStore"
-                // UUID: f5a9c6da-0810-4a56-8963-3cb9894f83a1
-                buildConfig.buildSettings.PROVISIONING_PROFILE = '"f5a9c6da-0810-4a56-8963-3cb9894f83a1"';
-                buildConfig.buildSettings.PROVISIONING_PROFILE_SPECIFIER = '"GrabDocsBroadcastUpload AppStore"';
+                // Let EAS inject the provisioning profile UUID via export_options.
+                // Do not hardcode UUID or name — EAS manages this for the extension
+                // bundle ID once credentials are set up in expo.dev.
               }
             }
           }
