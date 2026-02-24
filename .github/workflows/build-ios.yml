@@ -125,8 +125,11 @@ jobs:
       - name: Prebuild and verify Podfile (pod install)
         run: |
           npx expo prebuild --platform ios --clean --no-install
-          echo "===== Podfile (GrabDocsBroadcastUpload must be nested in target GrabDocs) ====="
-          grep -n "GrabDocsBroadcastUpload\|target.*GrabDocs" ios/Podfile || true
+          echo "===== Podfile (GrabDocsBroadcastUpload must be nested in target GrabDocs, with host_targets) ====="
+          grep -n "GrabDocsBroadcastUpload\|target.*GrabDocs\|host_targets" ios/Podfile || true
+          echo "----- FULL PODFILE -----"
+          cat ios/Podfile
+          echo "----- END PODFILE -----"
           cd ios && pod install --repo-update
 
       - name: EAS Build (local)

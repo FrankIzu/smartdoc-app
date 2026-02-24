@@ -382,6 +382,7 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     '    inherit! :search_paths',
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
+    "    host_targets '" + MAIN_APP_TARGET_NAME + "'",
     '  end',
   ];
   const before = filteredLines.slice(0, closingLineIndex).join(lineEnding);
