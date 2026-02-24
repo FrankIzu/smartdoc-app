@@ -138,33 +138,21 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
       const debugConfigUuid = project.generateUuid();
       const releaseConfigUuid = project.generateUuid();
 
+      const sharedBuildSettings = {
+        INFOPLIST_FILE: quoted(`${extensionName}/Info.plist`),
+        LD_RUNPATH_SEARCH_PATHS: quoted('$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'),
+        PRODUCT_NAME: quoted(extensionName),
+        SKIP_INSTALL: 'YES',
+        PRODUCT_BUNDLE_IDENTIFIER: quoted(extBundleId),
+        CODE_SIGN_ENTITLEMENTS: quoted(`${extensionName}/${extensionName}.entitlements`),
+        CODE_SIGN_STYLE: '"Automatic"',
+        IPHONEOS_DEPLOYMENT_TARGET: '"16.0"',
+        SWIFT_VERSION: '"5.0"',
+        TARGETED_DEVICE_FAMILY: '"1,2"',
+      };
       const buildConfigs = [
-        {
-          name: 'Debug',
-          isa: 'XCBuildConfiguration',
-          buildSettings: {
-            INFOPLIST_FILE: quoted(`${extensionName}/Info.plist`),
-            LD_RUNPATH_SEARCH_PATHS: quoted('$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'),
-            PRODUCT_NAME: quoted(extensionName),
-            SKIP_INSTALL: 'YES',
-            PRODUCT_BUNDLE_IDENTIFIER: quoted(extBundleId),
-            CODE_SIGN_ENTITLEMENTS: quoted(`${extensionName}/${extensionName}.entitlements`),
-            IPHONEOS_DEPLOYMENT_TARGET: '"14.0"',
-          },
-        },
-        {
-          name: 'Release',
-          isa: 'XCBuildConfiguration',
-          buildSettings: {
-            INFOPLIST_FILE: quoted(`${extensionName}/Info.plist`),
-            LD_RUNPATH_SEARCH_PATHS: quoted('$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'),
-            PRODUCT_NAME: quoted(extensionName),
-            SKIP_INSTALL: 'YES',
-            PRODUCT_BUNDLE_IDENTIFIER: quoted(extBundleId),
-            CODE_SIGN_ENTITLEMENTS: quoted(`${extensionName}/${extensionName}.entitlements`),
-            IPHONEOS_DEPLOYMENT_TARGET: '"14.0"',
-          },
-        },
+        { name: 'Debug',   isa: 'XCBuildConfiguration', buildSettings: { ...sharedBuildSettings } },
+        { name: 'Release', isa: 'XCBuildConfiguration', buildSettings: { ...sharedBuildSettings } },
       ];
       const xcConfigList = project.addXCConfigurationList(buildConfigs, 'Release', `Build configuration list for PBXNativeTarget "${extensionName}"`);
       if (!xcConfigList || !xcConfigList.uuid) return config;
@@ -218,10 +206,42 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
       );
     }
 
-    if (typeof project.updateBuildProperty === 'function') {
-      project.updateBuildProperty('INFOPLIST_FILE', quoted(`${extensionName}/Info.plist`), undefined, quoted(extensionName));
-      project.updateBuildProperty('CODE_SIGN_ENTITLEMENTS', quoted(`${extensionName}/${extensionName}.entitlements`), undefined, quoted(extensionName));
-      project.updateBuildProperty('IPHONEOS_DEPLOYMENT_TARGET', '"14.0"', undefined, quoted(extensionName));
+    // Directly patch build configurations belonging to this extension target.
+    // updateBuildProperty's target-name filter is unreliable; instead we find the
+    // target's XCConfigurationList and set properties on each XCBuildConfiguration.
+    const nativeTargetSection = project.pbxNativeTargetSection && project.pbxNativeTargetSection();
+    const configSection = project.pbxXCBuildConfigurationSection && project.pbxXCBuildConfigurationSection();
+    const configListSection = project.pbxXCConfigurationList && project.pbxXCConfigurationList();
+
+    if (nativeTargetSection && configSection && configListSection) {
+      // Find the extension target entry (may have quotes around name in pbxproj)
+      const extTargetEntry = Object.values(nativeTargetSection).find(
+        (t) => t && t.name && (t.name === extensionName || t.name === quoted(extensionName))
+      );
+
+      if (extTargetEntry && extTargetEntry.buildConfigurationList) {
+        const configListUuid = extTargetEntry.buildConfigurationList;
+        const configListEntry = configListSection[configListUuid];
+        if (configListEntry && configListEntry.buildConfigurations) {
+          const configUuids = configListEntry.buildConfigurations.map((c) =>
+            typeof c === 'object' ? c.value : c
+          );
+          for (const uuid of configUuids) {
+            const buildConfig = configSection[uuid];
+            if (buildConfig && buildConfig.buildSettings) {
+              buildConfig.buildSettings.SWIFT_VERSION = '"5.0"';
+              buildConfig.buildSettings.IPHONEOS_DEPLOYMENT_TARGET = '"16.0"';
+              buildConfig.buildSettings.TARGETED_DEVICE_FAMILY = '"1,2"';
+              buildConfig.buildSettings.SKIP_INSTALL = 'YES';
+              buildConfig.buildSettings.CODE_SIGN_STYLE = '"Automatic"';
+              buildConfig.buildSettings.DEVELOPMENT_TEAM = '"Q33K3Q7Q53"';
+              buildConfig.buildSettings.INFOPLIST_FILE = quoted(`${extensionName}/Info.plist`);
+              buildConfig.buildSettings.CODE_SIGN_ENTITLEMENTS = quoted(`${extensionName}/${extensionName}.entitlements`);
+              buildConfig.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = quoted(extBundleId);
+            }
+          }
+        }
+      }
     }
 
     return config;
