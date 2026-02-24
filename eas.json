@@ -63,12 +63,7 @@
       "ios": {
         "resourceClass": "m-medium",
         "distribution": "store",
-        "buildConfiguration": "Release",
-        "targets": {
-          "GrabDocsBroadcastUpload": {
-            "bundleIdentifier": "com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          }
-        }
+        "buildConfiguration": "Release"
       },
       "android": {
         "buildType": "app-bundle",
@@ -83,12 +78,7 @@
       },
       "ios": {
         "resourceClass": "m-medium",
-        "distribution": "store",
-        "targets": {
-          "GrabDocsBroadcastUpload": {
-            "bundleIdentifier": "com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          }
-        }
+        "distribution": "store"
       },
       "android": {
         "buildType": "apk",
@@ -102,12 +92,7 @@
       },
       "ios": {
         "resourceClass": "m-medium",
-        "distribution": "store",
-        "targets": {
-          "GrabDocsBroadcastUpload": {
-            "bundleIdentifier": "com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          }
-        }
+        "distribution": "store"
       }
     },
     "simple": {
@@ -116,12 +101,7 @@
       },
       "ios": {
         "resourceClass": "m-medium",
-        "distribution": "store",
-        "targets": {
-          "GrabDocsBroadcastUpload": {
-            "bundleIdentifier": "com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          }
-        }
+        "distribution": "store"
       }
     }
   },
