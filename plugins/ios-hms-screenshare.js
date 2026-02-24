@@ -273,16 +273,19 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.IPHONEOS_DEPLOYMENT_TARGET = '"16.0"';
               buildConfig.buildSettings.TARGETED_DEVICE_FAMILY = '"1,2"';
               buildConfig.buildSettings.SKIP_INSTALL = 'YES';
-              // Keep Automatic + DEVELOPMENT_TEAM so local/Xcode builds work.
-              // EAS local build overrides CODE_SIGN_STYLE to Manual and injects
-              // the extension profile fetched from EAS cloud (requires running
-              // `eas credentials --platform ios` once to register the extension
-              // bundle ID com.grabdocs.mobile.GrabDocsBroadcastUpload with EAS).
-              buildConfig.buildSettings.CODE_SIGN_STYLE = '"Automatic"';
               buildConfig.buildSettings.DEVELOPMENT_TEAM = '"Q33K3Q7Q53"';
               buildConfig.buildSettings.INFOPLIST_FILE = quoted(`${extensionName}/Info.plist`);
               buildConfig.buildSettings.CODE_SIGN_ENTITLEMENTS = quoted(`${extensionName}/${extensionName}.entitlements`);
               buildConfig.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = quoted(extBundleId);
+              // EAS overrides CODE_SIGN_STYLE to Manual and injects profile UUIDs for all
+              // managed targets. We must NOT set PROVISIONING_PROFILE_SPECIFIER by name —
+              // EAS uses UUID-based lookup and a name override would conflict with it.
+              // Setting Manual + Apple Distribution is enough for EAS to take over signing.
+              const isRelease = buildConfig.name && buildConfig.name === 'Release';
+              buildConfig.buildSettings.CODE_SIGN_STYLE = isRelease ? '"Manual"' : '"Automatic"';
+              if (isRelease) {
+                buildConfig.buildSettings.CODE_SIGN_IDENTITY = '"Apple Distribution"';
+              }
             }
           }
         }
