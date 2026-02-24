@@ -63,8 +63,7 @@
       "ios": {
         "resourceClass": "m-medium",
         "distribution": "store",
-        "buildConfiguration": "Release",
-        "customBuildConfig": ".eas/build/ios-production.yml"
+        "buildConfiguration": "Release"
       },
       "android": {
         "buildType": "app-bundle",
@@ -79,8 +78,7 @@
       },
       "ios": {
         "resourceClass": "m-medium",
-        "distribution": "store",
-        "customBuildConfig": ".eas/build/ios-production.yml"
+        "distribution": "store"
       },
       "android": {
         "buildType": "apk",
@@ -94,8 +92,7 @@
       },
       "ios": {
         "resourceClass": "m-medium",
-        "distribution": "store",
-        "customBuildConfig": ".eas/build/ios-production.yml"
+        "distribution": "store"
       }
     },
     "simple": {
@@ -104,8 +101,7 @@
       },
       "ios": {
         "resourceClass": "m-medium",
-        "distribution": "store",
-        "customBuildConfig": ".eas/build/ios-production.yml"
+        "distribution": "store"
       }
     }
   },

@@ -3,6 +3,7 @@
   "main": "./index.js",
   "version": "1.0.0",
   "scripts": {
+    "eas-build-post-install": "bash scripts/install-extension-profile.sh",
     "start": "expo start",
     "start:tunnel": "expo start --tunnel",
     "start:ios": "expo start --ios",
