@@ -98,7 +98,15 @@ jobs:
           cat ios/Podfile
           echo "========================================="
 
-          # Verify extension block is present AND comes after "target 'GrabDocs' do" (correct nesting)
+          # Ensure GrabDocsBroadcastUpload is nested inside the main app target.
+          # CocoaPods requires this or it throws "Unable to find host target(s) for GrabDocsBroadcastUpload".
+          node scripts/patch-ios-podfile.js
+
+          echo "===== PODFILE (after patch) ====="
+          cat ios/Podfile
+          echo "================================="
+
+          # Verify extension block is present AND nested (extension line after main target open, before main target close)
           MAIN_LINE=$(grep -n "^target 'GrabDocs' do" ios/Podfile | head -1 | cut -d: -f1)
           EXT_LINE=$(grep -n "target 'GrabDocsBroadcastUpload' do" ios/Podfile | head -1 | cut -d: -f1)
           if [ -n "$MAIN_LINE" ] && [ -n "$EXT_LINE" ] && [ "$EXT_LINE" -gt "$MAIN_LINE" ]; then
