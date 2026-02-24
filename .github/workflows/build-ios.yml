@@ -110,13 +110,22 @@ jobs:
             exit 1
           fi
 
-          # Also verify the extension target exists in the Xcode project — CocoaPods requires it.
+          # Also verify the extension target AND its embed phase exist in the Xcode project.
+          # CocoaPods checks user_target.embedded_targets (PBXCopyFilesBuildPhase with
+          # dstSubfolderSpec=13) to find the host. Without the phase it throws
+          # "Unable to find host target(s) for GrabDocsBroadcastUpload".
           PBXPROJ=$(find ios -name "project.pbxproj" | head -1)
           if [ -n "$PBXPROJ" ] && grep -q "GrabDocsBroadcastUpload" "$PBXPROJ"; then
             echo "✅ project.pbxproj: GrabDocsBroadcastUpload target found"
           else
-            echo "::error::project.pbxproj: GrabDocsBroadcastUpload target NOT found — plugin may have failed"
+            echo "::error::project.pbxproj: GrabDocsBroadcastUpload target NOT found — withXcodeProject plugin may have failed"
             [ -n "$PBXPROJ" ] && grep "PBXNativeTarget" "$PBXPROJ" | head -10
+            exit 1
+          fi
+          if [ -n "$PBXPROJ" ] && grep -q "Embed App Extensions" "$PBXPROJ"; then
+            echo "✅ project.pbxproj: Embed App Extensions phase found"
+          else
+            echo "::error::project.pbxproj: Embed App Extensions phase NOT found — CocoaPods will fail to locate host target"
             exit 1
           fi
 

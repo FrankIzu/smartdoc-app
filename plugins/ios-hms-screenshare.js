@@ -135,6 +135,27 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
       target = project.addTarget(extensionName, 'app_extension', extensionName, extBundleId);
       if (target && target.uuid) {
         targetUuid = target.uuid;
+
+        // xcode-js addTarget creates the extension target but does NOT add it to
+        // the main target's "Embed App Extensions" build phase. CocoaPods requires
+        // that embedding relationship in project.pbxproj to identify the host target
+        // (it calls user_target.embedded_targets on the xcodeproj). Without the phase,
+        // CocoaPods throws "Unable to find host target(s) for GrabDocsBroadcastUpload".
+        const mainTarget = project.getFirstTarget && project.getFirstTarget();
+        if (mainTarget && mainTarget.uuid) {
+          try {
+            project.addBuildPhase(
+              [`${extensionName}.appex`],
+              'PBXCopyFilesBuildPhase',
+              'Embed App Extensions',
+              mainTarget.uuid,
+              'app_extension'
+            );
+            console.log('[ios-hms-screenshare] ✅ Added Embed App Extensions phase to main target');
+          } catch (embedErr) {
+            console.warn('[ios-hms-screenshare] ⚠️  Could not add Embed App Extensions phase:', embedErr.message);
+          }
+        }
       }
     }
 
