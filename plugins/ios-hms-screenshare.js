@@ -114,22 +114,32 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
     const extBundleId = `${bundleId}.${extensionName}`;
     const quoted = (s) => `"${s}"`;
 
+    // Check if the extension target was already added (e.g. by expo.ios.appExtensions).
+    // If it exists, skip target creation but still apply build phases + build settings below.
     const nativeTargets = project.pbxNativeTargetSection && project.pbxNativeTargetSection();
-    if (nativeTargets && Object.keys(nativeTargets).filter((k) => !/comment$/.test(k)).length > 1) {
-      return config;
-    }
+    const existingExtTarget = nativeTargets && Object.values(nativeTargets).find(
+      (t) => t && t.name && (t.name === extensionName || t.name === quoted(extensionName))
+    );
 
     let targetUuid;
     let target;
 
-    if (typeof project.addTarget === 'function') {
+    if (existingExtTarget) {
+      // Target already exists — skip creation, jump straight to build settings patch below.
+      targetUuid = Object.keys(nativeTargets).find((k) => {
+        const t = nativeTargets[k];
+        return t && t.name && (t.name === extensionName || t.name === quoted(extensionName));
+      });
+    }
+
+    if (!existingExtTarget && typeof project.addTarget === 'function') {
       target = project.addTarget(extensionName, 'app_extension', extensionName, extBundleId);
       if (target && target.uuid) {
         targetUuid = target.uuid;
       }
     }
 
-    if (!targetUuid && typeof project.addToPbxNativeTargetSection === 'function') {
+    if (!existingExtTarget && !targetUuid && typeof project.addToPbxNativeTargetSection === 'function') {
       const mainTarget = project.getFirstTarget && project.getFirstTarget();
       if (!mainTarget || !mainTarget.uuid) return config;
 
@@ -145,7 +155,12 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
         SKIP_INSTALL: 'YES',
         PRODUCT_BUNDLE_IDENTIFIER: quoted(extBundleId),
         CODE_SIGN_ENTITLEMENTS: quoted(`${extensionName}/${extensionName}.entitlements`),
+        // Keep Automatic so Xcode can resolve signing when credentials are available.
+        // EAS overrides to Manual when it injects provisioning profiles from EAS cloud.
+        // Run `eas credentials --platform ios` once to register the extension bundle ID
+        // (com.grabdocs.mobile.GrabDocsBroadcastUpload) with EAS so it can inject a profile.
         CODE_SIGN_STYLE: '"Automatic"',
+        DEVELOPMENT_TEAM: '"Q33K3Q7Q53"',
         IPHONEOS_DEPLOYMENT_TARGET: '"16.0"',
         SWIFT_VERSION: '"5.0"',
         TARGETED_DEVICE_FAMILY: '"1,2"',
@@ -188,27 +203,52 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 
     if (!targetUuid) return config;
 
-    project.addBuildPhase(
-      [`${extensionName}/SampleHandler.swift`],
-      'PBXSourcesBuildPhase',
-      'Sources',
-      targetUuid
-    );
-    project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', targetUuid);
-
-    const replayKitFile = project.addFramework('ReplayKit.framework', { target: targetUuid, link: false });
-    if (replayKitFile) {
+    if (!existingExtTarget) {
+      // Target was created by this plugin — add all build phases fresh.
       project.addBuildPhase(
-        [replayKitFile.path || 'ReplayKit.framework'],
-        'PBXFrameworksBuildPhase',
-        'Frameworks',
+        [`${extensionName}/SampleHandler.swift`],
+        'PBXSourcesBuildPhase',
+        'Sources',
         targetUuid
       );
+      project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', targetUuid);
+
+      const replayKitFile = project.addFramework('ReplayKit.framework', { target: targetUuid, link: false });
+      if (replayKitFile) {
+        project.addBuildPhase(
+          [replayKitFile.path || 'ReplayKit.framework'],
+          'PBXFrameworksBuildPhase',
+          'Frameworks',
+          targetUuid
+        );
+      }
+    } else {
+      // Target was pre-created by expo.ios.appExtensions — ensure SampleHandler.swift is
+      // listed in the Sources build phase (Expo creates an empty one with no files).
+      try {
+        const buildPhaseSection = project.pbxSourcesBuildPhaseObj && project.pbxSourcesBuildPhaseObj(targetUuid);
+        const swiftPath = `${extensionName}/SampleHandler.swift`;
+        if (buildPhaseSection && buildPhaseSection.files) {
+          const alreadyListed = buildPhaseSection.files.some((f) => {
+            const ref = project.pbxBuildFileSection && project.pbxBuildFileSection()[f.value];
+            return ref && ref.fileRef_comment && ref.fileRef_comment.includes('SampleHandler.swift');
+          });
+          if (!alreadyListed) {
+            project.addBuildPhase([swiftPath], 'PBXSourcesBuildPhase', 'Sources', targetUuid);
+          }
+        } else {
+          project.addBuildPhase([swiftPath], 'PBXSourcesBuildPhase', 'Sources', targetUuid);
+        }
+      } catch (_) {
+        // pbxSourcesBuildPhaseObj may not exist on all xcode versions; fall back to addBuildPhase
+        project.addBuildPhase([`${extensionName}/SampleHandler.swift`], 'PBXSourcesBuildPhase', 'Sources', targetUuid);
+      }
     }
 
-    // Directly patch build configurations belonging to this extension target.
-    // updateBuildProperty's target-name filter is unreliable; instead we find the
-    // target's XCConfigurationList and set properties on each XCBuildConfiguration.
+    // Always patch build configurations — overwrite whatever appExtensions or addTarget set
+    // so our HMS-specific settings (INFOPLIST_FILE, CODE_SIGN_ENTITLEMENTS, etc.) win.
+    // updateBuildProperty's target-name filter is unreliable; we find the target's
+    // XCConfigurationList and set properties on each XCBuildConfiguration directly.
     const nativeTargetSection = project.pbxNativeTargetSection && project.pbxNativeTargetSection();
     const configSection = project.pbxXCBuildConfigurationSection && project.pbxXCBuildConfigurationSection();
     const configListSection = project.pbxXCConfigurationList && project.pbxXCConfigurationList();
@@ -233,6 +273,11 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.IPHONEOS_DEPLOYMENT_TARGET = '"16.0"';
               buildConfig.buildSettings.TARGETED_DEVICE_FAMILY = '"1,2"';
               buildConfig.buildSettings.SKIP_INSTALL = 'YES';
+              // Keep Automatic + DEVELOPMENT_TEAM so local/Xcode builds work.
+              // EAS local build overrides CODE_SIGN_STYLE to Manual and injects
+              // the extension profile fetched from EAS cloud (requires running
+              // `eas credentials --platform ios` once to register the extension
+              // bundle ID com.grabdocs.mobile.GrabDocsBroadcastUpload with EAS).
               buildConfig.buildSettings.CODE_SIGN_STYLE = '"Automatic"';
               buildConfig.buildSettings.DEVELOPMENT_TEAM = '"Q33K3Q7Q53"';
               buildConfig.buildSettings.INFOPLIST_FILE = quoted(`${extensionName}/Info.plist`);
@@ -391,10 +436,11 @@ function withHmsScreenshareExtension(config, options = {}) {
   config = withPodfileDangerousPatch(config, podfileOpts);
   config = withAppGroupEntitlements(config, { appGroup });
 
-  // Do NOT add appExtensions to extra.eas.build.experimental.ios - EAS tries to resolve
-  // extension targets by UUID and fails with "Cannot read properties of undefined" when
-  // the project was patched via string replacement. For prebuild+bare workflow, EAS
-  // auto-detects app extensions from the Xcode project.
+  // expo.ios.appExtensions in app.json declares the extension to EAS so that
+  // `eas credentials` shows it and manages a provisioning profile for it.
+  // The plugin handles source files, Info.plist, entitlements, and Podfile — it
+  // skips target creation when appExtensions has already created the target, but
+  // always overwrites the build settings so HMS-specific values win.
 
   return config;
 }

@@ -18,6 +18,15 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.grabdocs.mobile",
+      "appExtensions": [
+        {
+          "targetName": "GrabDocsBroadcastUpload",
+          "bundleIdentifier": "com.grabdocs.mobile.GrabDocsBroadcastUpload",
+          "entitlements": {
+            "com.apple.security.application-groups": ["group.com.grabdocs.mobile"]
+          }
+        }
+      ],
       "buildNumber": "1",
       "usesAppleSignIn": true,
       "associatedDomains": [

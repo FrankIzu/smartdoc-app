@@ -36,6 +36,10 @@ dist/
 *.key
 *.mobileprovision
 
+# Local iOS credentials (generated in CI from GitHub Secrets; never commit)
+credentials.json
+credentials/
+
 # Metro
 .metro-health-check*
 

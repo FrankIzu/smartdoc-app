@@ -64,6 +64,64 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up iOS local credentials from secrets
+        run: |
+          mkdir -p credentials/ios
+          echo "$IOS_DIST_CERT_P12_BASE64" | base64 --decode > credentials/ios/dist-cert.p12
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > credentials/ios/profile.mobileprovision
+          echo "$IOS_EXT_PROVISIONING_PROFILE_BASE64" | base64 --decode > credentials/ios/ext-profile.mobileprovision
+          cat > credentials.json << EOF
+          {
+            "ios": {
+              "com.grabdocs.mobile": {
+                "distributionCertificate": {
+                  "path": "credentials/ios/dist-cert.p12",
+                  "password": "$IOS_DIST_CERT_PASSWORD"
+                },
+                "provisioningProfilePath": "credentials/ios/profile.mobileprovision"
+              },
+              "com.grabdocs.mobile.GrabDocsBroadcastUpload": {
+                "distributionCertificate": {
+                  "path": "credentials/ios/dist-cert.p12",
+                  "password": "$IOS_DIST_CERT_PASSWORD"
+                },
+                "provisioningProfilePath": "credentials/ios/ext-profile.mobileprovision"
+              }
+            }
+          }
+          EOF
+          echo "✅ credentials.json written"
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_EXT_PROVISIONING_PROFILE_BASE64 }}
+
+      - name: Verify EAS credentials include extension target
+        run: |
+          # Fetch the credentials list from EAS and confirm that the broadcast extension
+          # bundle ID (com.grabdocs.mobile.GrabDocsBroadcastUpload) has a provisioning
+          # profile registered.  If it doesn't, the xcodebuild archive step will fail
+          # with "No profiles for 'com.grabdocs.mobile.GrabDocsBroadcastUpload' were found".
+          #
+          # Fix: run  eas credentials --platform ios  locally, select the
+          # GrabDocsBroadcastUpload target, and let EAS create/link a profile.
+          set +e
+          CREDS_OUTPUT=$(npx eas-cli credentials --platform ios --non-interactive 2>&1 || true)
+          echo "$CREDS_OUTPUT" | head -60
+          # A soft check — we grep for the extension bundle ID in whatever EAS outputs.
+          # This is best-effort; real failure will surface clearly in the EAS build step.
+          if echo "$CREDS_OUTPUT" | grep -q "GrabDocsBroadcastUpload"; then
+            echo "✅ GrabDocsBroadcastUpload credentials appear to be configured in EAS"
+          else
+            echo "⚠️  Could not confirm EAS credentials for com.grabdocs.mobile.GrabDocsBroadcastUpload"
+            echo "   If the build fails with 'No profiles for GrabDocsBroadcastUpload', run:"
+            echo "     eas credentials --platform ios"
+            echo "   This registers the extension App ID and provisioning profile with EAS."
+          fi
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
       - name: Prebuild iOS and verify Podfile patch
         run: |
           rm -rf ios
@@ -120,6 +178,14 @@ jobs:
             find /Users/runner /Users/expo /tmp -name "Podfile" -not -path "*/node_modules/*" 2>/dev/null | head -10 || true
           fi
           echo "======================================"
+
+      - name: Upload Xcode build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-build-logs
+          path: /tmp/eas-build-local-nodejs/**/logs/*.log
+          if-no-files-found: ignore
 
       - name: Fail if EAS build failed
         if: steps.eas_build.outcome == 'failure'
