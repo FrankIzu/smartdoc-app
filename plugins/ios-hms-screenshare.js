@@ -316,45 +316,76 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
   });
 }
 
+/** Main app target in Xcode/Podfile; must match exactly (plugin accepts both 'GrabDocs' and "GrabDocs" in Podfile). */
 const MAIN_APP_TARGET_NAME = 'GrabDocs';
 
 /**
  * Insert extension target INSIDE the main app target, immediately before its closing `end`.
- * CRITICAL: We must preserve the entire file — especially the preamble (require, platform, etc.)
- * — and only insert the extension block before the main target's closing `end`.
+ * Uses line-by-line parsing and block depth so we always find the correct closing `end`
+ * regardless of Podfile formatting (Expo can change require order, indentation, etc.).
  */
 function podfileInsertExtensionBlock(contents, extensionName, tag) {
-  const newBlock = [
-    '',
+  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
+  const lines = contents.split(/\r?\n/);
+
+  // Remove any existing extension block (wrong place or duplicate)
+  const tagStart = '# @generated begin ' + tag;
+  let filteredLines = lines;
+  if (contents.includes(tagStart)) {
+    const out = [];
+    let skip = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(tagStart)) {
+        skip = 1;
+        continue;
+      }
+      if (skip) {
+        if (lines[i].includes('# @generated end ' + tag)) skip = 0;
+        continue;
+      }
+      out.push(lines[i]);
+    }
+    filteredLines = out;
+  }
+
+  // Find first "target 'GrabDocs' do" or "target \"GrabDocs\" do" (not the extension)
+  const targetDoRe = new RegExp("^\\s*target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\s*$");
+  let mainTargetLineIndex = -1;
+  for (let i = 0; i < filteredLines.length; i++) {
+    if (targetDoRe.test(filteredLines[i])) {
+      mainTargetLineIndex = i;
+      break;
+    }
+  }
+  if (mainTargetLineIndex === -1) return contents;
+
+  // Find the matching "end" by block depth: each " do" line +1, each "end" line -1; at 0 we have main target's end
+  let depth = 1;
+  let closingLineIndex = -1;
+  for (let i = mainTargetLineIndex + 1; i < filteredLines.length; i++) {
+    const line = filteredLines[i];
+    if (/^\s*end\s*$/.test(line)) {
+      depth--;
+      if (depth === 0) {
+        closingLineIndex = i;
+        break;
+      }
+    } else if (/\s+do\s*$/.test(line)) {
+      depth++;
+    }
+  }
+  if (closingLineIndex === -1) return contents;
+
+  const extensionBlock = [
     '  target \'' + extensionName + '\' do',
     '    inherit! :search_paths',
     '    use_modular_headers!',
-    "    pod 'HMSBroadcastExtensionSDK'",
+    "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
     '  end',
-  ].join('\n');
-
-  // Remove any existing generated block (wrong place or duplicate)
-  const tagStart = '# @generated begin ' + tag;
-  const tagEnd = '# @generated end ' + tag;
-  if (contents.includes(tagStart)) {
-    contents = contents.replace(
-      new RegExp('\\s*' + tagStart.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?' + tagEnd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\n?', 'g'),
-      ''
-    );
-  }
-
-  // Capture: [preamble][target line][body until last end][closing end] — preserve preamble so require/platform stay intact
-  // Closing: allow \r\n and trailing newlines so we match Expo-generated Podfiles on any OS
-  const escapedName = MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const mainTargetRegex = new RegExp(
-    '^([\\s\\S]*?)(target\\s+[\'"]' + escapedName + '[\'"]\\s+do)([\\s\\S]*)(\\r?\\n\\s*end\\s*)(?:\\r?\\n)*$'
-  );
-  const match = contents.match(mainTargetRegex);
-  if (match) {
-    const [, preamble, open, middle, closing] = match;
-    return preamble + open + middle + newBlock + closing;
-  }
-  return contents;
+  ];
+  const before = filteredLines.slice(0, closingLineIndex).join(lineEnding);
+  const after = filteredLines.slice(closingLineIndex).join(lineEnding);
+  return before + lineEnding + extensionBlock.join(lineEnding) + lineEnding + after;
 }
 
 /**
