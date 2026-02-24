@@ -134,15 +134,22 @@ jobs:
             exit 1
           fi
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          FALLBACK_UUID="f5a9c6da-0810-4a56-8963-3cb9894f83a1"
           mkdir -p "$PROFILE_DIR"
-          echo "$EXT_PROVISIONING_PROFILE_BASE64" | base64 --decode > /tmp/ext.mobileprovision
+          # Strip newlines in case the secret was pasted with line breaks
+          echo "$EXT_PROVISIONING_PROFILE_BASE64" | tr -d '\n' | base64 --decode > /tmp/ext.mobileprovision
+          if [ ! -s /tmp/ext.mobileprovision ]; then
+            echo "::error::Failed to decode EXT_PROVISIONING_PROFILE_BASE64 (empty or invalid base64). Ensure the secret is a single line, no line breaks."
+            exit 1
+          fi
           UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-          if [ -n "$UUID" ]; then
+          # Use extracted UUID only if it looks like a UUID (hex and hyphens); otherwise fallback
+          if [ -n "$UUID" ] && [ "${#UUID}" -eq 36 ] && echo "$UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
             echo "✅ Installed extension profile: $UUID"
           else
-            cp /tmp/ext.mobileprovision "$PROFILE_DIR/f5a9c6da-0810-4a56-8963-3cb9894f83a1.mobileprovision"
-            echo "✅ Installed extension profile (fallback UUID)"
+            cp /tmp/ext.mobileprovision "$PROFILE_DIR/$FALLBACK_UUID.mobileprovision"
+            echo "✅ Installed extension profile (fallback UUID: $FALLBACK_UUID)"
           fi
         env:
           EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
