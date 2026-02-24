@@ -3,7 +3,7 @@
   "main": "./index.js",
   "version": "1.0.0",
   "scripts": {
-    "eas-build-post-install": "(tr -d '\\r' < scripts/install-extension-profile.sh | bash) || true; if [ -f ios/Podfile ]; then node scripts/patch-ios-podfile.js; fi",
+    "eas-build-post-install": "(tr -d '\\r' < scripts/install-extension-profile.sh | bash) || true",
     "start": "expo start",
     "start:tunnel": "expo start --tunnel",
     "start:ios": "expo start --ios",

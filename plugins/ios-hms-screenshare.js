@@ -320,9 +320,8 @@ const MAIN_APP_TARGET_NAME = 'GrabDocs';
 
 /**
  * Insert extension target INSIDE the main app target, immediately before its closing `end`.
- * Uses regex: match from "target 'GrabDocs' do" to the LAST "end" in the file — that final
- * "end" closes the main target, so we insert the extension block right before it.
- * This works regardless of post_install indentation or Expo Podfile format changes.
+ * CRITICAL: We must preserve the entire file — especially the preamble (require, platform, etc.)
+ * — and only insert the extension block before the main target's closing `end`.
  */
 function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const newBlock = [
@@ -344,15 +343,15 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     );
   }
 
-  // Match main target and everything up to the final "end" — insert extension before that "end"
+  // Capture: [preamble][target line][body until last end][closing end] — preserve preamble so require/platform stay intact
   const escapedName = MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const mainTargetRegex = new RegExp(
-    "(target\\s+['\"]" + escapedName + "['\"]\\s+do)([\\s\\S]*)(\\n\\s*end\\s*)$"
+    '^([\\s\\S]*?)(target\\s+[\'"]' + escapedName + '[\'"]\\s+do)([\\s\\S]*)(\\n\\s*end\\s*)$'
   );
   const match = contents.match(mainTargetRegex);
   if (match) {
-    const [, open, middle, closing] = match;
-    return open + middle + newBlock + closing;
+    const [, preamble, open, middle, closing] = match;
+    return preamble + open + middle + newBlock + closing;
   }
   return contents;
 }
@@ -392,43 +391,6 @@ function withPodfileEntry(config, { extensionName }) {
     }
     return config;
   });
-}
-
-/**
- * Safety net: if withPodfile didn't run or Podfile was written later, patch on disk.
- * Uses same logic as withPodfileEntry: insert extension before main target's closing `end`.
- */
-function withPodfileDangerousPatch(config, { extensionName }) {
-  return withDangerousMod(config, [
-    'ios',
-    async (config) => {
-      const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
-
-      if (!fs.existsSync(podfilePath)) {
-        console.warn('[ios-hms-screenshare] withDangerousMod: Podfile not found at', podfilePath, '— normal if withPodfile writes it later');
-        return config;
-      }
-
-      let contents = fs.readFileSync(podfilePath, 'utf8');
-      const tag = 'ios-hms-screenshare-' + extensionName;
-
-      const mainTargetStart = contents.indexOf("target '" + MAIN_APP_TARGET_NAME + "' do");
-      const extBlockStart = contents.indexOf("target '" + extensionName + "' do");
-      if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
-        console.log('[ios-hms-screenshare] ✅ withPodfileDangerousPatch: extension already nested');
-        return config;
-      }
-
-      const resultContents = podfileInsertExtensionBlock(contents, extensionName, tag);
-      if (resultContents === contents) {
-        console.error('[ios-hms-screenshare] ❌ withDangerousMod: could not find main target "' + MAIN_APP_TARGET_NAME + '" in Podfile.');
-        throw new Error('[ios-hms-screenshare] withDangerousMod: could not nest ' + extensionName + ' in Podfile.');
-      }
-      fs.writeFileSync(podfilePath, resultContents);
-      console.log('[ios-hms-screenshare] ✅ withPodfileDangerousPatch: Podfile patched on disk');
-      return config;
-    },
-  ]);
 }
 
 /**
@@ -516,7 +478,6 @@ function withHmsScreenshareExtension(config, options = {}) {
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
   config = withExtensionProfileInstallPhase(config, { extensionName });
   config = withPodfileEntry(config, podfileOpts);
-  config = withPodfileDangerousPatch(config, podfileOpts);
   config = withAppGroupEntitlements(config, { appGroup });
 
   // expo.ios.appExtensions in app.json declares the extension to EAS so that
