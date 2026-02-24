@@ -129,6 +129,6 @@ dev-files/
 *.zip
 *.tgz
 
-# NOTE: Do NOT add ios/ here. Our workflow runs prebuild, verifies the Podfile has the
-# nested GrabDocsBroadcastUpload target, then EAS uses that ios. If ios/ were ignored,
-# EAS would run its own prebuild and the Podfile mod might not apply correctly.
+# iOS native folder: ignored so EAS always runs prebuild (CNG). The plugin
+# plugins/ios-hms-screenshare creates the Broadcast Upload Extension and patches the Podfile.
+ios/

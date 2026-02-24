@@ -17,6 +17,7 @@ const {
 } = require('expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 // @expo/plist exports { default: { parse, build } }; use .default for CommonJS
 const plist = require('@expo/plist').default || require('@expo/plist');
 
@@ -443,6 +444,16 @@ function withPodfileDangerousPatch(config, { extensionName }) {
       const resultContents = podfileInsertExtensionBlock(contentsToPatch, extensionName, tag);
       fs.writeFileSync(podfilePath, resultContents);
       console.log('[ios-hms-screenshare] ✅ withDangerousMod: Podfile patched on disk');
+      // Guarantee nesting by running patch-ios-podfile.js (idempotent).
+      const projectRoot = config.modRequest.projectRoot;
+      const patchScript = path.join(projectRoot, 'scripts', 'patch-ios-podfile.js');
+      if (fs.existsSync(patchScript)) {
+        try {
+          execSync(`node "${patchScript}"`, { cwd: projectRoot, stdio: 'inherit' });
+        } catch (e) {
+          console.warn('[ios-hms-screenshare] patch-ios-podfile.js failed (non-fatal):', e.message);
+        }
+      }
       return config;
     },
   ]);

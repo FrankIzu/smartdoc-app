@@ -89,66 +89,8 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Prebuild iOS and verify Podfile patch
-        run: |
-          rm -rf ios
-          npx expo prebuild --platform ios --no-install
-
-          echo "===== FULL PODFILE (after prebuild) ====="
-          cat ios/Podfile
-          echo "========================================="
-
-          # Ensure GrabDocsBroadcastUpload is nested inside the main app target.
-          # CocoaPods requires this or it throws "Unable to find host target(s) for GrabDocsBroadcastUpload".
-          node scripts/patch-ios-podfile.js
-
-          echo "===== PODFILE (after patch) ====="
-          cat ios/Podfile
-          echo "================================="
-
-          # Verify extension block is present AND nested (extension line after main target open, before main target close)
-          MAIN_LINE=$(grep -n "^target 'GrabDocs' do" ios/Podfile | head -1 | cut -d: -f1)
-          EXT_LINE=$(grep -n "target 'GrabDocsBroadcastUpload' do" ios/Podfile | head -1 | cut -d: -f1)
-          if [ -n "$MAIN_LINE" ] && [ -n "$EXT_LINE" ] && [ "$EXT_LINE" -gt "$MAIN_LINE" ]; then
-            echo "✅ Podfile: GrabDocsBroadcastUpload correctly nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
-          else
-            echo "::error::Podfile: GrabDocsBroadcastUpload missing or not nested inside main target (main:$MAIN_LINE ext:$EXT_LINE)"
-            echo "--- Podfile ---"
-            cat ios/Podfile
-            exit 1
-          fi
-
-          # Also verify the extension target AND its embed phase exist in the Xcode project.
-          # CocoaPods checks user_target.embedded_targets (PBXCopyFilesBuildPhase with
-          # dstSubfolderSpec=13) to find the host. Without the phase it throws
-          # "Unable to find host target(s) for GrabDocsBroadcastUpload".
-          PBXPROJ=$(find ios -name "project.pbxproj" | head -1)
-          if [ -n "$PBXPROJ" ] && grep -q "GrabDocsBroadcastUpload" "$PBXPROJ"; then
-            echo "✅ project.pbxproj: GrabDocsBroadcastUpload target found"
-          else
-            echo "::error::project.pbxproj: GrabDocsBroadcastUpload target NOT found — withXcodeProject plugin may have failed"
-            [ -n "$PBXPROJ" ] && grep "PBXNativeTarget" "$PBXPROJ" | head -10
-            exit 1
-          fi
-          if [ -n "$PBXPROJ" ] && grep -q "Embed App Extensions" "$PBXPROJ"; then
-            echo "✅ project.pbxproj: Embed App Extensions phase found"
-          else
-            echo "::error::project.pbxproj: Embed App Extensions phase NOT found — CocoaPods will fail to locate host target"
-            exit 1
-          fi
-
-          # NOTE: do NOT delete ios/ here. EAS --local will use this prebuild output
-          # directly (ios/ is not in .easignore), so it skips its own prebuild and uses
-          # the already-patched Podfile. This is the key fix.
-          echo "✅ ios/ preserved for EAS to use directly"
-
-      - name: Upload Podfile for verification
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-podfile-verify
-          path: ios/Podfile
-        if: always()
-
+      # ios/ is in .easignore, so EAS will run prebuild. The plugin ios-hms-screenshare
+      # creates the Broadcast Upload Extension and patches the Podfile (nested target).
       - name: Install extension provisioning profile (App Groups)
         run: |
           # EAS does not install extension profiles for local builds; Xcode needs the
