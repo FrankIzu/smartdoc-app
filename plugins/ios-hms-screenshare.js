@@ -15,7 +15,6 @@ const {
   withPodfile,
   withEntitlementsPlist,
 } = require('expo/config-plugins');
-const { mergeContents } = require('@expo/config-plugins/build/utils/generateCode');
 const fs = require('fs');
 const path = require('path');
 // @expo/plist exports { default: { parse, build } }; use .default for CommonJS
@@ -296,13 +295,25 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
   });
 }
 
+/** Unique pattern at end of Podfile: post_install's "  end" then main target's "end". Insert extension block before it. */
+const PODFILE_MAIN_TARGET_END = /  end\s*\r?\nend\s*$/;
+
+function podfileInsertExtensionBlock(contents, extensionName, tag) {
+  const newBlock = [
+    '# @generated begin ' + tag + ' - expo prebuild (DO NOT MODIFY) sync-f159178a1fba6c4b1532a9d27cbb08ddbe3d5827',
+    "  target '" + extensionName + "' do",
+    '    inherit! :search_paths',
+    '    use_modular_headers!',
+    "    pod 'HMSBroadcastExtensionSDK'",
+    '  end',
+    '# @generated end ' + tag,
+  ].join('\n');
+  return contents.replace(PODFILE_MAIN_TARGET_END, newBlock + '\n  end\nend');
+}
+
 /**
- * Add the extension target nested inside the main app target using Expo's official
- * mergeContents utility. This is idempotent (tagged), battle-tested, and does NOT
- * depend on main target name or indentation heuristics.
- *
- * Anchor: the first unindented `end` in the Podfile = closing end of the main target.
- * The extension block is inserted BEFORE that line (offset: 0).
+ * Add the extension target nested inside the main app target.
+ * Uses the unique "  end\nend" at end of Podfile (post_install + target close) so we never insert inside def ccache_enabled?.
  */
 function withPodfileEntry(config, { extensionName }) {
   return withPodfile(config, (config) => {
@@ -315,59 +326,40 @@ function withPodfileEntry(config, { extensionName }) {
     }
 
     const tag = 'ios-hms-screenshare-' + extensionName;
-    // If already merged (tag present), skip.
+    let srcToPatch = src;
     if (src.includes('# @generated begin ' + tag)) {
-      console.log('[ios-hms-screenshare] ✅ withPodfile: already merged');
-      return config;
+      const mainTargetStart = src.indexOf("target 'GrabDocs' do");
+      const extBlockStart = src.indexOf("  target '" + extensionName + "' do");
+      if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
+        console.log('[ios-hms-screenshare] ✅ withPodfile: already merged');
+        return config;
+      }
+      // Tag present but in wrong place — remove block then re-insert below.
+      srcToPatch = src.replace(
+        new RegExp('# @generated begin ' + tag + '[\\s\\S]*?# @generated end ' + tag + '\\s*\\n?', 'g'),
+        ''
+      );
     }
 
-    const newSrc = [
-      "  target '" + extensionName + "' do",
-      '    inherit! :search_paths',
-      '    use_modular_headers!',
-      "    pod 'HMSBroadcastExtensionSDK'",
-      '  end',
-    ].join('\n');
-
-    // Anchor = the LAST unindented `end` in the Podfile (= main target's closing end).
-    // The first ^end$ is the def ccache_enabled? method's end — we must not insert there.
-    const anchor = /^end\s*$(?=\n?\s*$)/m;
-
-    let result;
-    try {
-      result = mergeContents({
-        tag,
-        src,
-        newSrc,
-        anchor,
-        offset: 0,
-        comment: '#',
-      });
-    } catch (e) {
-      console.error('[ios-hms-screenshare] ❌ mergeContents failed:', e.message);
-      console.error('[ios-hms-screenshare] Full Podfile:\n' + src);
-      throw e;
+    if (!PODFILE_MAIN_TARGET_END.test(srcToPatch)) {
+      console.error('[ios-hms-screenshare] ❌ Podfile missing main target end pattern "  end\\nend" at end.');
+      throw new Error('[ios-hms-screenshare] Could not find main target end in Podfile to insert ' + extensionName + '.');
     }
 
-    if (!result.didMerge) {
-      console.error('[ios-hms-screenshare] ❌ mergeContents anchor not found. Full Podfile:\n' + src);
-      throw new Error('[ios-hms-screenshare] Could not find main target closing `end` in Podfile to insert ' + extensionName + '.');
-    }
-
-    console.log('[ios-hms-screenshare] ✅ withPodfile: mergeContents applied');
+    const resultContents = podfileInsertExtensionBlock(srcToPatch, extensionName, tag);
+    console.log('[ios-hms-screenshare] ✅ withPodfile: extension block inserted');
     if (typeof data === 'string') {
-      config.modResults = result.contents;
+      config.modResults = resultContents;
     } else {
-      config.modResults = { ...data, contents: result.contents };
+      config.modResults = { ...data, contents: resultContents };
     }
     return config;
   });
 }
 
 /**
- * Safety net: if mergeContents in withPodfile didn't apply (e.g. Podfile written
- * after withPodfile runs), write the patch directly to disk. Throws with the full
- * Podfile if it still can't be patched so the build fails fast with useful diagnostics.
+ * Safety net: if withPodfile didn't run or Podfile was written later, patch on disk.
+ * Uses same "  end\nend" pattern so extension is always inside main target.
  */
 function withPodfileDangerousPatch(config, { extensionName }) {
   return withDangerousMod(config, [
@@ -395,40 +387,21 @@ function withPodfileDangerousPatch(config, { extensionName }) {
         return config;
       }
       // If tag exists but in wrong place (e.g. inside def ccache_enabled?), remove it then re-insert.
+      let contentsToPatch = contents;
       if (contents.includes('# @generated begin ' + tag)) {
-        contents = contents.replace(
-          new RegExp(
-            '# @generated begin ' + tag + '[\\s\\S]*?# @generated end ' + tag + '\\s*\\n?',
-            'g'
-          ),
+        contentsToPatch = contents.replace(
+          new RegExp('# @generated begin ' + tag + '[\\s\\S]*?# @generated end ' + tag + '\\s*\\n?', 'g'),
           ''
         );
       }
 
-      const newSrc = [
-        "  target '" + extensionName + "' do",
-        '    inherit! :search_paths',
-        '    use_modular_headers!',
-        "    pod 'HMSBroadcastExtensionSDK'",
-        '  end',
-      ].join('\n');
-
-      const anchor = /^end\s*$(?=\n?\s*$)/m;
-      let result;
-      try {
-        result = mergeContents({ tag, src: contents, newSrc, anchor, offset: 0, comment: '#' });
-      } catch (e) {
-        console.error('[ios-hms-screenshare] ❌ withDangerousMod mergeContents failed:', e.message);
-        console.error('[ios-hms-screenshare] Full Podfile:\n' + contents);
-        throw e;
-      }
-
-      if (!result.didMerge) {
-        console.error('[ios-hms-screenshare] ❌ withDangerousMod anchor not found. Full Podfile:\n' + contents);
+      if (!PODFILE_MAIN_TARGET_END.test(contentsToPatch)) {
+        console.error('[ios-hms-screenshare] ❌ withDangerousMod: Podfile missing "  end\\nend" at end.\n' + contentsToPatch);
         throw new Error('[ios-hms-screenshare] withDangerousMod: anchor not found in Podfile for ' + extensionName);
       }
 
-      fs.writeFileSync(podfilePath, result.contents);
+      const resultContents = podfileInsertExtensionBlock(contentsToPatch, extensionName, tag);
+      fs.writeFileSync(podfilePath, resultContents);
       console.log('[ios-hms-screenshare] ✅ withDangerousMod: Podfile patched on disk');
       return config;
     },
