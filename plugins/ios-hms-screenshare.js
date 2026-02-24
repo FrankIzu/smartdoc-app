@@ -389,6 +389,41 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
 }
 
 /**
+ * After all mods, patch the Podfile on disk so the extension target is nested inside the main app target.
+ * EAS/Expo can overwrite the Podfile after withPodfile runs; this ensures the final file on disk is correct.
+ */
+function withPodfilePatchOnDisk(config, { extensionName }) {
+  return withDangerousMod(config, [
+    'ios',
+    async (config) => {
+      const iosRoot = config.modRequest.platformProjectRoot;
+      const podfilePath = path.join(iosRoot, 'Podfile');
+      if (!fs.existsSync(podfilePath)) {
+        console.warn('[ios-hms-screenshare] Podfile not found at', podfilePath, '— skipping disk patch');
+        return config;
+      }
+      const contents = fs.readFileSync(podfilePath, 'utf8');
+      const tag = 'ios-hms-screenshare-' + extensionName;
+      const mainTargetRe = new RegExp("target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do");
+      const mainTargetStart = mainTargetRe.test(contents) ? contents.search(mainTargetRe) : -1;
+      const extBlockStart = contents.indexOf("target '" + extensionName + "' do");
+      if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
+        console.log('[ios-hms-screenshare] ✅ Podfile on disk: extension already nested inside main target');
+        return config;
+      }
+      const resultContents = podfileInsertExtensionBlock(contents, extensionName, tag);
+      if (resultContents === contents) {
+        console.error('[ios-hms-screenshare] ❌ Podfile (disk): could not find main target "' + MAIN_APP_TARGET_NAME + '" or insertion point.');
+        throw new Error('[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile. Check that the main app target is named "' + MAIN_APP_TARGET_NAME + '".');
+      }
+      fs.writeFileSync(podfilePath, resultContents);
+      console.log('[ios-hms-screenshare] ✅ Podfile patched on disk: extension nested inside main target');
+      return config;
+    },
+  ]);
+}
+
+/**
  * Add the extension target nested inside the main app target.
  * Inserts immediately before the main target's closing `end` so CocoaPods sees the host relationship.
  */
@@ -403,7 +438,8 @@ function withPodfileEntry(config, { extensionName }) {
     }
 
     const tag = 'ios-hms-screenshare-' + extensionName;
-    const mainTargetStart = src.indexOf("target '" + MAIN_APP_TARGET_NAME + "' do");
+    const mainTargetRe = new RegExp("target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do");
+    const mainTargetStart = mainTargetRe.test(src) ? src.search(mainTargetRe) : -1;
     const extBlockStart = src.indexOf("target '" + extensionName + "' do");
     if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
       console.log('[ios-hms-screenshare] ✅ withPodfile: extension already nested inside main target');
@@ -510,6 +546,8 @@ function withHmsScreenshareExtension(config, options = {}) {
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
   config = withExtensionProfileInstallPhase(config, { extensionName });
   config = withPodfileEntry(config, podfileOpts);
+  // Patch Podfile on disk after all mods so extension is nested in main target (EAS can overwrite Podfile; this runs last).
+  config = withPodfilePatchOnDisk(config, podfileOpts);
   config = withAppGroupEntitlements(config, { appGroup });
 
   // expo.ios.appExtensions in app.json declares the extension to EAS so that
