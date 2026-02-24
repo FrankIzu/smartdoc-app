@@ -1,36 +1,29 @@
 #!/bin/bash
-# Installs the GrabDocsBroadcastUpload provisioning profile before xcodebuild.
-# Runs via eas-build-post-install (after pod install, before archive).
-# EXT_PROVISIONING_PROFILE is a file-type EAS env var: its value is the path
-# to the decoded .mobileprovision file written to disk by EAS.
-
-if [ "$EAS_BUILD_PLATFORM" != "ios" ]; then
-  echo "[install-extension-profile] Not an iOS build, skipping."
-  exit 0
-fi
-
-if [ -z "$EXT_PROVISIONING_PROFILE" ]; then
-  echo "[install-extension-profile] EXT_PROVISIONING_PROFILE not set, skipping."
-  exit 0
-fi
-
-if [ ! -f "$EXT_PROVISIONING_PROFILE" ]; then
-  echo "[install-extension-profile] File not found at: $EXT_PROVISIONING_PROFILE"
-  exit 0
-fi
+# Runs after pod install (eas-build-post-install hook).
+# Checks if EAS already installed the extension profile (it should if credentials are set up).
+# If not, installs it from the EXT_PROVISIONING_PROFILE file-type env var.
 
 PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-mkdir -p "$PROFILE_DIR"
+EXT_UUID="f5a9c6da-0810-4a56-8963-3cb9894f83a1"
+EXT_PROFILE_PATH="$PROFILE_DIR/$EXT_UUID.mobileprovision"
 
-# Xcode identifies profiles by the UUID embedded INSIDE the file, not the filename.
-# Copying with a recognisable name is sufficient.
-DEST="$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
-cp "$EXT_PROVISIONING_PROFILE" "$DEST"
+echo "[install-extension-profile] Provisioning profiles directory:"
+ls -la "$PROFILE_DIR" 2>/dev/null || echo "  (directory does not exist yet)"
 
-if [ -f "$DEST" ]; then
-  echo "[install-extension-profile] Installed: $DEST"
-  ls -la "$DEST"
-else
-  echo "[install-extension-profile] ERROR: copy failed"
-  exit 1
+if [ -f "$EXT_PROFILE_PATH" ]; then
+  echo "[install-extension-profile] Extension profile already installed by EAS: $EXT_PROFILE_PATH"
+  exit 0
 fi
+
+echo "[install-extension-profile] Extension profile NOT found at $EXT_PROFILE_PATH"
+
+if [ -n "$EXT_PROVISIONING_PROFILE" ] && [ -f "$EXT_PROVISIONING_PROFILE" ]; then
+  mkdir -p "$PROFILE_DIR"
+  cp "$EXT_PROVISIONING_PROFILE" "$EXT_PROFILE_PATH"
+  echo "[install-extension-profile] Installed from EXT_PROVISIONING_PROFILE env var: $EXT_PROFILE_PATH"
+  exit 0
+fi
+
+echo "[install-extension-profile] WARNING: Could not install extension profile - EXT_PROVISIONING_PROFILE not set or file missing"
+echo "[install-extension-profile] Listing all installed profiles:"
+ls -la "$PROFILE_DIR" 2>/dev/null
