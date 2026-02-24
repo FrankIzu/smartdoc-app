@@ -277,14 +277,15 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.INFOPLIST_FILE = quoted(`${extensionName}/Info.plist`);
               buildConfig.buildSettings.CODE_SIGN_ENTITLEMENTS = quoted(`${extensionName}/${extensionName}.entitlements`);
               buildConfig.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = quoted(extBundleId);
-              // EAS overrides CODE_SIGN_STYLE to Manual and injects profile UUIDs for all
-              // managed targets. We must NOT set PROVISIONING_PROFILE_SPECIFIER by name —
-              // EAS uses UUID-based lookup and a name override would conflict with it.
-              // Setting Manual + Apple Distribution is enough for EAS to take over signing.
               const isRelease = buildConfig.name && buildConfig.name === 'Release';
               buildConfig.buildSettings.CODE_SIGN_STYLE = isRelease ? '"Manual"' : '"Automatic"';
               if (isRelease) {
                 buildConfig.buildSettings.CODE_SIGN_IDENTITY = '"Apple Distribution"';
+                // Specifier can be profile name or UUID. EAS uploaded profile:
+                // Name: "GrabDocsBroadcastUpload AppStore"
+                // UUID: f5a9c6da-0810-4a56-8963-3cb9894f83a1
+                buildConfig.buildSettings.PROVISIONING_PROFILE = '"f5a9c6da-0810-4a56-8963-3cb9894f83a1"';
+                buildConfig.buildSettings.PROVISIONING_PROFILE_SPECIFIER = '"GrabDocsBroadcastUpload AppStore"';
               }
             }
           }
