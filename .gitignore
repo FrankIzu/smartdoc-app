@@ -39,6 +39,7 @@ dist/
 # Local iOS credentials (generated in CI from GitHub Secrets; never commit)
 credentials.json
 credentials/
+ext-profile-base64.txt
 
 # Metro
 .metro-health-check*

@@ -125,6 +125,28 @@ jobs:
           path: ios/Podfile
         if: always()
 
+      - name: Install extension provisioning profile (App Groups)
+        run: |
+          # EAS does not install extension profiles for local builds; Xcode needs the
+          # GrabDocsBroadcastUpload profile (with App Groups) in the standard location.
+          if [ -z "$EXT_PROVISIONING_PROFILE_BASE64" ]; then
+            echo "::error::EXT_PROVISIONING_PROFILE_BASE64 secret is not set. Add the base64-encoded GrabDocsBroadcastUpload .mobileprovision (with App Groups) as a GitHub secret."
+            exit 1
+          fi
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          echo "$EXT_PROVISIONING_PROFILE_BASE64" | base64 --decode > /tmp/ext.mobileprovision
+          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+          if [ -n "$UUID" ]; then
+            cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
+            echo "✅ Installed extension profile: $UUID"
+          else
+            cp /tmp/ext.mobileprovision "$PROFILE_DIR/f5a9c6da-0810-4a56-8963-3cb9894f83a1.mobileprovision"
+            echo "✅ Installed extension profile (fallback UUID)"
+          fi
+        env:
+          EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
+
       - name: EAS Build (local)
         id: eas_build
         continue-on-error: true
