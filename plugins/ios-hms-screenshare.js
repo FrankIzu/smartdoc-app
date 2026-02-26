@@ -331,6 +331,19 @@ function podfileEnsureNewArchDisabled(contents) {
 }
 
 /**
+ * True only when the extension target is INDENTED (i.e. nested inside a parent target).
+ * Checks for a newline followed by at least one space/tab before `target 'Ext' do`.
+ * A top-level (root) target would have no leading whitespace and would fail this check.
+ */
+function isExtensionProperlyNested(podfile, extensionName) {
+  return new RegExp(
+    '\n[ \t]+target\\s+[\'"]' +
+    extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+    '[\'"]\\s+do\\b'
+  ).test(podfile);
+}
+
+/**
  * Insert extension target INSIDE the main app target, immediately BEFORE use_react_native!(.
  * We do not use "insert before closing end" because Ruby has if/else/case blocks whose
  * end would be found first by naive depth counting, putting the extension inside the
@@ -473,11 +486,10 @@ function withPodfileEntry(config, { extensionName }) {
     let working = podfileEnsureNewArchDisabled(src);
 
     const tag = 'ios-hms-screenshare-' + extensionName;
-    const mainTargetRe = new RegExp("target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do");
-    const mainTargetStart = mainTargetRe.test(working) ? working.search(mainTargetRe) : -1;
-    const extBlockStart = working.indexOf("target '" + extensionName + "' do");
-    if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
-      console.log('[ios-hms-screenshare] ✅ withPodfile: extension already nested inside main target');
+
+    // Correct check: extension must be INDENTED (nested), not just anywhere after the main target.
+    if (isExtensionProperlyNested(working, extensionName)) {
+      console.log('[ios-hms-screenshare] ✅ withPodfile: extension already properly nested inside main target');
       if (working !== src) {
         if (typeof data === 'string') config.modResults = working;
         else config.modResults = { ...data, contents: working };
@@ -486,7 +498,7 @@ function withPodfileEntry(config, { extensionName }) {
     }
 
     let resultContents = podfileInsertExtensionBlock(working, extensionName, tag);
-    if (resultContents === src) {
+    if (resultContents === working) {
       console.error('[ios-hms-screenshare] ❌ Podfile: could not find main target "' + MAIN_APP_TARGET_NAME + '" or insertion point.');
       throw new Error('[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile. Check that the main app target is named "' + MAIN_APP_TARGET_NAME + '".');
     }
@@ -564,6 +576,48 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
   ]);
 }
 
+/**
+ * Safety-net: after all config-plugin Podfile mods are written to disk, read it back
+ * and verify the extension is properly nested. If not (e.g. another plugin overwrote it or
+ * the withPodfile modResults had empty content), patch the disk file directly.
+ * withDangerousMod for ios runs AFTER withPodfile in Expo's mod pipeline, so this always
+ * sees the final on-disk Podfile.
+ */
+function withPodfilePatchOnDisk(config, { extensionName }) {
+  return withDangerousMod(config, [
+    'ios',
+    async (config) => {
+      const iosRoot = config.modRequest.platformProjectRoot;
+      const podfilePath = path.join(iosRoot, 'Podfile');
+      if (!fs.existsSync(podfilePath)) {
+        console.warn('[ios-hms-screenshare] Podfile not found at', podfilePath, '— skipping disk patch');
+        return config;
+      }
+      let contents = fs.readFileSync(podfilePath, 'utf8');
+
+      if (isExtensionProperlyNested(contents, extensionName)) {
+        console.log('[ios-hms-screenshare] ✅ Podfile on disk: extension already properly nested');
+        return config;
+      }
+
+      console.warn('[ios-hms-screenshare] ⚠️  Podfile on disk: extension NOT properly nested — applying disk patch');
+      const tag = 'ios-hms-screenshare-' + extensionName;
+      let patched = podfileInsertExtensionBlock(contents, extensionName, tag);
+      if (patched === contents) {
+        throw new Error(
+          '[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile (disk). ' +
+          'Ensure the main app target is named "' + MAIN_APP_TARGET_NAME + '" and the Podfile has use_react_native!(.'
+        );
+      }
+      patched = podfileInjectPostInstallExtensionApiOnly(patched, extensionName);
+      patched = podfileEnsureNewArchDisabled(patched);
+      fs.writeFileSync(podfilePath, patched);
+      console.log('[ios-hms-screenshare] ✅ Podfile patched on disk (safety net): extension nested + post_install + ENV');
+      return config;
+    },
+  ]);
+}
+
 function withAppGroupEntitlements(config, { appGroup }) {
   return withEntitlementsPlist(config, (config) => {
     const ents = config.modResults;
@@ -586,6 +640,8 @@ function withHmsScreenshareExtension(config, options = {}) {
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
   config = withExtensionProfileInstallPhase(config, { extensionName });
   config = withPodfileEntry(config, podfileOpts);
+  // Disk-level safety net: runs after withPodfile in Expo's pipeline; re-checks and re-patches if needed.
+  config = withPodfilePatchOnDisk(config, podfileOpts);
   config = withAppGroupEntitlements(config, { appGroup });
 
   // expo.ios.appExtensions in app.json declares the extension to EAS so that
