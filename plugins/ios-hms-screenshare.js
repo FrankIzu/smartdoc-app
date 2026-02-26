@@ -378,19 +378,6 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const platformMatch = contents.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
   const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
 
-  // RNReanimated v2 depends on FBReactNativeSpec from React Native codegen. With Expo prebuild
-  // and New Arch off, CocoaPods may not find it unless we point to the generated podspecs.
-  // Podfile runs from ios/, so path is relative to ios/ (e.g. build/generated/ios/ReactCodegen).
-  const codegenPath = 'build/generated/ios/ReactCodegen';
-  const needsCodegenPods = !contents.includes("pod 'FBReactNativeSpec'");
-  const codegenBlock = needsCodegenPods
-    ? [
-        '  # Point to locally generated codegen podspecs (for RNReanimated v2 / FBReactNativeSpec)',
-        "  pod 'FBReactNativeSpec', :path => '" + codegenPath + "'",
-        "  pod 'React-Codegen', :path => '" + codegenPath + "'",
-      ]
-    : [];
-
   // Do NOT add use_frameworks! to the extension target. With RN 0.81 + Expo + static frameworks
   // + Hermes, having use_frameworks! in both main and extension breaks CocoaPods host detection
   // ("Unable to find host target(s)"). Extension inherits linkage from parent via inherit! :search_paths.
@@ -402,10 +389,9 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
     '  end',
   ];
-  const insertBlock = [...codegenBlock, ...extensionBlock].filter(Boolean).join(lineEnding);
   const before = filteredLines.slice(0, insertLineIndex).join(lineEnding);
   const after = filteredLines.slice(insertLineIndex).join(lineEnding);
-  return before + lineEnding + insertBlock + lineEnding + after;
+  return before + lineEnding + extensionBlock.join(lineEnding) + lineEnding + after;
 }
 
 /**
