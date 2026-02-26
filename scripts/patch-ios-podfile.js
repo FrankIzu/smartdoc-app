@@ -92,6 +92,51 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   return before + block + lineEnding + after;
 }
 
+/**
+ * Prepend ENV['RCT_NEW_ARCH_ENABLED'] ||= '0' if not already set (legacy arch for Reanimated 3 + old arch).
+ */
+function ensureNewArchDisabled(podfile) {
+  if (podfile.includes("RCT_NEW_ARCH_ENABLED")) return podfile;
+  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+  return "ENV['RCT_NEW_ARCH_ENABLED'] ||= '0'" + lineEnding + podfile;
+}
+
+/**
+ * Inject APPLICATION_EXTENSION_API_ONLY = YES for the extension into the existing post_install block.
+ */
+function injectPostInstallExtensionApiOnly(podfile, extensionName) {
+  if (podfile.includes('APPLICATION_EXTENSION_API_ONLY') && podfile.includes(extensionName)) return podfile;
+  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
+  const lines = podfile.split(/\r?\n/);
+  const postInstallRe = /post_install\s+do\s+\|installer\|/;
+  let piLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (postInstallRe.test(lines[i])) { piLine = i; break; }
+  }
+  if (piLine === -1) return podfile;
+  let depth = 1, closingLine = -1;
+  for (let i = piLine + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*end\s*$/.test(line)) { if (--depth === 0) { closingLine = i; break; } }
+    else if (/\bdo\s*$/.test(line)) depth++;
+  }
+  if (closingLine === -1) return podfile;
+  const indent = (lines[closingLine].match(/^(\s*)/) || ['', ''])[1] || '  ';
+  const block = [
+    indent + '# patch-ios-podfile: app extension API only',
+    indent + "installer.pods_project.targets.each do |t|",
+    indent + "  if t.name == '" + extensionName + "'",
+    indent + "    t.build_configurations.each do |c|",
+    indent + "      c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'",
+    indent + "    end",
+    indent + "  end",
+    indent + "end",
+  ].join(lineEnding);
+  const before = lines.slice(0, closingLine).join(lineEnding);
+  const after  = lines.slice(closingLine).join(lineEnding);
+  return before + lineEnding + block + lineEnding + after;
+}
+
 function main() {
   const iosDir = path.join(__dirname, '..', 'ios');
   if (!fs.existsSync(PODFILE_PATH)) {
@@ -106,23 +151,41 @@ function main() {
     process.exit(1);
   }
 
-  const contents = fs.readFileSync(PODFILE_PATH, 'utf8');
-  const newContents = insertExtensionBeforeMainTargetEnd(contents, EXTENSION_NAME);
+  let contents = fs.readFileSync(PODFILE_PATH, 'utf8');
 
-  if (newContents === contents) {
-    if (contents.includes("target '" + EXTENSION_NAME + "' do") && contents.includes('inherit! :search_paths') && isExtensionProperlyNested(contents, EXTENSION_NAME)) {
-      console.log('Podfile already has nested GrabDocsBroadcastUpload target.');
-      process.exit(0);
-    }
+  // Step 1: ensure extension is nested
+  const nested = insertExtensionBeforeMainTargetEnd(contents, EXTENSION_NAME);
+  if (nested === contents && !isExtensionProperlyNested(contents, EXTENSION_NAME)) {
     console.error('❌ Failed to patch Podfile — could not find main app target.');
     console.error('Full Podfile contents:');
     console.error(contents);
     process.exit(1);
   }
+  const didNest = nested !== contents;
+  contents = nested;
 
-  fs.writeFileSync(PODFILE_PATH, newContents);
-  console.log('✅ Patched ios/Podfile: nested GrabDocsBroadcastUpload inside main app target.');
-  console.log('Run: cd ios && pod install');
+  // Step 2: ensure ENV['RCT_NEW_ARCH_ENABLED'] ||= '0'
+  const afterEnv = ensureNewArchDisabled(contents);
+  const didEnv = afterEnv !== contents;
+  contents = afterEnv;
+
+  // Step 3: inject APPLICATION_EXTENSION_API_ONLY in post_install
+  const afterPostInstall = injectPostInstallExtensionApiOnly(contents, EXTENSION_NAME);
+  const didPostInstall = afterPostInstall !== contents;
+  contents = afterPostInstall;
+
+  if (!didNest && !didEnv && !didPostInstall) {
+    console.log('✅ Podfile already fully patched (extension nested, ENV set, post_install injected).');
+    process.exit(0);
+  }
+
+  fs.writeFileSync(PODFILE_PATH, contents);
+  const changes = [
+    didNest       && 'nested extension inside main target',
+    didEnv        && 'added RCT_NEW_ARCH_ENABLED=0',
+    didPostInstall && 'injected APPLICATION_EXTENSION_API_ONLY',
+  ].filter(Boolean).join(', ');
+  console.log('✅ Patched ios/Podfile: ' + changes + '.');
 }
 
 main();

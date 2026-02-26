@@ -123,11 +123,17 @@ jobs:
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.15.2
 
-      # Verify Podfile before EAS: prebuild (plugin injects extension into Podfile), then pod install.
-      # If this fails, the plugin didn't nest GrabDocsBroadcastUpload in the main target.
-      - name: Prebuild and verify Podfile (pod install)
+      # Prebuild: generates ios/ folder and runs config plugins.
+      # Then patch-ios-podfile.js is run as an explicit disk-level step to guarantee the extension
+      # is nested inside the main target — this is the definitive fix for "Unable to find host target".
+      - name: Prebuild iOS
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Patch Podfile (nest extension, set ENV, post_install)
+        run: node scripts/patch-ios-podfile.js
+
+      - name: Verify Podfile and install Pods
         run: |
-          npx expo prebuild --platform ios --clean --no-install
           echo "===== XCODE TARGETS (for CocoaPods host relationship) ====="
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
           if [ -n "$PBXPROJ" ]; then
