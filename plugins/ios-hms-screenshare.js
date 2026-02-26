@@ -390,6 +390,7 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     ...frameworkLines,
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
+    "    host_targets '" + MAIN_APP_TARGET_NAME + "'", // Explicit host so CocoaPods 1.12+ finds the app when use_react_native! uses abstract targets
     '  end',
   ];
   const before = filteredLines.slice(0, insertLineIndex).join(lineEnding);
