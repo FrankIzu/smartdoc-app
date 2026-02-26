@@ -179,7 +179,24 @@ const baseExpo = {
   experiments: { typedRoutes: true, newArchEnabled: false },
   extra: {
     router: {},
-    eas: { projectId: "341d1cdf-5759-41ef-8ae3-36e4cf7fab00" },
+    eas: {
+      projectId: "341d1cdf-5759-41ef-8ae3-36e4cf7fab00",
+      build: {
+        experimental: {
+          ios: {
+            appExtensions: [
+              {
+                targetName: "GrabDocsBroadcastUpload",
+                bundleIdentifier: "com.grabdocs.mobile.GrabDocsBroadcastUpload",
+                entitlements: {
+                  "com.apple.security.application-groups": ["group.com.grabdocs.mobile"],
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
   },
 };
 

@@ -74,7 +74,7 @@ jobs:
           # Fix: run  eas credentials --platform ios  locally, select the
           # GrabDocsBroadcastUpload target, and let EAS create/link a profile.
           set +e
-          CREDS_OUTPUT=$(npx eas-cli credentials --platform ios --non-interactive 2>&1 || true)
+          CREDS_OUTPUT=$(npx eas-cli credentials --platform ios 2>&1 || true)
           echo "$CREDS_OUTPUT" | head -60
           # A soft check — we grep for the extension bundle ID in whatever EAS outputs.
           # This is best-effort; real failure will surface clearly in the EAS build step.
