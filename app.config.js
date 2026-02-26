@@ -20,6 +20,7 @@ const baseExpo = {
   },
   assetBundlePatterns: ["**/*"],
   ios: {
+    newArchEnabled: false,
     supportsTablet: true,
     bundleIdentifier: "com.grabdocs.mobile",
     buildNumber: String(versions.ios?.buildNumber ?? "1"),
@@ -166,8 +167,7 @@ const baseExpo = {
       },
     ],
     "expo-secure-store",
-    // Must be last: patches Podfile on disk so GrabDocsBroadcastUpload is nested in main target.
-    // Other plugins (expo-build-properties, etc.) can overwrite Podfile; running last ensures our patch sticks.
+    // Must be last: injects Broadcast Extension block into Podfile (nested in main target) via config plugin only.
     [
       "./plugins/ios-hms-screenshare",
       {
@@ -176,7 +176,7 @@ const baseExpo = {
       },
     ],
   ],
-  experiments: { typedRoutes: true },
+  experiments: { typedRoutes: true, newArchEnabled: false },
   extra: {
     router: {},
     eas: { projectId: "341d1cdf-5759-41ef-8ae3-36e4cf7fab00" },

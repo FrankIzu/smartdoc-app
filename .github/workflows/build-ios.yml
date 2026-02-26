@@ -120,7 +120,10 @@ jobs:
         env:
           EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
 
-      # Verify Podfile before EAS: prebuild (plugin patches Podfile), then pod install.
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods -v 1.15.2
+
+      # Verify Podfile before EAS: prebuild (plugin injects extension into Podfile), then pod install.
       # If this fails, the plugin didn't nest GrabDocsBroadcastUpload in the main target.
       - name: Prebuild and verify Podfile (pod install)
         run: |
