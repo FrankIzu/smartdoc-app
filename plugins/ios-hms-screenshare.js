@@ -385,11 +385,13 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   }
   if (mainTargetLineIndex === -1) return contents;
 
-  // Insert immediately BEFORE use_react_native!( — safe anchor inside main target, outside if/else
-  const useReactNativeRe = /use_react_native!\s*\(/;
+  // Insert BEFORE the main target's closing `end` — extension must be last nested block.
+  // CocoaPods 1.12+ requires extension as final nested target for host resolution.
+  const targetIndent = (filteredLines[mainTargetLineIndex].match(/^(\s*)/) || ['', ''])[1].length;
   let insertLineIndex = -1;
   for (let i = mainTargetLineIndex + 1; i < filteredLines.length; i++) {
-    if (useReactNativeRe.test(filteredLines[i])) {
+    const em = filteredLines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= targetIndent) {
       insertLineIndex = i;
       break;
     }

@@ -70,29 +70,19 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
 
   const targetIndent = (lines[mainTargetLine].match(/^(\s*)/) || ['', ''])[1].length;
 
-  // Strategy 1: Insert before use_react_native!( — guaranteed inside main target
-  const useReactNativeRe = /use_react_native!\s*\(/;
+  // Insert BEFORE the main target's closing `end` — extension must be last nested block.
+  // CocoaPods 1.12+ requires extension as final nested target for host resolution.
   let insertLineIndex = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
-    if (useReactNativeRe.test(lines[i])) {
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= targetIndent) {
       insertLineIndex = i;
       break;
     }
   }
 
-  // Strategy 2: Fallback to inserting before main target's closing end
   if (insertLineIndex === -1) {
-    for (let i = mainTargetLine + 1; i < lines.length; i++) {
-      const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
-      if (em && em[1].length <= targetIndent) {
-        insertLineIndex = i;
-        break;
-      }
-    }
-  }
-
-  if (insertLineIndex === -1) {
-    console.error('❌ Could not find use_react_native!( or main target closing end.');
+    console.error('❌ Could not find main target closing end.');
     return podfile;
   }
 
