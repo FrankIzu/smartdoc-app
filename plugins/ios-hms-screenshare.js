@@ -321,6 +321,16 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 const MAIN_APP_TARGET_NAME = 'GrabDocs';
 
 /**
+ * Ensure legacy architecture is set so codegen and RNReanimated v2 resolve consistently.
+ */
+function podfileEnsureNewArchDisabled(contents) {
+  if (contents.includes("RCT_NEW_ARCH_ENABLED")) return contents;
+  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
+  const line = "ENV['RCT_NEW_ARCH_ENABLED'] ||= '0'" + lineEnding;
+  return line + contents;
+}
+
+/**
  * Insert extension target INSIDE the main app target, immediately BEFORE use_react_native!(.
  * We do not use "insert before closing end" because Ruby has if/else/case blocks whose
  * end would be found first by naive depth counting, putting the extension inside the
@@ -378,6 +388,18 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const platformMatch = contents.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
   const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
 
+  // RNReanimated v2 depends on FBReactNativeSpec; Expo prebuild generates podspecs under
+  // ios/build/generated/ios. Path is relative to Podfile (ios/), so use build/generated/ios.
+  const codegenPath = 'build/generated/ios';
+  const needsCodegenPods = !contents.includes("pod 'FBReactNativeSpec'");
+  const codegenBlock = needsCodegenPods
+    ? [
+        '  # Point to locally generated codegen podspecs (RNReanimated v2 / FBReactNativeSpec)',
+        "  pod 'FBReactNativeSpec', :path => '" + codegenPath + "'",
+        "  pod 'React-Codegen', :path => '" + codegenPath + "'",
+      ]
+    : [];
+
   // Do NOT add use_frameworks! to the extension target. With RN 0.81 + Expo + static frameworks
   // + Hermes, having use_frameworks! in both main and extension breaks CocoaPods host detection
   // ("Unable to find host target(s)"). Extension inherits linkage from parent via inherit! :search_paths.
@@ -389,9 +411,10 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
     '  end',
   ];
+  const insertBlock = [...codegenBlock, ...extensionBlock].filter(Boolean).join(lineEnding);
   const before = filteredLines.slice(0, insertLineIndex).join(lineEnding);
   const after = filteredLines.slice(insertLineIndex).join(lineEnding);
-  return before + lineEnding + extensionBlock.join(lineEnding) + lineEnding + after;
+  return before + lineEnding + insertBlock + lineEnding + after;
 }
 
 /**
@@ -459,16 +482,23 @@ function withPodfileEntry(config, { extensionName }) {
       return config;
     }
 
+    // Ensure legacy architecture so codegen and RNReanimated v2 resolve consistently.
+    let working = podfileEnsureNewArchDisabled(src);
+
     const tag = 'ios-hms-screenshare-' + extensionName;
     const mainTargetRe = new RegExp("target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do");
-    const mainTargetStart = mainTargetRe.test(src) ? src.search(mainTargetRe) : -1;
-    const extBlockStart = src.indexOf("target '" + extensionName + "' do");
+    const mainTargetStart = mainTargetRe.test(working) ? working.search(mainTargetRe) : -1;
+    const extBlockStart = working.indexOf("target '" + extensionName + "' do");
     if (mainTargetStart >= 0 && extBlockStart > mainTargetStart) {
       console.log('[ios-hms-screenshare] ✅ withPodfile: extension already nested inside main target');
+      if (working !== src) {
+        if (typeof data === 'string') config.modResults = working;
+        else config.modResults = { ...data, contents: working };
+      }
       return config;
     }
 
-    let resultContents = podfileInsertExtensionBlock(src, extensionName, tag);
+    let resultContents = podfileInsertExtensionBlock(working, extensionName, tag);
     if (resultContents === src) {
       console.error('[ios-hms-screenshare] ❌ Podfile: could not find main target "' + MAIN_APP_TARGET_NAME + '" or insertion point.');
       throw new Error('[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile. Check that the main app target is named "' + MAIN_APP_TARGET_NAME + '".');
