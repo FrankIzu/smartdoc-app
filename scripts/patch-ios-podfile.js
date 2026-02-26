@@ -68,21 +68,20 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
     return podfile;
   }
 
-  const targetIndent = (lines[mainTargetLine].match(/^(\s*)/) || ['', ''])[1].length;
-
-  // Insert BEFORE the main target's closing `end` — extension must be last nested block.
-  // CocoaPods 1.12+ requires extension as final nested target for host resolution.
+  // Insert BEFORE use_react_native!( — extension must be declared before RN mutates target graph.
+  // CocoaPods builds the dependency graph top-down; if extension comes after use_react_native!,
+  // RN's autolinking breaks CocoaPods' ability to infer the host target.
+  const useReactNativeRe = /use_react_native!\s*\(/;
   let insertLineIndex = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
-    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
-    if (em && em[1].length <= targetIndent) {
+    if (useReactNativeRe.test(lines[i])) {
       insertLineIndex = i;
       break;
     }
   }
 
   if (insertLineIndex === -1) {
-    console.error('❌ Could not find main target closing end.');
+    console.error('❌ Could not find use_react_native!( in Podfile.');
     return podfile;
   }
 

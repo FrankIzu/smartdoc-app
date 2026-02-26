@@ -133,6 +133,7 @@ jobs:
         run: node scripts/patch-ios-podfile.js
 
       - name: Verify Podfile and install Pods
+        id: verify_pods
         run: |
           echo "===== XCODE TARGETS (for CocoaPods host relationship) ====="
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
@@ -162,8 +163,19 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Upload Podfile for debugging (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-podfile-debug
+          path: |
+            ios/Podfile
+            ios/Podfile.properties.json
+            ios/GrabDocs.xcodeproj/project.pbxproj
+          if-no-files-found: ignore
+
       - name: Dump Podfile and pod logs on failure (diagnosis)
-        if: failure() && steps.eas_build.outcome == 'failure'
+        if: failure()
         run: |
           echo "===== PODFILE (from repo or EAS build dir) ====="
           if [ -f ios/Podfile ]; then
