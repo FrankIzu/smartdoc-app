@@ -129,6 +129,7 @@ dev-files/
 *.zip
 *.tgz
 
-# Native folders: ignored so EAS always runs prebuild (CNG).
-ios/
+# Native folders: for iOS we prebuild+patch in CI and upload ios/ so EAS skips prebuild.
+# ios/ is NOT ignored — our patched ios/ gets uploaded for iOS builds.
+# android/ — ignored so EAS runs prebuild for Android.
 android/

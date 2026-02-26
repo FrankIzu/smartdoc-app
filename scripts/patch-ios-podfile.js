@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
+const MAIN_APP_TARGET = 'GrabDocs';
 const PODFILE_PATH = path.join(__dirname, '..', 'ios', 'Podfile');
 
 function isExtensionProperlyNested(podfile, extensionName) {
@@ -40,6 +41,10 @@ function removeTopLevelExtensionBlock(podfile, extensionName) {
   return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
 }
 
+/**
+ * Strategy 1: Insert before use_react_native!( — most reliable, always inside main target.
+ * Strategy 2 (fallback): Insert before main target's closing end.
+ */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
     if (isExtensionProperlyNested(podfile, extensionName)) return podfile;
@@ -49,29 +54,48 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
 
+  // Find main app target (GrabDocs) — must match exactly
+  const mainTargetRe = new RegExp('^\\s*target\\s+[\'"]' + MAIN_APP_TARGET.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\s*$');
   let mainTargetLine = -1;
-  let targetIndent = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
-    if (m && m[2] !== extensionName) {
+    if (mainTargetRe.test(lines[i])) {
       mainTargetLine = i;
-      targetIndent = m[1].length;
       break;
     }
   }
-  if (mainTargetLine === -1) return podfile;
+  if (mainTargetLine === -1) {
+    console.error('❌ Main target "' + MAIN_APP_TARGET + '" not found in Podfile.');
+    return podfile;
+  }
 
-  let closingLine = -1;
+  const targetIndent = (lines[mainTargetLine].match(/^(\s*)/) || ['', ''])[1].length;
+
+  // Strategy 1: Insert before use_react_native!( — guaranteed inside main target
+  const useReactNativeRe = /use_react_native!\s*\(/;
+  let insertLineIndex = -1;
   for (let i = mainTargetLine + 1; i < lines.length; i++) {
-    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
-    if (em && em[1].length <= targetIndent) {
-      closingLine = i;
+    if (useReactNativeRe.test(lines[i])) {
+      insertLineIndex = i;
       break;
     }
   }
-  if (closingLine === -1) return podfile;
 
-  // Match root Podfile platform so extension has same iOS deployment target (required for static RN + CocoaPods host resolution).
+  // Strategy 2: Fallback to inserting before main target's closing end
+  if (insertLineIndex === -1) {
+    for (let i = mainTargetLine + 1; i < lines.length; i++) {
+      const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+      if (em && em[1].length <= targetIndent) {
+        insertLineIndex = i;
+        break;
+      }
+    }
+  }
+
+  if (insertLineIndex === -1) {
+    console.error('❌ Could not find use_react_native!( or main target closing end.');
+    return podfile;
+  }
+
   const platformMatch = podfile.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
   const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
 
@@ -87,8 +111,8 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
     ind  + 'end',
   ].join(lineEnding);
 
-  const before = lines.slice(0, closingLine).join(lineEnding);
-  const after  = lines.slice(closingLine).join(lineEnding);
+  const before = lines.slice(0, insertLineIndex).join(lineEnding);
+  const after  = lines.slice(insertLineIndex).join(lineEnding);
   return before + block + lineEnding + after;
 }
 
@@ -140,15 +164,14 @@ function injectPostInstallExtensionApiOnly(podfile, extensionName) {
 function main() {
   const iosDir = path.join(__dirname, '..', 'ios');
   if (!fs.existsSync(PODFILE_PATH)) {
-    console.error('ios/Podfile not found.');
+    // No-op for Android-only builds or when ios/ not yet generated
     if (!fs.existsSync(iosDir)) {
-      console.error('The ios/ folder is missing. Expo does not generate it on Windows.');
-      console.error('  - Generate it on macOS/Linux: npx expo prebuild --platform ios --no-install');
-      console.error('  - Or run the "Prebuild iOS" GitHub workflow to generate and commit ios/.');
+      console.log('[patch-ios-podfile] Skipping: ios/ not found (Android build or prebuild not run).');
     } else {
-      console.error('Run from repo root after prebuild.');
+      console.error('ios/Podfile not found. Run from repo root after prebuild.');
+      process.exit(1);
     }
-    process.exit(1);
+    process.exit(0);
   }
 
   let contents = fs.readFileSync(PODFILE_PATH, 'utf8');
