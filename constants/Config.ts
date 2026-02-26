@@ -115,8 +115,8 @@ export const FRONTEND_URL = (() => {
     return 'http://localhost:3000'; // Local development web frontend
   }
   
-  // 3. Production fallback
-  return 'https://grabdocs.com'; // Production web frontend
+  // 3. Production fallback (app subdomain hosts /form/ and web app)
+  return 'https://app.grabdocs.com';
 })();
 
 // App Configuration

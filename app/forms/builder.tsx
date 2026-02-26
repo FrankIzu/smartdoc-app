@@ -324,11 +324,10 @@ export default function FormBuilderScreen() {
         return;
       }
       
-      // Construct the full share URL - use the public form endpoint
-      // The share URL is typically the share_url token, and the public endpoint is /form/{share_url}
-      const { API_BASE_URL } = await import('../../constants/Config');
-      const baseUrl = API_BASE_URL || 'http://localhost:5000';
-      const fullShareUrl = `${baseUrl}/form/${shareUrl}`;
+      // Construct the full share URL - use frontend app URL (form page lives at app.grabdocs.com/form/..., not API)
+      const { FRONTEND_URL } = await import('../../constants/Config');
+      const baseUrl = FRONTEND_URL || 'http://localhost:3000';
+      const fullShareUrl = `${baseUrl.replace(/\/$/, '')}/form/${shareUrl}`;
       
       Alert.alert(
         'Share Form',
