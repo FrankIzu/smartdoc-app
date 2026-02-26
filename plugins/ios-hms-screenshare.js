@@ -224,6 +224,18 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 
     if (!targetUuid) return config;
 
+    // CocoaPods 1.2.1+ requires the host target to list the extension in Target Dependencies
+    // (not just Embed phase); otherwise "Unable to find host target(s) for GrabDocsBroadcastUpload".
+    const mainTarget = project.getFirstTarget && project.getFirstTarget();
+    if (mainTarget && mainTarget.uuid && typeof project.addTargetDependency === 'function') {
+      try {
+        project.addTargetDependency(mainTarget.uuid, [targetUuid]);
+        console.log('[ios-hms-screenshare] ✅ Extension added as dependency of main target');
+      } catch (depErr) {
+        console.warn('[ios-hms-screenshare] ⚠️  Could not add extension target dependency:', depErr.message);
+      }
+    }
+
     if (!existingExtTarget) {
       // Target was created by this plugin — add all build phases fresh.
       project.addBuildPhase(
