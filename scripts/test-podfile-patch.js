@@ -48,9 +48,11 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
     if (em && em[1].length <= targetIndent) { closingLine = i; break; }
   }
   if (closingLine === -1) return podfile;
+  const platformMatch = podfile.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
+  const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
   const ind  = ' '.repeat(targetIndent + 2);
   const ind2 = ' '.repeat(targetIndent + 4);
-  const block = ['', ind + "target '" + extensionName + "' do", ind2 + 'inherit! :search_paths', ind2 + 'use_modular_headers!', ind2 + "pod 'HMSBroadcastExtensionSDK'", ind + 'end'].join(lineEnding);
+  const block = ['', ind + "target '" + extensionName + "' do", ind2 + "platform :ios, '" + iosDeploymentTarget + "'", ind2 + 'inherit! :search_paths', ind2 + 'use_modular_headers!', ind2 + "pod 'HMSBroadcastExtensionSDK'", ind + 'end'].join(lineEnding);
   const before = lines.slice(0, closingLine).join(lineEnding);
   const after  = lines.slice(closingLine).join(lineEnding);
   return before + block + lineEnding + after;

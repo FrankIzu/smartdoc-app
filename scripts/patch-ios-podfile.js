@@ -71,11 +71,16 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   }
   if (closingLine === -1) return podfile;
 
+  // Match root Podfile platform so extension has same iOS deployment target (required for static RN + CocoaPods host resolution).
+  const platformMatch = podfile.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
+  const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
+
   const ind  = ' '.repeat(targetIndent + 2);
   const ind2 = ' '.repeat(targetIndent + 4);
   const block = [
     '',
     ind  + "target '" + extensionName + "' do",
+    ind2 + "platform :ios, '" + iosDeploymentTarget + "'",
     ind2 + 'inherit! :search_paths',
     ind2 + 'use_modular_headers!',
     ind2 + "pod 'HMSBroadcastExtensionSDK'",

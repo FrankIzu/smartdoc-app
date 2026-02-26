@@ -373,11 +373,17 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   }
   if (insertLineIndex === -1) return contents;
 
+  // With static RN prebuilt + New Architecture, CocoaPods requires the extension to explicitly
+  // declare the same platform as the root so host resolution succeeds.
+  const platformMatch = contents.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
+  const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
+
   // Do NOT add use_frameworks! to the extension target. With RN 0.81 + Expo + static frameworks
   // + Hermes, having use_frameworks! in both main and extension breaks CocoaPods host detection
   // ("Unable to find host target(s)"). Extension inherits linkage from parent via inherit! :search_paths.
   const extensionBlock = [
     '  target \'' + extensionName + '\' do',
+    "    platform :ios, '" + iosDeploymentTarget + "'",
     '    inherit! :search_paths',
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
