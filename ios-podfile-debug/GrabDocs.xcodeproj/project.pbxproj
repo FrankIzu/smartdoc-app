@@ -11,9 +11,9 @@
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
-		3BC49876A1C241C193100D41 /* GrabDocsBroadcastUpload.appex in Copy Files */ = {isa = PBXBuildFile; fileRef = A81273C3E4A747889256144F /* GrabDocsBroadcastUpload.appex */; };
-		665F9100E515404386522B52 /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DDFFB903B4242E9BE276935 /* SampleHandler.swift */; };
-		A4F10033B965464CBFEA61CC /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 856D2E7DE3B94DD992F68FC9 /* ReplayKit.framework */; };
+		3A9DFBFDC37C45E3BCA370E8 /* GrabDocsBroadcastUpload.appex in Copy Files */ = {isa = PBXBuildFile; fileRef = DD71893EA0E440708BA41E91 /* GrabDocsBroadcastUpload.appex */; };
+		E8CDF31F322D4E17B18162C2 /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1297E732FE7468BA1E97345 /* SampleHandler.swift */; };
+		0D5BB2EED66240369D09BB96 /* ReplayKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 26B0C2B5DC324CA18DBB09D7 /* ReplayKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,9 +25,9 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = GrabDocs/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* GrabDocs-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "GrabDocs-Bridging-Header.h"; path = "GrabDocs/GrabDocs-Bridging-Header.h"; sourceTree = "<group>"; };
-		A81273C3E4A747889256144F /* GrabDocsBroadcastUpload.appex */ = {isa = PBXFileReference; name = "GrabDocsBroadcastUpload.appex"; path = "GrabDocsBroadcastUpload.appex"; sourceTree = BUILT_PRODUCTS_DIR; fileEncoding = undefined; lastKnownFileType = undefined; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; };
-		4DDFFB903B4242E9BE276935 /* SampleHandler.swift */ = {isa = PBXFileReference; name = "SampleHandler.swift"; path = "GrabDocsBroadcastUpload/SampleHandler.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
-		856D2E7DE3B94DD992F68FC9 /* ReplayKit.framework */ = {isa = PBXFileReference; name = "ReplayKit.framework"; path = "System/Library/Frameworks/ReplayKit.framework"; sourceTree = SDKROOT; fileEncoding = undefined; lastKnownFileType = wrapper.framework; explicitFileType = undefined; includeInIndex = 0; };
+		DD71893EA0E440708BA41E91 /* GrabDocsBroadcastUpload.appex */ = {isa = PBXFileReference; name = "GrabDocsBroadcastUpload.appex"; path = "GrabDocsBroadcastUpload.appex"; sourceTree = BUILT_PRODUCTS_DIR; fileEncoding = undefined; lastKnownFileType = undefined; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; };
+		F1297E732FE7468BA1E97345 /* SampleHandler.swift */ = {isa = PBXFileReference; name = "SampleHandler.swift"; path = "GrabDocsBroadcastUpload/SampleHandler.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
+		26B0C2B5DC324CA18DBB09D7 /* ReplayKit.framework */ = {isa = PBXFileReference; name = "ReplayKit.framework"; path = "System/Library/Frameworks/ReplayKit.framework"; sourceTree = SDKROOT; fileEncoding = undefined; lastKnownFileType = wrapper.framework; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -38,11 +38,11 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		8749357745F64A29B93CADF3 /* Frameworks */ = {
+		F64752D26F8D463F8651E03F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A4F10033B965464CBFEA61CC /* ReplayKit.framework" in Frameworks */,
+				0D5BB2EED66240369D09BB96 /* ReplayKit.framework" in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,7 +66,7 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				856D2E7DE3B94DD992F68FC9 /* ReplayKit.framework */,
+				26B0C2B5DC324CA18DBB09D7 /* ReplayKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -95,7 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* GrabDocs.app */,
-				A81273C3E4A747889256144F /* GrabDocsBroadcastUpload.appex */,
+				DD71893EA0E440708BA41E91 /* GrabDocsBroadcastUpload.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -122,8 +122,8 @@
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				E42C121DDC9E4E2C9BD9AF1E /* Copy Files */,
-				39C166A41C6F455593451CFF /* Embed App Extensions */,
+				27D664E29D4445B7AC805F95 /* Copy Files */,
+				6B2F0A6FE70247F2B496CCA6 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
@@ -134,17 +134,17 @@
 			productReference = 13B07F961A680F5B00A75B9A /* GrabDocs.app */;
 			productType = "com.apple.product-type.application";
 		};
-		8A2A3175A2D840498AD0886D /* "GrabDocsBroadcastUpload" */ = {
+		2F61F7381B0146999E585E82 /* "GrabDocsBroadcastUpload" */ = {
 			isa = PBXNativeTarget;
 			name = "GrabDocsBroadcastUpload";
 			productName = "GrabDocsBroadcastUpload";
-			productReference = A81273C3E4A747889256144F;
+			productReference = DD71893EA0E440708BA41E91;
 			productType = "com.apple.product-type.app-extension";
-			buildConfigurationList = 2B47943898AA4C29816BA747;
+			buildConfigurationList = C2F05BB08643421B85004E79;
 			buildPhases = (
-				146A1251FF2C4BC284B1BB77 /* Sources */,
-				40970F93821943AAB5AD9749 /* Resources */,
-				8749357745F64A29B93CADF3 /* Frameworks */,
+				2B68F32635314F2C92599F85 /* Sources */,
+				419A6975DB1B4678B2B62684 /* Resources */,
+				F64752D26F8D463F8651E03F /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -178,7 +178,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* GrabDocs */,
-				8A2A3175A2D840498AD0886D /* "GrabDocsBroadcastUpload" */,
+				2F61F7381B0146999E585E82 /* "GrabDocsBroadcastUpload" */,
 			);
 		};
 /* End PBXProject section */
@@ -194,7 +194,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		40970F93821943AAB5AD9749 /* Resources */ = {
+		419A6975DB1B4678B2B62684 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -290,11 +290,11 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		146A1251FF2C4BC284B1BB77 /* Sources */ = {
+		2B68F32635314F2C92599F85 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				665F9100E515404386522B52 /* SampleHandler.swift in Sources */,
+				E8CDF31F322D4E17B18162C2 /* SampleHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -474,7 +474,7 @@
 			};
 			name = Release;
 		};
-		E731F186927A4882AA7BA549 /* Debug */ = {
+		CBAEE3275DBE4821885EF78B /* Debug */ = {
 			name = Debug;
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -495,7 +495,7 @@
 				CODE_SIGN_STYLE = "Automatic";
 			};
 		};
-		54CC7565057241FAB06A83E5 /* Release */ = {
+		DF36D64B25C54E81B0D93A5A /* Release */ = {
 			name = Release;
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -535,11 +535,11 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		2B47943898AA4C29816BA747 /* Build configuration list for PBXNativeTarget "GrabDocsBroadcastUpload" */ = {
+		C2F05BB08643421B85004E79 /* Build configuration list for PBXNativeTarget "GrabDocsBroadcastUpload" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E731F186927A4882AA7BA549 /* Debug */,
-				54CC7565057241FAB06A83E5 /* Release */,
+				CBAEE3275DBE4821885EF78B /* Debug */,
+				DF36D64B25C54E81B0D93A5A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -547,22 +547,22 @@
 /* End XCConfigurationList section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		E42C121DDC9E4E2C9BD9AF1E /* Copy Files */ = {
+		27D664E29D4445B7AC805F95 /* Copy Files */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3BC49876A1C241C193100D41 /* GrabDocsBroadcastUpload.appex in Copy Files */,
+				3A9DFBFDC37C45E3BCA370E8 /* GrabDocsBroadcastUpload.appex in Copy Files */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			name = "Copy Files";
 			dstPath = "";
 			dstSubfolderSpec = 13;
 		};
-		39C166A41C6F455593451CFF /* Embed App Extensions */ = {
+		6B2F0A6FE70247F2B496CCA6 /* Embed App Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3BC49876A1C241C193100D41 /* "GrabDocsBroadcastUpload.appex" in Resources */,
+				3A9DFBFDC37C45E3BCA370E8 /* "GrabDocsBroadcastUpload.appex" in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			name = "Embed App Extensions";

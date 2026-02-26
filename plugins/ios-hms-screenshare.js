@@ -528,6 +528,121 @@ function withPodfileEntry(config, { extensionName }) {
 }
 
 /**
+ * Patch project.pbxproj to add the extension as a Target Dependency of the main app.
+ * CocoaPods 1.2.1+ requires this (not just Embed App Extensions); otherwise
+ * "Unable to find host target(s) for GrabDocsBroadcastUpload". The xcode-js
+ * addTargetDependency is not always available or applied, so we patch the file directly.
+ */
+function withPbxprojExtensionTargetDependency(config, { extensionName }) {
+  return withDangerousMod(config, [
+    'ios',
+    async (config) => {
+      const iosRoot = config.modRequest.platformProjectRoot;
+      const xcodeprojDir = fs.readdirSync(iosRoot).find((f) => f.endsWith('.xcodeproj'));
+      if (!xcodeprojDir) return config;
+
+      const pbxPath = path.join(iosRoot, xcodeprojDir, 'project.pbxproj');
+      if (!fs.existsSync(pbxPath)) return config;
+
+      let pbx = fs.readFileSync(pbxPath, 'utf8');
+
+      // Resolve project UUID (PBXProject)
+      const projectMatch = pbx.match(/([0-9A-F]{24})\s*\/\*\s*Project object\s*\*\/\s*=\s*\{\s*isa = PBXProject;/);
+      const projectUuid = projectMatch ? projectMatch[1] : null;
+      if (!projectUuid) {
+        console.warn('[ios-hms-screenshare] ⚠️  Could not find Project object UUID in project.pbxproj');
+        return config;
+      }
+
+      // Resolve main app target UUID (first PBXNativeTarget with product-type.application)
+      const nativeTargetSection = pbx.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
+      if (!nativeTargetSection) return config;
+      const appTargetMatch = nativeTargetSection[0].match(
+        /([0-9A-F]{24})\s*\/\*\s*GrabDocs\s*\*\/\s*=\s*\{[\s\S]*?productType = "com\.apple\.product-type\.application"/
+      );
+      const mainTargetUuid = appTargetMatch ? appTargetMatch[1] : null;
+      if (!mainTargetUuid) {
+        console.warn('[ios-hms-screenshare] ⚠️  Could not find main app target (GrabDocs) UUID');
+        return config;
+      }
+
+      // Resolve extension target UUID (PBXNativeTarget with GrabDocsBroadcastUpload)
+      const extTargetMatch = nativeTargetSection[0].match(
+        new RegExp('([0-9A-F]{24})\\s*\\/\\*\\s*"' + extensionName + '"\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?productType = "com\\.apple\\.product-type\\.app-extension"')
+      );
+      const extensionTargetUuid = extTargetMatch ? extTargetMatch[1] : null;
+      if (!extensionTargetUuid) {
+        console.warn('[ios-hms-screenshare] ⚠️  Could not find extension target UUID in project.pbxproj');
+        return config;
+      }
+
+      // Already patched: main target has a non-empty dependencies list
+      const mainTargetDepsAlready = new RegExp(
+        mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?dependencies = \\(\\s*\\n\\s*[0-9A-F]{24}'
+      );
+      if (mainTargetDepsAlready.test(pbx)) {
+        console.log('[ios-hms-screenshare] ✅ project.pbxproj: main target already has extension dependency');
+        return config;
+      }
+
+      // Deterministic UUIDs for the new entries (24 hex chars)
+      const containerProxyUuid = 'A1B2C3D4E5F60718293A4B5C';
+      const targetDependencyUuid = 'D4E5F60718293A4B5C6D7E8F';
+
+      // Add PBXContainerItemProxy and PBXTargetDependency entries (create sections if missing)
+      const containerProxyEntry = `\t\t${containerProxyUuid} /* PBXContainerItemProxy */ = {
+\t\t\tisa = PBXContainerItemProxy;
+\t\t\tcontainerPortal = ${projectUuid} /* Project object */;
+\t\t\tproxyType = 1;
+\t\t\tremoteGlobalIDString = ${extensionTargetUuid};
+\t\t\tremoteInfo = "${extensionName}";
+\t\t};
+`;
+      const targetDependencyEntry = `\t\t${targetDependencyUuid} /* PBXTargetDependency */ = {
+\t\t\tisa = PBXTargetDependency;
+\t\t\ttargetProxy = ${containerProxyUuid} /* PBXContainerItemProxy */;
+\t\t};
+`;
+
+      if (!pbx.includes('PBXContainerItemProxy')) {
+        pbx = pbx.replace(
+          /(\/\* End PBXProject section \*\/)/,
+          `$1\n\n/* Begin PBXContainerItemProxy section */\n${containerProxyEntry}/* End PBXContainerItemProxy section */\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
+        );
+      } else {
+        pbx = pbx.replace(/(\/\* End PBXContainerItemProxy section \*\/)/, containerProxyEntry + '$1');
+        if (!pbx.includes('PBXTargetDependency')) {
+          pbx = pbx.replace(
+            /(\/\* End PBXContainerItemProxy section \*\/)/,
+            `$1\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
+          );
+        } else {
+          pbx = pbx.replace(/(\/\* End PBXTargetDependency section \*\/)/, targetDependencyEntry + '$1');
+        }
+      }
+
+      // Add our dependency to the main target's dependencies array (only the GrabDocs target).
+      const mainTargetDepsPattern = new RegExp(
+        '(' + mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?)dependencies = \\(\\s*\\)\\s*;'
+      );
+      const mainTargetBlockMatch = pbx.match(mainTargetDepsPattern);
+      if (!mainTargetBlockMatch) {
+        console.warn('[ios-hms-screenshare] ⚠️  Could not find main target empty dependencies block');
+        return config;
+      }
+      pbx = pbx.replace(
+        mainTargetDepsPattern,
+        '$1dependencies = (\n\t\t\t\t' + targetDependencyUuid + ' /* ' + extensionName + ' */,\n\t\t\t);'
+      );
+
+      fs.writeFileSync(pbxPath, pbx);
+      console.log('[ios-hms-screenshare] ✅ project.pbxproj: added extension as dependency of main target');
+      return config;
+    },
+  ]);
+}
+
+/**
  * Add a Run Script build phase to the extension target that installs the
  * EXT_PROVISIONING_PROFILE (EAS file-type env var) into the provisioning profiles
  * directory. This runs DURING xcodebuild, when EAS has already set env vars and
@@ -652,6 +767,7 @@ function withHmsScreenshareExtension(config, options = {}) {
   const podfileOpts = { extensionName };
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
+  config = withPbxprojExtensionTargetDependency(config, podfileOpts);
   config = withExtensionProfileInstallPhase(config, { extensionName });
   config = withPodfileEntry(config, podfileOpts);
   // Disk-level safety net: runs after withPodfile in Expo's pipeline; re-checks and re-patches if needed.
