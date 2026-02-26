@@ -373,24 +373,14 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   }
   if (insertLineIndex === -1) return contents;
 
-  // When use_frameworks! is active in the main target, CocoaPods requires the extension target
-  // to use the same framework linkage; otherwise it refuses to attach the extension to the host.
-  const useFrameworksRe = /use_frameworks!\s*(.*)/;
-  const frameworkLines = [];
-  for (let i = mainTargetLineIndex + 1; i < insertLineIndex; i++) {
-    const line = filteredLines[i];
-    if (useFrameworksRe.test(line)) {
-      frameworkLines.push('    ' + line.trim());
-    }
-  }
-
+  // Do NOT add use_frameworks! to the extension target. With RN 0.81 + Expo + static frameworks
+  // + Hermes, having use_frameworks! in both main and extension breaks CocoaPods host detection
+  // ("Unable to find host target(s)"). Extension inherits linkage from parent via inherit! :search_paths.
   const extensionBlock = [
     '  target \'' + extensionName + '\' do',
     '    inherit! :search_paths',
-    ...frameworkLines,
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
-    "    host_targets '" + MAIN_APP_TARGET_NAME + "'", // Explicit host so CocoaPods 1.12+ finds the app when use_react_native! uses abstract targets
     '  end',
   ];
   const before = filteredLines.slice(0, insertLineIndex).join(lineEnding);

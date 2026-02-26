@@ -13,7 +13,6 @@ const fs = require('fs');
 const path = require('path');
 
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
-const MAIN_APP_TARGET_NAME = 'GrabDocs';
 const PODFILE_PATH = path.join(__dirname, '..', 'ios', 'Podfile');
 
 function isExtensionProperlyNested(podfile, extensionName) {
@@ -80,7 +79,6 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
     ind2 + 'inherit! :search_paths',
     ind2 + 'use_modular_headers!',
     ind2 + "pod 'HMSBroadcastExtensionSDK'",
-    ind2 + "host_targets '" + MAIN_APP_TARGET_NAME + "'",
     ind  + 'end',
   ].join(lineEnding);
 
