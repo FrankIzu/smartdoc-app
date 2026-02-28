@@ -1,0 +1,14 @@
+diff --git a/node_modules/react-native-worklets/RNWorklets.podspec b/node_modules/react-native-worklets/RNWorklets.podspec
+index 2133f86..cc2ce3a 100644
+--- a/node_modules/react-native-worklets/RNWorklets.podspec
++++ b/node_modules/react-native-worklets/RNWorklets.podspec
+@@ -6,7 +6,8 @@ $worklets_config = worklets_find_config()
+ worklets_assert_minimal_react_native_version($worklets_config)
+ 
+ $new_arch_enabled = ENV['RCT_NEW_ARCH_ENABLED'] != '0'
+-worklets_assert_new_architecture_enabled($new_arch_enabled)
++# Allow legacy arch for stability (e.g. 100ms broadcast extension).
++# worklets_assert_new_architecture_enabled($new_arch_enabled)
+ 
+ ios_min_version = '13.4'
+ 
