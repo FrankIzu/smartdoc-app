@@ -310,6 +310,10 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.INFOPLIST_FILE = quoted(`${extensionName}/Info.plist`);
               buildConfig.buildSettings.CODE_SIGN_ENTITLEMENTS = quoted(`${extensionName}/${extensionName}.entitlements`);
               buildConfig.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = quoted(extBundleId);
+              // Extension links HMSBroadcastExtensionSDK (built by CocoaPods for main target).
+              buildConfig.buildSettings.FRAMEWORK_SEARCH_PATHS = (buildConfig.buildSettings.FRAMEWORK_SEARCH_PATHS || '$(inherited)') + ' "$(PODS_CONFIGURATION_BUILD_DIR)/' + HMS_POD_NAME + '"';
+              buildConfig.buildSettings.OTHER_LDFLAGS = (buildConfig.buildSettings.OTHER_LDFLAGS || '$(inherited)') + ' -framework ' + HMS_POD_NAME;
+              buildConfig.buildSettings.APPLICATION_EXTENSION_API_ONLY = 'YES';
               const isRelease = buildConfig.name && buildConfig.name === 'Release';
               buildConfig.buildSettings.CODE_SIGN_STYLE = isRelease ? '"Manual"' : '"Automatic"';
               if (isRelease) {
@@ -359,147 +363,77 @@ function podfileStripConditionalUseFrameworks(contents) {
   return out.join(lineEnding);
 }
 
-/**
- * True only when the extension target is INDENTED (i.e. nested inside a parent target).
- * Checks for a newline followed by at least one space/tab before `target 'Ext' do`.
- */
-function isExtensionProperlyNested(podfile, extensionName) {
-  return new RegExp(
-    '\n[ \t]+target\\s+[\'"]' +
-    extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-    '[\'"]\\s+do\\b'
-  ).test(podfile);
-}
+const HMS_POD_NAME = 'HMSBroadcastExtensionSDK';
 
 /**
- * Insert extension target INSIDE the main app target, immediately BEFORE use_react_native!(.
- * We do not use "insert before closing end" because Ruby has if/else/case blocks whose
- * end would be found first by naive depth counting, putting the extension inside the
- * wrong block. Anchoring on use_react_native! guarantees we are inside the main target
- * and outside any if/else, so CocoaPods sees a proper host relationship.
+ * Remove any nested "target 'GrabDocsBroadcastUpload' do ... end" block from the Podfile.
+ * Used when switching to "main target only": extension is managed by Xcode, not CocoaPods.
  */
-function podfileInsertExtensionBlock(contents, extensionName, tag) {
+function podfileRemoveExtensionBlock(contents, extensionName) {
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
   const lines = contents.split(/\r?\n/);
-
-  // Remove any existing extension block (wrong place or duplicate)
-  const tagStart = '# @generated begin ' + tag;
-  let filteredLines = lines;
-  if (contents.includes(tagStart)) {
-    const out = [];
-    let skip = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes(tagStart)) {
-        skip = 1;
-        continue;
-      }
-      if (skip) {
-        if (lines[i].includes('# @generated end ' + tag)) skip = 0;
-        continue;
-      }
-      out.push(lines[i]);
-    }
-    filteredLines = out;
-  }
-
-  // Find first "target 'GrabDocs' do" or "target \"GrabDocs\" do"
-  const targetDoRe = new RegExp("^\\s*target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\s*$");
-  let mainTargetLineIndex = -1;
-  for (let i = 0; i < filteredLines.length; i++) {
-    if (targetDoRe.test(filteredLines[i])) {
-      mainTargetLineIndex = i;
-      break;
-    }
-  }
-  if (mainTargetLineIndex === -1) return contents;
-
-  // Insert BEFORE use_react_native!( — extension must be declared before RN mutates target graph.
-  // CocoaPods builds the dependency graph top-down; if extension comes after use_react_native!,
-  // RN's autolinking breaks CocoaPods' ability to infer the host target.
-  const useReactNativeRe = /use_react_native!\s*\(/;
-  let insertLineIndex = -1;
-  for (let i = mainTargetLineIndex + 1; i < filteredLines.length; i++) {
-    if (useReactNativeRe.test(filteredLines[i])) {
-      insertLineIndex = i;
-      break;
-    }
-  }
-  if (insertLineIndex === -1) return contents;
-
-  // With static RN prebuilt + New Architecture, CocoaPods requires the extension to explicitly
-  // declare the same platform as the root so host resolution succeeds.
-  const platformMatch = contents.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
-  const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
-
-  // Extension target name must match Xcode project (GrabDocsBroadcastUpload). Use inherit! :search_paths
-  // so CocoaPods resolves the extension as a host child; :complete breaks host detection.
-  const extensionBlock = [
-    '  target \'' + extensionName + '\' do',
-    "    platform :ios, '" + iosDeploymentTarget + "'",
-    '    inherit! :search_paths',
-    '    use_modular_headers!',
-    "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
-    '  end',
-  ];
-  const before = filteredLines.slice(0, insertLineIndex).join(lineEnding);
-  const after = filteredLines.slice(insertLineIndex).join(lineEnding);
-  return before + lineEnding + extensionBlock.join(lineEnding) + lineEnding + after;
-}
-
-/**
- * Inject APPLICATION_EXTENSION_API_ONLY for the extension target into the existing post_install block.
- * CocoaPods and Xcode expect app extensions to have this set.
- */
-function podfileInjectPostInstallExtensionApiOnly(contents, extensionName) {
-  if (contents.includes('APPLICATION_EXTENSION_API_ONLY') && contents.includes(extensionName)) {
-    return contents;
-  }
-  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
-  const lines = contents.split(/\r?\n/);
-  const postInstallRe = /post_install\s+do\s+\|installer\|/;
-  let postInstallLineIndex = -1;
+  const extRe = new RegExp("^\\s*target\\s+['\"]" + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\s*$");
+  let start = -1;
+  let indent = 0;
   for (let i = 0; i < lines.length; i++) {
-    if (postInstallRe.test(lines[i])) {
-      postInstallLineIndex = i;
+    const m = lines[i].match(extRe);
+    if (m) {
+      start = i;
+      indent = (lines[i].match(/^(\s*)/) || ['', ''])[1].length;
       break;
     }
   }
-  if (postInstallLineIndex === -1) return contents;
-  // Find the "end" that closes this post_install (depth from postInstallLineIndex)
-  let depth = 1;
-  let closingIndex = -1;
-  for (let i = postInstallLineIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^\s*end\s*$/.test(line)) {
-      depth--;
-      if (depth === 0) {
-        closingIndex = i;
-        break;
-      }
-    } else if (/\s+do\s*$/.test(line)) {
-      depth++;
+  if (start === -1) return contents;
+  let end = -1;
+  for (let i = start + 1; i < lines.length; i++) {
+    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
+    if (em && em[1].length <= indent) {
+      end = i;
+      break;
     }
   }
-  if (closingIndex === -1) return contents;
-  const indent = (lines[closingIndex].match(/^(\s*)/) || ['', ''])[1] || '  ';
-  const block = [
-    indent + '# ios-hms-screenshare: app extension must use APPLICATION_EXTENSION_API_ONLY',
-    indent + 'installer.pods_project.targets.each do |target|',
-    indent + '  if target.name == \'' + extensionName + '\'',
-    indent + '    target.build_configurations.each do |config|',
-    indent + '      config.build_settings[\'APPLICATION_EXTENSION_API_ONLY\'] = \'YES\'',
-    indent + '    end',
-    indent + '  end',
-    indent + 'end',
-  ].join(lineEnding);
-  const before = lines.slice(0, closingIndex).join(lineEnding);
-  const after = lines.slice(closingIndex).join(lineEnding);
-  return before + lineEnding + block + lineEnding + after;
+  if (end === -1) return contents;
+  const before = lines.slice(0, start).join(lineEnding);
+  const after = lines.slice(end + 1).join(lineEnding);
+  return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
 }
 
 /**
- * Add the extension target nested inside the main app target.
- * Inserts immediately before the main target's closing `end` so CocoaPods sees the host relationship.
+ * Add pod 'HMSBroadcastExtensionSDK' to the main app target only (before use_react_native!).
+ * CocoaPods manages only GrabDocs; the extension links the framework built for the main app.
+ */
+function podfileAddHmsPodToMainTarget(contents) {
+  if (contents.includes("pod '" + HMS_POD_NAME + "'")) return contents;
+  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
+  const lines = contents.split(/\r?\n/);
+  const targetDoRe = new RegExp("^\\s*target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\s*$");
+  let mainLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (targetDoRe.test(lines[i])) {
+      mainLine = i;
+      break;
+    }
+  }
+  if (mainLine === -1) return contents;
+  const useRnRe = /use_react_native!\s*\(/;
+  let insertAt = -1;
+  for (let i = mainLine + 1; i < lines.length; i++) {
+    if (useRnRe.test(lines[i])) {
+      insertAt = i;
+      break;
+    }
+  }
+  if (insertAt === -1) return contents;
+  const indent = (lines[insertAt].match(/^(\s*)/) || ['', '  '])[1];
+  const podLine = indent + "  pod '" + HMS_POD_NAME + "'  # for broadcast extension (linked by Xcode)";
+  const before = lines.slice(0, insertAt).join(lineEnding);
+  const after = lines.slice(insertAt).join(lineEnding);
+  return before + lineEnding + podLine + lineEnding + after;
+}
+
+/**
+ * Podfile: do NOT declare the extension as a CocoaPods target. CocoaPods manages only the main app.
+ * Add HMSBroadcastExtensionSDK to the main target so it is built; the extension links it in Xcode.
  */
 function withPodfileEntry(config, { extensionName }) {
   return withPodfile(config, (config) => {
@@ -511,37 +445,18 @@ function withPodfileEntry(config, { extensionName }) {
       return config;
     }
 
-    // Ensure legacy architecture so codegen and RNReanimated v2 resolve consistently.
     let working = podfileEnsureNewArchDisabled(src);
-
-    const tag = 'ios-hms-screenshare-' + extensionName;
-
-    // Strip conditional use_frameworks! (100ms + extension: never enable frameworks linkage).
+    working = podfileStripConditionalUseFrameworks(working);
+    working = podfileRemoveExtensionBlock(working, extensionName);
+    working = podfileAddHmsPodToMainTarget(working);
     working = podfileStripConditionalUseFrameworks(working);
 
-    // Correct check: extension must be INDENTED (nested), not just anywhere after the main target.
-    if (isExtensionProperlyNested(working, extensionName)) {
-      console.log('[ios-hms-screenshare] ✅ withPodfile: extension already properly nested inside main target');
-      if (working !== src) {
-        if (typeof data === 'string') config.modResults = working;
-        else config.modResults = { ...data, contents: working };
-      }
-      return config;
-    }
-
-    let resultContents = podfileInsertExtensionBlock(working, extensionName, tag);
-    if (resultContents === working) {
-      console.error('[ios-hms-screenshare] ❌ Podfile: could not find main target "' + MAIN_APP_TARGET_NAME + '" or insertion point.');
-      throw new Error('[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile. Check that the main app target is named "' + MAIN_APP_TARGET_NAME + '".');
-    }
-    resultContents = podfileInjectPostInstallExtensionApiOnly(resultContents, extensionName);
-    resultContents = podfileStripConditionalUseFrameworks(resultContents);
-    console.log('[ios-hms-screenshare] ✅ withPodfile: extension block nested inside main target + post_install APPLICATION_EXTENSION_API_ONLY');
     if (typeof data === 'string') {
-      config.modResults = resultContents;
+      config.modResults = working;
     } else {
-      config.modResults = { ...data, contents: resultContents };
+      config.modResults = { ...data, contents: working };
     }
+    console.log('[ios-hms-screenshare] ✅ withPodfile: main target only + pod ' + HMS_POD_NAME + ' (no extension target in Podfile)');
     return config;
   });
 }
@@ -731,6 +646,9 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
  * withDangerousMod for ios runs AFTER withPodfile in Expo's mod pipeline, so this always
  * sees the final on-disk Podfile.
  */
+/**
+ * Safety net: re-apply main-target-only Podfile rules on disk (no extension target).
+ */
 function withPodfilePatchOnDisk(config, { extensionName }) {
   return withDangerousMod(config, [
     'ios',
@@ -743,27 +661,12 @@ function withPodfilePatchOnDisk(config, { extensionName }) {
       }
       let contents = fs.readFileSync(podfilePath, 'utf8');
       contents = podfileStripConditionalUseFrameworks(contents);
-
-      if (isExtensionProperlyNested(contents, extensionName)) {
-        console.log('[ios-hms-screenshare] ✅ Podfile on disk: extension already properly nested');
-        fs.writeFileSync(podfilePath, contents);
-        return config;
-      }
-
-      console.warn('[ios-hms-screenshare] ⚠️  Podfile on disk: extension NOT properly nested — applying disk patch');
-      const tag = 'ios-hms-screenshare-' + extensionName;
-      let patched = podfileInsertExtensionBlock(contents, extensionName, tag);
-      if (patched === contents) {
-        throw new Error(
-          '[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile (disk). ' +
-          'Ensure the main app target is named "' + MAIN_APP_TARGET_NAME + '" and the Podfile has use_react_native!(.'
-        );
-      }
-      patched = podfileInjectPostInstallExtensionApiOnly(patched, extensionName);
-      patched = podfileEnsureNewArchDisabled(patched);
-      patched = podfileStripConditionalUseFrameworks(patched);
-      fs.writeFileSync(podfilePath, patched);
-      console.log('[ios-hms-screenshare] ✅ Podfile patched on disk (safety net): extension nested + post_install + ENV');
+      contents = podfileEnsureNewArchDisabled(contents);
+      contents = podfileRemoveExtensionBlock(contents, extensionName);
+      contents = podfileAddHmsPodToMainTarget(contents);
+      contents = podfileStripConditionalUseFrameworks(contents);
+      fs.writeFileSync(podfilePath, contents);
+      console.log('[ios-hms-screenshare] ✅ Podfile on disk: main target only + ' + HMS_POD_NAME + ' (no extension target)');
       return config;
     },
   ]);
