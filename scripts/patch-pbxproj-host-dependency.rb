@@ -39,19 +39,8 @@ if already
   exit 0
 end
 
-# Add a PBXTargetDependency (and the required PBXContainerItemProxy)
-dep = project.new(Xcodeproj::Project::Object::PBXTargetDependency)
-dep.target = ext_target
-
-proxy = project.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
-proxy.container_portal = project.root_object   # PBXProject object (same project)
-proxy.proxy_type       = '1'                   # 1 = native target
-proxy.remote_global_id_string = ext_target.uuid
-proxy.remote_info      = ext_target.name
-
-dep.target       = ext_target
-dep.target_proxy = proxy
-main_target.dependencies << dep
-
+# Use the gem's built-in method: creates PBXTargetDependency + PBXContainerItemProxy,
+# sets containerPortal, proxyType, remoteGlobalIDString, remoteInfo with correct UUIDs.
+main_target.add_dependency(ext_target)
 project.save
 puts "[patch-pbxproj] ✅ Added #{ext_target.name} as dependency of #{main_target.name}."
