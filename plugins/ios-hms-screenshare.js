@@ -332,6 +332,11 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 /** Main app target in Xcode/Podfile; must match exactly (plugin accepts both 'GrabDocs' and "GrabDocs" in Podfile). */
 const MAIN_APP_TARGET_NAME = 'GrabDocs';
 
+/** Expo/RN autolinking creates a pod target named <AppTarget>-<ExtensionTarget>; Podfile must match. */
+function getExtensionPodTargetName(extensionName) {
+  return MAIN_APP_TARGET_NAME + '-' + extensionName;
+}
+
 /**
  * Ensure legacy architecture is set so codegen and RNReanimated v2 resolve consistently.
  */
@@ -361,15 +366,21 @@ function podfileStripConditionalUseFrameworks(contents) {
 
 /**
  * True only when the extension target is INDENTED (i.e. nested inside a parent target).
- * Checks for a newline followed by at least one space/tab before `target 'Ext' do`.
- * A top-level (root) target would have no leading whitespace and would fail this check.
+ * Accepts either the simple name (GrabDocsBroadcastUpload) or Expo autolinking name (GrabDocs-GrabDocsBroadcastUpload).
  */
 function isExtensionProperlyNested(podfile, extensionName) {
-  return new RegExp(
+  const podTargetName = getExtensionPodTargetName(extensionName);
+  const reSimple = new RegExp(
     '\n[ \t]+target\\s+[\'"]' +
     extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
     '[\'"]\\s+do\\b'
-  ).test(podfile);
+  );
+  const rePodName = new RegExp(
+    '\n[ \t]+target\\s+[\'"]' +
+    podTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+    '[\'"]\\s+do\\b'
+  );
+  return reSimple.test(podfile) || rePodName.test(podfile);
 }
 
 /**
@@ -432,11 +443,11 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const platformMatch = contents.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
   const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
 
-  // Do NOT add use_frameworks! to the extension target. With RN 0.81 + Expo + static frameworks
-  // + Hermes, having use_frameworks! in both main and extension breaks CocoaPods host detection
-  // ("Unable to find host target(s)"). Use inherit! :complete so CocoaPods sees full host relationship.
+  // Expo/RN autolinking registers the extension pod as <AppTarget>-<ExtensionTarget>; Podfile must match.
+  const podTargetName = getExtensionPodTargetName(extensionName);
+  // Do NOT add use_frameworks! to the extension target. Use inherit! :complete so CocoaPods sees full host relationship.
   const extensionBlock = [
-    '  target \'' + extensionName + '\' do',
+    '  target \'' + podTargetName + '\' do',
     "    platform :ios, '" + iosDeploymentTarget + "'",
     '    inherit! :complete',
     '    use_modular_headers!',
@@ -453,7 +464,8 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
  * CocoaPods and Xcode expect app extensions to have this set.
  */
 function podfileInjectPostInstallExtensionApiOnly(contents, extensionName) {
-  if (contents.includes('APPLICATION_EXTENSION_API_ONLY') && contents.includes(extensionName)) {
+  const podTargetName = getExtensionPodTargetName(extensionName);
+  if (contents.includes('APPLICATION_EXTENSION_API_ONLY') && (contents.includes(extensionName) || contents.includes(podTargetName))) {
     return contents;
   }
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
@@ -484,10 +496,11 @@ function podfileInjectPostInstallExtensionApiOnly(contents, extensionName) {
   }
   if (closingIndex === -1) return contents;
   const indent = (lines[closingIndex].match(/^(\s*)/) || ['', ''])[1] || '  ';
+  // CocoaPods target.name is the Expo autolinking name (GrabDocs-GrabDocsBroadcastUpload)
   const block = [
     indent + '# ios-hms-screenshare: app extension must use APPLICATION_EXTENSION_API_ONLY',
     indent + 'installer.pods_project.targets.each do |target|',
-    indent + '  if target.name == \'' + extensionName + '\'',
+    indent + '  if target.name == \'' + extensionName + '\' || target.name == \'' + podTargetName + '\'',
     indent + '    target.build_configurations.each do |config|',
     indent + '      config.build_settings[\'APPLICATION_EXTENSION_API_ONLY\'] = \'YES\'',
     indent + '    end',
