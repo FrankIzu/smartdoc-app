@@ -311,8 +311,9 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.CODE_SIGN_ENTITLEMENTS = quoted(`${extensionName}/${extensionName}.entitlements`);
               buildConfig.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = quoted(extBundleId);
               // Extension links HMSBroadcastExtensionSDK (built by CocoaPods for main target).
-              buildConfig.buildSettings.FRAMEWORK_SEARCH_PATHS = (buildConfig.buildSettings.FRAMEWORK_SEARCH_PATHS || '$(inherited)') + ' "$(PODS_CONFIGURATION_BUILD_DIR)/' + HMS_POD_NAME + '"';
-              buildConfig.buildSettings.OTHER_LDFLAGS = (buildConfig.buildSettings.OTHER_LDFLAGS || '$(inherited)') + ' -framework ' + HMS_POD_NAME;
+              // Use single-quoted form so Nanaimo (CocoaPods pbxproj parser) doesn't treat $(...) as a dict.
+              buildConfig.buildSettings.FRAMEWORK_SEARCH_PATHS = "'$(inherited) $(PODS_CONFIGURATION_BUILD_DIR)/" + HMS_POD_NAME + "'";
+              buildConfig.buildSettings.OTHER_LDFLAGS = "'$(inherited) -framework " + HMS_POD_NAME + "'";
               buildConfig.buildSettings.APPLICATION_EXTENSION_API_ONLY = 'YES';
               const isRelease = buildConfig.name && buildConfig.name === 'Release';
               buildConfig.buildSettings.CODE_SIGN_STYLE = isRelease ? '"Manual"' : '"Automatic"';
@@ -567,6 +568,19 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
       pbx = pbx.replace(
         mainTargetDepsPattern,
         '$1dependencies = (\n\t\t\t\t' + targetDependencyUuid + ' /* ' + extensionName + ' */,\n\t\t\t);'
+      );
+
+      // Nanaimo (CocoaPods pbxproj parser) treats $(...) inside double-quoted values as a dict and fails.
+      // Force single-quoted form for extension's FRAMEWORK_SEARCH_PATHS and OTHER_LDFLAGS.
+      const singleQuotedFrameworks = "'$(inherited) $(PODS_CONFIGURATION_BUILD_DIR)/" + HMS_POD_NAME + "'";
+      const singleQuotedLdflags = "'$(inherited) -framework " + HMS_POD_NAME + "'";
+      pbx = pbx.replace(
+        /FRAMEWORK_SEARCH_PATHS = [^\n]*PODS_CONFIGURATION_BUILD_DIR[^\n]*;/g,
+        "FRAMEWORK_SEARCH_PATHS = " + singleQuotedFrameworks + ";"
+      );
+      pbx = pbx.replace(
+        new RegExp("OTHER_LDFLAGS = [^\\n]*-framework " + HMS_POD_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "[^\\n]*;", "g"),
+        "OTHER_LDFLAGS = " + singleQuotedLdflags + ";"
       );
 
       fs.writeFileSync(pbxPath, pbx);
