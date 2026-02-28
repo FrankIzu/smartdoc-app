@@ -343,6 +343,23 @@ function podfileEnsureNewArchDisabled(contents) {
 }
 
 /**
+ * Remove conditional use_frameworks! from the main target.
+ * 100ms + broadcast extension + use_frameworks! = fragile host resolution; we never want it enabled.
+ */
+function podfileStripConditionalUseFrameworks(contents) {
+  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
+  const lines = contents.split(/\r?\n/);
+  const out = lines.filter((line) => {
+    const t = line.trim();
+    return !(
+      t.startsWith("use_frameworks!") &&
+      (t.includes("podfile_properties['ios.useFrameworks']") || t.includes("ENV['USE_FRAMEWORKS']"))
+    );
+  });
+  return out.join(lineEnding);
+}
+
+/**
  * True only when the extension target is INDENTED (i.e. nested inside a parent target).
  * Checks for a newline followed by at least one space/tab before `target 'Ext' do`.
  * A top-level (root) target would have no leading whitespace and would fail this check.
@@ -501,6 +518,9 @@ function withPodfileEntry(config, { extensionName }) {
 
     const tag = 'ios-hms-screenshare-' + extensionName;
 
+    // Strip conditional use_frameworks! (100ms + extension: never enable frameworks linkage).
+    working = podfileStripConditionalUseFrameworks(working);
+
     // Correct check: extension must be INDENTED (nested), not just anywhere after the main target.
     if (isExtensionProperlyNested(working, extensionName)) {
       console.log('[ios-hms-screenshare] ✅ withPodfile: extension already properly nested inside main target');
@@ -517,6 +537,7 @@ function withPodfileEntry(config, { extensionName }) {
       throw new Error('[ios-hms-screenshare] Could not nest ' + extensionName + ' in Podfile. Check that the main app target is named "' + MAIN_APP_TARGET_NAME + '".');
     }
     resultContents = podfileInjectPostInstallExtensionApiOnly(resultContents, extensionName);
+    resultContents = podfileStripConditionalUseFrameworks(resultContents);
     console.log('[ios-hms-screenshare] ✅ withPodfile: extension block nested inside main target + post_install APPLICATION_EXTENSION_API_ONLY');
     if (typeof data === 'string') {
       config.modResults = resultContents;
@@ -723,9 +744,11 @@ function withPodfilePatchOnDisk(config, { extensionName }) {
         return config;
       }
       let contents = fs.readFileSync(podfilePath, 'utf8');
+      contents = podfileStripConditionalUseFrameworks(contents);
 
       if (isExtensionProperlyNested(contents, extensionName)) {
         console.log('[ios-hms-screenshare] ✅ Podfile on disk: extension already properly nested');
+        fs.writeFileSync(podfilePath, contents);
         return config;
       }
 
@@ -740,6 +763,7 @@ function withPodfilePatchOnDisk(config, { extensionName }) {
       }
       patched = podfileInjectPostInstallExtensionApiOnly(patched, extensionName);
       patched = podfileEnsureNewArchDisabled(patched);
+      patched = podfileStripConditionalUseFrameworks(patched);
       fs.writeFileSync(podfilePath, patched);
       console.log('[ios-hms-screenshare] ✅ Podfile patched on disk (safety net): extension nested + post_install + ENV');
       return config;

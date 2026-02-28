@@ -685,6 +685,9 @@ function DashboardScreen() {
       case 'bookmarks':
         router.push('/bookmarks/manage');
         break;
+      case 'fillable-file':
+        router.push('/fillable-file');
+        break;
       default:
         break;
     }
@@ -1323,6 +1326,14 @@ function DashboardScreen() {
               icon="clipboard-outline"
               color="#34C759"
               onPress={() => handleQuickAction('form')}
+            />
+            <QuickActionCard
+              key="action-fillable-file"
+              title="Fillable File"
+              subtitle="Templates to fill and share"
+              icon="document-text"
+              color="#10B981"
+              onPress={() => handleQuickAction('fillable-file')}
             />
           </View>
         </View>

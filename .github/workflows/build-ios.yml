@@ -123,14 +123,9 @@ jobs:
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.15.2
 
-      # Prebuild: generates ios/ folder and runs config plugins.
-      # Then patch-ios-podfile.js is run as an explicit disk-level step to guarantee the extension
-      # is nested inside the main target — this is the definitive fix for "Unable to find host target".
+      # Prebuild: generates ios/ folder and runs config plugins (extension + pbxproj dependency via ios-hms-screenshare).
       - name: Prebuild iOS
         run: npx expo prebuild --platform ios --clean --no-install
-
-      - name: Patch Podfile (nest extension, set ENV, post_install)
-        run: node scripts/patch-ios-podfile.js
 
       - name: Verify Podfile and install Pods
         id: verify_pods
