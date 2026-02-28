@@ -434,11 +434,11 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
 
   // Do NOT add use_frameworks! to the extension target. With RN 0.81 + Expo + static frameworks
   // + Hermes, having use_frameworks! in both main and extension breaks CocoaPods host detection
-  // ("Unable to find host target(s)"). Extension inherits linkage from parent via inherit! :search_paths.
+  // ("Unable to find host target(s)"). Use inherit! :complete so CocoaPods sees full host relationship.
   const extensionBlock = [
     '  target \'' + extensionName + '\' do',
     "    platform :ios, '" + iosDeploymentTarget + "'",
-    '    inherit! :search_paths',
+    '    inherit! :complete',
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
     '  end',

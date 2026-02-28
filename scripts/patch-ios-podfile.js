@@ -46,7 +46,7 @@ function removeTopLevelExtensionBlock(podfile, extensionName) {
  * Strategy 2 (fallback): Insert before main target's closing end.
  */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
-  if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
+  if (podfile.includes("target '" + extensionName + "' do") && (podfile.includes('inherit! :search_paths') || podfile.includes('inherit! :complete'))) {
     if (isExtensionProperlyNested(podfile, extensionName)) return podfile;
     podfile = removeTopLevelExtensionBlock(podfile, extensionName);
   }
@@ -94,7 +94,7 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
     '',
     ind  + "target '" + extensionName + "' do",
     ind2 + "platform :ios, '" + iosDeploymentTarget + "'",
-    ind2 + 'inherit! :search_paths',
+    ind2 + 'inherit! :complete',
     ind2 + 'use_modular_headers!',
     ind2 + "pod 'HMSBroadcastExtensionSDK'",
     ind  + 'end',

@@ -30,7 +30,7 @@ function removeTopLevelExtensionBlock(podfile, extensionName) {
   return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
 }
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
-  if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :search_paths')) {
+  if (podfile.includes("target '" + extensionName + "' do") && podfile.includes('inherit! :complete')) {
     if (isExtensionProperlyNested(podfile, extensionName)) return podfile;
     podfile = removeTopLevelExtensionBlock(podfile, extensionName);
   }
@@ -52,7 +52,7 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
   const ind  = ' '.repeat(targetIndent + 2);
   const ind2 = ' '.repeat(targetIndent + 4);
-  const block = ['', ind + "target '" + extensionName + "' do", ind2 + "platform :ios, '" + iosDeploymentTarget + "'", ind2 + 'inherit! :search_paths', ind2 + 'use_modular_headers!', ind2 + "pod 'HMSBroadcastExtensionSDK'", ind + 'end'].join(lineEnding);
+  const block = ['', ind + "target '" + extensionName + "' do", ind2 + "platform :ios, '" + iosDeploymentTarget + "'", ind2 + 'inherit! :complete', ind2 + 'use_modular_headers!', ind2 + "pod 'HMSBroadcastExtensionSDK'", ind + 'end'].join(lineEnding);
   const before = lines.slice(0, closingLine).join(lineEnding);
   const after  = lines.slice(closingLine).join(lineEnding);
   return before + block + lineEnding + after;
@@ -101,7 +101,7 @@ end
 
 const result1 = insertExtensionBeforeMainTargetEnd(PODFILE_POST_INSTALL_INSIDE, EXTENSION_NAME);
 assert(result1.includes("  target 'GrabDocsBroadcastUpload' do"), 'Test1: extension target present');
-assert(result1.includes('inherit! :search_paths'), 'Test1: inherit! present');
+assert(result1.includes('inherit! :complete'), 'Test1: inherit! present');
 // Must appear BEFORE the final `end` (main target's end)
 const extIdx1 = result1.indexOf("  target 'GrabDocsBroadcastUpload' do");
 const lastEndIdx1 = result1.lastIndexOf('\nend');
@@ -139,7 +139,7 @@ end
 
 const result2 = insertExtensionBeforeMainTargetEnd(PODFILE_POST_INSTALL_OUTSIDE, EXTENSION_NAME);
 assert(result2.includes("  target 'GrabDocsBroadcastUpload' do"), 'Test2: extension target present');
-assert(result2.includes('inherit! :search_paths'), 'Test2: inherit! present');
+assert(result2.includes('inherit! :complete'), 'Test2: inherit! present');
 // Extension must be before `end` of target (not after, not inside post_install)
 const extIdx2 = result2.indexOf("  target 'GrabDocsBroadcastUpload' do");
 const postInstallLineIdx2 = result2.indexOf('\npost_install do');
@@ -175,7 +175,7 @@ end
 
 const result4 = insertExtensionBeforeMainTargetEnd(PODFILE_ABSTRACT_TARGET, EXTENSION_NAME);
 assert(result4.includes("target 'GrabDocsBroadcastUpload' do"), 'Test4: extension in abstract_target case');
-assert(result4.includes('inherit! :search_paths'), 'Test4: inherit! present');
+assert(result4.includes('inherit! :complete'), 'Test4: inherit! present');
 // Extension should be inside the GrabDocs target (before its end), not inside abstract_target
 const extIdx4 = result4.indexOf("target 'GrabDocsBroadcastUpload' do");
 const grabDocsEndIdx4 = result4.indexOf('\n  end\nend'); // GrabDocs target closes with `  end`
@@ -192,7 +192,7 @@ target 'GrabDocs' do
 end
 
 target 'GrabDocsBroadcastUpload' do
-  inherit! :search_paths
+  inherit! :complete
   use_modular_headers!
   pod 'HMSBroadcastExtensionSDK'
 end
