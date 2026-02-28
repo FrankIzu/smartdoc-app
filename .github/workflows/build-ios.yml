@@ -92,9 +92,11 @@ jobs:
       # ios/ is in .easignore, so EAS will run prebuild. The plugin ios-hms-screenshare
       # creates the Broadcast Upload Extension and patches the Podfile (nested target).
       - name: Install extension provisioning profile (App Groups)
+        id: ext_profile
         run: |
-          # EAS does not install extension profiles for local builds; Xcode needs the
-          # GrabDocsBroadcastUpload profile (with App Groups) in the standard location.
+          # EAS local build does not install extension profiles; Xcode needs the
+          # GrabDocsBroadcastUpload profile (with App Groups) so the extension target can sign.
+          # The profile MUST have App Groups capability and include group.com.grabdocs.mobile.
           if [ -z "$EXT_PROVISIONING_PROFILE_BASE64" ]; then
             echo "::error::EXT_PROVISIONING_PROFILE_BASE64 secret is not set. Add the base64-encoded GrabDocsBroadcastUpload .mobileprovision (with App Groups) as a GitHub secret."
             exit 1
@@ -102,14 +104,12 @@ jobs:
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           FALLBACK_UUID="f5a9c6da-0810-4a56-8963-3cb9894f83a1"
           mkdir -p "$PROFILE_DIR"
-          # Strip newlines in case the secret was pasted with line breaks
           echo "$EXT_PROVISIONING_PROFILE_BASE64" | tr -d '\n' | base64 --decode > /tmp/ext.mobileprovision
           if [ ! -s /tmp/ext.mobileprovision ]; then
             echo "::error::Failed to decode EXT_PROVISIONING_PROFILE_BASE64 (empty or invalid base64). Ensure the secret is a single line, no line breaks."
             exit 1
           fi
           UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-          # Use extracted UUID only if it looks like a UUID (hex and hyphens); otherwise fallback
           if [ -n "$UUID" ] && [ "${#UUID}" -eq 36 ] && echo "$UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
             echo "✅ Installed extension profile: $UUID"
@@ -117,6 +117,7 @@ jobs:
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/$FALLBACK_UUID.mobileprovision"
             echo "✅ Installed extension profile (fallback UUID: $FALLBACK_UUID)"
           fi
+          echo "EXT_PROVISIONING_PROFILE=/tmp/ext.mobileprovision" >> "$GITHUB_ENV"
         env:
           EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
 
@@ -149,6 +150,23 @@ jobs:
           echo "----- END PODFILE -----"
           cd ios && pod install --repo-update
 
+      - name: Set extension provisioning profile UUID in project
+        run: |
+          # Plugin hardcodes a UUID; Xcode must use the actual UUID of the profile we installed.
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -z "$PBXPROJ" ] || [ ! -f /tmp/ext.mobileprovision ]; then
+            echo "Skipping extension profile UUID patch (no project or no profile)"
+            exit 0
+          fi
+          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
+            echo "Could not extract UUID from extension profile; project will use plugin default."
+            exit 0
+          fi
+          # Replace hardcoded extension PROVISIONING_PROFILE with the profile's real UUID (only in extension target context).
+          sed -i '' "s/PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"/PROVISIONING_PROFILE = \"$UUID\"/g" "$PBXPROJ"
+          echo "✅ Set extension PROVISIONING_PROFILE to $UUID"
+
       - name: EAS Build (local)
         id: eas_build
         continue-on-error: true
@@ -157,6 +175,9 @@ jobs:
           eas build --platform ios --profile "$PROFILE" --local --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # So the extension target's "Install Extension Profile" run script can copy the profile
+          # into the build environment (EAS may use a different HOME when running xcodebuild).
+          EXT_PROVISIONING_PROFILE: /tmp/ext.mobileprovision
 
       - name: Upload Podfile for debugging (on failure)
         if: failure()
