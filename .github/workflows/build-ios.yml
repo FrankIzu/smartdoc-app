@@ -116,8 +116,10 @@ jobs:
           else
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/$FALLBACK_UUID.mobileprovision"
             echo "✅ Installed extension profile (fallback UUID: $FALLBACK_UUID)"
+            UUID="$FALLBACK_UUID"
           fi
           echo "EXT_PROVISIONING_PROFILE=/tmp/ext.mobileprovision" >> "$GITHUB_ENV"
+          echo "EXT_PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
         env:
           EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
 
@@ -175,9 +177,9 @@ jobs:
           eas build --platform ios --profile "$PROFILE" --local --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          # So the extension target's "Install Extension Profile" run script can copy the profile
-          # into the build environment (EAS may use a different HOME when running xcodebuild).
+          # Run script copies profile into build env; plugin uses UUID when EAS prebuilds in temp.
           EXT_PROVISIONING_PROFILE: /tmp/ext.mobileprovision
+          EXT_PROFILE_UUID: ${{ env.EXT_PROFILE_UUID }}
 
       - name: Upload Podfile for debugging (on failure)
         if: failure()

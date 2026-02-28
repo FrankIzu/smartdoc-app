@@ -301,10 +301,10 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.CODE_SIGN_STYLE = isRelease ? '"Manual"' : '"Automatic"';
               if (isRelease) {
                 buildConfig.buildSettings.CODE_SIGN_IDENTITY = '"Apple Distribution"';
-                // UUID of our manually created profile (GrabDocsBroadcastUpload AppStore)
-                // which has App Groups. Installed by eas-build-post-install hook from
-                // EXT_PROVISIONING_PROFILE env var. EAS does not auto-manage extension credentials.
-                buildConfig.buildSettings.PROVISIONING_PROFILE = '"f5a9c6da-0810-4a56-8963-3cb9894f83a1"';
+                // Use EXT_PROFILE_UUID from env (CI) so EAS prebuild in temp gets the right profile; else fallback.
+                const extProfileUuid = (process.env.EXT_PROFILE_UUID || '').trim();
+                const uuidMatch = extProfileUuid && extProfileUuid.length === 36 && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(extProfileUuid);
+                buildConfig.buildSettings.PROVISIONING_PROFILE = uuidMatch ? `"${extProfileUuid}"` : '"f5a9c6da-0810-4a56-8963-3cb9894f83a1"';
               }
             }
           }
@@ -650,7 +650,7 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/${extensionName}.mobileprovision\\"\\\\nfi\\\\n";
+			shellScript = "if [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/${extensionName}.mobileprovision\\"\\\\nelif [ -f /tmp/ext.mobileprovision ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp /tmp/ext.mobileprovision \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/${extensionName}.mobileprovision\\"\\\\nfi\\\\n";
 		};
 `;
 
