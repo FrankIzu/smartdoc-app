@@ -135,27 +135,9 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
       target = project.addTarget(extensionName, 'app_extension', extensionName, extBundleId);
       if (target && target.uuid) {
         targetUuid = target.uuid;
-
-        // xcode-js addTarget creates the extension target but does NOT add it to
-        // the main target's "Embed App Extensions" build phase. CocoaPods requires
-        // that embedding relationship in project.pbxproj to identify the host target
-        // (it calls user_target.embedded_targets on the xcodeproj). Without the phase,
-        // CocoaPods throws "Unable to find host target(s) for GrabDocsBroadcastUpload".
-        const mainTarget = project.getFirstTarget && project.getFirstTarget();
-        if (mainTarget && mainTarget.uuid) {
-          try {
-            project.addBuildPhase(
-              [`${extensionName}.appex`],
-              'PBXCopyFilesBuildPhase',
-              'Embed App Extensions',
-              mainTarget.uuid,
-              'app_extension'
-            );
-            console.log('[ios-hms-screenshare] ✅ Added Embed App Extensions phase to main target');
-          } catch (embedErr) {
-            console.warn('[ios-hms-screenshare] ⚠️  Could not add Embed App Extensions phase:', embedErr.message);
-          }
-        }
+        // addTarget(app_extension) typically adds "Embed App Extensions" and the .appex product.
+        // Do NOT add the phase again: duplicate phase/build file causes xcodeproj
+        // "Consistency issue: no parent for object ... Copy Files, Embed App Extensions".
       }
     }
 
@@ -193,7 +175,7 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
       if (!xcConfigList || !xcConfigList.uuid) return config;
 
       const productFile = project.addProductFile(`${extensionName}.appex`, {
-        group: 'Copy Files',
+        group: 'Products',
         target: mainTarget.uuid,
         explicitFileType: 'wrapper.app-extension',
       });
@@ -463,6 +445,43 @@ function withPodfileEntry(config, { extensionName }) {
 }
 
 /**
+ * Ensure the extension .appex PBXFileReference is in the Products group so the xcodeproj
+ * gem can assign a parent (fixes "no parent for object ... Copy Files, Embed App Extensions").
+ */
+function ensureAppexInProductsGroup(pbx, extensionName) {
+  const appexName = extensionName + '.appex';
+  const fileRefSection = pbx.match(/\/\* Begin PBXFileReference section \*\/[\s\S]*?\/\* End PBXFileReference section \*\//);
+  if (!fileRefSection) return pbx;
+  const appexRefMatch = fileRefSection[0].match(
+    new RegExp('([0-9A-F]{24})\\s*\\/\\*[^*]*\\*\\/\\s*=\\s*\\{[\\s\\S]*?path\\s*=\\s*["\']' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.appex["\']')
+  );
+  const appexRefUuid = appexRefMatch ? appexRefMatch[1] : null;
+  if (!appexRefUuid) return pbx;
+
+  let groupSection = pbx.match(/\/\* Begin PBXGroup section \*\/[\s\S]*?\/\* End PBXGroup section \*\//);
+  if (!groupSection) return pbx;
+  const productsBlockRe = /(\t\t[0-9A-F]{24}\s*\/\*\s*Products\s*\/\*\s*=\s*\{\s*isa = PBXGroup;\s*children = \()([\s\S]*?)(\n\t\t\t\);)/;
+  const productsMatch = groupSection[0].match(productsBlockRe);
+  if (productsMatch && !productsMatch[2].includes(appexRefUuid)) {
+    const insertLine = '\n\t\t\t\t' + appexRefUuid + ' /* ' + appexName + ' */,';
+    const newBlock = productsMatch[1] + productsMatch[2] + insertLine + productsMatch[3];
+    pbx = pbx.replace(productsMatch[0], newBlock);
+  }
+
+  groupSection = pbx.match(/\/\* Begin PBXGroup section \*\/[\s\S]*?\/\* End PBXGroup section \*\//);
+  if (groupSection) {
+    const copyFilesRe = /(\t\t[0-9A-F]{24}\s*\/\*\s*Copy Files\s*\/\*\s*=\s*\{\s*isa = PBXGroup;\s*children = \()([\s\S]*?)(\n\t\t\t\);)/;
+    const copyMatch = groupSection[0].match(copyFilesRe);
+    if (copyMatch && copyMatch[2].includes(appexRefUuid)) {
+      const withoutAppex = copyMatch[2].replace(new RegExp('\\s*' + appexRefUuid + '\\s*\\/\\*[^*]*\\*\\/,\\n?', 'g'), '');
+      const newCopyBlock = copyMatch[1] + withoutAppex + copyMatch[3];
+      pbx = pbx.replace(copyMatch[0], newCopyBlock);
+    }
+  }
+  return pbx;
+}
+
+/**
  * Patch project.pbxproj to add the extension as a Target Dependency of the main app.
  * CocoaPods 1.2.1+ requires this (not just Embed App Extensions); otherwise
  * "Unable to find host target(s) for GrabDocsBroadcastUpload". The xcode-js
@@ -582,6 +601,10 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
         new RegExp("OTHER_LDFLAGS = [^\\n]*-framework " + HMS_POD_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "[^\\n]*;", "g"),
         "OTHER_LDFLAGS = " + singleQuotedLdflags + ";"
       );
+
+      // xcodeproj gem "no parent for object .appex: Copy Files, Embed App Extensions": the .appex
+      // file ref must be in a group that's in the project hierarchy. Ensure it's in Products.
+      pbx = ensureAppexInProductsGroup(pbx, extensionName);
 
       fs.writeFileSync(pbxPath, pbx);
       console.log('[ios-hms-screenshare] ✅ project.pbxproj: added extension as dependency of main target');
