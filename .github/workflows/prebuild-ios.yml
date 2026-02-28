@@ -50,10 +50,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install CocoaPods (for xcodeproj gem)
+        run: sudo gem install cocoapods -v 1.15.2
+
       - name: Run prebuild (iOS)
         run: npx expo prebuild --platform ios --clean --no-install
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Patch project.pbxproj (host → extension target dependency)
+        run: ruby scripts/patch-pbxproj-host-dependency.rb
 
       - name: Commit and push ios folder
         run: |

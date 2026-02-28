@@ -123,9 +123,16 @@ jobs:
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.15.2
 
-      # Prebuild: generates ios/ folder and runs config plugins (extension + pbxproj dependency via ios-hms-screenshare).
+      # Prebuild: generates ios/ folder and runs config plugins (extension target, Podfile entry, build settings).
       - name: Prebuild iOS
         run: npx expo prebuild --platform ios --clean --no-install
+
+      # Add GrabDocsBroadcastUpload as a PBXTargetDependency of the main app target using the
+      # Xcodeproj gem (already installed with CocoaPods). CocoaPods 1.2.1+ requires this to
+      # find the host target relationship during `pod install`; the JS plugin cannot reliably
+      # patch project.pbxproj from withDangerousMod due to regex ordering issues.
+      - name: Patch project.pbxproj (host → extension target dependency)
+        run: ruby scripts/patch-pbxproj-host-dependency.rb
 
       - name: Verify Podfile and install Pods
         id: verify_pods
