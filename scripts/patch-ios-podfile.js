@@ -14,14 +14,10 @@ const path = require('path');
 
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
 const MAIN_APP_TARGET = 'GrabDocs';
-/** Expo/RN autolinking registers the extension pod as <App>-<Extension>; Podfile must match. */
-const EXTENSION_POD_TARGET = MAIN_APP_TARGET + '-' + EXTENSION_NAME;
 const PODFILE_PATH = path.join(__dirname, '..', 'ios', 'Podfile');
 
 function isExtensionProperlyNested(podfile, extensionName) {
-  const reSimple = new RegExp('\\n\\s+target\\s+[\'"]' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\b');
-  const rePod = new RegExp('\\n\\s+target\\s+[\'"]' + EXTENSION_POD_TARGET.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\b');
-  return reSimple.test(podfile) || rePod.test(podfile);
+  return new RegExp('\\n\\s+target\\s+[\'"]' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\'"]\\s+do\\b').test(podfile);
 }
 
 function removeTopLevelExtensionBlock(podfile, extensionName) {
@@ -45,37 +41,14 @@ function removeTopLevelExtensionBlock(podfile, extensionName) {
   return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
 }
 
-function removeTopLevelExtensionBlockByPodTarget(podfile, podTargetName) {
-  const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
-  const lines = podfile.split(/\r?\n/);
-  let extLine = -1;
-  let extIndent = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(\s*)target\s+['"]([^'"]+)['"]\s+do\b/);
-    if (m && m[2] === podTargetName) { extLine = i; extIndent = m[1].length; break; }
-  }
-  if (extLine === -1) return podfile;
-  let endLine = -1;
-  for (let i = extLine + 1; i < lines.length; i++) {
-    const em = lines[i].match(/^(\s*)end(\s*(#.*)?)$/);
-    if (em && em[1].length <= extIndent) { endLine = i; break; }
-  }
-  if (endLine === -1) return podfile;
-  const before = lines.slice(0, extLine).join(lineEnding);
-  const after  = lines.slice(endLine + 1).join(lineEnding);
-  return before + (before.endsWith(lineEnding) ? '' : lineEnding) + after;
-}
-
 /**
- * Strategy 1: Insert before use_react_native!( — most reliable, always inside main target.
- * Use Expo autolinking pod target name (GrabDocs-GrabDocsBroadcastUpload).
+ * Insert before use_react_native!( — extension nested inside main target. Use inherit! :search_paths
+ * so CocoaPods resolves the extension as a host child.
  */
 function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
-  const podTargetName = EXTENSION_POD_TARGET;
-  if ((podfile.includes("target '" + extensionName + "' do") || podfile.includes("target '" + podTargetName + "' do")) && (podfile.includes('inherit! :search_paths') || podfile.includes('inherit! :complete'))) {
+  if (podfile.includes("target '" + extensionName + "' do") && (podfile.includes('inherit! :search_paths') || podfile.includes('inherit! :complete'))) {
     if (isExtensionProperlyNested(podfile, extensionName)) return podfile;
     podfile = removeTopLevelExtensionBlock(podfile, extensionName);
-    podfile = removeTopLevelExtensionBlockByPodTarget(podfile, podTargetName);
   }
 
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
@@ -120,9 +93,9 @@ function insertExtensionBeforeMainTargetEnd(podfile, extensionName) {
   const ind2 = mainIndent + '    ';
   const block = [
     '',
-    ind  + "target '" + EXTENSION_POD_TARGET + "' do",
+    ind  + "target '" + extensionName + "' do",
     ind2 + "platform :ios, '" + iosDeploymentTarget + "'",
-    ind2 + 'inherit! :complete',
+    ind2 + 'inherit! :search_paths',
     ind2 + 'use_modular_headers!',
     ind2 + "pod 'HMSBroadcastExtensionSDK'",
     ind  + 'end',
@@ -146,7 +119,7 @@ function ensureNewArchDisabled(podfile) {
  * Inject APPLICATION_EXTENSION_API_ONLY = YES for the extension into the existing post_install block.
  */
 function injectPostInstallExtensionApiOnly(podfile, extensionName) {
-  if (podfile.includes('APPLICATION_EXTENSION_API_ONLY') && (podfile.includes(extensionName) || podfile.includes(EXTENSION_POD_TARGET))) return podfile;
+  if (podfile.includes('APPLICATION_EXTENSION_API_ONLY') && podfile.includes(extensionName)) return podfile;
   const lineEnding = podfile.includes('\r\n') ? '\r\n' : '\n';
   const lines = podfile.split(/\r?\n/);
   const postInstallRe = /post_install\s+do\s+\|installer\|/;
@@ -166,7 +139,7 @@ function injectPostInstallExtensionApiOnly(podfile, extensionName) {
   const block = [
     indent + '# patch-ios-podfile: app extension API only',
     indent + "installer.pods_project.targets.each do |t|",
-    indent + "  if t.name == '" + extensionName + "' || t.name == '" + EXTENSION_POD_TARGET + "'",
+    indent + "  if t.name == '" + extensionName + "'",
     indent + "    t.build_configurations.each do |c|",
     indent + "      c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'",
     indent + "    end",

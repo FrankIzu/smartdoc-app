@@ -332,11 +332,6 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
 /** Main app target in Xcode/Podfile; must match exactly (plugin accepts both 'GrabDocs' and "GrabDocs" in Podfile). */
 const MAIN_APP_TARGET_NAME = 'GrabDocs';
 
-/** Expo/RN autolinking creates a pod target named <AppTarget>-<ExtensionTarget>; Podfile must match. */
-function getExtensionPodTargetName(extensionName) {
-  return MAIN_APP_TARGET_NAME + '-' + extensionName;
-}
-
 /**
  * Ensure legacy architecture is set so codegen and RNReanimated v2 resolve consistently.
  */
@@ -366,21 +361,14 @@ function podfileStripConditionalUseFrameworks(contents) {
 
 /**
  * True only when the extension target is INDENTED (i.e. nested inside a parent target).
- * Accepts either the simple name (GrabDocsBroadcastUpload) or Expo autolinking name (GrabDocs-GrabDocsBroadcastUpload).
+ * Checks for a newline followed by at least one space/tab before `target 'Ext' do`.
  */
 function isExtensionProperlyNested(podfile, extensionName) {
-  const podTargetName = getExtensionPodTargetName(extensionName);
-  const reSimple = new RegExp(
+  return new RegExp(
     '\n[ \t]+target\\s+[\'"]' +
     extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
     '[\'"]\\s+do\\b'
-  );
-  const rePodName = new RegExp(
-    '\n[ \t]+target\\s+[\'"]' +
-    podTargetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-    '[\'"]\\s+do\\b'
-  );
-  return reSimple.test(podfile) || rePodName.test(podfile);
+  ).test(podfile);
 }
 
 /**
@@ -443,13 +431,12 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
   const platformMatch = contents.match(/platform\s+:\s*ios\s*,\s*['"]([\d.]+)['"]/);
   const iosDeploymentTarget = platformMatch ? platformMatch[1] : '16.0';
 
-  // Expo/RN autolinking registers the extension pod as <AppTarget>-<ExtensionTarget>; Podfile must match.
-  const podTargetName = getExtensionPodTargetName(extensionName);
-  // Do NOT add use_frameworks! to the extension target. Use inherit! :complete so CocoaPods sees full host relationship.
+  // Extension target name must match Xcode project (GrabDocsBroadcastUpload). Use inherit! :search_paths
+  // so CocoaPods resolves the extension as a host child; :complete breaks host detection.
   const extensionBlock = [
-    '  target \'' + podTargetName + '\' do',
+    '  target \'' + extensionName + '\' do',
     "    platform :ios, '" + iosDeploymentTarget + "'",
-    '    inherit! :complete',
+    '    inherit! :search_paths',
     '    use_modular_headers!',
     "    pod 'HMSBroadcastExtensionSDK'", // From 100ms; requires iOS deployment target compatible with @100mslive/react-native-hms
     '  end',
@@ -464,8 +451,7 @@ function podfileInsertExtensionBlock(contents, extensionName, tag) {
  * CocoaPods and Xcode expect app extensions to have this set.
  */
 function podfileInjectPostInstallExtensionApiOnly(contents, extensionName) {
-  const podTargetName = getExtensionPodTargetName(extensionName);
-  if (contents.includes('APPLICATION_EXTENSION_API_ONLY') && (contents.includes(extensionName) || contents.includes(podTargetName))) {
+  if (contents.includes('APPLICATION_EXTENSION_API_ONLY') && contents.includes(extensionName)) {
     return contents;
   }
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
@@ -496,11 +482,10 @@ function podfileInjectPostInstallExtensionApiOnly(contents, extensionName) {
   }
   if (closingIndex === -1) return contents;
   const indent = (lines[closingIndex].match(/^(\s*)/) || ['', ''])[1] || '  ';
-  // CocoaPods target.name is the Expo autolinking name (GrabDocs-GrabDocsBroadcastUpload)
   const block = [
     indent + '# ios-hms-screenshare: app extension must use APPLICATION_EXTENSION_API_ONLY',
     indent + 'installer.pods_project.targets.each do |target|',
-    indent + '  if target.name == \'' + extensionName + '\' || target.name == \'' + podTargetName + '\'',
+    indent + '  if target.name == \'' + extensionName + '\'',
     indent + '    target.build_configurations.each do |config|',
     indent + '      config.build_settings[\'APPLICATION_EXTENSION_API_ONLY\'] = \'YES\'',
     indent + '    end',
