@@ -297,15 +297,12 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               buildConfig.buildSettings.FRAMEWORK_SEARCH_PATHS = "'$(inherited) $(PODS_CONFIGURATION_BUILD_DIR)/" + HMS_POD_NAME + "'";
               buildConfig.buildSettings.OTHER_LDFLAGS = "'$(inherited) -framework " + HMS_POD_NAME + "'";
               buildConfig.buildSettings.APPLICATION_EXTENSION_API_ONLY = 'YES';
-              const isRelease = buildConfig.name && buildConfig.name === 'Release';
-              buildConfig.buildSettings.CODE_SIGN_STYLE = isRelease ? '"Manual"' : '"Automatic"';
-              if (isRelease) {
-                buildConfig.buildSettings.CODE_SIGN_IDENTITY = '"Apple Distribution"';
-                // Use EXT_PROFILE_UUID from env (CI) so EAS prebuild in temp gets the right profile; else fallback.
-                const extProfileUuid = (process.env.EXT_PROFILE_UUID || '').trim();
-                const uuidMatch = extProfileUuid && extProfileUuid.length === 36 && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(extProfileUuid);
-                buildConfig.buildSettings.PROVISIONING_PROFILE = uuidMatch ? `"${extProfileUuid}"` : '"f5a9c6da-0810-4a56-8963-3cb9894f83a1"';
-              }
+              // Use Automatic signing so Xcode picks the profile we install (run script) by bundle ID.
+              // Manual + PROVISIONING_PROFILE failed in EAS local (HOME/temp isolation); Automatic finds the profile in the standard dir.
+              buildConfig.buildSettings.CODE_SIGN_STYLE = '"Automatic"';
+              buildConfig.buildSettings.DEVELOPMENT_TEAM = '"Q33K3Q7Q53"';
+              if (buildConfig.buildSettings.PROVISIONING_PROFILE) delete buildConfig.buildSettings.PROVISIONING_PROFILE;
+              if (buildConfig.buildSettings.PROVISIONING_PROFILE_SPECIFIER) delete buildConfig.buildSettings.PROVISIONING_PROFILE_SPECIFIER;
             }
           }
         }
