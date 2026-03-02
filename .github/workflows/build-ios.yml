@@ -133,6 +133,8 @@ jobs:
             grep -n "PBXNativeTarget" "$PBXPROJ" || true
             echo "===== Embed App Extensions (main target) ====="
             grep -n "Embed App Extensions\|PBXCopyFilesBuildPhase" "$PBXPROJ" || true
+            echo "===== Main target dependencies (CocoaPods host) ====="
+            grep -n "dependencies =\|GrabDocsBroadcastUpload" "$PBXPROJ" | head -20 || true
           else
             echo "project.pbxproj not found under ios/"
           fi

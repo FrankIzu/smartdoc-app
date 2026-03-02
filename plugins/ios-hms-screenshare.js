@@ -740,21 +740,23 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
         return config;
       }
 
-      // Already patched: main target has a non-empty dependencies list
-      const mainTargetDepsAlready = new RegExp(
-        mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?dependencies = \\(\\s*\\n\\s*[0-9A-F]{24}'
+      // Check if extension is already in main target's dependencies (CocoaPods needs this for host detection)
+      const mainTargetBlockRe = new RegExp(
+        mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?dependencies = \\(([\\s\\S]*?)\\)\\s*;',
+        'g'
       );
-      if (mainTargetDepsAlready.test(pbx)) {
+      const mainTargetBlockMatch = mainTargetBlockRe.exec(pbx);
+      const depsContent = mainTargetBlockMatch ? mainTargetBlockMatch[1] : '';
+      const hasExtensionDep = depsContent.includes(extensionTargetUuid) || depsContent.includes(extensionName);
+      if (hasExtensionDep) {
         console.log('[ios-hms-screenshare] ✅ project.pbxproj: main target already has extension dependency');
-        return config;
-      }
+        // Still run fixExtensionEmbedPhaseForCocoaPods and ensureAppexInProductsGroup below
+      } else {
+        // Add PBXContainerItemProxy and PBXTargetDependency for the extension
+        const containerProxyUuid = 'A1B2C3D4E5F60718293A4B5C';
+        const targetDependencyUuid = 'D4E5F60718293A4B5C6D7E8F';
 
-      // Deterministic UUIDs for the new entries (24 hex chars)
-      const containerProxyUuid = 'A1B2C3D4E5F60718293A4B5C';
-      const targetDependencyUuid = 'D4E5F60718293A4B5C6D7E8F';
-
-      // Add PBXContainerItemProxy and PBXTargetDependency entries (create sections if missing)
-      const containerProxyEntry = `\t\t${containerProxyUuid} /* PBXContainerItemProxy */ = {
+        const containerProxyEntry = `\t\t${containerProxyUuid} /* PBXContainerItemProxy */ = {
 \t\t\tisa = PBXContainerItemProxy;
 \t\t\tcontainerPortal = ${projectUuid} /* Project object */;
 \t\t\tproxyType = 1;
@@ -762,42 +764,42 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
 \t\t\tremoteInfo = "${extensionName}";
 \t\t};
 `;
-      const targetDependencyEntry = `\t\t${targetDependencyUuid} /* PBXTargetDependency */ = {
+        const targetDependencyEntry = `\t\t${targetDependencyUuid} /* PBXTargetDependency */ = {
 \t\t\tisa = PBXTargetDependency;
 \t\t\ttargetProxy = ${containerProxyUuid} /* PBXContainerItemProxy */;
 \t\t};
 `;
 
-      if (!pbx.includes('PBXContainerItemProxy')) {
-        pbx = pbx.replace(
-          /(\/\* End PBXProject section \*\/)/,
-          `$1\n\n/* Begin PBXContainerItemProxy section */\n${containerProxyEntry}/* End PBXContainerItemProxy section */\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
-        );
-      } else {
-        pbx = pbx.replace(/(\/\* End PBXContainerItemProxy section \*\/)/, containerProxyEntry + '$1');
-        if (!pbx.includes('PBXTargetDependency')) {
+        if (!pbx.includes('PBXContainerItemProxy')) {
           pbx = pbx.replace(
-            /(\/\* End PBXContainerItemProxy section \*\/)/,
-            `$1\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
+            /(\/\* End PBXProject section \*\/)/,
+            `$1\n\n/* Begin PBXContainerItemProxy section */\n${containerProxyEntry}/* End PBXContainerItemProxy section */\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
           );
         } else {
-          pbx = pbx.replace(/(\/\* End PBXTargetDependency section \*\/)/, targetDependencyEntry + '$1');
+          pbx = pbx.replace(/(\/\* End PBXContainerItemProxy section \*\/)/, containerProxyEntry + '$1');
+          if (!pbx.includes('PBXTargetDependency')) {
+            pbx = pbx.replace(
+              /(\/\* End PBXContainerItemProxy section \*\/)/,
+              `$1\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
+            );
+          } else {
+            pbx = pbx.replace(/(\/\* End PBXTargetDependency section \*\/)/, targetDependencyEntry + '$1');
+          }
         }
-      }
 
-      // Add our dependency to the main target's dependencies array (only the GrabDocs target).
-      const mainTargetDepsPattern = new RegExp(
-        '(' + mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?)dependencies = \\(\\s*\\)\\s*;'
-      );
-      const mainTargetBlockMatch = pbx.match(mainTargetDepsPattern);
-      if (!mainTargetBlockMatch) {
-        console.warn('[ios-hms-screenshare] ⚠️  Could not find main target empty dependencies block');
-        return config;
+        // Add extension to main target's dependencies (empty or non-empty list)
+        const mainTargetDepsPattern = new RegExp(
+          '(' + mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?)dependencies = \\(([\\s\\S]*?)\\)\\s*;'
+        );
+        pbx = pbx.replace(mainTargetDepsPattern, (_, prefix, existingDeps) => {
+          const depLine = targetDependencyUuid + ' /* ' + extensionName + ' */';
+          const trimmed = existingDeps.trim();
+          const newDeps = trimmed
+            ? trimmed + ',\n\t\t\t\t' + depLine
+            : '\n\t\t\t\t' + depLine;
+          return prefix + 'dependencies = (' + newDeps + '\n\t\t\t);';
+        });
       }
-      pbx = pbx.replace(
-        mainTargetDepsPattern,
-        '$1dependencies = (\n\t\t\t\t' + targetDependencyUuid + ' /* ' + extensionName + ' */,\n\t\t\t);'
-      );
 
       // Nanaimo (CocoaPods pbxproj parser) treats $(...) inside double-quoted values as a dict and fails.
       // Force single-quoted form for extension's FRAMEWORK_SEARCH_PATHS and OTHER_LDFLAGS.
