@@ -64,52 +64,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify EAS credentials include extension target
-        run: |
-          # EAS local build patches project.pbxproj AFTER expo prebuild, setting every target to
-          # Manual signing. For the main app it uses the EAS-cloud certificate + profile.
-          # For the extension it must also have a certificate + profile registered in EAS cloud;
-          # otherwise it sets Manual with no profile and the archive fails with:
-          #   "No profiles for 'com.grabdocs.mobile.GrabDocsBroadcastUpload' were found"
-          #
-          # ONE-TIME FIX (run locally, not in CI):
-          #   npx expo prebuild --platform ios --clean
-          #   eas credentials --platform ios
-          #   → select GrabDocsBroadcastUpload target
-          #   → upload / link the App Store profile (App Groups enabled)
-          #   After that EAS stores the credentials and CI will use them automatically.
-          #
-          # We query the EAS credentials API to check whether the extension bundle ID
-          # has a provisioning profile stored. The JSON output is more reliable than
-          # the interactive TUI output.
-          set +e
-          EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          CREDS_JSON=$(npx eas-cli credentials --platform ios --json 2>/dev/null || true)
-          if echo "$CREDS_JSON" | grep -q "$EXT_BUNDLE"; then
-            echo "✅ EAS has credentials for $EXT_BUNDLE"
-          else
-            # Try the interactive (non-JSON) path as a fallback.
-            CREDS_OUTPUT=$(npx eas-cli credentials --platform ios 2>&1 || true)
-            echo "$CREDS_OUTPUT" | head -80
-            if echo "$CREDS_OUTPUT" | grep -q "GrabDocsBroadcastUpload"; then
-              echo "✅ EAS has credentials for $EXT_BUNDLE (detected in TUI output)"
-            else
-              echo "::error::EAS has NO credentials for $EXT_BUNDLE."
-              echo "::error::EAS local build will set the extension target to Manual signing"
-              echo "::error::with no profile, which causes: No profiles for '$EXT_BUNDLE' were found."
-              echo "::error::ONE-TIME FIX — run these commands LOCALLY (not in CI):"
-              echo "::error::  npx expo prebuild --platform ios --clean"
-              echo "::error::  eas credentials --platform ios"
-              echo "::error::Select the GrabDocsBroadcastUpload target and upload the"
-              echo "::error::App Store provisioning profile (must have App Groups capability)."
-              echo "::error::After saving to EAS, re-run this workflow."
-              exit 1
-            fi
-          fi
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # Extension signing: We use EXT_PROVISIONING_PROFILE_BASE64 + eas-build-post-install.
+      # The post-install script installs the profile and patches project.pbxproj AFTER EAS
+      # credential manager runs, so no Mac or eas credentials needed for the extension.
 
-      # ios/ is in .easignore, so EAS will run prebuild. The plugin ios-hms-screenshare
+      # ios/ is NOT in .easignore; we prebuild+patch in CI. The plugin ios-hms-screenshare
       # creates the Broadcast Upload Extension and patches the Podfile (nested target).
       - name: Install extension provisioning profile (App Groups)
         id: ext_profile
