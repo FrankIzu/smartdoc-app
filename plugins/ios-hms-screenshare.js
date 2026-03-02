@@ -541,70 +541,85 @@ function withPodfileEntry(config, { extensionName }) {
 
 /**
  * Fix the extension embed phase for CocoaPods. CocoaPods requires the .appex to be in a
- * phase named "Embed App Extensions". xcode addTarget() sometimes creates:
- * - "Copy Files" only (wrong name) → rename to "Embed App Extensions"
- * - Both "Copy Files" and "Embed App Extensions" (duplicate) → remove "Copy Files"
+ * phase named "Embed App Extensions" with dstSubfolderSpec = 13. xcode addTarget() may create
+ * a phase with wrong name ("Copy Files") or no name. We find ANY phase containing the .appex
+ * and ensure it has the correct name and dstSubfolderSpec.
  */
 function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
   const escapedAppex = extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.appex';
 
-  // Check if "Embed App Extensions" phase already exists with the .appex
-  const embedPhaseRe = new RegExp(
-    '[0-9A-F]{24}\\s*\\/\\*\\s*Embed App Extensions\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?files = \\([\\s\\S]*?' +
+  // Find ANY PBXCopyFilesBuildPhase that contains the .appex (require dstSubfolderSpec for reliable capture)
+  const anyPhaseWithAppexRe = new RegExp(
+    '\t\t([0-9A-F]{24})\\s*\\/\\*\\s*[^*]*\\*\\/\\s*=\\s*\\{\\s*\\n\\s*isa = PBXCopyFilesBuildPhase;[\\s\\S]*?files = \\([\\s\\S]*?' +
       escapedAppex +
-      '[\\s\\S]*?\\);[\\s\\S]*?name = "Embed App Extensions";',
+      '[\\s\\S]*?\\);[\\s\\S]*?runOnlyForDeploymentPostprocessing = [^\\n]+\\n\\s*name = "([^"]*)";[\\s\\S]*?dstSubfolderSpec = ([0-9]+);',
     'g'
   );
-  const hasEmbedPhase = embedPhaseRe.test(pbx);
+  const phases = [];
+  let m;
+  while ((m = anyPhaseWithAppexRe.exec(pbx)) !== null) {
+    phases.push({ uuid: m[1], name: m[2], dstSubfolderSpec: m[3] });
+  }
+  if (phases.length === 0) return pbx;
 
-  // Find "Copy Files" phase that has the .appex
-  const copyFilesPhaseRe = new RegExp(
-    '\t\t([0-9A-F]{24})\\s*\\/\\*\\s*Copy Files\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?files = \\([\\s\\S]*?' +
-      escapedAppex +
-      '[\\s\\S]*?\\);[\\s\\S]*?name = "Copy Files";[\\s\\S]*?\\};',
-    'g'
-  );
-  const phaseMatch = copyFilesPhaseRe.exec(pbx);
-  if (!phaseMatch) return pbx;
+  // If we have both a correct "Embed App Extensions" phase and wrong ones (e.g. "Copy Files"),
+  // remove the wrong phases. Otherwise fix the existing phase in place.
+  const correctPhase = phases.find((p) => p.name === 'Embed App Extensions' && p.dstSubfolderSpec === '13');
+  const wrongPhases = phases.filter((p) => p.name !== 'Embed App Extensions' || p.dstSubfolderSpec !== '13');
 
-  const phaseUuid = phaseMatch[1];
-
-  if (hasEmbedPhase) {
-    // Duplicate case: remove "Copy Files" phase (keep Embed App Extensions)
-    const phaseRefPattern = new RegExp(
-      '\\s*' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/,\\n?',
-      'g'
-    );
-    const grabDocsBuildPhasesRe = new RegExp(
-      '(\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?buildPhases = \\()([\\s\\S]*?)(\\n\\s*\\);\\s*\\n\\s*buildRules)',
-      'g'
-    );
-    pbx = pbx.replace(grabDocsBuildPhasesRe, (_, prefix, buildPhasesContent, suffix) => {
-      const newBuildPhases = buildPhasesContent.replace(phaseRefPattern, '');
-      return prefix + newBuildPhases + suffix;
-    });
-    const phaseBlockRe = new RegExp(
-      '\t\t' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?\\};\\n?',
-      'g'
-    );
-    pbx = pbx.replace(phaseBlockRe, '');
-  } else {
-    // Single phase with wrong name: rename "Copy Files" to "Embed App Extensions"
-    pbx = pbx.replace(
-      new RegExp(
-        '(' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*)Copy Files(\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?)name = "Copy Files";',
+  if (correctPhase && wrongPhases.length > 0) {
+    for (const p of wrongPhases) {
+      const phaseUuid = p.uuid;
+      const phaseRefPattern = new RegExp(
+        '\\s*' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*[^*]*\\*\\/,\\n?',
         'g'
-      ),
-      '$1Embed App Extensions$2name = "Embed App Extensions";'
-    );
-    // Also update the buildPhases reference comment in the main target
-    pbx = pbx.replace(
-      new RegExp(
-        '(' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*)Copy Files(\\s*\\*\\/)(?!\\s*=\\s*\\{)',
+      );
+      const grabDocsBuildPhasesRe = new RegExp(
+        '(\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?buildPhases = \\()([\\s\\S]*?)(\\n\\s*\\);\\s*\\n\\s*buildRules)',
         'g'
-      ),
-      '$1Embed App Extensions$2'
-    );
+      );
+      pbx = pbx.replace(grabDocsBuildPhasesRe, (_, prefix, buildPhasesContent, suffix) => {
+        const newBuildPhases = buildPhasesContent.replace(phaseRefPattern, '');
+        return prefix + newBuildPhases + suffix;
+      });
+      const phaseBlockRe = new RegExp(
+        '\t\t' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*[^*]*\\*\\/\\s*=\\s*\\{[\\s\\S]*?\\};\\n?',
+        'g'
+      );
+      pbx = pbx.replace(phaseBlockRe, '');
+    }
+  }
+
+  // Fix wrong phase(s) in place (only when we don't have a correct one): ensure name and dstSubfolderSpec
+  if (!correctPhase) {
+    for (const p of wrongPhases) {
+      const phaseUuid = p.uuid;
+      const escapedUuid = phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (p.dstSubfolderSpec) {
+        pbx = pbx.replace(
+          new RegExp(
+            '(' + escapedUuid + '\\s*\\/\\*\\s*)[^*]*(\\*\\/\\s*=\\s*\\{[\\s\\S]*?name = ")[^"]*(";[\\s\\S]*?dstSubfolderSpec = )(\\d+)(;)',
+            'g'
+          ),
+          (_, a, b, c, _num, d) => a + 'Embed App Extensions' + b + 'Embed App Extensions' + c + '13' + d
+        );
+      } else {
+        pbx = pbx.replace(
+          new RegExp(
+            '(' + escapedUuid + '\\s*\\/\\*\\s*)[^*]*(\\*\\/\\s*=\\s*\\{[\\s\\S]*?name = ")[^"]*(";[\\s\\S]*?)(\\n\\s*\\};)',
+            'g'
+          ),
+          '$1Embed App Extensions$2Embed App Extensions$3dstSubfolderSpec = 13;$4'
+        );
+      }
+      pbx = pbx.replace(
+        new RegExp(
+          '(' + escapedUuid + '\\s*\\/\\*\\s*)[^*]*(\\s*\\*\\/)(?!\\s*=\\s*\\{)',
+          'g'
+        ),
+        '$1Embed App Extensions$2'
+      );
+    }
   }
 
   return pbx;

@@ -118,6 +118,9 @@ jobs:
       - name: Ensure Podfile extension block (safety net)
         run: node scripts/ensure-podfile-extension.js
 
+      - name: Ensure pbxproj Embed App Extensions phase (CocoaPods host)
+        run: node scripts/ensure-pbxproj-embed-phase.js
+
       - name: Verify Podfile and install Pods
         id: verify_pods
         run: |
