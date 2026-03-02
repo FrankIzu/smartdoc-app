@@ -415,6 +415,39 @@ function podfileAddHmsPodToMainTarget(contents) {
 }
 
 /**
+ * Inject post_integrate hook so the extension target depends on HMSBroadcastExtensionSDK pod.
+ * That way Xcode builds the pod before the extension and the Swift compiler finds the module.
+ */
+function podfileInjectExtensionPodDependency(contents, extensionName) {
+  const marker = '# @generated ios-hms-screenshare post_integrate';
+  if (contents.includes(marker)) return contents;
+  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
+  const block = lineEnding + `
+${marker}
+post_integrate do |installer|
+  user_project = installer.aggregate_targets.first&.user_project
+  next unless user_project
+  ext_target = user_project.targets.find { |t| t.name == '${extensionName}' }
+  pod_target = installer.pods_project.targets.find { |t| t.name == '${HMS_POD_NAME}' }
+  next unless ext_target && pod_target
+  next if ext_target.dependencies.any? { |d| (d.target_proxy && d.target_proxy.remote_info == '${HMS_POD_NAME}') }
+  pods_xcodeproj = 'Pods/Pods.xcodeproj'
+  file_ref = user_project.reference_for_path(pods_xcodeproj) || user_project.new_file(pods_xcodeproj)
+  proxy = user_project.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
+  proxy.container_portal = file_ref
+  proxy.proxy_type = '1'
+  proxy.remote_global_id_string = pod_target.uuid
+  proxy.remote_info = pod_target.name
+  dep = user_project.new(Xcodeproj::Project::Object::PBXTargetDependency)
+  dep.target_proxy = proxy
+  ext_target.dependencies << dep
+  user_project.save
+end
+`;
+  return contents.trimEnd() + block + lineEnding;
+}
+
+/**
  * Podfile: do NOT declare the extension as a CocoaPods target. CocoaPods manages only the main app.
  * Add HMSBroadcastExtensionSDK to the main target so it is built; the extension links it in Xcode.
  */
@@ -433,13 +466,14 @@ function withPodfileEntry(config, { extensionName }) {
     working = podfileRemoveExtensionBlock(working, extensionName);
     working = podfileAddHmsPodToMainTarget(working);
     working = podfileStripConditionalUseFrameworks(working);
+    working = podfileInjectExtensionPodDependency(working, extensionName);
 
     if (typeof data === 'string') {
       config.modResults = working;
     } else {
       config.modResults = { ...data, contents: working };
     }
-    console.log('[ios-hms-screenshare] ✅ withPodfile: main target only + pod ' + HMS_POD_NAME + ' (no extension target in Podfile)');
+    console.log('[ios-hms-screenshare] ✅ withPodfile: main target only + pod ' + HMS_POD_NAME + ' + post_integrate extension→pod dependency');
     return config;
   });
 }
@@ -727,9 +761,10 @@ function withPodfilePatchOnDisk(config, { extensionName }) {
       contents = podfileEnsureNewArchDisabled(contents);
       contents = podfileRemoveExtensionBlock(contents, extensionName);
       contents = podfileAddHmsPodToMainTarget(contents);
+      contents = podfileInjectExtensionPodDependency(contents, extensionName);
       contents = podfileStripConditionalUseFrameworks(contents);
       fs.writeFileSync(podfilePath, contents);
-      console.log('[ios-hms-screenshare] ✅ Podfile on disk: main target only + ' + HMS_POD_NAME + ' (no extension target)');
+      console.log('[ios-hms-screenshare] ✅ Podfile on disk: main target only + ' + HMS_POD_NAME + ' + post_integrate');
       return config;
     },
   ]);
