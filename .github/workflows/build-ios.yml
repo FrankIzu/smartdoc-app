@@ -115,6 +115,9 @@ jobs:
       - name: Prebuild iOS
         run: npx expo prebuild --platform ios --clean --no-install
 
+      - name: Ensure Podfile extension block (safety net)
+        run: node scripts/ensure-podfile-extension.js
+
       - name: Verify Podfile and install Pods
         id: verify_pods
         run: |

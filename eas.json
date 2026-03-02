@@ -49,6 +49,7 @@
     },
     "production": {
       "node": "20.18.1",
+      "prebuildCommand": "npx expo prebuild --platform ios --clean --no-install && node scripts/ensure-podfile-extension.js",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "EXPO_PUBLIC_API_URL": "https://api.grabdocs.com",
