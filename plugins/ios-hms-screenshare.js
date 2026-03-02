@@ -379,6 +379,31 @@ function podfileRemoveExtensionBlock(contents, extensionName) {
 }
 
 /**
+ * Force HMSWebRTC to 1.0.6174 at the very start of the main target so HMSSDK (from
+ * react-native-hms) and HMSBroadcastExtensionSDK both use it; 1.0.6173 download often returns 502.
+ */
+function podfileInjectHMSWebRTCPin(contents) {
+  const marker = "# @generated ios-hms-screenshare HMSWebRTC pin";
+  if (contents.includes(marker)) return contents;
+  const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
+  const lines = contents.split(/\r?\n/);
+  const targetDoRe = new RegExp("^\\s*target\\s+['\"]" + MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "['\"]\\s+do\\s*$");
+  let mainLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (targetDoRe.test(lines[i])) {
+      mainLine = i;
+      break;
+    }
+  }
+  if (mainLine === -1) return contents;
+  const indent = (lines[mainLine].match(/^(\s*)/) || ['', ''])[1];
+  const pinBlock = lineEnding + indent + '  ' + marker + lineEnding + indent + "  pod 'HMSWebRTC', '1.0.6174'" + lineEnding;
+  const before = lines.slice(0, mainLine + 1).join(lineEnding);
+  const after = lines.slice(mainLine + 1).join(lineEnding);
+  return before + pinBlock + after;
+}
+
+/**
  * Add pod 'HMSBroadcastExtensionSDK' to the main app target only (before use_react_native!).
  * CocoaPods manages only GrabDocs; the extension links the framework built for the main app.
  */
@@ -468,6 +493,7 @@ function withPodfileEntry(config, { extensionName }) {
     let working = podfileEnsureNewArchDisabled(src);
     working = podfileStripConditionalUseFrameworks(working);
     working = podfileRemoveExtensionBlock(working, extensionName);
+    working = podfileInjectHMSWebRTCPin(working);
     working = podfileAddHmsPodToMainTarget(working);
     working = podfileStripConditionalUseFrameworks(working);
     working = podfileInjectExtensionPodDependency(working, extensionName);
@@ -796,6 +822,7 @@ function withPodfilePatchOnDisk(config, { extensionName }) {
       contents = podfileStripConditionalUseFrameworks(contents);
       contents = podfileEnsureNewArchDisabled(contents);
       contents = podfileRemoveExtensionBlock(contents, extensionName);
+      contents = podfileInjectHMSWebRTCPin(contents);
       contents = podfileAddHmsPodToMainTarget(contents);
       contents = podfileInjectExtensionPodDependency(contents, extensionName);
       contents = podfileStripConditionalUseFrameworks(contents);
