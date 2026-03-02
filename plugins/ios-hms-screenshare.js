@@ -437,49 +437,60 @@ function podfileAddHmsPodToMainTarget(contents) {
 }
 
 /**
- * Append the extension as a top-level CocoaPods target at the END of the Podfile.
- *
- * Why top-level (not nested with inherit! :search_paths):
- *  - With "inherit! :search_paths", CocoaPods deduplicates HMSBroadcastExtensionSDK — the
- *    "[CP] Copy XCFrameworks" phase runs inside Pods-GrabDocs (the main app's aggregate), NOT
- *    inside Pods-GrabDocsBroadcastUpload. The extension only depends on Pods-GrabDocsBroadcastUpload,
- *    so Xcode builds the extension in parallel with the main app's pods, causing:
- *    "Unable to find module dependency: HMSBroadcastExtensionSDK"
- *  - As a top-level standalone target, CocoaPods creates a DEDICATED Pods-GrabDocsBroadcastUpload
- *    aggregate with its OWN copy phase for HMSBroadcastExtensionSDK. The extension depends on
- *    Pods-GrabDocsBroadcastUpload, which forces Xcode to copy the framework BEFORE compiling
- *    the extension → correct build order, no parallel-compile race condition.
- *  - CocoaPods finds the host app (GrabDocs) from the Xcode project's "Embed App Extensions"
- *    build phase, which withBroadcastExtensionTarget ensures is present. So CocoaPods will NOT
- *    raise "Unable to find host target(s) for GrabDocsBroadcastUpload".
+ * Nest the extension as a CocoaPods target INSIDE the main app target so CocoaPods
+ * can find the host (fixes "Unable to find host target(s) for GrabDocsBroadcastUpload").
+ * Top-level extension targets only work when CocoaPods infers the host from the Xcode
+ * project; in CI/EAS that often fails, so we use nested.
  */
 function podfileEnsureExtensionBlock(contents, extensionName) {
   const marker = '# @generated ios-hms-screenshare extension-target';
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
 
-  // Remove any existing extension block first (handles nested or top-level variants).
-  // Also strip any leftover marker comment that podfileRemoveExtensionBlock leaves behind.
   let result = podfileRemoveExtensionBlock(contents, extensionName);
   result = result.split(/\r?\n/).filter(l => l.trim() !== marker.trim()).join(
     contents.includes('\r\n') ? '\r\n' : '\n'
   );
 
-  // Check if a full block (marker + target) already exists (true idempotency guard).
   const hasTargetBlock = new RegExp(`(^|\\n)target\\s+['"]${extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]\\s+do`).test(result);
-  if (result.includes(marker) && hasTargetBlock) return result; // already injected
+  if (result.includes(marker) && hasTargetBlock) return result;
 
-  // Append as a top-level target at end of Podfile.
+  const lines = result.split(/\r?\n/);
+  const targetDoRe = new RegExp(
+    '^(\\s*)target\\s+[\'"]' +
+    MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+    '[\'"]\\s+do\\s*$'
+  );
+
+  let mainLine = -1;
+  let mainIndent = '';
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(targetDoRe);
+    if (m) { mainLine = i; mainIndent = m[1]; break; }
+  }
+  if (mainLine === -1) return contents;
+
+  const insertBeforeRe = /^\s*(use_react_native!\s*\(|config\s*=\s*use_native_modules!)/;
+  let insertAt = -1;
+  for (let i = mainLine + 1; i < lines.length; i++) {
+    if (insertBeforeRe.test(lines[i])) { insertAt = i; break; }
+  }
+  if (insertAt === -1) return contents;
+
+  const innerIndent = mainIndent + '  ';
+  const extIndent = mainIndent + '    ';
   const block = [
-    '',
-    marker,
-    `target '${extensionName}' do`,
-    `  platform :ios, '16.0'`,
-    `  pod '${HMS_POD_NAME}'`,
-    `end`,
+    innerIndent + marker,
+    innerIndent + `target '${extensionName}' do`,
+    extIndent + `platform :ios, '16.0'`,
+    extIndent + `inherit! :search_paths`,
+    extIndent + `pod '${HMS_POD_NAME}'`,
+    innerIndent + `end`,
     '',
   ].join(lineEnding);
 
-  return result.trimEnd() + lineEnding + block;
+  const before = lines.slice(0, insertAt).join(lineEnding);
+  const after = lines.slice(insertAt).join(lineEnding);
+  return before + lineEnding + block + after;
 }
 
 /**
@@ -508,7 +519,7 @@ function withPodfileEntry(config, { extensionName }) {
     } else {
       config.modResults = { ...data, contents: working };
     }
-    console.log('[ios-hms-screenshare] ✅ withPodfile: main target + top-level extension target pod ' + HMS_POD_NAME);
+    console.log('[ios-hms-screenshare] ✅ withPodfile: nested extension target pod ' + HMS_POD_NAME);
     return config;
   });
 }
