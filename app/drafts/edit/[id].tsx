@@ -130,6 +130,9 @@ export default function DraftEditScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [showColorPicker, setShowColorPicker] = useState<'fore' | 'back' | null>(null);
   const initialFilenameRef = useRef<string | null>(null);
+  const currentFilenameRef = useRef<string>('Untitled Draft');
+  const renameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  currentFilenameRef.current = filename;
 
   useEffect(() => {
     if (share === '1') setShowShareModal(true);
@@ -303,6 +306,28 @@ export default function DraftEditScreen() {
     })();
     return () => { cancelled = true; };
   }, [draftId, router]);
+
+  // Debounced immediate save of filename when user types (persist after 600ms idle)
+  const persistFilenameIfChangedRef = useRef(persistFilenameIfChanged);
+  persistFilenameIfChangedRef.current = persistFilenameIfChanged;
+  useEffect(() => {
+    if (!draftId || isNaN(draftId)) return;
+    if (renameTimeoutRef.current) clearTimeout(renameTimeoutRef.current);
+    const name = (filename || '').trim() || 'Untitled Draft';
+    if (name === (initialFilenameRef.current ?? '')) return;
+    renameTimeoutRef.current = setTimeout(() => {
+      renameTimeoutRef.current = null;
+      persistFilenameIfChangedRef.current().catch((e: any) => {
+        Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename draft'));
+      });
+    }, 600);
+    return () => {
+      if (renameTimeoutRef.current) {
+        clearTimeout(renameTimeoutRef.current);
+        renameTimeoutRef.current = null;
+      }
+    };
+  }, [draftId, filename]);
 
   // Socket.IO: connect, join document room, presence
   useEffect(() => {
@@ -693,20 +718,29 @@ export default function DraftEditScreen() {
     });
   }, [handleSave]);
 
-  const handleRenameBlur = useCallback(async () => {
-    const name = (filename || '').trim() || 'Untitled Draft';
+  /** Persist current filename to server if it changed. Call on blur, Back, and Save. */
+  const persistFilenameIfChanged = useCallback(async (): Promise<void> => {
+    const name = (currentFilenameRef.current || '').trim() || 'Untitled Draft';
     if (name === (initialFilenameRef.current ?? '')) return;
     if (!draftId || isNaN(draftId)) return;
+    await apiClient.renameFile(draftId, name);
+    initialFilenameRef.current = name;
+  }, [draftId]);
+
+  const handleRenameBlur = useCallback(async () => {
     try {
-      await apiClient.renameFile(draftId, name);
-      setFilename(name);
-      initialFilenameRef.current = name;
+      await persistFilenameIfChanged();
     } catch (e: any) {
       Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename draft'));
     }
-  }, [draftId, filename]);
+  }, [persistFilenameIfChanged]);
 
-  const handleBack = useCallback(() => {
+  const handleBack = useCallback(async () => {
+    try {
+      await persistFilenameIfChanged();
+    } catch (_) {
+      // Allow leaving even if rename failed; user already has name in field
+    }
     if (hasUnsavedRef.current) {
       Alert.alert('Unsaved changes', 'Leave without saving?', [
         { text: 'Cancel', style: 'cancel' },
@@ -715,7 +749,7 @@ export default function DraftEditScreen() {
     } else {
       router.back();
     }
-  }, [router]);
+  }, [router, persistFilenameIfChanged]);
 
   const others = Array.from(presenceEditors.entries()).map(([uid, name]) => ({ id: uid, name }));
   const othersLabel = others.length === 0 ? '' : others.length === 1 ? `${others[0].name} is editing` : `${others.map(o => o.name).join(', ')} are editing`;
@@ -1056,7 +1090,10 @@ export default function DraftEditScreen() {
               }}>
                 <Ionicons name="person-add-outline" size={22} color={colors.text} />
               </TouchableOpacity>
-              <TouchableOpacity style={dynamicStyles.headerBtn} onPress={() => {
+              <TouchableOpacity style={dynamicStyles.headerBtn} onPress={async () => {
+                try {
+                  await persistFilenameIfChanged();
+                } catch (_) {}
                 saveRequestedRef.current = true;
                 webViewRef.current?.injectJavaScript(
                   "(function(){ var el=document.getElementById('content'); if(el&&window.ReactNativeWebView) window.ReactNativeWebView.postMessage(el.innerHTML); })(); true;"
