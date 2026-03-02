@@ -437,66 +437,49 @@ function podfileAddHmsPodToMainTarget(contents) {
 }
 
 /**
- * Inject the extension as a proper nested CocoaPods target inside the main app target.
+ * Append the extension as a top-level CocoaPods target at the END of the Podfile.
  *
- * Why this instead of a post_integrate hook:
- *  - CocoaPods natively manages build order when the extension is a declared target.
- *  - CocoaPods generates xcconfigs for the extension with correct FRAMEWORK_SEARCH_PATHS,
- *    PODS_CONFIGURATION_BUILD_DIR, and OTHER_LDFLAGS — no manual Xcode build-setting hacks.
- *  - The post_integrate cross-project PBXTargetDependency approach was brittle and failed
- *    in some build environments (error: "Unable to find module dependency: HMSBroadcastExtensionSDK").
- *
- * Prerequisite: the extension target must exist in the Xcode project before pod install.
- * withBroadcastExtensionTarget (withXcodeProject) runs first and creates it, so pod install
- * will find the target and set up its xcconfigs correctly.
+ * Why top-level (not nested with inherit! :search_paths):
+ *  - With "inherit! :search_paths", CocoaPods deduplicates HMSBroadcastExtensionSDK — the
+ *    "[CP] Copy XCFrameworks" phase runs inside Pods-GrabDocs (the main app's aggregate), NOT
+ *    inside Pods-GrabDocsBroadcastUpload. The extension only depends on Pods-GrabDocsBroadcastUpload,
+ *    so Xcode builds the extension in parallel with the main app's pods, causing:
+ *    "Unable to find module dependency: HMSBroadcastExtensionSDK"
+ *  - As a top-level standalone target, CocoaPods creates a DEDICATED Pods-GrabDocsBroadcastUpload
+ *    aggregate with its OWN copy phase for HMSBroadcastExtensionSDK. The extension depends on
+ *    Pods-GrabDocsBroadcastUpload, which forces Xcode to copy the framework BEFORE compiling
+ *    the extension → correct build order, no parallel-compile race condition.
+ *  - CocoaPods finds the host app (GrabDocs) from the Xcode project's "Embed App Extensions"
+ *    build phase, which withBroadcastExtensionTarget ensures is present. So CocoaPods will NOT
+ *    raise "Unable to find host target(s) for GrabDocsBroadcastUpload".
  */
 function podfileEnsureExtensionBlock(contents, extensionName) {
   const marker = '# @generated ios-hms-screenshare extension-target';
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
 
-  // Remove any existing extension block first (idempotent).
+  // Remove any existing extension block first (handles nested or top-level variants).
+  // Also strip any leftover marker comment that podfileRemoveExtensionBlock leaves behind.
   let result = podfileRemoveExtensionBlock(contents, extensionName);
-
-  if (result.includes(marker)) return result; // already injected
-
-  const lines = result.split(/\r?\n/);
-  const targetDoRe = new RegExp(
-    '^(\\s*)target\\s+[\'"]' +
-    MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-    '[\'"]\\s+do\\s*$'
+  result = result.split(/\r?\n/).filter(l => l.trim() !== marker.trim()).join(
+    contents.includes('\r\n') ? '\r\n' : '\n'
   );
 
-  let mainLine = -1;
-  let mainIndent = '';
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(targetDoRe);
-    if (m) { mainLine = i; mainIndent = m[1]; break; }
-  }
-  if (mainLine === -1) return contents;
+  // Check if a full block (marker + target) already exists (true idempotency guard).
+  const hasTargetBlock = new RegExp(`(^|\\n)target\\s+['"]${extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]\\s+do`).test(result);
+  if (result.includes(marker) && hasTargetBlock) return result; // already injected
 
-  // Insert before use_react_native! (or config = use_native_modules!).
-  const insertBeforeRe = /^\s*(use_react_native!\s*\(|config\s*=\s*use_native_modules!)/;
-  let insertAt = -1;
-  for (let i = mainLine + 1; i < lines.length; i++) {
-    if (insertBeforeRe.test(lines[i])) { insertAt = i; break; }
-  }
-  if (insertAt === -1) return contents;
-
-  const innerIndent = mainIndent + '  ';
-  const extIndent = mainIndent + '    ';
+  // Append as a top-level target at end of Podfile.
   const block = [
-    innerIndent + marker,
-    innerIndent + `target '${extensionName}' do`,
-    extIndent + `platform :ios, '16.0'`,
-    extIndent + `inherit! :search_paths`,
-    extIndent + `pod '${HMS_POD_NAME}'`,
-    innerIndent + `end`,
+    '',
+    marker,
+    `target '${extensionName}' do`,
+    `  platform :ios, '16.0'`,
+    `  pod '${HMS_POD_NAME}'`,
+    `end`,
     '',
   ].join(lineEnding);
 
-  const before = lines.slice(0, insertAt).join(lineEnding);
-  const after = lines.slice(insertAt).join(lineEnding);
-  return before + lineEnding + block + after;
+  return result.trimEnd() + lineEnding + block;
 }
 
 /**
@@ -525,7 +508,7 @@ function withPodfileEntry(config, { extensionName }) {
     } else {
       config.modResults = { ...data, contents: working };
     }
-    console.log('[ios-hms-screenshare] ✅ withPodfile: main target only + pod ' + HMS_POD_NAME + ' + post_integrate extension→pod dependency');
+    console.log('[ios-hms-screenshare] ✅ withPodfile: main target + top-level extension target pod ' + HMS_POD_NAME);
     return config;
   });
 }
