@@ -435,7 +435,7 @@ post_integrate do |installer|
   file_ref = user_project.files.find { |f| f.path && File.expand_path(f.path, File.dirname(user_project.path)) == pods_xcodeproj_absolute }
   file_ref ||= user_project.new_file(pods_xcodeproj_absolute)
   proxy = user_project.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
-  proxy.container_portal = file_ref
+  proxy.container_portal = file_ref.uuid
   proxy.proxy_type = '1'
   proxy.remote_global_id_string = pod_target.uuid
   proxy.remote_info = pod_target.name
