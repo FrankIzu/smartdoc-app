@@ -437,43 +437,66 @@ function podfileAddHmsPodToMainTarget(contents) {
 }
 
 /**
- * Inject post_integrate hook so the extension target depends on HMSBroadcastExtensionSDK pod.
- * That way Xcode builds the pod before the extension and the Swift compiler finds the module.
+ * Inject the extension as a proper nested CocoaPods target inside the main app target.
+ *
+ * Why this instead of a post_integrate hook:
+ *  - CocoaPods natively manages build order when the extension is a declared target.
+ *  - CocoaPods generates xcconfigs for the extension with correct FRAMEWORK_SEARCH_PATHS,
+ *    PODS_CONFIGURATION_BUILD_DIR, and OTHER_LDFLAGS — no manual Xcode build-setting hacks.
+ *  - The post_integrate cross-project PBXTargetDependency approach was brittle and failed
+ *    in some build environments (error: "Unable to find module dependency: HMSBroadcastExtensionSDK").
+ *
+ * Prerequisite: the extension target must exist in the Xcode project before pod install.
+ * withBroadcastExtensionTarget (withXcodeProject) runs first and creates it, so pod install
+ * will find the target and set up its xcconfigs correctly.
  */
-function podfileInjectExtensionPodDependency(contents, extensionName) {
-  const marker = '# @generated ios-hms-screenshare post_integrate';
-  if (contents.includes(marker)) return contents;
+function podfileEnsureExtensionBlock(contents, extensionName) {
+  const marker = '# @generated ios-hms-screenshare extension-target';
   const lineEnding = contents.includes('\r\n') ? '\r\n' : '\n';
-  const block = lineEnding + `
-${marker}
-post_integrate do |installer|
-  user_project = installer.aggregate_targets.first&.user_project
-  next unless user_project
-  ext_target = user_project.targets.find { |t| t.name == '${extensionName}' }
-  pod_target = installer.pods_project.targets.find { |t| t.name == '${HMS_POD_NAME}' }
-  next unless ext_target && pod_target
-  next if ext_target.dependencies.any? { |d| (d.target_proxy && d.target_proxy.remote_info == '${HMS_POD_NAME}') }
-  pods_xcodeproj_absolute = File.expand_path('Pods/Pods.xcodeproj', File.dirname(user_project.path))
-  file_ref = user_project.files.find { |f| f.path && File.expand_path(f.path, File.dirname(user_project.path)) == pods_xcodeproj_absolute }
-  file_ref ||= user_project.new_file(pods_xcodeproj_absolute)
-  proxy = user_project.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
-  proxy.container_portal = file_ref.uuid
-  proxy.proxy_type = '1'
-  proxy.remote_global_id_string = pod_target.uuid
-  proxy.remote_info = pod_target.name
-  dep = user_project.new(Xcodeproj::Project::Object::PBXTargetDependency)
-  dep.target_proxy = proxy
-  ext_target.dependencies << dep
-  ext_target.build_configurations.each do |config|
-    config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
-    config.build_settings['DEVELOPMENT_TEAM'] = 'Q33K3Q7Q53'
-    config.build_settings.delete('PROVISIONING_PROFILE')
-    config.build_settings.delete('PROVISIONING_PROFILE_SPECIFIER')
-  end
-  user_project.save
-end
-`;
-  return contents.trimEnd() + block + lineEnding;
+
+  // Remove any existing extension block first (idempotent).
+  let result = podfileRemoveExtensionBlock(contents, extensionName);
+
+  if (result.includes(marker)) return result; // already injected
+
+  const lines = result.split(/\r?\n/);
+  const targetDoRe = new RegExp(
+    '^(\\s*)target\\s+[\'"]' +
+    MAIN_APP_TARGET_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+    '[\'"]\\s+do\\s*$'
+  );
+
+  let mainLine = -1;
+  let mainIndent = '';
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(targetDoRe);
+    if (m) { mainLine = i; mainIndent = m[1]; break; }
+  }
+  if (mainLine === -1) return contents;
+
+  // Insert before use_react_native! (or config = use_native_modules!).
+  const insertBeforeRe = /^\s*(use_react_native!\s*\(|config\s*=\s*use_native_modules!)/;
+  let insertAt = -1;
+  for (let i = mainLine + 1; i < lines.length; i++) {
+    if (insertBeforeRe.test(lines[i])) { insertAt = i; break; }
+  }
+  if (insertAt === -1) return contents;
+
+  const innerIndent = mainIndent + '  ';
+  const extIndent = mainIndent + '    ';
+  const block = [
+    innerIndent + marker,
+    innerIndent + `target '${extensionName}' do`,
+    extIndent + `platform :ios, '16.0'`,
+    extIndent + `inherit! :search_paths`,
+    extIndent + `pod '${HMS_POD_NAME}'`,
+    innerIndent + `end`,
+    '',
+  ].join(lineEnding);
+
+  const before = lines.slice(0, insertAt).join(lineEnding);
+  const after = lines.slice(insertAt).join(lineEnding);
+  return before + lineEnding + block + after;
 }
 
 /**
@@ -492,11 +515,10 @@ function withPodfileEntry(config, { extensionName }) {
 
     let working = podfileEnsureNewArchDisabled(src);
     working = podfileStripConditionalUseFrameworks(working);
-    working = podfileRemoveExtensionBlock(working, extensionName);
     working = podfileInjectHMSWebRTCPin(working);
-    working = podfileAddHmsPodToMainTarget(working);
-    working = podfileStripConditionalUseFrameworks(working);
-    working = podfileInjectExtensionPodDependency(working, extensionName);
+    // podfileEnsureExtensionBlock internally calls podfileRemoveExtensionBlock first,
+    // then nests the extension as a proper CocoaPods target inside the main target.
+    working = podfileEnsureExtensionBlock(working, extensionName);
 
     if (typeof data === 'string') {
       config.modResults = working;
@@ -699,8 +721,9 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
       // file ref must be in a group that's in the project hierarchy. Ensure it's in Products.
       pbx = ensureAppexInProductsGroup(pbx, extensionName);
 
-      // Force extension to Automatic signing so Xcode finds the profile we install at build time.
-      pbx = forceExtensionAutomaticSigningInPbx(pbx, extensionName);
+      // NOTE: do NOT force Automatic signing here. EAS credentials are now registered for
+      // com.grabdocs.mobile.GrabDocsBroadcastUpload via `eas credentials --platform ios`.
+      // EAS will correctly set Manual signing + the extension provisioning profile during build.
 
       fs.writeFileSync(pbxPath, pbx);
       console.log('[ios-hms-screenshare] ✅ project.pbxproj: added extension as dependency of main target');
@@ -821,13 +844,10 @@ function withPodfilePatchOnDisk(config, { extensionName }) {
       let contents = fs.readFileSync(podfilePath, 'utf8');
       contents = podfileStripConditionalUseFrameworks(contents);
       contents = podfileEnsureNewArchDisabled(contents);
-      contents = podfileRemoveExtensionBlock(contents, extensionName);
       contents = podfileInjectHMSWebRTCPin(contents);
-      contents = podfileAddHmsPodToMainTarget(contents);
-      contents = podfileInjectExtensionPodDependency(contents, extensionName);
-      contents = podfileStripConditionalUseFrameworks(contents);
+      contents = podfileEnsureExtensionBlock(contents, extensionName);
       fs.writeFileSync(podfilePath, contents);
-      console.log('[ios-hms-screenshare] ✅ Podfile on disk: main target only + ' + HMS_POD_NAME + ' + post_integrate');
+      console.log('[ios-hms-screenshare] ✅ Podfile on disk: nested extension target ' + extensionName + ' + ' + HMS_POD_NAME);
       return config;
     },
   ]);
