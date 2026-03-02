@@ -479,7 +479,7 @@ function podfileEnsureExtensionBlock(contents, extensionName) {
     innerIndent + marker,
     innerIndent + `target '${extensionName}' do`,
     extIndent + `platform :ios, '16.0'`,
-    extIndent + `inherit! :complete`,
+    extIndent + `inherit! :search_paths`,
     extIndent + `pod '${HMS_POD_NAME}'`,
     innerIndent + `end`,
     '',
