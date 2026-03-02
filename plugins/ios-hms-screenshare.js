@@ -540,6 +540,50 @@ function withPodfileEntry(config, { extensionName }) {
 }
 
 /**
+ * Remove the duplicate "Copy Files" PBXCopyFilesBuildPhase that contains the extension's
+ * .appex. CocoaPods expects the .appex only in "Embed App Extensions"; xcode addTarget()
+ * sometimes creates both, causing "Unable to find host target(s)".
+ */
+function removeDuplicateCopyFilesPhaseForExtension(pbx, extensionName) {
+  const escapedAppex = extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.appex';
+
+  // Find PBXCopyFilesBuildPhase with name "Copy Files" that has the .appex in its files
+  const copyFilesPhaseRe = new RegExp(
+    '\t\t([0-9A-F]{24})\\s*\\/\\*\\s*Copy Files\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?files = \\([\\s\\S]*?' +
+      escapedAppex +
+      '[\\s\\S]*?\\);[\\s\\S]*?name = "Copy Files";[\\s\\S]*?\\};',
+    'g'
+  );
+  const phaseMatch = copyFilesPhaseRe.exec(pbx);
+  if (!phaseMatch) return pbx;
+
+  const phaseUuid = phaseMatch[1];
+
+  // Remove phase from main target's buildPhases (GrabDocs target only)
+  const phaseRefPattern = new RegExp(
+    '\\s*' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/,\\n?',
+    'g'
+  );
+  const grabDocsBuildPhasesRe = new RegExp(
+    '(\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?buildPhases = \\()([\\s\\S]*?)(\\n\\s*\\);\\s*\\n\\s*buildRules)',
+    'g'
+  );
+  pbx = pbx.replace(grabDocsBuildPhasesRe, (_, prefix, buildPhasesContent, suffix) => {
+    const newBuildPhases = buildPhasesContent.replace(phaseRefPattern, '');
+    return prefix + newBuildPhases + suffix;
+  });
+
+  // Remove the Copy Files phase definition block from PBXCopyFilesBuildPhase section
+  const phaseBlockRe = new RegExp(
+    '\t\t' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?\\};\\n?',
+    'g'
+  );
+  pbx = pbx.replace(phaseBlockRe, '');
+
+  return pbx;
+}
+
+/**
  * Ensure the extension .appex PBXFileReference is in the Products group so the xcodeproj
  * gem can assign a parent (fixes "no parent for object ... Copy Files, Embed App Extensions").
  */
@@ -725,6 +769,11 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
         new RegExp("OTHER_LDFLAGS = [^\\n]*-framework " + HMS_POD_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "[^\\n]*;", "g"),
         "OTHER_LDFLAGS = " + singleQuotedLdflags + ";"
       );
+
+      // CocoaPods requires the .appex to be in "Embed App Extensions" only. xcode addTarget()
+      // sometimes creates a duplicate "Copy Files" phase with the same .appex, causing
+      // "Unable to find host target(s)" because CocoaPods gets confused by the duplicate.
+      pbx = removeDuplicateCopyFilesPhaseForExtension(pbx, extensionName);
 
       // xcodeproj gem "no parent for object .appex: Copy Files, Embed App Extensions": the .appex
       // file ref must be in a group that's in the project hierarchy. Ensure it's in Products.
