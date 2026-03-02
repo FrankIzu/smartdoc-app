@@ -519,6 +519,35 @@ function ensureAppexInProductsGroup(pbx, extensionName) {
   return pbx;
 }
 
+const EXTENSION_BUNDLE_ID = 'com.grabdocs.mobile.GrabDocsBroadcastUpload';
+
+/**
+ * Force the extension target's build configurations to Automatic signing and remove
+ * manual profile keys so Xcode finds the profile we install (run script). Applied
+ * directly in pbxproj so it persists regardless of EAS/post_integrate order.
+ */
+function forceExtensionAutomaticSigningInPbx(pbx, extensionName) {
+  const escapedBundleId = EXTENSION_BUNDLE_ID.replace(/\./g, '\\.');
+  // Match each XCBuildConfiguration block that contains the extension's bundle ID.
+  // We match from that line to the end of its buildSettings (next \n\t\t};).
+  const blockRe = new RegExp(
+    '(PRODUCT_BUNDLE_IDENTIFIER = "' + escapedBundleId + '";)([\\s\\S]*?)(\\n\\s*\\};)',
+    'g'
+  );
+  return pbx.replace(blockRe, (_, bundleLine, restOfBuildSettings, closing) => {
+    let rest = restOfBuildSettings
+      .replace(/\s*CODE_SIGN_STYLE = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*PROVISIONING_PROFILE = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*PROVISIONING_PROFILE_SPECIFIER = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*CODE_SIGN_IDENTITY = "Apple Distribution";\s*\n?/g, '');
+    rest = rest.trimEnd() + '\n\t\t\t\tCODE_SIGN_STYLE = "Automatic";\n\t\t';
+    if (!rest.includes('DEVELOPMENT_TEAM')) {
+      rest = rest.trimEnd() + '\n\t\t\t\tDEVELOPMENT_TEAM = "Q33K3Q7Q53";\n\t\t\t';
+    }
+    return bundleLine + rest + closing;
+  });
+}
+
 /**
  * Patch project.pbxproj to add the extension as a Target Dependency of the main app.
  * CocoaPods 1.2.1+ requires this (not just Embed App Extensions); otherwise
@@ -643,6 +672,9 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
       // xcodeproj gem "no parent for object .appex: Copy Files, Embed App Extensions": the .appex
       // file ref must be in a group that's in the project hierarchy. Ensure it's in Products.
       pbx = ensureAppexInProductsGroup(pbx, extensionName);
+
+      // Force extension to Automatic signing so Xcode finds the profile we install at build time.
+      pbx = forceExtensionAutomaticSigningInPbx(pbx, extensionName);
 
       fs.writeFileSync(pbxPath, pbx);
       console.log('[ios-hms-screenshare] ✅ project.pbxproj: added extension as dependency of main target');
