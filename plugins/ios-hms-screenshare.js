@@ -439,6 +439,12 @@ post_integrate do |installer|
   dep = user_project.new(Xcodeproj::Project::Object::PBXTargetDependency)
   dep.target_proxy = proxy
   ext_target.dependencies << dep
+  ext_target.build_configurations.each do |config|
+    config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
+    config.build_settings['DEVELOPMENT_TEAM'] = 'Q33K3Q7Q53'
+    config.build_settings.delete('PROVISIONING_PROFILE')
+    config.build_settings.delete('PROVISIONING_PROFILE_SPECIFIER')
+  end
   user_project.save
 end
 `;
