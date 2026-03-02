@@ -540,14 +540,24 @@ function withPodfileEntry(config, { extensionName }) {
 }
 
 /**
- * Remove the duplicate "Copy Files" PBXCopyFilesBuildPhase that contains the extension's
- * .appex. CocoaPods expects the .appex only in "Embed App Extensions"; xcode addTarget()
- * sometimes creates both, causing "Unable to find host target(s)".
+ * Fix the extension embed phase for CocoaPods. CocoaPods requires the .appex to be in a
+ * phase named "Embed App Extensions". xcode addTarget() sometimes creates:
+ * - "Copy Files" only (wrong name) → rename to "Embed App Extensions"
+ * - Both "Copy Files" and "Embed App Extensions" (duplicate) → remove "Copy Files"
  */
-function removeDuplicateCopyFilesPhaseForExtension(pbx, extensionName) {
+function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
   const escapedAppex = extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.appex';
 
-  // Find PBXCopyFilesBuildPhase with name "Copy Files" that has the .appex in its files
+  // Check if "Embed App Extensions" phase already exists with the .appex
+  const embedPhaseRe = new RegExp(
+    '[0-9A-F]{24}\\s*\\/\\*\\s*Embed App Extensions\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?files = \\([\\s\\S]*?' +
+      escapedAppex +
+      '[\\s\\S]*?\\);[\\s\\S]*?name = "Embed App Extensions";',
+    'g'
+  );
+  const hasEmbedPhase = embedPhaseRe.test(pbx);
+
+  // Find "Copy Files" phase that has the .appex
   const copyFilesPhaseRe = new RegExp(
     '\t\t([0-9A-F]{24})\\s*\\/\\*\\s*Copy Files\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?files = \\([\\s\\S]*?' +
       escapedAppex +
@@ -559,26 +569,43 @@ function removeDuplicateCopyFilesPhaseForExtension(pbx, extensionName) {
 
   const phaseUuid = phaseMatch[1];
 
-  // Remove phase from main target's buildPhases (GrabDocs target only)
-  const phaseRefPattern = new RegExp(
-    '\\s*' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/,\\n?',
-    'g'
-  );
-  const grabDocsBuildPhasesRe = new RegExp(
-    '(\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?buildPhases = \\()([\\s\\S]*?)(\\n\\s*\\);\\s*\\n\\s*buildRules)',
-    'g'
-  );
-  pbx = pbx.replace(grabDocsBuildPhasesRe, (_, prefix, buildPhasesContent, suffix) => {
-    const newBuildPhases = buildPhasesContent.replace(phaseRefPattern, '');
-    return prefix + newBuildPhases + suffix;
-  });
-
-  // Remove the Copy Files phase definition block from PBXCopyFilesBuildPhase section
-  const phaseBlockRe = new RegExp(
-    '\t\t' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?\\};\\n?',
-    'g'
-  );
-  pbx = pbx.replace(phaseBlockRe, '');
+  if (hasEmbedPhase) {
+    // Duplicate case: remove "Copy Files" phase (keep Embed App Extensions)
+    const phaseRefPattern = new RegExp(
+      '\\s*' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/,\\n?',
+      'g'
+    );
+    const grabDocsBuildPhasesRe = new RegExp(
+      '(\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?buildPhases = \\()([\\s\\S]*?)(\\n\\s*\\);\\s*\\n\\s*buildRules)',
+      'g'
+    );
+    pbx = pbx.replace(grabDocsBuildPhasesRe, (_, prefix, buildPhasesContent, suffix) => {
+      const newBuildPhases = buildPhasesContent.replace(phaseRefPattern, '');
+      return prefix + newBuildPhases + suffix;
+    });
+    const phaseBlockRe = new RegExp(
+      '\t\t' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Copy Files\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?\\};\\n?',
+      'g'
+    );
+    pbx = pbx.replace(phaseBlockRe, '');
+  } else {
+    // Single phase with wrong name: rename "Copy Files" to "Embed App Extensions"
+    pbx = pbx.replace(
+      new RegExp(
+        '(' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*)Copy Files(\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?)name = "Copy Files";',
+        'g'
+      ),
+      '$1Embed App Extensions$2name = "Embed App Extensions";'
+    );
+    // Also update the buildPhases reference comment in the main target
+    pbx = pbx.replace(
+      new RegExp(
+        '(' + phaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*)Copy Files(\\s*\\*\\/)(?!\\s*=\\s*\\{)',
+        'g'
+      ),
+      '$1Embed App Extensions$2'
+    );
+  }
 
   return pbx;
 }
@@ -770,10 +797,9 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
         "OTHER_LDFLAGS = " + singleQuotedLdflags + ";"
       );
 
-      // CocoaPods requires the .appex to be in "Embed App Extensions" only. xcode addTarget()
-      // sometimes creates a duplicate "Copy Files" phase with the same .appex, causing
-      // "Unable to find host target(s)" because CocoaPods gets confused by the duplicate.
-      pbx = removeDuplicateCopyFilesPhaseForExtension(pbx, extensionName);
+      // CocoaPods requires the .appex in a phase named "Embed App Extensions". Fix wrong
+      // phase name (Copy Files → Embed App Extensions) or remove duplicate.
+      pbx = fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName);
 
       // xcodeproj gem "no parent for object .appex: Copy Files, Embed App Extensions": the .appex
       // file ref must be in a group that's in the project hierarchy. Ensure it's in Products.
