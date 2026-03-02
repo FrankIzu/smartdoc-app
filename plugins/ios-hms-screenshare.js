@@ -431,8 +431,8 @@ post_integrate do |installer|
   pod_target = installer.pods_project.targets.find { |t| t.name == '${HMS_POD_NAME}' }
   next unless ext_target && pod_target
   next if ext_target.dependencies.any? { |d| (d.target_proxy && d.target_proxy.remote_info == '${HMS_POD_NAME}') }
-  pods_xcodeproj = 'Pods/Pods.xcodeproj'
-  file_ref = user_project.reference_for_path(pods_xcodeproj) || user_project.new_file(pods_xcodeproj)
+  pods_xcodeproj_absolute = File.expand_path('Pods/Pods.xcodeproj', File.dirname(user_project.path))
+  file_ref = user_project.reference_for_path(pods_xcodeproj_absolute) || user_project.new_file(pods_xcodeproj_absolute)
   proxy = user_project.new(Xcodeproj::Project::Object::PBXContainerItemProxy)
   proxy.container_portal = file_ref
   proxy.proxy_type = '1'
