@@ -183,9 +183,10 @@ jobs:
           eas build --platform ios --profile "$PROFILE" --local --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          # Run script copies profile into build env; plugin uses UUID when EAS prebuilds in temp.
           EXT_PROVISIONING_PROFILE: /tmp/ext.mobileprovision
           EXT_PROFILE_UUID: ${{ env.EXT_PROFILE_UUID }}
+          # Use runner HOME so the extension profile installed in step 1 is visible to xcodebuild.
+          HOME: ${{ env.HOME || '/Users/runner' }}
 
       - name: Upload Podfile for debugging (on failure)
         if: failure()
