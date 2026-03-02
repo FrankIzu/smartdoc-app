@@ -118,6 +118,12 @@ jobs:
             echo "✅ Installed extension profile (fallback UUID: $FALLBACK_UUID)"
             UUID="$FALLBACK_UUID"
           fi
+          # Fail fast if the profile does not have App Groups (required for extension signing).
+          if ! security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:com.apple.security.application-groups' /dev/stdin 2>/dev/null | grep -q .; then
+            echo "::error::The provisioning profile in EXT_PROVISIONING_PROFILE_BASE64 does NOT have App Groups. In Apple Developer: App ID com.grabdocs.mobile.GrabDocsBroadcastUpload -> Capabilities -> enable App Groups and add group.com.grabdocs.mobile. Then create a new provisioning profile and update the secret."
+            exit 1
+          fi
+          echo "✅ Profile has App Groups entitlement"
           echo "EXT_PROVISIONING_PROFILE=/tmp/ext.mobileprovision" >> "$GITHUB_ENV"
           echo "EXT_PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
         env:

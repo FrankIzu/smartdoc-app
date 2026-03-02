@@ -636,7 +636,9 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
         return config;
       }
 
+      const scriptBody = 'if [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nelif [ -f /tmp/ext.mobileprovision ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp /tmp/ext.mobileprovision \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nfi\\\\n';
       const phaseId = 'A1B2C3D4E5F60718293A4B5C6D7E8F90';
+      const mainPhaseId = 'B2C3D4E5F60718293A4B5C6D7E8F90A1';
       const phaseBlock = `
 		${phaseId} /* Install Extension Profile */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -650,7 +652,21 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/${extensionName}.mobileprovision\\"\\\\nelif [ -f /tmp/ext.mobileprovision ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp /tmp/ext.mobileprovision \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/${extensionName}.mobileprovision\\"\\\\nfi\\\\n";
+			shellScript = "${scriptBody}";
+		};
+		${mainPhaseId} /* Install Extension Profile (Main) */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Install Extension Profile (Main)";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "${scriptBody}";
 		};
 `;
 
@@ -659,14 +675,24 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
         `$1${phaseBlock}`
       );
 
+      // Add main app phase first so profile is installed before any target builds (EAS may build main before extension).
+      const mainAppPattern = /(\/\*\s*GrabDocs\s*\*\/\s*=\s*\{[\s\S]*?buildPhases = \(\s*\n\s*)([A-F0-9]+\s*\/\*[^*]*\*\/,)/m;
+      const mainAppMatch = pbx.match(mainAppPattern);
+      if (mainAppMatch) {
+        pbx = pbx.replace(mainAppMatch[0], mainAppMatch[1] + mainPhaseId + ' /* Install Extension Profile (Main) */,\n\t\t\t\t' + mainAppMatch[2]);
+      }
+
       // Add our phase as the first build phase of the extension target.
-      // Extension target has Sources then Resources (main app has other phases in between).
+      // Match the extension target by name (comment may be "Name" or Name) and prepend our phase.
+      const extTargetName = extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const extPattern = new RegExp(
-        `(buildPhases = \\(\\s*\\n\\s*)([A-F0-9]+) /\\* Sources \\*/,(\\s*\\n\\s*[A-F0-9]+ /\\* Resources \\*/)`
+        '(\\/\\* ["]?' + extTargetName + '["]? \\*\\/\\s*=\\s*\\{[\\s\\S]*?buildPhases = \\(\\s*\\n\\s*)' +
+        '([A-F0-9]+\\s*\\/\\*[^*]*\\*\\/,)',
+        'm'
       );
       const extMatch = pbx.match(extPattern);
       if (extMatch) {
-        pbx = pbx.replace(extMatch[0], `$1${phaseId} /* Install Extension Profile */,\n\t\t\t\t$2 /* Sources */,$3`);
+        pbx = pbx.replace(extMatch[0], extMatch[1] + phaseId + ' /* Install Extension Profile */,\n\t\t\t\t' + extMatch[2]);
       }
 
       fs.writeFileSync(pbxPath, pbx);
