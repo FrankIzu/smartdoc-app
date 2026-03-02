@@ -439,7 +439,10 @@ function podfileAddHmsPodToMainTarget(contents) {
 /**
  * Nest the extension as a CocoaPods target INSIDE the main app target so CocoaPods
  * can find the host (fixes "Unable to find host target(s) for GrabDocsBroadcastUpload").
- * Use inherit! :complete so CocoaPods clearly treats it as an embedded target.
+ *
+ * Strategy: find the main target's closing `end` by matching its indentation level,
+ * then insert the extension block just before that `end`. This is robust regardless
+ * of the internal structure of the main target block.
  */
 function podfileEnsureExtensionBlock(contents, extensionName) {
   const marker = '# @generated ios-hms-screenshare extension-target';
@@ -466,28 +469,43 @@ function podfileEnsureExtensionBlock(contents, extensionName) {
     const m = lines[i].match(targetDoRe);
     if (m) { mainLine = i; mainIndent = m[1]; break; }
   }
-  if (mainLine === -1) return contents;
+  if (mainLine === -1) {
+    console.warn('[ios-hms-screenshare] podfileEnsureExtensionBlock: could not find target ' + MAIN_APP_TARGET_NAME + ' in Podfile');
+    return contents;
+  }
 
-  // Insert right after the first line inside the main target (e.g. use_expo_modules!)
-  // so the extension block is unambiguously nested and CocoaPods sees the host.
-  const firstLineInside = mainLine + 1;
-  if (firstLineInside >= lines.length) return contents;
+  // Find the closing `end` for the main target by looking for an `end` at the same
+  // indentation as the `target '...' do` line (items inside are at deeper indentation).
+  const mainIndentLen = mainIndent.length;
+  let endLine = -1;
+  for (let i = mainLine + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)end\s*$/);
+    if (m && m[1].length === mainIndentLen) {
+      endLine = i;
+      break;
+    }
+  }
+  if (endLine === -1) {
+    console.warn('[ios-hms-screenshare] podfileEnsureExtensionBlock: could not find closing end for target ' + MAIN_APP_TARGET_NAME);
+    return contents;
+  }
 
   const innerIndent = mainIndent + '  ';
   const extIndent = mainIndent + '    ';
   const block = [
+    '',
     innerIndent + marker,
     innerIndent + `target '${extensionName}' do`,
     extIndent + `platform :ios, '16.0'`,
     extIndent + `inherit! :search_paths`,
     extIndent + `pod '${HMS_POD_NAME}'`,
     innerIndent + `end`,
-    '',
   ].join(lineEnding);
 
-  const before = lines.slice(0, firstLineInside + 1).join(lineEnding);
-  const after = lines.slice(firstLineInside + 1).join(lineEnding);
-  return before + lineEnding + block + after;
+  // Insert the block just before the closing `end` of the main target.
+  const before = lines.slice(0, endLine).join(lineEnding);
+  const after = lines.slice(endLine).join(lineEnding);
+  return before + block + lineEnding + after;
 }
 
 /**
