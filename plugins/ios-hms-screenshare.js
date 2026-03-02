@@ -561,6 +561,91 @@ function ensureAppexInProductsGroup(pbx, extensionName) {
   return pbx;
 }
 
+/**
+ * Ensure the main app target has an "Embed App Extensions" build phase that embeds the
+ * extension's .appex. CocoaPods uses this to resolve the host for the extension target;
+ * without it we get "Unable to find host target(s) for GrabDocsBroadcastUpload".
+ */
+function ensureEmbedAppExtensionsPhase(pbx, extensionName, mainTargetUuid) {
+  const appexName = extensionName + '.appex';
+
+  // Resolve extension target's productReference (.appex file ref)
+  const nativeSection = pbx.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
+  if (!nativeSection) return pbx;
+  const extTargetBlock = nativeSection[0].match(
+    new RegExp('[0-9A-F]{24}\\s*\\/\\*[^*]*' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^*]*\\*\\/\\s*=\\s*\\{[\\s\\S]*?productType\\s*=\\s*"com\\.apple\\.product-type\\.app-extension"[\\s\\S]*?productReference\\s*=\\s*([0-9A-F]{24})\\s*\\/\\*')
+  );
+  const appexFileRefUuid = extTargetBlock ? extTargetBlock[1] : null;
+  if (!appexFileRefUuid) return pbx;
+
+  // Check if "Embed App Extensions" phase already exists on main target and contains this .appex
+  const mainTargetBlock = pbx.match(
+    new RegExp(mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?buildPhases\\s*=\\s*\\(([\\s\\S]*?)\\)\\s*;')
+  );
+  if (!mainTargetBlock) return pbx;
+
+  const buildPhaseList = mainTargetBlock[1];
+  const phaseIdRe = /([0-9A-F]{24})\s*\/\*/g;
+  let embedPhaseUuid = null;
+  let m;
+  while ((m = phaseIdRe.exec(buildPhaseList)) !== null) {
+    const phaseUuid = m[1];
+    const phaseSection = pbx.match(/\/\* Begin PBXCopyFilesBuildPhase section \*\/[\s\S]*?\/\* End PBXCopyFilesBuildPhase section \*\//);
+    if (phaseSection && phaseSection[0].includes(phaseUuid)) {
+      const phaseBlock = phaseSection[0].match(new RegExp(phaseUuid + '[\\s\\S]*?name\\s*=\\s*"Embed App Extensions"'));
+      if (phaseBlock) {
+        embedPhaseUuid = phaseUuid;
+        break;
+      }
+    }
+  }
+
+  if (embedPhaseUuid) {
+    const phaseBlock = pbx.match(new RegExp('\\t\\t' + embedPhaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?name\\s*=\\s*"Embed App Extensions"'));
+    if (phaseBlock && phaseBlock[0].includes(appexName)) return pbx;
+  }
+
+  const buildFileUuid = 'B1E2M3B4E5D6A7P8P9E0X1';
+  const newBuildFileEntry = `\t\t${buildFileUuid} /* ${appexName} in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = ${appexFileRefUuid} /* ${appexName} */; };\n`;
+
+  if (!embedPhaseUuid) {
+    embedPhaseUuid = 'E1M2B3E4D5A6P7P8E9X0T1';
+    const newPhaseEntry = `\t\t${embedPhaseUuid} /* Embed App Extensions */ = {
+\t\t\tisa = PBXCopyFilesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tdstPath = \"\";
+\t\t\tdstSubfolderSpec = 13;
+\t\t\tfiles = (
+\t\t\t\t${buildFileUuid} /* ${appexName} in Embed App Extensions */,
+\t\t\t);
+\t\t\tname = \"Embed App Extensions\";
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};\n`;
+
+    if (!pbx.includes('PBXBuildFile')) return pbx;
+    pbx = pbx.replace(/(\/\* End PBXBuildFile section \*\/)/, newBuildFileEntry + '$1');
+    if (!pbx.includes('PBXCopyFilesBuildPhase section')) {
+      pbx = pbx.replace(/(\/\* End PBXBuildFile section \*\/)/, '$1\n\n/* Begin PBXCopyFilesBuildPhase section */\n' + newPhaseEntry + '/* End PBXCopyFilesBuildPhase section */');
+    } else {
+      pbx = pbx.replace(/(\/\* End PBXCopyFilesBuildPhase section \*\/)/, newPhaseEntry + '$1');
+    }
+
+    const mainTargetBuildPhasesRe = new RegExp(
+      '(' + mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*[^*]*\\*\\/\\s*=\\s*\\{[\\s\\S]*?buildPhases\\s*=\\s*\\()([\\s\\S]*?)(\\n\\s*\\)\\;)'
+    );
+    pbx = pbx.replace(mainTargetBuildPhasesRe, '$1\n\t\t\t\t' + embedPhaseUuid + ' /* Embed App Extensions */,$2$3');
+  } else {
+    const phaseFilesRe = new RegExp(
+      '(' + embedPhaseUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?files\\s*=\\s*\\()([\\s\\S]*?)(\\s*\\);'
+    );
+    if (!pbx.includes('PBXBuildFile')) return pbx;
+    pbx = pbx.replace(/(\/\* End PBXBuildFile section \*\/)/, newBuildFileEntry + '$1');
+    pbx = pbx.replace(phaseFilesRe, '$1\n\t\t\t\t' + buildFileUuid + ' /* ' + appexName + ' in Embed App Extensions */,$2$3');
+  }
+
+  return pbx;
+}
+
 const EXTENSION_BUNDLE_ID = 'com.grabdocs.mobile.GrabDocsBroadcastUpload';
 
 /**
@@ -714,6 +799,10 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
       // xcodeproj gem "no parent for object .appex: Copy Files, Embed App Extensions": the .appex
       // file ref must be in a group that's in the project hierarchy. Ensure it's in Products.
       pbx = ensureAppexInProductsGroup(pbx, extensionName);
+
+      // CocoaPods needs the main target to have "Embed App Extensions" containing the .appex
+      // to resolve the host; otherwise "Unable to find host target(s) for GrabDocsBroadcastUpload".
+      pbx = ensureEmbedAppExtensionsPhase(pbx, extensionName, mainTargetUuid);
 
       // NOTE: do NOT force Automatic signing here. EAS credentials are now registered for
       // com.grabdocs.mobile.GrabDocsBroadcastUpload via `eas credentials --platform ios`.
