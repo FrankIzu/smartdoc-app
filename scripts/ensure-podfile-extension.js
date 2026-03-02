@@ -39,9 +39,9 @@ const bareExtRe = new RegExp(
 );
 content = content.replace(bareExtRe, '\n');
 
-// ── Find target 'GrabDocs' do ───────────────────────────────────────────────
+// ── Find target 'GrabDocs' do or target "GrabDocs" do ────────────────────────
 const lines = content.split(/\r?\n/);
-const mainTargetRe = new RegExp('^(\\s*)target\\s+\'' + MAIN_TARGET + '\'\\s+do\\s*$');
+const mainTargetRe = new RegExp('^(\\s*)target\\s+[\'"]' + MAIN_TARGET + '[\'"]\\s+do\\s*$');
 let mainLine = -1;
 let mainIndent = '';
 for (let i = 0; i < lines.length; i++) {
@@ -51,8 +51,9 @@ for (let i = 0; i < lines.length; i++) {
 
 if (mainLine === -1) {
   console.error('[ensure-podfile-extension] ❌ Could not find target \'' + MAIN_TARGET + '\' in Podfile!');
-  console.error('First 40 lines of Podfile:');
-  console.error(lines.slice(0, 40).join('\n'));
+  console.error('Looked for: target \'' + MAIN_TARGET + '\' do or target "' + MAIN_TARGET + '" do');
+  console.error('First 50 lines of Podfile:');
+  console.error(lines.slice(0, 50).join('\n'));
   process.exit(1);
 }
 
