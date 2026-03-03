@@ -175,6 +175,25 @@ jobs:
             security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || echo "(could not read)"
           fi
 
+      # EAS may run prebuildCommand (expo prebuild --clean) which overwrites ios/; run ensure script
+      # again right before EAS so project.pbxproj has no literal "undefined" (causes "target with id 'undefined'").
+      - name: Re-apply pbxproj undefined fix (before EAS)
+        run: node scripts/ensure-pbxproj-embed-phase.js
+
+      - name: Verify no undefined in project.pbxproj
+        run: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -z "$PBXPROJ" ]; then
+            echo "::error::project.pbxproj not found"
+            exit 1
+          fi
+          if grep -q " = undefined" "$PBXPROJ"; then
+            echo "::error::project.pbxproj still contains literal 'undefined' - EAS Configure Xcode will fail with 'Could not find target with id undefined'"
+            grep -n " = undefined" "$PBXPROJ" || true
+            exit 1
+          fi
+          echo "✅ No literal undefined in project.pbxproj"
+
       - name: EAS Build (local)
         id: eas_build
         continue-on-error: true
