@@ -1,7 +1,10 @@
+// Test/submit config — keep in sync by reading from app.versions.json (same as app.config.js).
+const versions = require("./app.versions.json");
+
 module.exports = { expo: {
   "name": "GrabDocs",
   "slug": "grabdocs",
-  "version": "1.0.6",
+  "version": versions.version,
   "orientation": "portrait",
   "icon": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light.png",
   "userInterfaceStyle": "automatic",
@@ -17,7 +20,7 @@ module.exports = { expo: {
   "ios": {
     "supportsTablet": true,
     "bundleIdentifier": "com.grabdocs.mobile",
-    "buildNumber": "1",
+    "buildNumber": String(versions.ios?.buildNumber ?? "1"),
     "usesAppleSignIn": true,
     "associatedDomains": [
       "applinks:api.grabdocs.com"
@@ -52,7 +55,7 @@ module.exports = { expo: {
   },
   "android": {
     "package": "com.grabdocs.mobile",
-    "versionCode": 31,
+    "versionCode": versions.android?.versionCode ?? 31,
     "adaptiveIcon": {
       "foregroundImage": "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
       "backgroundColor": "#ffffff",

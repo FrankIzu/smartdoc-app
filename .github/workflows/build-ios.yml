@@ -111,20 +111,7 @@ jobs:
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.15.2
 
-      # Use a unique iOS build number per run for production so re-runs don't hit "already submitted".
-      - name: Set unique iOS build number (production)
-        if: github.event.inputs.profile == 'production'
-        run: |
-          node -e "
-          const fs = require('fs');
-          const p = 'app.versions.json';
-          const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-          if (!j.ios) j.ios = {};
-          j.ios.buildNumber = String(process.env.GITHUB_RUN_NUMBER || (parseInt(j.ios.buildNumber || '0', 10) + 1));
-          fs.writeFileSync(p, JSON.stringify(j, null, 2));
-          console.log('Set iOS buildNumber to', j.ios.buildNumber);
-          "
-
+      # Use version and buildNumber from app.versions.json (set by deploy.ps1 before triggering this workflow).
       # Prebuild: plugin adds extension target, Embed phase, and main-target dependency (addTargetDependency).
       - name: Prebuild iOS
         run: npx expo prebuild --platform ios --clean --no-install
