@@ -1,0 +1,31 @@
+diff --git a/node_modules/@expo/config-plugins/build/ios/Target.js b/node_modules/@expo/config-plugins/build/ios/Target.js
+index b0b8329..3da7ceb 100644
+--- a/node_modules/@expo/config-plugins/build/ios/Target.js
++++ b/node_modules/@expo/config-plugins/build/ios/Target.js
+@@ -70,12 +70,20 @@ function getTargetDependencies(project, parentTarget) {
+     return undefined;
+   }
+   const nonSignableTargetTypes = [TargetType.FRAMEWORK];
+-  return parentTarget.dependencies.map(({
+-    value
+-  }) => {
+-    const {
+-      target: targetId
+-    } = project.getPBXGroupByKeyAndType(value, 'PBXTargetDependency');
++  return parentTarget.dependencies
++    .map(({ value }) => {
++      const dep = project.getPBXGroupByKeyAndType(value, 'PBXTargetDependency');
++      if (!dep) return null;
++      let targetId = dep.target;
++      if (targetId == null && dep.targetProxy) {
++        const proxy = project.getPBXGroupByKeyAndType(dep.targetProxy, 'PBXContainerItemProxy');
++        if (proxy && proxy.remoteGlobalIDString) targetId = proxy.remoteGlobalIDString;
++      }
++      if (targetId == null) return null;
++      return [targetId, value];
++    })
++    .filter(Boolean)
++    .map(([targetId]) => {
+     const [, target] = findNativeTargetById(project, targetId);
+     const type = isTargetOfType(target, TargetType.EXTENSION) ? TargetType.EXTENSION : TargetType.OTHER;
+     return {

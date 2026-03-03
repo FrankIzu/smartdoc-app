@@ -214,20 +214,30 @@ jobs:
           fi
           echo "✅ No literal undefined in project.pbxproj"
 
+      - name: Dump PBXTargetDependency section (debug)
+        run: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -n "$PBXPROJ" ]; then
+            echo "===== PBXTargetDependency section ====="
+            sed -n '/Begin PBXTargetDependency/,/End PBXTargetDependency/p' "$PBXPROJ" || true
+            echo "===== PBXContainerItemProxy section ====="
+            sed -n '/Begin PBXContainerItemProxy/,/End PBXContainerItemProxy/p' "$PBXPROJ" || true
+          fi
+
       - name: EAS Build (local)
         id: eas_build
         continue-on-error: true
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          echo "Running EAS build with DEBUG=* for verbose logs..."
           eas build --platform ios --profile "$PROFILE" --local --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXT_PROVISIONING_PROFILE: /tmp/ext.mobileprovision
           EXT_PROFILE_UUID: ${{ env.EXT_PROFILE_UUID }}
-          # Bypass EAS target/bundle-id validation that fails with "Could not find target with id 'undefined'"
           EAS_DANGEROUS_OVERRIDE_IOS_BUNDLE_IDENTIFIER: "com.grabdocs.mobile"
-          # Use runner HOME so the extension profile installed in step 1 is visible to xcodebuild.
           HOME: ${{ env.HOME || '/Users/runner' }}
+          EXPO_DEBUG: "1"
 
       - name: Upload Podfile for debugging (on failure)
         if: failure()
@@ -239,6 +249,16 @@ jobs:
             ios/Podfile.properties.json
             ios/GrabDocs.xcodeproj/project.pbxproj
           if-no-files-found: ignore
+
+      - name: Upload EAS build logs (on failure)
+        if: failure()
+        run: |
+          LOGDIR=$(find /var/folders /tmp -type d -name "eas-build-local-nodejs" 2>/dev/null | head -1)
+          if [ -n "$LOGDIR" ] && [ -d "$LOGDIR" ]; then
+            echo "Found EAS build dir: $LOGDIR"
+            find "$LOGDIR" -name "*.log" -type f 2>/dev/null | head -20
+          fi
+        continue-on-error: true
 
       - name: Dump Podfile and pod logs on failure (diagnosis)
         if: failure()
