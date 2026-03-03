@@ -23,7 +23,9 @@ build:
 
           # Support both: file path (e.g. GitHub Actions sets EXT_PROVISIONING_PROFILE=/tmp/ext.mobileprovision) or base64 content (EAS secret).
           if [ -n "$EXT_PROVISIONING_PROFILE" ] && [ -f "$EXT_PROVISIONING_PROFILE" ]; then
-            cp "$EXT_PROVISIONING_PROFILE" /tmp/ext.mobileprovision
+            if [ "$EXT_PROVISIONING_PROFILE" != "/tmp/ext.mobileprovision" ]; then
+              cp "$EXT_PROVISIONING_PROFILE" /tmp/ext.mobileprovision
+            fi
             echo "Using extension profile from path: $EXT_PROVISIONING_PROFILE"
           elif [ -n "$EXT_PROVISIONING_PROFILE" ]; then
             echo "$EXT_PROVISIONING_PROFILE" | base64 --decode > /tmp/ext.mobileprovision
