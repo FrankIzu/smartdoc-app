@@ -1,0 +1,13 @@
+diff --git a/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h b/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
+index fca4649..4ca91ae 100644
+--- a/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
++++ b/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
+@@ -17,7 +17,7 @@ typedef NS_OPTIONS(unsigned int, EXFileSystemPermissionFlags) {
+ 
+ // TODO: Move permissionsForURI to EXFileSystemManagerInterface
+ - (EXFileSystemPermissionFlags)permissionsForURI:(NSURL *)uri;
+-- (nonnull NSString *)generatePathInDirectory:(NSString *)directory withExtension:(NSString *)extension;
++- (nonnull NSString *)generatePathInDirectory:(NSString *)directory withExtension:(NSString * _Nullable)extension;
+ - (BOOL)ensureDirExistsWithPath:(NSString *)path;
+ 
+ @end

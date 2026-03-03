@@ -164,6 +164,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Generate android/ so gradle.properties exists for patching. EAS build --local uses this folder and skips prebuild.
+      - name: Expo prebuild (Android)
+        run: npx expo prebuild --platform android --clean --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
       - name: Disable configuration cache (Expo/RN build.gradle runs Node during config)
         run: |
           sed -i 's/^org\.gradle\.configuration-cache=.*/org.gradle.configuration-cache=false/' android/gradle.properties
