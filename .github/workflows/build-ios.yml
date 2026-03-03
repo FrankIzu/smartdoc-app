@@ -230,7 +230,8 @@ jobs:
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
           echo "Running EAS build with DEBUG=* for verbose logs..."
-          eas build --platform ios --profile "$PROFILE" --local --non-interactive
+          eas build --platform ios --profile "$PROFILE" --local --non-interactive 2>&1 | tee "$RUNNER_TEMP/eas-build.log"
+          exit "${PIPESTATUS[0]:-0}"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXT_PROVISIONING_PROFILE: /tmp/ext.mobileprovision
@@ -248,6 +249,25 @@ jobs:
             ios/Podfile
             ios/Podfile.properties.json
             ios/GrabDocs.xcodeproj/project.pbxproj
+          if-no-files-found: ignore
+
+      - name: Show EAS build log tail (on failure)
+        if: failure()
+        run: |
+          echo "===== Last 150 lines of EAS build log ====="
+          if [ -f "$RUNNER_TEMP/eas-build.log" ]; then
+            tail -150 "$RUNNER_TEMP/eas-build.log"
+          else
+            echo "(eas-build.log not found)"
+          fi
+        continue-on-error: true
+
+      - name: Upload EAS full build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eas-build-full-log
+          path: ${{ runner.temp }}/eas-build.log
           if-no-files-found: ignore
 
       - name: Upload EAS build logs (on failure)
