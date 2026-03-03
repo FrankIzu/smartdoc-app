@@ -28,7 +28,7 @@ function fixUndefinedInPbxproj(pbx) {
     pbx = pbx.replace(/fileEncoding = undefined/g, 'fileEncoding = 4');
     changed = true;
   }
-  // Replace lastKnownFileType = undefined with proper type
+  // Replace lastKnownFileType = undefined with proper type (for .appex; framework uses wrapper.framework)
   if (pbx.includes('lastKnownFileType = undefined')) {
     pbx = pbx.replace(/lastKnownFileType = undefined/g, 'lastKnownFileType = "wrapper.app-extension"');
     changed = true;
@@ -36,6 +36,13 @@ function fixUndefinedInPbxproj(pbx) {
   // Replace explicitFileType = undefined with explicitFileType = "" (empty string, not JS undefined)
   if (pbx.includes('explicitFileType = undefined')) {
     pbx = pbx.replace(/explicitFileType = undefined/g, 'explicitFileType = ""');
+    changed = true;
+  }
+  // Catch-all: replace any remaining = undefined (includeInIndex, etc.) to prevent EAS parser errors
+  if (pbx.includes(' = undefined')) {
+    pbx = pbx.replace(/(\w+) = undefined/g, (_, key) =>
+      key === 'fileEncoding' ? 'fileEncoding = 4' : `${key} = ""`
+    );
     changed = true;
   }
   return { pbx, changed };
