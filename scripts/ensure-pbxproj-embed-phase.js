@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Standalone script: ensures the Broadcast Upload Extension .appex is in a phase
- * named "Embed App Extensions" with dstSubfolderSpec = 13. CocoaPods requires this
- * to resolve the host target. Run after `expo prebuild`, before `pod install`.
+ * Standalone script: ensures CocoaPods can find the host target for GrabDocsBroadcastUpload.
+ * CocoaPods reads the Xcode project and requires:
+ * 1. Main target (GrabDocs) has the extension in Target Dependencies
+ * 2. Main target has "Embed App Extensions" phase with the .appex
  *
- * Works as a safety net when the plugin's pbxproj patch doesn't match the CI project.
+ * Run after `expo prebuild`, before `pod install`.
  *
  * Usage: node scripts/ensure-pbxproj-embed-phase.js
  */
@@ -13,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
+const MAIN_TARGET_NAME = 'GrabDocs';
 
 function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
   const escapedAppex = extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.appex';
@@ -90,6 +92,87 @@ function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
   return { pbx, changed: true };
 }
 
+/**
+ * Ensure main app target has the extension in its Target Dependencies.
+ * CocoaPods uses user_project.host_targets_for_embedded_target() which returns
+ * targets that depend on the extension. Without this, "Unable to find host target(s)".
+ */
+function ensureTargetDependency(pbx, extensionName) {
+  const nativeTargetSection = pbx.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
+  if (!nativeTargetSection) return { pbx, changed: false };
+
+  const appTargetMatch = nativeTargetSection[0].match(
+    /([0-9A-F]{24})\s*\/\*\s*GrabDocs\s*\*\/\s*=\s*\{[\s\S]*?productType = "com\.apple\.product-type\.application"/
+  );
+  const mainTargetUuid = appTargetMatch ? appTargetMatch[1] : null;
+  if (!mainTargetUuid) return { pbx, changed: false };
+
+  const extTargetMatch = nativeTargetSection[0].match(
+    new RegExp('([0-9A-F]{24})\\s*\\/\\*\\s*"' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?productType = "com\\.apple\\.product-type\\.app-extension"')
+  );
+  const extensionTargetUuid = extTargetMatch ? extTargetMatch[1] : null;
+  if (!extensionTargetUuid) return { pbx, changed: false };
+
+  const mainTargetBlockRe = new RegExp(
+    mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?dependencies = \\(([\\s\\S]*?)\\)\\s*;',
+    'g'
+  );
+  const mainTargetBlockMatch = mainTargetBlockRe.exec(pbx);
+  const depsContent = mainTargetBlockMatch ? mainTargetBlockMatch[1] : '';
+  if (depsContent.includes(extensionTargetUuid) || depsContent.includes(extensionName)) {
+    return { pbx, changed: false };
+  }
+  const projectMatch = pbx.match(/([0-9A-F]{24})\s*\/\*\s*Project object\s*\*\/\s*=\s*\{\s*isa = PBXProject;/);
+  const projectUuid = projectMatch ? projectMatch[1] : null;
+  if (!projectUuid) return { pbx, changed: false };
+
+  const containerProxyUuid = 'A1B2C3D4E5F60718293A4B5C';
+  const targetDependencyUuid = 'D4E5F60718293A4B5C6D7E8F';
+
+  const containerProxyEntry = `\t\t${containerProxyUuid} /* PBXContainerItemProxy */ = {
+\t\t\tisa = PBXContainerItemProxy;
+\t\t\tcontainerPortal = ${projectUuid} /* Project object */;
+\t\t\tproxyType = 1;
+\t\t\tremoteGlobalIDString = ${extensionTargetUuid};
+\t\t\tremoteInfo = "${extensionName}";
+\t\t};
+`;
+  const targetDependencyEntry = `\t\t${targetDependencyUuid} /* PBXTargetDependency */ = {
+\t\t\tisa = PBXTargetDependency;
+\t\t\ttargetProxy = ${containerProxyUuid} /* PBXContainerItemProxy */;
+\t\t};
+`;
+
+  if (!pbx.includes('PBXContainerItemProxy')) {
+    pbx = pbx.replace(
+      /(\/\* End PBXProject section \*\/)/,
+      `$1\n\n/* Begin PBXContainerItemProxy section */\n${containerProxyEntry}/* End PBXContainerItemProxy section */\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
+    );
+  } else {
+    pbx = pbx.replace(/(\/\* End PBXContainerItemProxy section \*\/)/, containerProxyEntry + '$1');
+    if (!pbx.includes('PBXTargetDependency')) {
+      pbx = pbx.replace(
+        /(\/\* End PBXContainerItemProxy section \*\/)/,
+        `$1\n\n/* Begin PBXTargetDependency section */\n${targetDependencyEntry}/* End PBXTargetDependency section */`
+      );
+    } else {
+      pbx = pbx.replace(/(\/\* End PBXTargetDependency section \*\/)/, targetDependencyEntry + '$1');
+    }
+  }
+
+  const mainTargetDepsPattern = new RegExp(
+    '(' + mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?)dependencies = \\(([\\s\\S]*?)\\)\\s*;'
+  );
+  pbx = pbx.replace(mainTargetDepsPattern, (_, prefix, existingDeps) => {
+    const depLine = targetDependencyUuid + ' /* ' + extensionName + ' */';
+    const trimmed = existingDeps.trim();
+    const newDeps = trimmed ? trimmed + ',\n\t\t\t\t' + depLine : '\n\t\t\t\t' + depLine;
+    return prefix + 'dependencies = (' + newDeps + '\n\t\t\t);';
+  });
+
+  return { pbx, changed: true };
+}
+
 const iosDir = path.join(process.cwd(), 'ios');
 if (!fs.existsSync(iosDir)) {
   console.log('[ensure-pbxproj-embed-phase] ios/ not found — skipping');
@@ -109,11 +192,26 @@ if (!fs.existsSync(pbxPath)) {
 }
 
 let pbx = fs.readFileSync(pbxPath, 'utf8');
-const result = fixExtensionEmbedPhaseForCocoaPods(pbx, EXTENSION_NAME);
+let changed = false;
 
-if (result.changed) {
-  fs.writeFileSync(pbxPath, result.pbx);
-  console.log('[ensure-pbxproj-embed-phase] ✅ Patched project.pbxproj: Embed App Extensions phase fixed for CocoaPods');
+// Run target dependency first - CocoaPods needs this for host detection
+const depResult = ensureTargetDependency(pbx, EXTENSION_NAME);
+if (depResult.changed) {
+  pbx = depResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Added extension to main target Target Dependencies (CocoaPods host)');
+}
+
+const embedResult = fixExtensionEmbedPhaseForCocoaPods(pbx, EXTENSION_NAME);
+if (embedResult.changed) {
+  pbx = embedResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Fixed Embed App Extensions phase');
+}
+
+if (changed) {
+  fs.writeFileSync(pbxPath, pbx);
+  console.log('[ensure-pbxproj-embed-phase] ✅ Patched project.pbxproj for CocoaPods');
 } else {
-  console.log('[ensure-pbxproj-embed-phase] No change needed (phase already correct or no extension phase found)');
+  console.log('[ensure-pbxproj-embed-phase] No change needed');
 }
