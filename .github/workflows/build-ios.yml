@@ -179,6 +179,27 @@ jobs:
       - name: Re-apply pbxproj undefined fix (before EAS)
         run: node scripts/ensure-pbxproj-embed-phase.js
 
+      # Belt-and-suspenders: sed replace any remaining "undefined" (pod install may re-introduce).
+      - name: Force-remove undefined from project.pbxproj
+        run: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -z "$PBXPROJ" ]; then
+            echo "project.pbxproj not found"
+            exit 0
+          fi
+          if grep -q " = undefined" "$PBXPROJ"; then
+            echo "Found undefined in project.pbxproj, applying fixes..."
+            sed -i '' 's/fileEncoding = undefined/fileEncoding = 4/g' "$PBXPROJ"
+            sed -i '' 's/lastKnownFileType = undefined/lastKnownFileType = "wrapper.app-extension"/g' "$PBXPROJ"
+            sed -i '' 's/explicitFileType = undefined/explicitFileType = ""/g' "$PBXPROJ"
+            sed -i '' 's/includeInIndex = undefined/includeInIndex = 0/g' "$PBXPROJ"
+            # Catch-all: any remaining key = undefined
+            sed -i '' -E 's/([a-zA-Z0-9_]+) = undefined/\1 = ""/g' "$PBXPROJ"
+            echo "✅ Force-removed undefined from project.pbxproj"
+          else
+            echo "No undefined in project.pbxproj"
+          fi
+
       - name: Verify no undefined in project.pbxproj
         run: |
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
@@ -186,9 +207,9 @@ jobs:
             echo "::error::project.pbxproj not found"
             exit 1
           fi
-          if grep -q " = undefined" "$PBXPROJ"; then
+          if grep -qE " = undefined|= undefined" "$PBXPROJ"; then
             echo "::error::project.pbxproj still contains literal 'undefined'"
-            grep -n " = undefined" "$PBXPROJ" || true
+            grep -nE " = undefined|= undefined" "$PBXPROJ" || true
             exit 1
           fi
           echo "✅ No literal undefined in project.pbxproj"
