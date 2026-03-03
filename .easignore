@@ -129,7 +129,8 @@ dev-files/
 *.zip
 *.tgz
 
-# Native folders: for iOS we prebuild+patch in CI and upload ios/ so EAS skips prebuild.
-# ios/ is NOT ignored — our patched ios/ gets uploaded for iOS builds.
-# android/ — ignored so EAS runs prebuild for Android.
+# Native folders: exclude so EAS always runs prebuildCommand (which patches project.pbxproj).
+# Without this, EAS skips prebuild when ios/ exists and may use unpatched project.pbxproj
+# (with literal "undefined") causing "Could not find target with id 'undefined'".
+ios/
 android/
