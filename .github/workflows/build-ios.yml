@@ -191,7 +191,8 @@ jobs:
             echo "Found undefined in project.pbxproj, applying fixes..."
             sed -i '' 's/fileEncoding = undefined/fileEncoding = 4/g' "$PBXPROJ"
             sed -i '' 's/lastKnownFileType = undefined/lastKnownFileType = "wrapper.app-extension"/g' "$PBXPROJ"
-            sed -i '' 's/explicitFileType = undefined/explicitFileType = ""/g' "$PBXPROJ"
+            sed -i '' 's/explicitFileType = undefined/explicitFileType = "wrapper.app-extension"/g' "$PBXPROJ"
+            sed -i '' 's/explicitFileType = ""/explicitFileType = "wrapper.app-extension"/g' "$PBXPROJ"
             sed -i '' 's/includeInIndex = undefined/includeInIndex = 0/g' "$PBXPROJ"
             # Catch-all: any remaining key = undefined
             sed -i '' -E 's/([a-zA-Z0-9_]+) = undefined/\1 = ""/g' "$PBXPROJ"

@@ -33,15 +33,20 @@ function fixUndefinedInPbxproj(pbx) {
     pbx = pbx.replace(/lastKnownFileType = undefined/g, 'lastKnownFileType = "wrapper.app-extension"');
     changed = true;
   }
-  // Replace explicitFileType = undefined with explicitFileType = "" (empty string, not JS undefined)
+  // Replace explicitFileType = undefined with a valid non-empty type (Xcode asserts "identifier should be a non-empty string")
   if (pbx.includes('explicitFileType = undefined')) {
-    pbx = pbx.replace(/explicitFileType = undefined/g, 'explicitFileType = ""');
+    pbx = pbx.replace(/explicitFileType = undefined/g, 'explicitFileType = "wrapper.app-extension"');
+    changed = true;
+  }
+  // Fix empty explicitFileType (Xcode rejects empty string for PBXFileType identifier)
+  if (pbx.includes('explicitFileType = ""')) {
+    pbx = pbx.replace(/explicitFileType = ""/g, 'explicitFileType = "wrapper.app-extension"');
     changed = true;
   }
   // Catch-all: replace any remaining = undefined (includeInIndex, etc.) to prevent EAS parser errors
   if (pbx.includes(' = undefined')) {
     pbx = pbx.replace(/(\w+) = undefined/g, (_, key) =>
-      key === 'fileEncoding' ? 'fileEncoding = 4' : `${key} = ""`
+      key === 'fileEncoding' ? 'fileEncoding = 4' : key === 'explicitFileType' ? 'explicitFileType = "wrapper.app-extension"' : `${key} = ""`
     );
     changed = true;
   }
