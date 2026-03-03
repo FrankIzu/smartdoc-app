@@ -16,6 +16,31 @@ const path = require('path');
 const EXTENSION_NAME = 'GrabDocsBroadcastUpload';
 const MAIN_TARGET_NAME = 'GrabDocs';
 
+/**
+ * Fix literal "undefined" in pbxproj that can confuse EAS/Expo's JavaScript parser.
+ * EAS "Configure Xcode project" fails with "Could not find target with id 'undefined'"
+ * when the parser sees unquoted "undefined" and returns JS undefined for target lookup.
+ */
+function fixUndefinedInPbxproj(pbx) {
+  let changed = false;
+  // Replace fileEncoding = undefined with fileEncoding = 4 (UTF-8)
+  if (pbx.includes('fileEncoding = undefined')) {
+    pbx = pbx.replace(/fileEncoding = undefined/g, 'fileEncoding = 4');
+    changed = true;
+  }
+  // Replace lastKnownFileType = undefined with proper type
+  if (pbx.includes('lastKnownFileType = undefined')) {
+    pbx = pbx.replace(/lastKnownFileType = undefined/g, 'lastKnownFileType = "wrapper.app-extension"');
+    changed = true;
+  }
+  // Replace explicitFileType = undefined with explicitFileType = "" (empty string, not JS undefined)
+  if (pbx.includes('explicitFileType = undefined')) {
+    pbx = pbx.replace(/explicitFileType = undefined/g, 'explicitFileType = ""');
+    changed = true;
+  }
+  return { pbx, changed };
+}
+
 function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
   const escapedAppex = extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.appex';
 
@@ -193,6 +218,14 @@ if (!fs.existsSync(pbxPath)) {
 
 let pbx = fs.readFileSync(pbxPath, 'utf8');
 let changed = false;
+
+// Fix literal "undefined" first - EAS parser can return JS undefined and fail with "target with id 'undefined'"
+const undefinedResult = fixUndefinedInPbxproj(pbx);
+if (undefinedResult.changed) {
+  pbx = undefinedResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Replaced literal "undefined" in pbxproj (EAS parser fix)');
+}
 
 // Run target dependency first - CocoaPods needs this for host detection
 const depResult = ensureTargetDependency(pbx, EXTENSION_NAME);
