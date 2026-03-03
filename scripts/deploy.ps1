@@ -808,29 +808,39 @@ try {
             Write-Host "   ⚠️  Could not verify workflow on GitHub (may need sync time)" -ForegroundColor Yellow
         }
         
-        # Retry mechanism: GitHub may need time to sync workflow file updates
+        # Retry mechanism: GitHub may need time to sync workflow file updates after push
         $maxRetries = 3
-        $retryDelay = 5
+        $retryDelay = 15
         $triggered = $false
-        
+        $workflowName = if ($Platform -eq "android") { "Build Android (EAS local)" } else { "Build iOS (EAS local)" }
+        $triggerArgs = @("-f", "profile=$profile", "--ref", "main")
+
         for ($retry = 1; $retry -le $maxRetries; $retry++) {
             if ($retry -gt 1) {
                 Write-Host "   Retry attempt $retry of $maxRetries (waiting ${retryDelay}s for GitHub sync)..." -ForegroundColor Yellow
                 Start-Sleep -Seconds $retryDelay
-                $retryDelay = $retryDelay * 2  # Exponential backoff
+                $retryDelay = $retryDelay * 2
             } else {
                 Write-Host "Triggering $workflowFile for ref main (profile $profile)..." -ForegroundColor Cyan
             }
-            
-            $triggerOutput = gh workflow run $workflowFile -f profile=$profile --ref main 2>&1
+
+            # Try by filename first, then by workflow name (helps when GitHub has stale workflow_dispatch)
+            $triggerOutput = gh workflow run $workflowFile @triggerArgs 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "✅ Triggered $Platform build on main. See Actions tab for run." -ForegroundColor Green
                 $triggered = $true
                 break
-            } else {
-                # Show the actual error on first attempt
-                if ($retry -eq 1) {
-                    Write-Host "   Error: $triggerOutput" -ForegroundColor Red
+            }
+            if ($retry -eq 1) {
+                Write-Host "   Error: $triggerOutput" -ForegroundColor Red
+                if ($triggerOutput -match "workflow_dispatch|422") {
+                    Write-Host "   Trying by workflow name in case GitHub sync is delayed..." -ForegroundColor Yellow
+                    $triggerOutput2 = gh workflow run $workflowName @triggerArgs 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "✅ Triggered $Platform build (by name). See Actions tab for run." -ForegroundColor Green
+                        $triggered = $true
+                        break
+                    }
                 }
             }
         }
@@ -867,11 +877,10 @@ try {
             }
             
             Write-Host "`n   Next steps:" -ForegroundColor Cyan
-            Write-Host "   1. Wait 60-120 seconds for GitHub to fully sync, then try: gh workflow run $workflowFile -f profile=$profile --ref main" -ForegroundColor Gray
-            Write-Host "   2. Verify workflow on main: gh workflow view $workflowFile --ref main" -ForegroundColor Gray
-            Write-Host "   3. Check latest commit on main: git log origin/main --oneline -1" -ForegroundColor Gray
-            Write-Host "   4. Use GitHub UI: Actions → $workflowFile → Run workflow (select main branch)" -ForegroundColor Gray
-            Write-Host "   5. If still failing, check if workflow file path matches exactly: .github/workflows/$workflowFile" -ForegroundColor Gray
+            Write-Host "   1. Wait 60-120 seconds for GitHub to sync, then run: gh workflow run `"$workflowName`" -f profile=$profile --ref main" -ForegroundColor Gray
+            Write-Host "   2. Or use GitHub UI: Actions → $workflowFile → Run workflow (choose main, profile $profile)" -ForegroundColor Gray
+            Write-Host "   3. If you see 'workflow_dispatch' 422: workflow on default branch may be stale. Push a tiny change to .github/workflows/$workflowFile (e.g. add a comment), wait 60s, then trigger again." -ForegroundColor Gray
+            Write-Host "   4. Verify: gh workflow view $workflowFile --ref main" -ForegroundColor Gray
         }
         exit 0
     }

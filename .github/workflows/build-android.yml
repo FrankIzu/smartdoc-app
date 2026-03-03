@@ -190,20 +190,7 @@ jobs:
           ROOT="android/build.gradle"
           MARKER="lintVitalAnalyzeRelease disabled for CI"
           grep -q "$MARKER" "$ROOT" && { echo "Lint already disabled in root build.gradle"; exit 0; }
-          BLOCK="
-// $MARKER
-subprojects { subproject ->
-  subproject.afterEvaluate {
-    subproject.tasks.configureEach { task ->
-      if (task.name.contains(\"lintVital\") || task.name.contains(\"lintRelease\")) {
-        task.enabled = false
-      }
-    }
-  }
-}
-"
-          echo "$BLOCK" >> "$ROOT"
-          echo "Appended subprojects { disable lintVital* } to $ROOT"
+          node -e 'const fs=require("fs");const p="android/build.gradle";let c=fs.readFileSync(p,"utf8");if(c.includes("lintVitalAnalyzeRelease disabled for CI")){console.log("Lint already disabled in root build.gradle");process.exit(0);}const m="\n// lintVitalAnalyzeRelease disabled for CI\nsubprojects { subproject ->\n  subproject.afterEvaluate {\n    subproject.tasks.configureEach { task ->\n      if (task.name.contains(\"lintVital\") || task.name.contains(\"lintRelease\")) {\n        task.enabled = false\n      }\n    }\n  }\n}\n";fs.appendFileSync(p,m);console.log("Appended subprojects { disable lintVital* } to",p);'
 
       - name: Prepare preview build (single ABI, no minify)
         if: github.event.inputs.profile == 'preview' || github.event.inputs.profile == 'development'
