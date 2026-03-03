@@ -3,11 +3,18 @@ build:
   steps:
     - eas/checkout
     - eas/install_node_modules
-    - eas/prebuild
+    - eas/resolve_apple_team_id_from_credentials:
+        id: resolve_apple_team_id_from_credentials
+    - eas/prebuild:
+        inputs:
+          clean: false
+          apple_team_id: ${ steps.resolve_apple_team_id_from_credentials.apple_team_id }
     - run:
         name: Patch Podfile for GrabDocsBroadcastUpload extension
         command: node scripts/ensure-podfile-extension.js && node scripts/ensure-pbxproj-embed-phase.js
-    - eas/ios/install_pods
+    - run:
+        name: Install CocoaPods dependencies
+        command: cd ios && pod install
     - run:
         name: Install GrabDocsBroadcastUpload provisioning profile
         command: |
@@ -28,4 +35,10 @@ build:
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
             echo "⚠️  Could not extract UUID, installed with fixed name"
           fi
-    - eas/ios/build
+    - eas/configure_eas_update
+    - eas/configure_ios_credentials
+    - eas/generate_gymfile_from_template:
+        inputs:
+          credentials: ${ eas.job.secrets.buildCredentials }
+    - eas/run_fastlane
+    - eas/find_and_upload_build_artifacts
