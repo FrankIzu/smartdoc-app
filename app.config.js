@@ -182,19 +182,10 @@ const baseExpo = {
     eas: {
       projectId: "341d1cdf-5759-41ef-8ae3-36e4cf7fab00",
       build: {
-        experimental: {
-          ios: {
-            appExtensions: [
-              {
-                targetName: "GrabDocsBroadcastUpload",
-                bundleIdentifier: "com.grabdocs.mobile.GrabDocsBroadcastUpload",
-                entitlements: {
-                  "com.apple.security.application-groups": ["group.com.grabdocs.mobile"],
-                },
-              },
-            ],
-          },
-        },
+        // appExtensions removed: EAS "Configure Xcode project" was failing with
+        // "Could not find target with id 'undefined'" when looking up extension targets.
+        // Extension is created by ios-hms-screenshare plugin; provisioning profile
+        // is installed via eas-build-post-install (install-extension-profile.sh).
       },
     },
   },
