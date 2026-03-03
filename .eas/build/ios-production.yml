@@ -41,8 +41,14 @@ build:
           fi
 
           # Extract the UUID (|| true so set -eo pipefail does not exit when PlistBuddy fails)
-          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null \
+          RAW_UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null \
             | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null) || true
+          # Only use if it looks like a UUID (PlistBuddy may print "Error Reading File: ..." on failure)
+          if [ -n "$RAW_UUID" ] && echo "$RAW_UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+            UUID="$RAW_UUID"
+          else
+            UUID=""
+          fi
 
           if [ -n "$UUID" ]; then
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
