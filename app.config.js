@@ -123,6 +123,7 @@ const baseExpo = {
   },
   plugins: [
     "./plugins/android-pip",
+    "./plugins/android-disable-release-lint",
     "./plugins/ios-pip",
     "expo-dev-client",
     "expo-router",
