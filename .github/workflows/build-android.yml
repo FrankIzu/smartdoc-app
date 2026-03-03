@@ -193,15 +193,15 @@ jobs:
           echo "Old artifacts cleaned"
 
       # Production: bump Android versionCode so every submit has a new version (avoids "You've already submitted this version").
-      # Must update BOTH app.json AND build.gradle - Gradle reads versionCode from build.gradle; EAS prebuild uses app.json.
+      # Version lives in app.versions.json (app.config.js reads it). Prebuild writes it into android/app/build.gradle.
       - name: Bump Android version code (production)
         if: github.event.inputs.profile == 'production'
         run: |
           set -e
-          APP_JSON="app.json"
+          VERSIONS_JSON="app.versions.json"
           BUILD_GRADLE="android/app/build.gradle"
-          if [ ! -f "$APP_JSON" ]; then
-            echo "::error::app.json not found"
+          if [ ! -f "$VERSIONS_JSON" ]; then
+            echo "::error::app.versions.json not found"
             exit 1
           fi
           if [ ! -f "$BUILD_GRADLE" ]; then
@@ -210,24 +210,23 @@ jobs:
           fi
           CODE=$(node -e "
             const fs = require('fs');
-            const app = JSON.parse(fs.readFileSync('$APP_JSON', 'utf8'));
-            const v = app.expo?.android?.versionCode ?? 0;
-            console.log(Number(v));
+            const v = JSON.parse(fs.readFileSync('$VERSIONS_JSON', 'utf8'));
+            console.log(Number(v?.android?.versionCode ?? 0));
           ")
           NEXT=$((CODE + 1))
           echo "Bumping Android versionCode: $CODE -> $NEXT"
           node -e "
             const fs = require('fs');
-            const app = JSON.parse(fs.readFileSync('$APP_JSON', 'utf8'));
-            if (!app.expo.android) app.expo.android = {};
-            app.expo.android.versionCode = $NEXT;
-            fs.writeFileSync('$APP_JSON', JSON.stringify(app, null, 2) + '\n');
+            const v = JSON.parse(fs.readFileSync('$VERSIONS_JSON', 'utf8'));
+            if (!v.android) v.android = {};
+            v.android.versionCode = $NEXT;
+            fs.writeFileSync('$VERSIONS_JSON', JSON.stringify(v, null, 2) + '\n');
           "
           sed -i "s/versionCode [0-9]*/versionCode $NEXT/" "$BUILD_GRADLE"
           echo "ANDROID_VERSION_CODE=$NEXT" >> $GITHUB_ENV
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$APP_JSON" "$BUILD_GRADLE"
+          git add "$VERSIONS_JSON" "$BUILD_GRADLE"
           git diff --staged --quiet && echo "No change (versionCode already $NEXT?)" || true
           git diff --staged --quiet || (git commit -m "chore(android): bump versionCode to $NEXT for Play submit" && git push)
 
