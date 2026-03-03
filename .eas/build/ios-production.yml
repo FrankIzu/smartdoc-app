@@ -40,15 +40,14 @@ build:
             exit 1
           fi
 
-          # Extract the UUID embedded inside the .mobileprovision plist
+          # Extract the UUID (|| true so set -eo pipefail does not exit when PlistBuddy fails)
           UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null \
-            | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null)
+            | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null) || true
 
           if [ -n "$UUID" ]; then
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
             echo "✅ Installed extension profile: $UUID"
           else
-            # Fallback — use a fixed name; Xcode reads the embedded UUID regardless of filename
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
             echo "⚠️  Could not extract UUID, installed with fixed name"
           fi
