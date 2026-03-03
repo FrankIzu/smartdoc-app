@@ -81,7 +81,9 @@ function withBroadcastExtensionFiles(config, { appGroup, extensionName }) {
       const extensionPlist = {
         CFBundleIdentifier: extBundleId,
         CFBundleName: extensionName,
-        CFBundlePackageType: 'BNDL',
+        CFBundleDisplayName: extensionName,
+        CFBundleExecutable: extensionName,
+        CFBundlePackageType: 'XPC!',
         CFBundleShortVersionString: '1.0',
         CFBundleVersion: '1',
         NSExtension: {
