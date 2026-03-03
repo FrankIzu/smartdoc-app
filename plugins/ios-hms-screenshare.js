@@ -856,7 +856,7 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
         return config;
       }
 
-      const scriptBody = 'if [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nelif [ -f /tmp/ext.mobileprovision ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp /tmp/ext.mobileprovision \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nfi\\\\n';
+      const scriptBody = 'set +e\\\\nif [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nelif [ -f /tmp/ext.mobileprovision ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp /tmp/ext.mobileprovision \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nfi\\\\nexit 0\\\\n';
       const phaseId = 'A1B2C3D4E5F60718293A4B5C6D7E8F90';
       const mainPhaseId = 'B2C3D4E5F60718293A4B5C6D7E8F90A1';
       const phaseBlock = `

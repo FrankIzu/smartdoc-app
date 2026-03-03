@@ -31,7 +31,8 @@ function fixUndefinedInPbxproj(pbx) {
     changed = true;
   }
   // Context-aware file type: only set wrapper.app-extension for .appex product; use sourcecode.swift for .swift
-  const fileRefBlockRe = /(\t\t[0-9A-F]{24}\s*\/\*[^*]*\*\/\s*=\s*\{)([\s\S]*?)(\n\t\t\};)/g;
+  // Use flexible whitespace so we match EAS/pod-generated project format (tabs or spaces)
+  const fileRefBlockRe = /(\t+[0-9A-F]{24}\s*\/\*[^*]*\*\/\s*=\s*\{)([\s\S]*?)(\n\s*\};)/g;
   pbx = pbx.replace(fileRefBlockRe, (_, open, block, close) => {
     const pathMatch = block.match(/path\s*=\s*["']([^"']+)["']/);
     const path = pathMatch ? pathMatch[1] : '';
@@ -73,6 +74,20 @@ function fixUndefinedInPbxproj(pbx) {
     }
     return open + newBlock + close;
   });
+  // Fallback: fix .swift file refs that still have wrapper.app-extension (e.g. block regex didn't match or pod install overwrote)
+  const blockScope = '[\\s\\S]{0,400}?';
+  if (pbx.includes('lastKnownFileType = "wrapper.app-extension"')) {
+    const before = pbx;
+    pbx = pbx.replace(/(path\s*=\s*["'][^"']*\.swift["'];[\s\S]*?)(lastKnownFileType = "wrapper\.app-extension")/g, '$1lastKnownFileType = "sourcecode.swift"');
+    pbx = pbx.replace(new RegExp('(lastKnownFileType = "wrapper\\.app-extension")(' + blockScope + 'path\\s*=\\s*["\'][^"\']*\\.swift["\'])', 'g'), 'lastKnownFileType = "sourcecode.swift"$2');
+    if (pbx !== before) changed = true;
+  }
+  if (pbx.includes('explicitFileType = "wrapper.app-extension"')) {
+    const before = pbx;
+    pbx = pbx.replace(/(path\s*=\s*["'][^"']*\.swift["'];[\s\S]*?)(explicitFileType = "wrapper\.app-extension")/g, '$1explicitFileType = "sourcecode.swift"');
+    pbx = pbx.replace(new RegExp('(explicitFileType = "wrapper\\.app-extension")(' + blockScope + 'path\\s*=\\s*["\'][^"\']*\\.swift["\'])', 'g'), 'explicitFileType = "sourcecode.swift"$2');
+    if (pbx !== before) changed = true;
+  }
   // Catch-all: replace any remaining = undefined (includeInIndex, etc.) to prevent EAS parser errors
   if (pbx.includes(' = undefined')) {
     pbx = pbx.replace(/(\w+) = undefined/g, (_, key) =>
