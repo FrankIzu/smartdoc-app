@@ -160,35 +160,34 @@ function Update-BuildNumber {
                 throw "Expected versionCode $BuildNumber but found $actualVersionCode in app.versions.json"
             }
             
-            # Also update Android versionCode in build.gradle (for local builds when android/ exists)
+            # Also update Android versionCode in build.gradle when android/ exists (e.g. after expo prebuild).
+            # EAS Build generates android/ during prebuild and uses app.versions.json; no android folder is normal.
             $buildGradlePath = "$PSScriptRoot\..\android\app\build.gradle"
-            if (-not (Test-Path $buildGradlePath)) {
-                throw "build.gradle not found at $buildGradlePath"
-            }
-            $content = Get-Content $buildGradlePath -Raw
-            if ($content -notmatch 'versionCode') {
-                throw "versionCode not found in build.gradle"
-            }
-            # More robust regex: match versionCode followed by whitespace and digits, replace the digits
-            # This handles: versionCode 25, versionCode=25, versionCode  25, etc.
-            if ($content -match '(?m)(^\s*versionCode\s+)(\d+)') {
-                $oldValue = $matches[2]
-                $content = $content -replace '(?m)(^\s*versionCode\s+)(\d+)', "`${1}$BuildNumber"
-                Set-Content $buildGradlePath $content -Encoding UTF8
-                
-                # Verify the update was successful
-                $verifyContent = Get-Content $buildGradlePath -Raw
-                if ($verifyContent -match '(?m)^\s*versionCode\s+(\d+)') {
-                    $actualValue = $matches[1]
-                    if ([int]$actualValue -eq [int]$BuildNumber) {
-                        Write-Host "✅ Updated Android versionCode in build.gradle from $oldValue to $actualValue" -ForegroundColor Green
+            if (Test-Path $buildGradlePath) {
+                $content = Get-Content $buildGradlePath -Raw
+                if ($content -notmatch 'versionCode') {
+                    Write-Host "⚠️  versionCode not found in build.gradle" -ForegroundColor Yellow
+                } else {
+                    # More robust regex: match versionCode followed by whitespace and digits, replace the digits
+                    if ($content -match '(?m)(^\s*versionCode\s+)(\d+)') {
+                        $oldValue = $matches[2]
+                        $content = $content -replace '(?m)(^\s*versionCode\s+)(\d+)', "`${1}$BuildNumber"
+                        Set-Content $buildGradlePath $content -Encoding UTF8
+                        $verifyContent = Get-Content $buildGradlePath -Raw
+                        if ($verifyContent -match '(?m)^\s*versionCode\s+(\d+)') {
+                            $actualValue = $matches[1]
+                            if ([int]$actualValue -eq [int]$BuildNumber) {
+                                Write-Host "✅ Updated Android versionCode in build.gradle from $oldValue to $actualValue" -ForegroundColor Green
+                            } else {
+                                Write-Host "⚠️  Warning: Expected versionCode $BuildNumber but found $actualValue in build.gradle" -ForegroundColor Yellow
+                            }
+                        }
                     } else {
-                        Write-Host "⚠️  Warning: Expected versionCode $BuildNumber but found $actualValue in build.gradle" -ForegroundColor Yellow
+                        Write-Host "⚠️  Could not find versionCode pattern in build.gradle to update" -ForegroundColor Yellow
                     }
                 }
             } else {
-                Write-Host "⚠️  Could not find versionCode pattern in build.gradle to update" -ForegroundColor Yellow
-                Write-Host "   EAS Build will use versionCode from app.versions.json (app.config.js) during prebuild" -ForegroundColor Gray
+                Write-Host "ℹ️  android/app/build.gradle not present (normal for EAS Build; versionCode from app.versions.json is used during prebuild)" -ForegroundColor Gray
             }
         } else {
             throw "Invalid platform: $Platform"

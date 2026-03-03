@@ -1237,6 +1237,40 @@ export default function DraftEditScreen() {
       </Modal>
       </TapToToggleHeaderView>
 
+      {/* Currently editing – list of other editors */}
+      <Modal visible={showEditorsModal} transparent animationType="fade">
+        <TouchableOpacity
+          activeOpacity={1}
+          style={dynamicStyles.modalOverlay}
+          onPress={() => setShowEditorsModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={e => e.stopPropagation()} style={[dynamicStyles.modalBox, { minWidth: 280, maxWidth: 360 }]}>
+            <View style={[dynamicStyles.modalHeader, { paddingBottom: 12 }]}>
+              <View style={dynamicStyles.modalTitleRow}>
+                <Ionicons name="people-outline" size={22} color={colors.text} />
+                <Text style={dynamicStyles.modalTitle}>Currently editing</Text>
+              </View>
+              <TouchableOpacity style={dynamicStyles.modalCloseBtn} onPress={() => setShowEditorsModal(false)}>
+                <Ionicons name="close" size={22} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 280 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+              {others.map(({ id: uid, name }) => (
+                <View key={uid} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+                  <Ionicons name="person-outline" size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
+                  <Text style={{ fontSize: 16, color: colors.text }}>{name || 'Someone'}</Text>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={{ padding: 16, paddingTop: 0 }}>
+              <TouchableOpacity style={[dynamicStyles.modalBtn, { marginBottom: 0 }]} onPress={() => setShowEditorsModal(false)}>
+                <Text style={dynamicStyles.modalBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Create Link Modal */}
       <Modal visible={showShareModal} transparent animationType="fade">
         <KeyboardAvoidingView 
