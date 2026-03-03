@@ -249,15 +249,19 @@ jobs:
             ios/GrabDocs.xcodeproj/project.pbxproj
           if-no-files-found: ignore
 
-      - name: Show EAS build log tail (on failure)
+      - name: Extract and show build error from EAS log (on failure)
         if: failure()
         run: |
-          echo "===== Last 150 lines of EAS build log ====="
-          if [ -f "$RUNNER_TEMP/eas-build.log" ]; then
-            tail -150 "$RUNNER_TEMP/eas-build.log"
-          else
+          LOG="$RUNNER_TEMP/eas-build.log"
+          if [ ! -f "$LOG" ]; then
             echo "(eas-build.log not found)"
+            exit 0
           fi
+          echo "===== Likely failure (grep for error / fail / undefined) ====="
+          grep -n -E "error:|Error:|❌|ARCHIVE FAILED|Undefined symbols|ld: symbol|Code signing|Process crashed|exit code: [1-9]|non-zero code" "$LOG" | tail -80 || true
+          echo ""
+          echo "===== Last 250 lines of EAS build log ====="
+          tail -250 "$LOG"
         continue-on-error: true
 
       - name: Upload EAS full build log (on failure)

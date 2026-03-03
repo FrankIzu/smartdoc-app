@@ -362,7 +362,7 @@ export default function QuickFilesScreen() {
           return '#10b981'; // Green for AI summaries
         case 'draft':
         case 'drafts':
-          return '#34C759'; // Green for drafts
+          return '#5AC8FA'; // Teal for drafts
         case 'spreadsheet':
         case 'spreadsheets':
           return '#10b981'; // Green for spreadsheets

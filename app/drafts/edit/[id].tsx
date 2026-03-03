@@ -107,6 +107,7 @@ export default function DraftEditScreen() {
   const [presenceEditors, setPresenceEditors] = useState<Map<number, string>>(new Map());
   const [showShareModal, setShowShareModal] = useState(false);
   const [showSendLinkModal, setShowSendLinkModal] = useState(false);
+  const [showEditorsModal, setShowEditorsModal] = useState(false);
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [shareLinkExpiresInDays, setShareLinkExpiresInDays] = useState<number | undefined>(undefined);
   const [linkLoading, setLinkLoading] = useState(false);
@@ -306,28 +307,6 @@ export default function DraftEditScreen() {
     })();
     return () => { cancelled = true; };
   }, [draftId, router]);
-
-  // Debounced immediate save of filename when user types (persist after 600ms idle)
-  const persistFilenameIfChangedRef = useRef(persistFilenameIfChanged);
-  persistFilenameIfChangedRef.current = persistFilenameIfChanged;
-  useEffect(() => {
-    if (!draftId || isNaN(draftId)) return;
-    if (renameTimeoutRef.current) clearTimeout(renameTimeoutRef.current);
-    const name = (filename || '').trim() || 'Untitled Draft';
-    if (name === (initialFilenameRef.current ?? '')) return;
-    renameTimeoutRef.current = setTimeout(() => {
-      renameTimeoutRef.current = null;
-      persistFilenameIfChangedRef.current().catch((e: any) => {
-        Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename draft'));
-      });
-    }, 600);
-    return () => {
-      if (renameTimeoutRef.current) {
-        clearTimeout(renameTimeoutRef.current);
-        renameTimeoutRef.current = null;
-      }
-    };
-  }, [draftId, filename]);
 
   // Socket.IO: connect, join document room, presence
   useEffect(() => {
@@ -751,8 +730,33 @@ export default function DraftEditScreen() {
     }
   }, [router, persistFilenameIfChanged]);
 
+  // Debounced immediate save of filename when user types (persist after 600ms idle)
+  useEffect(() => {
+    if (!draftId || isNaN(draftId)) return;
+    if (renameTimeoutRef.current) clearTimeout(renameTimeoutRef.current);
+    const name = (filename || '').trim() || 'Untitled Draft';
+    if (name === (initialFilenameRef.current ?? '')) return;
+    const timeoutId = setTimeout(() => {
+      renameTimeoutRef.current = null;
+      persistFilenameIfChanged().catch((e: any) => {
+        Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename draft'));
+      });
+    }, 600);
+    renameTimeoutRef.current = timeoutId;
+    return () => {
+      clearTimeout(timeoutId);
+      if (renameTimeoutRef.current === timeoutId) renameTimeoutRef.current = null;
+    };
+  }, [draftId, filename, persistFilenameIfChanged]);
+
   const others = Array.from(presenceEditors.entries()).map(([uid, name]) => ({ id: uid, name }));
-  const othersLabel = others.length === 0 ? '' : others.length === 1 ? `${others[0].name} is editing` : `${others.map(o => o.name).join(', ')} are editing`;
+  const othersLabel = others.length === 0
+    ? ''
+    : others.length === 1
+      ? `${others[0].name} is editing`
+      : others.length === 2
+        ? `${others[0].name} and ${others[1].name} are editing`
+        : `${others.length} people are editing`;
 
   const handleCreateShareLink = useCallback(async () => {
     if (!draftId || isNaN(draftId)) return;
@@ -1105,10 +1109,15 @@ export default function DraftEditScreen() {
             </View>
           </View>
           {othersLabel ? (
-            <View style={dynamicStyles.presenceBar}>
+            <TouchableOpacity
+              style={dynamicStyles.presenceBar}
+              onPress={() => setShowEditorsModal(true)}
+              activeOpacity={0.7}
+            >
               <Ionicons name="people-outline" size={16} color={colors.textSecondary} />
               <Text style={dynamicStyles.presenceText}>{othersLabel}</Text>
-            </View>
+              <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} style={{ marginLeft: 4 }} />
+            </TouchableOpacity>
           ) : null}
         </AnimatedHeaderContainer>
 

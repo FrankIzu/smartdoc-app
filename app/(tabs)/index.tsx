@@ -1242,7 +1242,7 @@ function DashboardScreen() {
               title="Draft"
               value={stats.totalDrafts}
               icon="create-outline"
-              color="#34C759"
+              color="#5AC8FA"
               onPress={() => router.push('/drafts')}
             />
           </View>
@@ -1327,14 +1327,7 @@ function DashboardScreen() {
               color="#34C759"
               onPress={() => handleQuickAction('form')}
             />
-            <QuickActionCard
-              key="action-fillable-file"
-              title="Fillable File"
-              subtitle="Templates to fill and share"
-              icon="document-text"
-              color="#10B981"
-              onPress={() => handleQuickAction('fillable-file')}
-            />
+            {/* Fillable File hidden from quick actions for now */}
           </View>
         </View>
 

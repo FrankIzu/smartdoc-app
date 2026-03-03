@@ -164,7 +164,7 @@ export default function DraftsListScreen() {
     newButton: {
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: '#34C759',
+      backgroundColor: '#5AC8FA',
       width: 28,
       height: 28,
       borderRadius: 14,
