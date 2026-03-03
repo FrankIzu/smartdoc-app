@@ -49,6 +49,7 @@
     },
     "production": {
       "node": "20.18.1",
+      "prebuildCommand": "prebuild --clean --no-install",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
         "EXPO_PUBLIC_API_URL": "https://api.grabdocs.com",
@@ -60,6 +61,7 @@
         "EXPO_PUBLIC_DROPBOX_APP_KEY": "hmlhlh1h44gtth0"
       },
       "ios": {
+        "config": "ios-production.yml",
         "resourceClass": "m-medium",
         "distribution": "store",
         "buildConfiguration": "Release",

@@ -39,19 +39,44 @@ const bareExtRe = new RegExp(
 );
 content = content.replace(bareExtRe, '\n');
 
-// ── Find target 'GrabDocs' do or target "GrabDocs" do ────────────────────────
+// ── Find main app target: target 'GrabDocs' do, or first target with use_expo_modules! ───
 const lines = content.split(/\r?\n/);
 const mainTargetRe = new RegExp('^(\\s*)target\\s+[\'"]' + MAIN_TARGET + '[\'"]\\s+do\\s*$');
+const anyTargetRe = /^(\s*)target\s+['"]([^'"]+)['"]\s+do\s*$/;
 let mainLine = -1;
 let mainIndent = '';
+
 for (let i = 0; i < lines.length; i++) {
   const m = lines[i].match(mainTargetRe);
   if (m) { mainLine = i; mainIndent = m[1]; break; }
 }
 
+// Fallback: find first target that contains use_expo_modules! (Expo main app target)
 if (mainLine === -1) {
-  console.error('[ensure-podfile-extension] ❌ Could not find target \'' + MAIN_TARGET + '\' in Podfile!');
-  console.error('Looked for: target \'' + MAIN_TARGET + '\' do or target "' + MAIN_TARGET + '" do');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(anyTargetRe);
+    if (m) {
+      const indent = m[1];
+      // Look ahead for use_expo_modules! within this target block
+      const indentLen = indent.length;
+      for (let j = i + 1; j < lines.length; j++) {
+        const endMatch = lines[j].match(/^(\s*)end\s*$/);
+        if (endMatch && endMatch[1].length === indentLen) break;
+        if (/use_expo_modules!/.test(lines[j])) {
+          mainLine = i;
+          mainIndent = indent;
+          console.log('[ensure-podfile-extension] Using main target from line ' + (i + 1) + ': ' + m[2]);
+          break;
+        }
+      }
+      if (mainLine >= 0) break;
+    }
+  }
+}
+
+if (mainLine === -1) {
+  console.error('[ensure-podfile-extension] ❌ Could not find main app target in Podfile!');
+  console.error('Looked for: target \'' + MAIN_TARGET + '\' do or target with use_expo_modules!');
   console.error('First 50 lines of Podfile:');
   console.error(lines.slice(0, 50).join('\n'));
   process.exit(1);
@@ -69,7 +94,7 @@ for (let i = mainLine + 1; i < lines.length; i++) {
 }
 
 if (closingLine === -1) {
-  console.error('[ensure-podfile-extension] ❌ Could not find closing end for target \'' + MAIN_TARGET + '\'!');
+  console.error('[ensure-podfile-extension] ❌ Could not find closing end for main target!');
   process.exit(1);
 }
 

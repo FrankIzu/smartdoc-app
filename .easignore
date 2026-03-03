@@ -129,6 +129,7 @@ dev-files/
 *.zip
 *.tgz
 
-# Native folders: for iOS we prebuild+patch in CI; ios/ is NOT ignored so EAS uses our patched ios/.
+# Native folders: EAS runs prebuild on Mac servers to generate ios/ (can't prebuild iOS on Windows).
 # android/ — ignored so EAS runs prebuild for Android.
+ios/
 android/
