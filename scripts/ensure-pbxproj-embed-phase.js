@@ -20,6 +20,8 @@ const MAIN_TARGET_NAME = 'GrabDocs';
  * Fix literal "undefined" in pbxproj that can confuse EAS/Expo's JavaScript parser.
  * EAS "Configure Xcode project" fails with "Could not find target with id 'undefined'"
  * when the parser sees unquoted "undefined" and returns JS undefined for target lookup.
+ * File types must be set by path: .swift -> sourcecode.swift, .appex product -> wrapper.app-extension
+ * (Xcode errors on "no rule to process file ... of type 'wrapper.app-extension'" for .swift sources).
  */
 function fixUndefinedInPbxproj(pbx) {
   let changed = false;
@@ -28,25 +30,53 @@ function fixUndefinedInPbxproj(pbx) {
     pbx = pbx.replace(/fileEncoding = undefined/g, 'fileEncoding = 4');
     changed = true;
   }
-  // Replace lastKnownFileType = undefined with proper type (for .appex; framework uses wrapper.framework)
-  if (pbx.includes('lastKnownFileType = undefined')) {
-    pbx = pbx.replace(/lastKnownFileType = undefined/g, 'lastKnownFileType = "wrapper.app-extension"');
-    changed = true;
-  }
-  // Replace explicitFileType = undefined with a valid non-empty type (Xcode asserts "identifier should be a non-empty string")
-  if (pbx.includes('explicitFileType = undefined')) {
-    pbx = pbx.replace(/explicitFileType = undefined/g, 'explicitFileType = "wrapper.app-extension"');
-    changed = true;
-  }
-  // Fix empty explicitFileType (Xcode rejects empty string for PBXFileType identifier)
-  if (pbx.includes('explicitFileType = ""')) {
-    pbx = pbx.replace(/explicitFileType = ""/g, 'explicitFileType = "wrapper.app-extension"');
-    changed = true;
-  }
+  // Context-aware file type: only set wrapper.app-extension for .appex product; use sourcecode.swift for .swift
+  const fileRefBlockRe = /(\t\t[0-9A-F]{24}\s*\/\*[^*]*\*\/\s*=\s*\{)([\s\S]*?)(\n\t\t\};)/g;
+  pbx = pbx.replace(fileRefBlockRe, (_, open, block, close) => {
+    const pathMatch = block.match(/path\s*=\s*["']([^"']+)["']/);
+    const path = pathMatch ? pathMatch[1] : '';
+    let newBlock = block;
+    if (path.endsWith('.swift')) {
+      if (block.includes('lastKnownFileType = undefined')) {
+        newBlock = newBlock.replace(/lastKnownFileType = undefined/g, 'lastKnownFileType = "sourcecode.swift"');
+        changed = true;
+      }
+      if (block.includes('explicitFileType = undefined')) {
+        newBlock = newBlock.replace(/explicitFileType = undefined/g, 'explicitFileType = "sourcecode.swift"');
+        changed = true;
+      }
+      if (block.includes('explicitFileType = ""')) {
+        newBlock = newBlock.replace(/explicitFileType = ""/g, 'explicitFileType = "sourcecode.swift"');
+        changed = true;
+      }
+    } else if (path.endsWith('.appex')) {
+      if (block.includes('lastKnownFileType = undefined')) {
+        newBlock = newBlock.replace(/lastKnownFileType = undefined/g, 'lastKnownFileType = "wrapper.app-extension"');
+        changed = true;
+      }
+      if (block.includes('explicitFileType = undefined') || block.includes('explicitFileType = ""')) {
+        newBlock = newBlock.replace(/explicitFileType = undefined/g, 'explicitFileType = "wrapper.app-extension"');
+        newBlock = newBlock.replace(/explicitFileType = ""/g, 'explicitFileType = "wrapper.app-extension"');
+        changed = true;
+      }
+    } else {
+      // Other files: lastKnownFileType undefined -> text; explicitFileType -> non-empty if present
+      if (block.includes('lastKnownFileType = undefined')) {
+        newBlock = newBlock.replace(/lastKnownFileType = undefined/g, 'lastKnownFileType = "text"');
+        changed = true;
+      }
+      if (block.includes('explicitFileType = undefined') || block.includes('explicitFileType = ""')) {
+        newBlock = newBlock.replace(/explicitFileType = undefined/g, 'explicitFileType = "wrapper.app-extension"');
+        newBlock = newBlock.replace(/explicitFileType = ""/g, 'explicitFileType = "wrapper.app-extension"');
+        changed = true;
+      }
+    }
+    return open + newBlock + close;
+  });
   // Catch-all: replace any remaining = undefined (includeInIndex, etc.) to prevent EAS parser errors
   if (pbx.includes(' = undefined')) {
     pbx = pbx.replace(/(\w+) = undefined/g, (_, key) =>
-      key === 'fileEncoding' ? 'fileEncoding = 4' : key === 'explicitFileType' ? 'explicitFileType = "wrapper.app-extension"' : `${key} = ""`
+      key === 'fileEncoding' ? 'fileEncoding = 4' : key === 'explicitFileType' ? 'explicitFileType = "wrapper.app-extension"' : key === 'lastKnownFileType' ? 'lastKnownFileType = "text"' : `${key} = ""`
     );
     changed = true;
   }
@@ -127,6 +157,30 @@ function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
   }
 
   return { pbx, changed: true };
+}
+
+/**
+ * Remove ExpoModulesProvider (and similar) from the extension target's Sources build phase.
+ * The extension is a minimal ReplayKit target and must not link Expo modules (e.g. ExpoCamera),
+ * otherwise "Undefined symbols: protocol witness table for ExpoCamera.CameraViewModule".
+ * We identify the extension's Sources phase as the one that contains SampleHandler.swift.
+ */
+function removeExpoModulesProviderFromExtensionTarget(pbx, extensionName) {
+  let changed = false;
+  const sourcesPhaseRe = /(\t\t[0-9A-F]{24}\s*\/\*[^*]*\*\/\s*=\s*\{\s*\n\s*isa = PBXSourcesBuildPhase;[\s\S]*?files = \()([\s\S]*?)(\)\s*;)/g;
+  pbx = pbx.replace(sourcesPhaseRe, (_, before, filesContent, after) => {
+    if (!filesContent.includes('SampleHandler.swift')) return _;
+    const hasExpoProvider = /ExpoModulesProvider|ModulesProvider/i.test(filesContent);
+    if (!hasExpoProvider) return _;
+    const lines = filesContent.split('\n').filter((line) => {
+      const comment = line.match(/\/\*\s*([^*]+)\s*\*\//);
+      const name = comment ? comment[1] : '';
+      return !/ExpoModulesProvider|ModulesProvider/i.test(name);
+    });
+    changed = true;
+    return before + lines.join('\n') + after;
+  });
+  return { pbx, changed };
 }
 
 /**
@@ -252,6 +306,13 @@ if (embedResult.changed) {
   pbx = embedResult.pbx;
   changed = true;
   console.log('[ensure-pbxproj-embed-phase] ✅ Fixed Embed App Extensions phase');
+}
+
+const expoProviderResult = removeExpoModulesProviderFromExtensionTarget(pbx, EXTENSION_NAME);
+if (expoProviderResult.changed) {
+  pbx = expoProviderResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Removed ExpoModulesProvider from extension target (avoids linking ExpoCamera)');
 }
 
 if (changed) {

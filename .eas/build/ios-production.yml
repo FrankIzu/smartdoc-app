@@ -21,14 +21,11 @@ build:
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
           if [ -z "$PBXPROJ" ]; then exit 0; fi
           node scripts/ensure-pbxproj-embed-phase.js
-          if grep -qE " = undefined|explicitFileType = \"\"" "$PBXPROJ" 2>/dev/null; then
+          if grep -q " = undefined" "$PBXPROJ" 2>/dev/null; then
             sed -i '' 's/fileEncoding = undefined/fileEncoding = 4/g' "$PBXPROJ"
-            sed -i '' 's/lastKnownFileType = undefined/lastKnownFileType = "wrapper.app-extension"/g' "$PBXPROJ"
-            sed -i '' 's/explicitFileType = undefined/explicitFileType = "wrapper.app-extension"/g' "$PBXPROJ"
-            sed -i '' 's/explicitFileType = ""/explicitFileType = "wrapper.app-extension"/g' "$PBXPROJ"
             sed -i '' 's/includeInIndex = undefined/includeInIndex = 0/g' "$PBXPROJ"
             sed -i '' -E 's/([a-zA-Z0-9_]+) = undefined/\1 = ""/g' "$PBXPROJ"
-            echo "✅ Sanitized project.pbxproj"
+            echo "✅ Sanitized remaining undefined in project.pbxproj"
           fi
     - run:
         name: Install GrabDocsBroadcastUpload provisioning profile
