@@ -63,7 +63,8 @@
       "ios": {
         "resourceClass": "m-medium",
         "distribution": "store",
-        "buildConfiguration": "Release"
+        "buildConfiguration": "Release",
+        "scheme": "GrabDocs"
       },
       "android": {
         "buildType": "app-bundle",

@@ -185,6 +185,8 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EXT_PROVISIONING_PROFILE: /tmp/ext.mobileprovision
           EXT_PROFILE_UUID: ${{ env.EXT_PROFILE_UUID }}
+          # Bypass EAS target/bundle-id validation that fails with "Could not find target with id 'undefined'"
+          EAS_DANGEROUS_OVERRIDE_IOS_BUNDLE_IDENTIFIER: "com.grabdocs.mobile"
           # Use runner HOME so the extension profile installed in step 1 is visible to xcodebuild.
           HOME: ${{ env.HOME || '/Users/runner' }}
 
