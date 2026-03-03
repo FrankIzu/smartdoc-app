@@ -76,7 +76,14 @@ function withBroadcastExtensionFiles(config, { appGroup, extensionName }) {
       const sampleHandler = SAMPLE_HANDLER_SWIFT.replace(/\{\{APP_GROUP\}\}/g, appGroup);
       await fs.promises.writeFile(path.join(extRoot, 'SampleHandler.swift'), sampleHandler);
 
+      const bundleId = config.ios?.bundleIdentifier || 'com.grabdocs.mobile';
+      const extBundleId = `${bundleId}.${extensionName}`;
       const extensionPlist = {
+        CFBundleIdentifier: extBundleId,
+        CFBundleName: extensionName,
+        CFBundlePackageType: 'BNDL',
+        CFBundleShortVersionString: '1.0',
+        CFBundleVersion: '1',
         NSExtension: {
           NSExtensionPointIdentifier: 'com.apple.broadcast-services-upload',
           NSExtensionPrincipalClass: '$(PRODUCT_MODULE_NAME).SampleHandler',

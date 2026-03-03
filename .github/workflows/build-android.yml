@@ -184,9 +184,26 @@ jobs:
           echo 'org.gradle.parallel=true' >> android/gradle.properties
           echo 'org.gradle.configureondemand=true' >> android/gradle.properties
 
-      - name: Disable lint for release builds (skip lintVitalAnalyzeRelease in CI)
+      # Disable lintVital* for ALL subprojects (app + expo + react-native-async-storage etc.) to avoid Metaspace OOM.
+      - name: Disable lint for release (all subprojects)
         run: |
-          node -e 'const fs=require("fs");const p="android/app/build.gradle";let c=fs.readFileSync(p,"utf8");if(c.includes("checkReleaseBuilds false")){console.log("Lint already disabled");process.exit(0);}const block="\n    lint {\n        checkReleaseBuilds false\n        abortOnError false\n    }\n";c=c.replace(/(android\s*\{)/,"$1"+block);fs.writeFileSync(p,c);console.log("Added lint block to android/app/build.gradle");'
+          ROOT="android/build.gradle"
+          MARKER="lintVitalAnalyzeRelease disabled for CI"
+          grep -q "$MARKER" "$ROOT" && { echo "Lint already disabled in root build.gradle"; exit 0; }
+          BLOCK="
+// $MARKER
+subprojects { subproject ->
+  subproject.afterEvaluate {
+    subproject.tasks.configureEach { task ->
+      if (task.name.contains(\"lintVital\") || task.name.contains(\"lintRelease\")) {
+        task.enabled = false
+      }
+    }
+  }
+}
+"
+          echo "$BLOCK" >> "$ROOT"
+          echo "Appended subprojects { disable lintVital* } to $ROOT"
 
       - name: Prepare preview build (single ABI, no minify)
         if: github.event.inputs.profile == 'preview' || github.event.inputs.profile == 'development'
