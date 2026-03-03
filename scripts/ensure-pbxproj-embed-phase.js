@@ -199,6 +199,51 @@ function removeExpoModulesProviderFromExtensionTarget(pbx, extensionName) {
 }
 
 /**
+ * Line-by-line fix: any PBXFileReference block that contains SampleHandler.swift must have
+ * lastKnownFileType = "sourcecode.swift" (not wrapper.app-extension). Robust after pod install.
+ */
+function forceSwiftFileTypeForSampleHandler(pbx) {
+  const lines = pbx.split(/\r?\n/);
+  let changed = false;
+  let inSwiftBlock = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/path\s*=\s*["'][^"']*SampleHandler\.swift["']/.test(line)) {
+      inSwiftBlock = true;
+    }
+    if (inSwiftBlock) {
+      if (line.includes('lastKnownFileType = "wrapper.app-extension"')) {
+        lines[i] = line.replace('lastKnownFileType = "wrapper.app-extension"', 'lastKnownFileType = "sourcecode.swift"');
+        changed = true;
+      }
+      if (line.includes('explicitFileType = "wrapper.app-extension"')) {
+        lines[i] = line.replace('explicitFileType = "wrapper.app-extension"', 'explicitFileType = "sourcecode.swift"');
+        changed = true;
+      }
+      if (/^\s*\}\s*;\s*$/.test(line)) {
+        inSwiftBlock = false;
+      }
+    }
+  }
+  return { pbx: lines.join('\n'), changed };
+}
+
+/**
+ * Remove "Install Extension Profile (Main)" phase from main app target so the phase never runs
+ * (profile is already installed by custom build step; the phase can fail and break the build).
+ */
+function removeInstallExtensionProfileMainPhase(pbx) {
+  const mainPhaseId = 'B2C3D4E5F60718293A4B5C6D7E8F90A1';
+  if (!pbx.includes('Install Extension Profile (Main)')) return { pbx, changed: false };
+  const phaseLineRe = new RegExp(
+    '\\s*' + mainPhaseId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Install Extension Profile \\(Main\\)\\s*\\*\\/,\\n?',
+    'g'
+  );
+  const next = pbx.replace(phaseLineRe, '');
+  return { pbx: next, changed: next !== pbx };
+}
+
+/**
  * Ensure main app target has the extension in its Target Dependencies.
  * CocoaPods uses user_project.host_targets_for_embedded_target() which returns
  * targets that depend on the extension. Without this, "Unable to find host target(s)".
@@ -328,6 +373,20 @@ if (expoProviderResult.changed) {
   pbx = expoProviderResult.pbx;
   changed = true;
   console.log('[ensure-pbxproj-embed-phase] ✅ Removed ExpoModulesProvider from extension target (avoids linking ExpoCamera)');
+}
+
+const swiftTypeResult = forceSwiftFileTypeForSampleHandler(pbx);
+if (swiftTypeResult.changed) {
+  pbx = swiftTypeResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Forced SampleHandler.swift to sourcecode.swift (line-by-line fix)');
+}
+
+const removePhaseResult = removeInstallExtensionProfileMainPhase(pbx);
+if (removePhaseResult.changed) {
+  pbx = removePhaseResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Removed Install Extension Profile (Main) phase (profile already installed by build step)');
 }
 
 if (changed) {

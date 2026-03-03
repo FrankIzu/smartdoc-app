@@ -69,7 +69,7 @@
       "android": {
         "buildType": "app-bundle",
         "distribution": "store",
-        "resourceClass": "medium"
+        "resourceClass": "large"
       }
     },
     "minimal": {

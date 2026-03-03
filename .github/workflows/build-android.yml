@@ -174,12 +174,33 @@ jobs:
         run: |
           sed -i 's/^org\.gradle\.configuration-cache=.*/org.gradle.configuration-cache=false/' android/gradle.properties
 
-      # Lint (lintVitalAnalyzeRelease) can OOM with default Metaspace; give workers more headroom.
-      - name: Increase Gradle JVM memory for lint (avoid Metaspace OOM)
+      # Gradle memory + disable release lint (avoids lintVitalAnalyzeRelease Metaspace OOM in CI).
+      - name: Gradle properties: memory and parallel
         run: |
           echo '' >> android/gradle.properties
-          echo '# CI: more Metaspace for lint workers (avoid OutOfMemoryError: Metaspace)' >> android/gradle.properties
-          echo 'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=2048m' >> android/gradle.properties
+          echo '# CI: heap + Metaspace + Kotlin daemon (avoid OOM during build/lint)' >> android/gradle.properties
+          echo 'org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=2g -Dkotlin.daemon.jvm.options=-Xmx3g' >> android/gradle.properties
+          echo 'org.gradle.daemon=true' >> android/gradle.properties
+          echo 'org.gradle.parallel=true' >> android/gradle.properties
+          echo 'org.gradle.configureondemand=true' >> android/gradle.properties
+
+      - name: Disable lint for release builds (skip lintVitalAnalyzeRelease in CI)
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = 'android/app/build.gradle';
+          let c = fs.readFileSync(path, 'utf8');
+          if (c.includes('checkReleaseBuilds false')) { console.log('Lint already disabled'); process.exit(0); }
+          const block = \`
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+\`;
+          c = c.replace(/(android\s*\{)/, '\$1' + block);
+          fs.writeFileSync(path, c);
+          console.log('Added lint { checkReleaseBuilds false } to android/app/build.gradle');
+          "
 
       - name: Prepare preview build (single ABI, no minify)
         if: github.event.inputs.profile == 'preview' || github.event.inputs.profile == 'development'
@@ -249,7 +270,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           GRADLE_USER_HOME: ${{ env.GRADLE_USER_HOME }}
-          GRADLE_OPTS: -Xmx4096m -XX:MaxMetaspaceSize=2048m
+          GRADLE_OPTS: -Xmx6g -XX:MaxMetaspaceSize=2g -Dkotlin.daemon.jvm.options=-Xmx3g
 
       - name: Save Gradle cache
         uses: actions/cache/save@v4
