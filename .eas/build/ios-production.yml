@@ -21,7 +21,22 @@ build:
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
 
-          echo "$EXT_PROVISIONING_PROFILE" | base64 --decode > /tmp/ext.mobileprovision
+          # Support both: file path (e.g. GitHub Actions sets EXT_PROVISIONING_PROFILE=/tmp/ext.mobileprovision) or base64 content (EAS secret).
+          if [ -n "$EXT_PROVISIONING_PROFILE" ] && [ -f "$EXT_PROVISIONING_PROFILE" ]; then
+            cp "$EXT_PROVISIONING_PROFILE" /tmp/ext.mobileprovision
+            echo "Using extension profile from path: $EXT_PROVISIONING_PROFILE"
+          elif [ -n "$EXT_PROVISIONING_PROFILE" ]; then
+            echo "$EXT_PROVISIONING_PROFILE" | base64 --decode > /tmp/ext.mobileprovision
+            echo "Decoded extension profile from base64 (EAS secret)"
+          else
+            echo "::error::EXT_PROVISIONING_PROFILE not set. For EAS cloud: add base64-encoded .mobileprovision as EAS secret. For local/CI: set env to path of installed profile (e.g. /tmp/ext.mobileprovision)."
+            exit 1
+          fi
+
+          if [ ! -s /tmp/ext.mobileprovision ]; then
+            echo "::error::Extension profile file is empty or invalid."
+            exit 1
+          fi
 
           # Extract the UUID embedded inside the .mobileprovision plist
           UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null \
