@@ -175,7 +175,7 @@ jobs:
           sed -i 's/^org\.gradle\.configuration-cache=.*/org.gradle.configuration-cache=false/' android/gradle.properties
 
       # Gradle memory + disable release lint (avoids lintVitalAnalyzeRelease Metaspace OOM in CI).
-      - name: Gradle properties: memory and parallel
+      - name: "Gradle properties: memory and parallel"
         run: |
           echo '' >> android/gradle.properties
           echo '# CI: heap + Metaspace + Kotlin daemon (avoid OOM during build/lint)' >> android/gradle.properties

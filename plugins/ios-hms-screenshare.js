@@ -852,13 +852,32 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
 
       let pbx = fs.readFileSync(pbxPath, 'utf8');
 
-      if (pbx.includes('Install Extension Profile')) {
-        return config;
+      // Fix SampleHandler.swift file type: Xcode/Expo may create PBXFileReference with wrong type
+      // (wrapper.app-extension). Swift sources must be sourcecode.swift or build fails with
+      // "no rule to process file ... of type 'wrapper.app-extension'".
+      if (pbx.includes('SampleHandler.swift')) {
+        const lines = pbx.split(/\r?\n/);
+        let inSwiftBlock = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (/path\s*=\s*["'][^"']*SampleHandler\.swift["']/.test(lines[i])) inSwiftBlock = true;
+          if (inSwiftBlock) {
+            if (lines[i].includes('lastKnownFileType = "wrapper.app-extension"')) {
+              lines[i] = lines[i].replace('lastKnownFileType = "wrapper.app-extension"', 'lastKnownFileType = "sourcecode.swift"');
+            }
+            if (lines[i].includes('explicitFileType = "wrapper.app-extension"')) {
+              lines[i] = lines[i].replace('explicitFileType = "wrapper.app-extension"', 'explicitFileType = "sourcecode.swift"');
+            }
+            if (/^\s*\}\s*;\s*$/.test(lines[i])) inSwiftBlock = false;
+          }
+        }
+        pbx = lines.join('\n');
       }
 
       const scriptBody = 'set +e\\\\nif [ -n \\"\\\\$EXT_PROVISIONING_PROFILE\\" ] && [ -f \\"\\\\$EXT_PROVISIONING_PROFILE\\" ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp \\"\\\\$EXT_PROVISIONING_PROFILE\\" \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nelif [ -f /tmp/ext.mobileprovision ]; then\\\\nmkdir -p \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles\\"\\\\ncp /tmp/ext.mobileprovision \\"\\\\$HOME/Library/MobileDevice/Provisioning Profiles/' + extensionName + '.mobileprovision\\"\\\\nfi\\\\nexit 0\\\\n';
       const phaseId = 'A1B2C3D4E5F60718293A4B5C6D7E8F90';
       const mainPhaseId = 'B2C3D4E5F60718293A4B5C6D7E8F90A1';
+
+      if (!pbx.includes('Install Extension Profile')) {
       const phaseBlock = `
 		${phaseId} /* Install Extension Profile */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -914,9 +933,10 @@ function withExtensionProfileInstallPhase(config, { extensionName }) {
       if (extMatch) {
         pbx = pbx.replace(extMatch[0], extMatch[1] + phaseId + ' /* Install Extension Profile */,\n\t\t\t\t' + extMatch[2]);
       }
+      console.log('[ios-hms-screenshare] ✅ Added Install Extension Profile run script phase');
+      }
 
       fs.writeFileSync(pbxPath, pbx);
-      console.log('[ios-hms-screenshare] ✅ Added Install Extension Profile run script phase');
       return config;
     },
   ]);
