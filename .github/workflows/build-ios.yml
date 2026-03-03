@@ -175,11 +175,23 @@ jobs:
             security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || echo "(could not read)"
           fi
 
-      # Remove ios/ so EAS runs prebuildCommand (which patches project.pbxproj). When ios/ exists,
-      # EAS may skip prebuild and use unpatched project.pbxproj with literal "undefined", causing
-      # "Could not find target with id 'undefined'". ios/ is also in .easignore for the same reason.
-      - name: Remove ios/ so EAS runs prebuildCommand
-        run: rm -rf ios
+      # Re-apply pbxproj fix and verify before EAS (patched ios/ is used; no prebuildCommand).
+      - name: Re-apply pbxproj undefined fix (before EAS)
+        run: node scripts/ensure-pbxproj-embed-phase.js
+
+      - name: Verify no undefined in project.pbxproj
+        run: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -z "$PBXPROJ" ]; then
+            echo "::error::project.pbxproj not found"
+            exit 1
+          fi
+          if grep -q " = undefined" "$PBXPROJ"; then
+            echo "::error::project.pbxproj still contains literal 'undefined'"
+            grep -n " = undefined" "$PBXPROJ" || true
+            exit 1
+          fi
+          echo "✅ No literal undefined in project.pbxproj"
 
       - name: EAS Build (local)
         id: eas_build
