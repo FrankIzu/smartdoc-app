@@ -1,3 +1,18 @@
+diff --git a/node_modules/expo-modules-core/ios/FileSystemUtilities/FileSystemLegacyUtilities.swift b/node_modules/expo-modules-core/ios/FileSystemUtilities/FileSystemLegacyUtilities.swift
+index 340b03b..23dbc97 100644
+--- a/node_modules/expo-modules-core/ios/FileSystemUtilities/FileSystemLegacyUtilities.swift
++++ b/node_modules/expo-modules-core/ios/FileSystemUtilities/FileSystemLegacyUtilities.swift
+@@ -70,8 +70,8 @@ public class FileSystemLegacyUtilities: NSObject, EXInternalModule, EXFileSystem
+   }
+ 
+   @objc
+-  public func generatePath(inDirectory directory: String, withExtension ext: String) -> String {
+-    let fileName = "\(UUID().uuidString)\(ext)"
++  public func generatePath(inDirectory directory: String, withExtension ext: String?) -> String {
++    let fileName = "\(UUID().uuidString)\(ext ?? "")"
+     ensureDirExists(withPath: directory)
+     return (directory as NSString).appendingPathComponent(fileName)
+   }
 diff --git a/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h b/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
 index fca4649..4ca91ae 100644
 --- a/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
