@@ -206,7 +206,14 @@ jobs:
           sed -i 's/^android\.enableMinifyInReleaseBuilds=.*/android.enableMinifyInReleaseBuilds=false/' android/gradle.properties
           sed -i 's/^android\.enableShrinkResourcesInReleaseBuilds=.*/android.enableShrinkResourcesInReleaseBuilds=false/' android/gradle.properties
 
-      # Production: use default gradle.properties (multi-ABI, minify enabled). 1024m Metaspace avoids OOM.
+      # Production: ensure minify + resource shrinking so R8 reduces size and generates mapping.txt for Play deobfuscation.
+      - name: Ensure production minify and shrink (smaller AAB, mapping file)
+        if: github.event.inputs.profile == 'production'
+        run: |
+          F=android/gradle.properties
+          grep -q 'android.enableMinifyInReleaseBuilds' "$F" && sed -i 's/^android\.enableMinifyInReleaseBuilds=.*/android.enableMinifyInReleaseBuilds=true/' "$F" || echo 'android.enableMinifyInReleaseBuilds=true' >> "$F"
+          grep -q 'android.enableShrinkResourcesInReleaseBuilds' "$F" && sed -i 's/^android\.enableShrinkResourcesInReleaseBuilds=.*/android.enableShrinkResourcesInReleaseBuilds=true/' "$F" || echo 'android.enableShrinkResourcesInReleaseBuilds=true' >> "$F"
+          echo "Production: minify and shrink resources enabled"
 
       # No clean: we don't run gradle clean; incremental build uses Gradle cache (5–8 min, <5 warm).
       - name: Clean old build artifacts
@@ -287,9 +294,10 @@ jobs:
             echo "::error::No .aab file found in artifact"
             exit 1
           fi
-          # R8 mapping file (if present) is in artifact; upload manually in Play Console: Release > App bundle explorer > version > Deobfuscation file
+          # Deobfuscation: mapping.txt is in the android-build artifact. Upload in Play Console to clear the warning:
+          # Testing > Closed testing (or your track) > Release (VERSION CODE 60) > App bundle explorer > select this version > Deobfuscation file > Upload mapping file.
           if [ -f "android/app/build/outputs/mapping/release/mapping.txt" ]; then
-            echo "R8 mapping file available at android/app/build/outputs/mapping/release/mapping.txt - upload in Play Console for crash deobfuscation"
+            echo "R8 mapping file present. Upload it in Play Console: Release > App bundle explorer > this version > Deobfuscation file"
           fi
           # Swap to plugin-free config so EAS submit doesn't resolve plugins (expo-router, etc.)
           cp app.config.js app.config.js.bak
