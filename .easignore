@@ -130,6 +130,7 @@ dev-files/
 *.tgz
 
 # Native folders: EAS runs prebuild on Mac servers to generate ios/ (can't prebuild iOS on Windows).
-# android/ — ignored so EAS runs prebuild for Android.
 ios/
-android/
+# Do NOT ignore android/ when using prebuild in CI (build-android.yml). If android/ is ignored,
+# EAS re-runs prebuild and uses remote stored versionCode (e.g. 51) instead of app.versions.json.
+# android/

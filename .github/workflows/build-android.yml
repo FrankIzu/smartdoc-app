@@ -185,6 +185,19 @@ jobs:
 
       # Lint for release is disabled by Expo config plugin (plugins/android-disable-release-lint.js) during prebuild.
 
+      # Force versionCode from app.versions.json into build.gradle so the AAB always matches the repo (avoids EAS/prebuild using a stale value).
+      - name: Sync versionCode from app.versions.json to build.gradle
+        run: |
+          VERSION_CODE=$(node -e "const v=require('./app.versions.json'); console.log(v?.android?.versionCode ?? 0)")
+          echo "app.versions.json versionCode: $VERSION_CODE"
+          if [ -f android/app/build.gradle ]; then
+            sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" android/app/build.gradle
+            echo "Patched android/app/build.gradle; versionCode in file:"
+            grep versionCode android/app/build.gradle || true
+          else
+            echo "::warning::android/app/build.gradle not found, skipping sync"
+          fi
+
       - name: Prepare preview build (single ABI, no minify)
         if: github.event.inputs.profile == 'preview' || github.event.inputs.profile == 'development'
         run: |
