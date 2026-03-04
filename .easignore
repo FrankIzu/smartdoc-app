@@ -129,8 +129,8 @@ dev-files/
 *.zip
 *.tgz
 
-# Native folders: EAS runs prebuild on Mac servers to generate ios/ (can't prebuild iOS on Windows).
-ios/
-# Do NOT ignore android/ when using prebuild in CI (build-android.yml). If android/ is ignored,
-# EAS re-runs prebuild and uses remote stored versionCode (e.g. 51) instead of app.versions.json.
+# Do NOT ignore ios/ or android/ when using prebuild in CI (build-ios.yml, build-android.yml).
+# If ignored, EAS re-runs prebuild and uses remote stored version (e.g. buildNumber 51, versionCode 51)
+# instead of app.versions.json. That causes "already submitted this build/version" on store submit.
+# ios/
 # android/
