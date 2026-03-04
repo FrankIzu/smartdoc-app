@@ -64,7 +64,8 @@
         "resourceClass": "m-medium",
         "distribution": "store",
         "buildConfiguration": "Release",
-        "scheme": "GrabDocs"
+        "scheme": "GrabDocs",
+        "buildArtifactPaths": ["ios/build/*"]
       },
       "android": {
         "buildType": "app-bundle",

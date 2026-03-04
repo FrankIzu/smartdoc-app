@@ -235,7 +235,7 @@ jobs:
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
           echo "Running EAS build with DEBUG=* for verbose logs..."
-          eas build --platform ios --profile "$PROFILE" --local --non-interactive 2>&1 | tee "$RUNNER_TEMP/eas-build.log"
+          EAS_LOCAL_BUILD_SKIP_CLEANUP=1 eas build --platform ios --profile "$PROFILE" --local --non-interactive 2>&1 | tee "$RUNNER_TEMP/eas-build.log"
           exit "${PIPESTATUS[0]:-0}"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -327,6 +327,42 @@ jobs:
           name: ios-build
           path: |
             *.ipa
+          if-no-files-found: ignore
+
+      # dSYM for symbolication: find in EAS local build dir or in ios/build, upload for crash reports.
+      - name: Upload iOS dSYM
+        if: success()
+        run: |
+          DSYM_DIR="$RUNNER_TEMP/ios-dsym"
+          mkdir -p "$DSYM_DIR"
+          FOUND=""
+          # EAS local working dir (e.g. $RUNNER_TEMP or /var/folders/.../eas-build-local-nodejs/...)
+          for archive in $(find "$GITHUB_WORKSPACE" "$RUNNER_TEMP" /var/folders -name "*.xcarchive" -type d 2>/dev/null | head -5); do
+            if [ -d "$archive/dSYMs" ]; then
+              cp -R "$archive/dSYMs/"* "$DSYM_DIR/" 2>/dev/null || true
+              FOUND=1
+              echo "Found dSYMs in $archive"
+              break
+            fi
+          done
+          # Fallback: ios/build (if buildArtifactPaths or local copy left it)
+          if [ -z "$FOUND" ] && [ -d "ios/build" ]; then
+            find ios/build -name "*.dSYM" -type d -exec cp -R {} "$DSYM_DIR/" \; 2>/dev/null || true
+          fi
+          if [ -n "$(ls -A "$DSYM_DIR" 2>/dev/null)" ]; then
+            echo "dSYM contents:"
+            ls -la "$DSYM_DIR"
+          else
+            echo "No dSYM found; crash symbolication will need dSYM from a build that preserves it."
+          fi
+        continue-on-error: true
+
+      - name: Upload iOS dSYM artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-dsym
+          path: ${{ runner.temp }}/ios-dsym
           if-no-files-found: ignore
 
   submit:

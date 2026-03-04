@@ -14,6 +14,8 @@
 #
 #   In interactive mode you can choose: (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions.
 #   Option 3 commits version/build and pushes; iOS runs on push to main, Android runs on push to main or tag.
+#
+#   iOS dSYM: GitHub Actions uploads ios-dsym artifact when the iOS workflow runs. Download from the workflow run (Actions -> run -> Artifacts); use GrabDocs.app.dSYM for symbolication.
 
 param(
     [string]$Platform,
