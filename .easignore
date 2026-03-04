@@ -129,8 +129,10 @@ dev-files/
 *.zip
 *.tgz
 
-# Do NOT ignore ios/ or android/ when using prebuild in CI (build-ios.yml, build-android.yml).
-# If ignored, EAS re-runs prebuild and uses remote stored version (e.g. buildNumber 51, versionCode 51)
-# instead of app.versions.json. That causes "already submitted this build/version" on store submit.
-# ios/
+# android/ — do NOT ignore when using prebuild in CI (build-android.yml). If ignored, EAS re-runs
+# prebuild and uses remote stored versionCode (e.g. 51) instead of app.versions.json.
 # android/
+
+# ios/ — keep ignored. EAS runs prebuild and generates a clean project (avoids "target with id 'undefined'"
+# from our prebuilt project). appVersionSource: local ensures buildNumber from app.versions.json is used.
+ios/

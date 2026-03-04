@@ -192,7 +192,13 @@ jobs:
             echo "Found undefined in project.pbxproj, applying fixes (file types are fixed by ensure-pbxproj-embed-phase.js)..."
             sed -i '' 's/fileEncoding = undefined/fileEncoding = 4/g' "$PBXPROJ"
             sed -i '' 's/includeInIndex = undefined/includeInIndex = 0/g' "$PBXPROJ"
-            # Catch-all: any remaining key = undefined (script already fixed lastKnownFileType/explicitFileType by path)
+            # Fix remoteGlobalIDString FIRST (before catch-all) — EAS fails with "target with id 'undefined'" otherwise
+            EXT_UUID=$(sed -n '/Begin PBXNativeTarget/,/End PBXNativeTarget/p' "$PBXPROJ" | grep '"GrabDocsBroadcastUpload"' | head -1 | grep -oE '[0-9A-F]{24}' | head -1)
+            if [ -n "$EXT_UUID" ] && grep -q "remoteGlobalIDString = undefined" "$PBXPROJ"; then
+              sed -i '' "s/remoteGlobalIDString = undefined/remoteGlobalIDString = $EXT_UUID/g" "$PBXPROJ"
+              echo "   Fixed remoteGlobalIDString with extension UUID $EXT_UUID"
+            fi
+            # Catch-all: any remaining key = undefined
             sed -i '' -E 's/([a-zA-Z0-9_]+) = undefined/\1 = ""/g' "$PBXPROJ"
             echo "✅ Force-removed undefined from project.pbxproj"
           else

@@ -88,14 +88,40 @@ function fixUndefinedInPbxproj(pbx) {
     pbx = pbx.replace(new RegExp('(explicitFileType = "wrapper\\.app-extension")(' + blockScope + 'path\\s*=\\s*["\'][^"\']*\\.swift["\'])', 'g'), 'explicitFileType = "sourcecode.swift"$2');
     if (pbx !== before) changed = true;
   }
-  // Catch-all: replace any remaining = undefined (includeInIndex, etc.) to prevent EAS parser errors
+  // Catch-all: replace any remaining = undefined (includeInIndex, etc.) to prevent EAS parser errors.
+  // Skip remoteGlobalIDString — fixRemoteGlobalIDStringUndefined replaces it with the real extension target UUID.
   if (pbx.includes(' = undefined')) {
     pbx = pbx.replace(/(\w+) = undefined/g, (_, key) =>
-      key === 'fileEncoding' ? 'fileEncoding = 4' : key === 'explicitFileType' ? 'explicitFileType = "wrapper.app-extension"' : key === 'lastKnownFileType' ? 'lastKnownFileType = "text"' : `${key} = ""`
+      key === 'remoteGlobalIDString'
+        ? 'remoteGlobalIDString = undefined'
+        : key === 'fileEncoding'
+          ? 'fileEncoding = 4'
+          : key === 'explicitFileType'
+            ? 'explicitFileType = "wrapper.app-extension"'
+            : key === 'lastKnownFileType'
+              ? 'lastKnownFileType = "text"'
+              : `${key} = ""`
     );
     changed = true;
   }
   return { pbx, changed };
+}
+
+/**
+ * EAS fails with "Could not find target with id 'undefined'" when PBXContainerItemProxy has
+ * remoteGlobalIDString = undefined (literal). Replace with the actual extension target UUID.
+ */
+function fixRemoteGlobalIDStringUndefined(pbx, extensionName) {
+  const nativeTargetSection = pbx.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
+  if (!nativeTargetSection) return { pbx, changed: false };
+
+  const extTargetMatch = nativeTargetSection[0].match(
+    new RegExp('([0-9A-F]{24})\\s*\\/\\*\\s*"' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?productType = "com\\.apple\\.product-type\\.app-extension"')
+  );
+  const extensionTargetUuid = extTargetMatch ? extTargetMatch[1] : null;
+  if (!extensionTargetUuid || !pbx.includes('remoteGlobalIDString = undefined')) return { pbx, changed: false };
+  pbx = pbx.replace(/remoteGlobalIDString = undefined/g, `remoteGlobalIDString = ${extensionTargetUuid}`);
+  return { pbx, changed: true };
 }
 
 function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
@@ -351,6 +377,14 @@ if (undefinedResult.changed) {
   pbx = undefinedResult.pbx;
   changed = true;
   console.log('[ensure-pbxproj-embed-phase] ✅ Replaced literal "undefined" in pbxproj (EAS parser fix)');
+}
+
+// Fix remoteGlobalIDString = undefined in PBXContainerItemProxy (EAS "Could not find target with id 'undefined'")
+const remoteIdResult = fixRemoteGlobalIDStringUndefined(pbx, EXTENSION_NAME);
+if (remoteIdResult.changed) {
+  pbx = remoteIdResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Fixed remoteGlobalIDString = undefined (EAS target lookup)');
 }
 
 // Run target dependency first - CocoaPods needs this for host detection
