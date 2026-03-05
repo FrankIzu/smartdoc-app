@@ -168,21 +168,17 @@ build:
             exit 0
           fi
 
-          # Patch: insert extension profile into provisioningProfiles hash in export_options
-          if grep -q '"provisioningProfiles"' "$GYMFILE" || grep -q 'provisioningProfiles:' "$GYMFILE"; then
-            # Insert after the opening brace of provisioningProfiles
-            sed -i '' "s/\"provisioningProfiles\" => {/\"provisioningProfiles\" => { \"$EXT_BUNDLE\" => \"$EXT_UUID\",/" "$GYMFILE"
-            sed -i '' "s/provisioningProfiles: {/provisioningProfiles: { \"$EXT_BUNDLE\" => \"$EXT_UUID\",/" "$GYMFILE"
+          # Patch using sed with | delimiter to avoid quoting/heredoc issues
+          if grep -q 'provisioningProfiles' "$GYMFILE"; then
+            sed -i '' "s|\"provisioningProfiles\" => {|\"provisioningProfiles\" => { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\",|" "$GYMFILE" 2>/dev/null \
+              || sed -i '' "s|provisioningProfiles: {|provisioningProfiles: { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\",|" "$GYMFILE"
             echo "✅ Patched existing provisioningProfiles in Gymfile"
-          elif grep -q 'export_options:' "$GYMFILE"; then
-            sed -i '' "s/export_options: {/export_options: { provisioningProfiles: { \"$EXT_BUNDLE\" => \"$EXT_UUID\" },/" "$GYMFILE"
+          elif grep -q 'export_options' "$GYMFILE"; then
+            sed -i '' "s|export_options: {|export_options: { provisioningProfiles: { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\" },|" "$GYMFILE"
             echo "✅ Added provisioningProfiles to Gymfile export_options"
           else
-            # Append export_options to gym call
-            sed -i '' "/^gym(/a\\
-  export_options: { provisioningProfiles: { \"$EXT_BUNDLE\" => \"$EXT_UUID\" } },
-" "$GYMFILE"
-            echo "✅ Appended export_options to Gymfile gym call"
+            echo "⚠️  Could not find provisioningProfiles or export_options in Gymfile; not patched"
+            cat "$GYMFILE"
           fi
 
           echo "=== Gymfile after patch ==="
