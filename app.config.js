@@ -21,6 +21,7 @@ const baseExpo = {
   assetBundlePatterns: ["**/*"],
   ios: {
     newArchEnabled: false,
+    jsEngine: "jsc",
     supportsTablet: true,
     bundleIdentifier: "com.grabdocs.mobile",
     buildNumber: String(versions.ios?.buildNumber ?? "1"),
