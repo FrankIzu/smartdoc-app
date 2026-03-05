@@ -80,8 +80,6 @@ build:
             exit 0
           fi
 
-          # Get UUID: prefer /tmp/ext.mobileprovision (from our install step),
-          # then search installed profiles for the extension bundle ID.
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
           UUID=""
@@ -92,13 +90,12 @@ build:
           fi
 
           if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
-            echo "Searching installed profiles for $EXT_BUNDLE..."
             for profile in "$PROFILE_DIR"/*.mobileprovision; do
               [ -f "$profile" ] || continue
               APP_ID=$(security cms -D -i "$profile" 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || true)
               if echo "$APP_ID" | grep -q "$EXT_BUNDLE"; then
                 UUID=$(security cms -D -i "$profile" 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-                echo "Found extension profile in: $profile  UUID=$UUID"
+                echo "Found extension profile UUID: $UUID"
                 break
               fi
             done
@@ -109,15 +106,10 @@ build:
             exit 0
           fi
 
-          # Replace any UUID currently set for the extension target (handles hardcoded or EAS-set values)
-          # First try the known hardcoded UUID
-          if grep -q "PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"" "$PBXPROJ"; then
-            sed -i '' "s/PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"/PROVISIONING_PROFILE = \"$UUID\"/g" "$PBXPROJ"
-            echo "✅ Replaced hardcoded UUID with $UUID"
-          else
-            echo "Hardcoded UUID not found; extension may already have been patched by configure_ios_credentials"
-          fi
-          echo "Current extension PROVISIONING_PROFILE lines:"
+          # Use node script to patch all XCBuildConfiguration blocks for the extension target
+          node scripts/patch-ext-profile.js "$PBXPROJ" "$UUID"
+
+          echo "=== PROVISIONING_PROFILE lines after patch ==="
           grep "PROVISIONING_PROFILE" "$PBXPROJ" | grep -v "SPECIFIER" || true
     - run:
         name: Write Gymfile with explicit provisioning profiles for both targets
