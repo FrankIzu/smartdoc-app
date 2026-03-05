@@ -229,24 +229,18 @@ jobs:
             sed -n '/Begin PBXContainerItemProxy/,/End PBXContainerItemProxy/p' "$PBXPROJ" || true
           fi
 
-      # With ios/ in .easignore, EAS runs prebuild and reads app.versions.json. Use a unique build number
-      # per run so we never hit "You've already submitted this build" (App Store rejects duplicates).
-      - name: Set unique iOS build number for production
-        if: github.event.inputs.profile == 'production'
+      # Force version and buildNumber from app.versions.json into ios/ so the IPA matches the repo (Apple was seeing older values).
+      - name: Sync version and build number from app.versions.json into iOS project
         run: |
-          node -e "
-          const fs = require('fs');
-          const p = 'app.versions.json';
-          const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-          if (!j.ios) j.ios = {};
-          const runNum = process.env.GITHUB_RUN_NUMBER || '';
-          const next = runNum || String(parseInt(j.ios.buildNumber || '0', 10) + 1);
-          j.ios.buildNumber = String(next);
-          fs.writeFileSync(p, JSON.stringify(j, null, 2));
-          console.log('Set iOS buildNumber to', j.ios.buildNumber);
-          "
-        env:
-          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          V=$(node -e "const j=require('./app.versions.json'); console.log(j.version||'1.0.0');")
+          B=$(node -e "const j=require('./app.versions.json'); console.log(j.ios?.buildNumber||'1');")
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -n "$PBXPROJ" ]; then
+            sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $V/g" "$PBXPROJ"
+            sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = $B/g" "$PBXPROJ"
+            echo "Synced version=$V buildNumber=$B into $PBXPROJ"
+            grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" "$PBXPROJ" | head -10
+          fi
 
       - name: EAS Build (local)
         id: eas_build
