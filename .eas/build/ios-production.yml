@@ -171,6 +171,9 @@ build:
           printf 'export_method "app-store"\n' >> "$GYMFILE"
           printf 'export_team_id "%s"\n' "$TEAM_ID" >> "$GYMFILE"
           printf '\n' >> "$GYMFILE"
+          printf 'output_directory "./build"\n' >> "$GYMFILE"
+          printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
+          printf '\n' >> "$GYMFILE"
           printf 'export_options(\n' >> "$GYMFILE"
           printf '  provisioningProfiles: {\n' >> "$GYMFILE"
           printf '    "%s" => "%s",\n' "$MAIN_BUNDLE" "$MAIN_UUID" >> "$GYMFILE"
@@ -181,5 +184,18 @@ build:
           echo "=== Gymfile written to $GYMFILE ==="
           cat "$GYMFILE"
           echo "===================================="
-    - eas/run_fastlane
+    - run:
+        name: Run Fastlane gym
+        command: |
+          cd ios
+          mkdir -p build
+          echo "=== Final Gymfile ==="
+          cat Gymfile
+          echo "===================="
+          echo "=== PROVISIONING_PROFILE in project.pbxproj ==="
+          grep "PROVISIONING_PROFILE" GrabDocs.xcodeproj/project.pbxproj | grep -v "SPECIFIER" || true
+          echo "=== PROVISIONING_PROFILE_SPECIFIER in project.pbxproj ==="
+          grep "PROVISIONING_PROFILE_SPECIFIER" GrabDocs.xcodeproj/project.pbxproj || true
+          echo "================================================"
+          fastlane gym
     - eas/find_and_upload_build_artifacts
