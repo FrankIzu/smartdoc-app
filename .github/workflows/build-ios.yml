@@ -242,6 +242,27 @@ jobs:
             grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" "$PBXPROJ" | head -10
           fi
 
+      # Final undefined fix before EAS reads project (EAS fails with "target with id 'undefined'" otherwise).
+      - name: Final undefined fix in project.pbxproj (before EAS)
+        run: |
+          node scripts/ensure-pbxproj-embed-phase.js
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          [ -z "$PBXPROJ" ] && exit 0
+          # Extension UUID: try with quotes then without (GrabDocsBroadcastUpload)
+          EXT_UUID=$(sed -n '/Begin PBXNativeTarget/,/End PBXNativeTarget/p' "$PBXPROJ" | grep -E '"GrabDocsBroadcastUpload"|GrabDocsBroadcastUpload' | head -1 | grep -oE '[0-9A-F]{24}' | head -1)
+          if [ -n "$EXT_UUID" ] && grep -q "remoteGlobalIDString = undefined" "$PBXPROJ"; then
+            sed -i '' "s/remoteGlobalIDString = undefined/remoteGlobalIDString = $EXT_UUID/g" "$PBXPROJ"
+            echo "Fixed remoteGlobalIDString = $EXT_UUID"
+          fi
+          # Wipe any remaining " = undefined" (remoteGlobalIDString already fixed above)
+          if grep -q " = undefined" "$PBXPROJ"; then
+            sed -i '' 's/fileEncoding = undefined/fileEncoding = 4/g' "$PBXPROJ"
+            sed -i '' 's/includeInIndex = undefined/includeInIndex = 0/g' "$PBXPROJ"
+            sed -i '' -E 's/([a-zA-Z0-9_]+) = undefined/\1 = ""/g' "$PBXPROJ"
+            echo "Replaced remaining undefined"
+          fi
+          grep -qE " = undefined" "$PBXPROJ" && (echo "::error::undefined still present"; grep -n "undefined" "$PBXPROJ" | head -20; exit 1) || echo "✅ No undefined in project.pbxproj"
+
       - name: EAS Build (local)
         id: eas_build
         continue-on-error: true

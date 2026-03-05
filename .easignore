@@ -133,6 +133,5 @@ dev-files/
 # prebuild and uses remote stored versionCode (e.g. 51) instead of app.versions.json.
 # android/
 
-# ios/ — keep ignored. EAS runs prebuild and generates a clean project (avoids "target with id 'undefined'"
-# from our prebuilt project). appVersionSource: local ensures buildNumber from app.versions.json is used.
-ios/
+# ios/ — do NOT ignore so EAS uses our prebuilt ios/ (correct version/build). We fix "undefined" in the workflow.
+# ios/
