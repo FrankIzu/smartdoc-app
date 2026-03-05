@@ -65,8 +65,7 @@
         "distribution": "store",
         "buildConfiguration": "Release",
         "scheme": "GrabDocs",
-        "buildArtifactPaths": ["ios/build/*"],
-        "prebuildCommand": "npx expo prebuild --platform ios --clean --no-install && node scripts/ensure-podfile-extension.js && node scripts/ensure-pbxproj-embed-phase.js"
+        "buildArtifactPaths": ["ios/build/*"]
       },
       "android": {
         "buildType": "app-bundle",
