@@ -69,6 +69,25 @@ build:
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
             echo "⚠️  Could not extract UUID, installed with fixed name"
           fi
+    - run:
+        name: Set extension provisioning profile UUID in project
+        command: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -z "$PBXPROJ" ] || [ ! -f /tmp/ext.mobileprovision ]; then
+            echo "Skipping extension profile UUID patch (no project or no profile)"
+            exit 0
+          fi
+          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null) || true
+          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
+            echo "Could not extract UUID from extension profile; project will use existing value."
+            exit 0
+          fi
+          if grep -q 'PROVISIONING_PROFILE = "f5a9c6da-0810-4a56-8963-3cb9894f83a1"' "$PBXPROJ"; then
+            sed -i '' "s/PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"/PROVISIONING_PROFILE = \"$UUID\"/g" "$PBXPROJ"
+            echo "✅ Set extension PROVISIONING_PROFILE to $UUID"
+          else
+            echo "Extension target already uses a different profile UUID (or pattern not found)."
+          fi
     - eas/configure_eas_update
     - eas/configure_ios_credentials
     - eas/generate_gymfile_from_template:
