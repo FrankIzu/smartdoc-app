@@ -39,35 +39,30 @@ let HMSConfig: any = null;
 
 // Only try to import HMS on native platforms (not web) and in development builds (not Expo Go)
 // HMS requires native modules that don't work in Expo Go
-// Stub on iOS to avoid native crash (Data Abort / development screen); remove when root cause fixed.
 if (Platform.OS !== 'web') {
   try {
-    if (Platform.OS === 'ios') {
-      // Leave HMSPrebuilt null on iOS to avoid loading HMS native bridge (crash workaround).
-      // User will see Development Mode fallback; revert this block when iOS HMS crash is fixed.
+    // Check if we're in Expo Go (HMS won't work)
+    const Constants = require('expo-constants').default;
+    const isExpoGo = Constants.appOwnership === 'expo';
+    
+    if (isExpoGo) {
+      // Silently skip HMS in Expo Go - it requires a development build
+      // The error will be handled gracefully in the component
     } else {
-      // Check if we're in Expo Go (HMS won't work)
-      const Constants = require('expo-constants').default;
-      const isExpoGo = Constants.appOwnership === 'expo';
-
-      if (isExpoGo) {
-        // Silently skip HMS in Expo Go - it requires a development build
-        // The error will be handled gracefully in the component
-      } else {
-        // Try to import HMS Room Kit (prebuilt UI) - requires native module
-        // For localhost testing, you need a development build
-        const roomKitPackage = require('@100mslive/react-native-room-kit');
+      // Try to import HMS Room Kit (prebuilt UI) - requires native module
+      // For localhost testing, you need a development build
+      const roomKitPackage = require('@100mslive/react-native-room-kit');
         if (roomKitPackage && roomKitPackage.HMSPrebuilt) {
-          HMSPrebuilt = roomKitPackage.HMSPrebuilt;
-        }
-
-        // HMS SDK is a peer dependency of room-kit but not required for prebuilt UI
-        try {
-          const hmsSDK = require('@100mslive/react-native-hms');
-          HMSConfig = hmsSDK.HMSConfig;
-        } catch (sdkError) {
-          // Silently ignore - SDK is optional
-        }
+        HMSPrebuilt = roomKitPackage.HMSPrebuilt;
+      }
+      
+      // HMS SDK is a peer dependency of room-kit but not required for prebuilt UI
+      // Only import if needed for advanced configuration
+      try {
+        const hmsSDK = require('@100mslive/react-native-hms');
+        HMSConfig = hmsSDK.HMSConfig;
+      } catch (sdkError) {
+        // Silently ignore - SDK is optional
       }
     }
   } catch (error: any) {

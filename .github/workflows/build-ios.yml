@@ -235,7 +235,10 @@ jobs:
         run: |
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
           echo "Running EAS build with DEBUG=* for verbose logs..."
-          EAS_LOCAL_BUILD_SKIP_CLEANUP=1 eas build --platform ios --profile "$PROFILE" --local --non-interactive 2>&1 | tee "$RUNNER_TEMP/eas-build.log"
+          export EAS_LOCAL_BUILD_SKIP_CLEANUP=1
+          export EAS_LOCAL_BUILD_WORKINGDIR="$GITHUB_WORKSPACE/eas-build"
+          mkdir -p "$EAS_LOCAL_BUILD_WORKINGDIR"
+          eas build --platform ios --profile "$PROFILE" --local --non-interactive 2>&1 | tee "$RUNNER_TEMP/eas-build.log"
           exit "${PIPESTATUS[0]:-0}"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -329,32 +332,44 @@ jobs:
             *.ipa
           if-no-files-found: ignore
 
-      # dSYM for symbolication: find in EAS local build dir or in ios/build, upload for crash reports.
-      - name: Upload iOS dSYM
+      # dSYM for symbolication: EAS working dir is $GITHUB_WORKSPACE/eas-build; xcarchive may be in project subdir or Xcode default Archives.
+      - name: Collect and upload iOS dSYM
         if: success()
         run: |
           DSYM_DIR="$RUNNER_TEMP/ios-dsym"
           mkdir -p "$DSYM_DIR"
-          FOUND=""
-          # EAS local working dir (e.g. $RUNNER_TEMP or /var/folders/.../eas-build-local-nodejs/...)
-          for archive in $(find "$GITHUB_WORKSPACE" "$RUNNER_TEMP" /var/folders -name "*.xcarchive" -type d 2>/dev/null | head -5); do
-            if [ -d "$archive/dSYMs" ]; then
-              cp -R "$archive/dSYMs/"* "$DSYM_DIR/" 2>/dev/null || true
-              FOUND=1
-              echo "Found dSYMs in $archive"
-              break
-            fi
-          done
-          # Fallback: ios/build (if buildArtifactPaths or local copy left it)
-          if [ -z "$FOUND" ] && [ -d "ios/build" ]; then
+          echo "===== Searching for xcarchive and dSYM ====="
+          # 1) Fixed EAS working dir (we set EAS_LOCAL_BUILD_WORKINGDIR=eas-build)
+          if [ -d "eas-build" ]; then
+            echo "Listing eas-build:"
+            find eas-build -maxdepth 4 -type d \( -name "*.xcarchive" -o -name "dSYMs" -o -name "*.dSYM" \) 2>/dev/null || true
+            find eas-build -name "*.xcarchive" -type d 2>/dev/null | while read -r archive; do
+              if [ -d "$archive/dSYMs" ]; then
+                echo "Copying dSYMs from $archive"
+                cp -R "$archive/dSYMs/"* "$DSYM_DIR/" 2>/dev/null || true
+              fi
+            done
+            find eas-build -name "*.dSYM" -type d 2>/dev/null | head -5 | while read -r d; do cp -R "$d" "$DSYM_DIR/" 2>/dev/null; done
+          fi
+          # 2) Xcode default archive location (EAS may export there)
+          if [ -d "$HOME/Library/Developer/Xcode/Archives" ]; then
+            echo "Listing Xcode Archives (newest first):"
+            find "$HOME/Library/Developer/Xcode/Archives" -name "*.xcarchive" -type d -mmin -120 2>/dev/null | head -3
+            find "$HOME/Library/Developer/Xcode/Archives" -name "*.xcarchive" -type d -mmin -120 2>/dev/null | head -1 | while read -r archive; do
+              if [ -d "$archive/dSYMs" ]; then
+                echo "Copying dSYMs from $archive"
+                cp -R "$archive/dSYMs/"* "$DSYM_DIR/" 2>/dev/null || true
+              fi
+            done
+          fi
+          # 3) Workspace root (IPA is here; dSYM sometimes next to it)
+          find "$GITHUB_WORKSPACE" -maxdepth 3 -name "*.dSYM" -type d 2>/dev/null | while read -r d; do cp -R "$d" "$DSYM_DIR/" 2>/dev/null; done
+          # 4) ios/build from prebuild
+          if [ -d "ios/build" ]; then
             find ios/build -name "*.dSYM" -type d -exec cp -R {} "$DSYM_DIR/" \; 2>/dev/null || true
           fi
-          if [ -n "$(ls -A "$DSYM_DIR" 2>/dev/null)" ]; then
-            echo "dSYM contents:"
-            ls -la "$DSYM_DIR"
-          else
-            echo "No dSYM found; crash symbolication will need dSYM from a build that preserves it."
-          fi
+          echo "===== ios-dsym artifact contents ====="
+          ls -laR "$DSYM_DIR" 2>/dev/null || echo "No dSYM collected."
         continue-on-error: true
 
       - name: Upload iOS dSYM artifact
