@@ -69,29 +69,124 @@ build:
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
             echo "⚠️  Could not extract UUID, installed with fixed name"
           fi
-    - run:
-        name: Set extension provisioning profile UUID in project
-        command: |
-          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
-          if [ -z "$PBXPROJ" ] || [ ! -f /tmp/ext.mobileprovision ]; then
-            echo "Skipping extension profile UUID patch (no project or no profile)"
-            exit 0
-          fi
-          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null) || true
-          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
-            echo "Could not extract UUID from extension profile; project will use existing value."
-            exit 0
-          fi
-          if grep -q 'PROVISIONING_PROFILE = "f5a9c6da-0810-4a56-8963-3cb9894f83a1"' "$PBXPROJ"; then
-            sed -i '' "s/PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"/PROVISIONING_PROFILE = \"$UUID\"/g" "$PBXPROJ"
-            echo "✅ Set extension PROVISIONING_PROFILE to $UUID"
-          else
-            echo "Extension target already uses a different profile UUID (or pattern not found)."
-          fi
     - eas/configure_eas_update
     - eas/configure_ios_credentials
+    - run:
+        name: Set extension provisioning profile UUID in project (after credentials)
+        command: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -z "$PBXPROJ" ]; then
+            echo "project.pbxproj not found, skipping"
+            exit 0
+          fi
+
+          # Get UUID: prefer /tmp/ext.mobileprovision (from our install step),
+          # then search installed profiles for the extension bundle ID.
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
+          UUID=""
+
+          if [ -f /tmp/ext.mobileprovision ]; then
+            UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+            echo "UUID from /tmp/ext.mobileprovision: $UUID"
+          fi
+
+          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
+            echo "Searching installed profiles for $EXT_BUNDLE..."
+            for profile in "$PROFILE_DIR"/*.mobileprovision; do
+              [ -f "$profile" ] || continue
+              APP_ID=$(security cms -D -i "$profile" 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || true)
+              if echo "$APP_ID" | grep -q "$EXT_BUNDLE"; then
+                UUID=$(security cms -D -i "$profile" 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+                echo "Found extension profile in: $profile  UUID=$UUID"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
+            echo "⚠️  Could not find extension profile UUID; pbxproj not patched"
+            exit 0
+          fi
+
+          # Replace any UUID currently set for the extension target (handles hardcoded or EAS-set values)
+          # First try the known hardcoded UUID
+          if grep -q "PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"" "$PBXPROJ"; then
+            sed -i '' "s/PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"/PROVISIONING_PROFILE = \"$UUID\"/g" "$PBXPROJ"
+            echo "✅ Replaced hardcoded UUID with $UUID"
+          else
+            echo "Hardcoded UUID not found; extension may already have been patched by configure_ios_credentials"
+          fi
+          echo "Current extension PROVISIONING_PROFILE lines:"
+          grep "PROVISIONING_PROFILE" "$PBXPROJ" | grep -v "SPECIFIER" || true
     - eas/generate_gymfile_from_template:
         inputs:
           credentials: ${ eas.job.secrets.buildCredentials }
+    - run:
+        name: Patch Gymfile to include extension provisioning profile
+        command: |
+          GYMFILE=$(find . -name "Gymfile" -not -path "*/node_modules/*" | head -1)
+          if [ -z "$GYMFILE" ] || [ ! -f "$GYMFILE" ]; then
+            echo "Gymfile not found, skipping"
+            exit 0
+          fi
+          echo "=== Gymfile before patch ==="
+          cat "$GYMFILE"
+          echo "==========================="
+
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
+          EXT_UUID=""
+
+          # Find extension profile UUID from installed profiles
+          for profile in "$PROFILE_DIR"/*.mobileprovision; do
+            [ -f "$profile" ] || continue
+            APP_ID=$(security cms -D -i "$profile" 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || true)
+            if echo "$APP_ID" | grep -q "$EXT_BUNDLE"; then
+              RAW=$(security cms -D -i "$profile" 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+              if echo "$RAW" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+                EXT_UUID="$RAW"
+                echo "Extension profile UUID for Gymfile: $EXT_UUID"
+                break
+              fi
+            fi
+          done
+
+          # Fallback: try /tmp/ext.mobileprovision
+          if [ -z "$EXT_UUID" ] && [ -f /tmp/ext.mobileprovision ]; then
+            EXT_UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+          fi
+
+          if [ -z "$EXT_UUID" ]; then
+            echo "⚠️  Could not find extension profile UUID; Gymfile not patched"
+            exit 0
+          fi
+
+          # If Gymfile already maps GrabDocsBroadcastUpload, skip
+          if grep -q "GrabDocsBroadcastUpload" "$GYMFILE"; then
+            echo "Gymfile already references GrabDocsBroadcastUpload"
+            exit 0
+          fi
+
+          # Patch: insert extension profile into provisioningProfiles hash in export_options
+          if grep -q '"provisioningProfiles"' "$GYMFILE" || grep -q 'provisioningProfiles:' "$GYMFILE"; then
+            # Insert after the opening brace of provisioningProfiles
+            sed -i '' "s/\"provisioningProfiles\" => {/\"provisioningProfiles\" => { \"$EXT_BUNDLE\" => \"$EXT_UUID\",/" "$GYMFILE"
+            sed -i '' "s/provisioningProfiles: {/provisioningProfiles: { \"$EXT_BUNDLE\" => \"$EXT_UUID\",/" "$GYMFILE"
+            echo "✅ Patched existing provisioningProfiles in Gymfile"
+          elif grep -q 'export_options:' "$GYMFILE"; then
+            sed -i '' "s/export_options: {/export_options: { provisioningProfiles: { \"$EXT_BUNDLE\" => \"$EXT_UUID\" },/" "$GYMFILE"
+            echo "✅ Added provisioningProfiles to Gymfile export_options"
+          else
+            # Append export_options to gym call
+            sed -i '' "/^gym(/a\\
+  export_options: { provisioningProfiles: { \"$EXT_BUNDLE\" => \"$EXT_UUID\" } },
+" "$GYMFILE"
+            echo "✅ Appended export_options to Gymfile gym call"
+          fi
+
+          echo "=== Gymfile after patch ==="
+          cat "$GYMFILE"
+          echo "=========================="
     - eas/run_fastlane
     - eas/find_and_upload_build_artifacts
