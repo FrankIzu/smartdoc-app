@@ -449,7 +449,20 @@ export default function DraftEditScreen() {
       if (e?.message?.includes('409') || (e?.response?.status === 409)) {
         Alert.alert('Someone else is editing', 'Your changes were not saved. Someone else is editing this draft.');
       } else {
-        Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to save draft'));
+        // Do not show alert for network/offline errors; user already has offline indicator
+        const msg = (e?.message ?? e?.response?.data?.message ?? '').toString().toLowerCase();
+        const isNetworkError =
+          msg.includes('network') ||
+          msg.includes('err_network') ||
+          msg.includes('econnrefused') ||
+          msg.includes('timeout') ||
+          msg.includes('timed out') ||
+          msg.includes('connection') ||
+          e?.code === 'ERR_NETWORK' ||
+          e?.code === 'ECONNREFUSED';
+        if (!isNetworkError) {
+          Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to save draft'));
+        }
       }
     } finally {
       setSaving(false);

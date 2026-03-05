@@ -169,19 +169,20 @@ build:
           fi
 
           # Write Gymfile to ios/ directory (where Fastlane runs)
+          # Gymfile DSL: top-level options, no gym() wrapper
           GYMFILE="ios/Gymfile"
-          printf 'gym(\n' > "$GYMFILE"
-          printf '  workspace: "./GrabDocs.xcworkspace",\n' >> "$GYMFILE"
-          printf '  scheme: "GrabDocs",\n' >> "$GYMFILE"
-          printf '  configuration: "Release",\n' >> "$GYMFILE"
-          printf '  clean: false,\n' >> "$GYMFILE"
-          printf '  export_options: {\n' >> "$GYMFILE"
-          printf '    method: "app-store",\n' >> "$GYMFILE"
-          printf '    teamID: "%s",\n' "$TEAM_ID" >> "$GYMFILE"
-          printf '    provisioningProfiles: {\n' >> "$GYMFILE"
-          printf '      "%s" => "%s",\n' "$MAIN_BUNDLE" "$MAIN_UUID" >> "$GYMFILE"
-          printf '      "%s" => "%s"\n' "$EXT_BUNDLE" "$EXT_UUID" >> "$GYMFILE"
-          printf '    }\n' >> "$GYMFILE"
+          printf 'workspace "./GrabDocs.xcworkspace"\n' > "$GYMFILE"
+          printf 'scheme "GrabDocs"\n' >> "$GYMFILE"
+          printf 'configuration "Release"\n' >> "$GYMFILE"
+          printf 'clean false\n' >> "$GYMFILE"
+          printf '\n' >> "$GYMFILE"
+          printf 'export_method "app-store"\n' >> "$GYMFILE"
+          printf 'export_team_id "%s"\n' "$TEAM_ID" >> "$GYMFILE"
+          printf '\n' >> "$GYMFILE"
+          printf 'export_options(\n' >> "$GYMFILE"
+          printf '  provisioningProfiles: {\n' >> "$GYMFILE"
+          printf '    "%s" => "%s",\n' "$MAIN_BUNDLE" "$MAIN_UUID" >> "$GYMFILE"
+          printf '    "%s" => "%s"\n' "$EXT_BUNDLE" "$EXT_UUID" >> "$GYMFILE"
           printf '  }\n' >> "$GYMFILE"
           printf ')\n' >> "$GYMFILE"
 
