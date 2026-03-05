@@ -756,8 +756,10 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
         console.log('[ios-hms-screenshare] ✅ Fixed remoteGlobalIDString = undefined in PBXContainerItemProxy');
       }
       if (pbx.includes('target = undefined') || pbx.includes('target = ""')) {
-        pbx = pbx.replace(/\n\s*target = (?:undefined|"");\s*\n/g, '\n');
-        console.log('[ios-hms-screenshare] ✅ Removed target = undefined from PBXTargetDependency');
+        // Replace with the real extension UUID — removing the line leaves target as JS undefined,
+        // which EAS @expo/config-plugins reads as undefined and throws "Could not find target with id 'undefined'".
+        pbx = pbx.replace(/\btarget = (?:undefined|"");/g, `target = ${extensionTargetUuid};`);
+        console.log('[ios-hms-screenshare] ✅ Fixed target = undefined → real UUID in PBXTargetDependency');
       }
 
       // Check if extension is already in main target's dependencies (CocoaPods needs this for host detection)
@@ -786,6 +788,7 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
 `;
         const targetDependencyEntry = `\t\t${targetDependencyUuid} /* PBXTargetDependency */ = {
 \t\t\tisa = PBXTargetDependency;
+\t\t\ttarget = ${extensionTargetUuid};
 \t\t\ttargetProxy = ${containerProxyUuid} /* PBXContainerItemProxy */;
 \t\t};
 `;

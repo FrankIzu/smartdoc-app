@@ -22,7 +22,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: Checkout (exclude manager-francis; app build does not use it)
         uses: actions/checkout@v4
@@ -263,6 +263,10 @@ jobs:
           fi
           grep -qE " = undefined" "$PBXPROJ" && (echo "::error::undefined still present"; grep -n "undefined" "$PBXPROJ" | head -20; exit 1) || echo "✅ No undefined in project.pbxproj"
 
+      - name: Diagnose project.pbxproj (Expo parse simulation)
+        run: node scripts/diagnose-pbxproj-targets.js
+        continue-on-error: true
+
       - name: EAS Build (local)
         id: eas_build
         continue-on-error: true
@@ -292,6 +296,17 @@ jobs:
             ios/Podfile.properties.json
             ios/GrabDocs.xcodeproj/project.pbxproj
           if-no-files-found: ignore
+
+      - name: Diagnose eas-build project (on failure)
+        if: failure()
+        run: |
+          if [ -d "eas-build/ios" ]; then
+            echo "===== eas-build/ios project (what EAS may have parsed) ====="
+            node scripts/diagnose-pbxproj-targets.js eas-build/ios 2>&1 || true
+          else
+            echo "eas-build/ios not found (EAS may parse from workspace before copy)"
+          fi
+        continue-on-error: true
 
       - name: Extract and show build error from EAS log (on failure)
         if: failure()
@@ -416,7 +431,7 @@ jobs:
 
   submit:
     needs: build
-    runs-on: macos-latest
+    runs-on: macos-26
     if: github.event.inputs.profile == 'production'
     steps:
       - name: Checkout

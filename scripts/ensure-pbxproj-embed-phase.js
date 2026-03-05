@@ -126,17 +126,22 @@ function fixRemoteGlobalIDStringUndefined(pbx, extensionName) {
 
 /**
  * EAS "Could not find target with id 'undefined'" can also come from PBXTargetDependency
- * having "target = undefined" or "target = \"\"". The Expo parser uses dep.target first;
- * if it's a non-null value it never falls back to targetProxy/remoteGlobalIDString.
- * Remove the line so the parser uses the proxy and the real extension target id.
+ * having "target = undefined" or "target = \"\"". The Expo parser uses dep.target directly;
+ * if it resolves to JS undefined (missing field or literal "undefined"), it throws.
+ * Replace with the real extension target UUID so EAS can look it up successfully.
  */
-function fixTargetDependencyTargetUndefined(pbx) {
+function fixTargetDependencyTargetUndefined(pbx, extensionTargetUuid) {
   if (!pbx.includes('PBXTargetDependency')) return { pbx, changed: false };
   const before = pbx;
-  // Remove target = undefined or target = "" only inside PBXTargetDependency blocks (optional key)
-  pbx = pbx.replace(/(\t\tisa = PBXTargetDependency;\s*\n)(\s*target = (?:undefined|"");\s*\n)(\s*targetProxy)/g, '$1$3');
-  if (pbx === before) {
-    pbx = pbx.replace(/\n\s*target = (?:undefined|"");\s*\n/g, '\n');
+  if (extensionTargetUuid) {
+    // Replace target = undefined/empty with the actual extension UUID.
+    pbx = pbx.replace(/\btarget = (?:undefined|"");/g, `target = ${extensionTargetUuid};`);
+  } else {
+    // Fallback (no UUID available): remove the broken line so at least there's no literal "undefined".
+    pbx = pbx.replace(/(\t\tisa = PBXTargetDependency;\s*\n)(\s*target = (?:undefined|"");\s*\n)(\s*targetProxy)/g, '$1$3');
+    if (pbx === before) {
+      pbx = pbx.replace(/\n\s*target = (?:undefined|"");\s*\n/g, '\n');
+    }
   }
   if (pbx === before) return { pbx, changed: false };
   return { pbx, changed: true };
@@ -288,6 +293,63 @@ function removeInstallExtensionProfileMainPhase(pbx) {
 }
 
 /**
+ * Remove from the main target's dependencies list any ref that points to a
+ * PBXTargetDependency whose proxy has remoteGlobalIDString = undefined.
+ * EAS fails when it resolves such a ref and gets targetId "undefined".
+ * Removing the ref ensures the parser never sees the broken dependency.
+ */
+function removeBrokenDependencyRefsFromMainTarget(pbx) {
+  const nativeTargetSection = pbx.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
+  if (!nativeTargetSection) return { pbx, changed: false };
+  const appTargetMatch = nativeTargetSection[0].match(
+    /([0-9A-F]{24})\s*\/\*\s*GrabDocs\s*\*\/\s*=\s*\{[\s\S]*?productType = "com\.apple\.product-type\.application"/
+  );
+  const mainTargetUuid = appTargetMatch ? appTargetMatch[1] : null;
+  if (!mainTargetUuid) return { pbx, changed: false };
+
+  const proxySection = pbx.match(/\/\* Begin PBXContainerItemProxy section \*\/[\s\S]*?\/\* End PBXContainerItemProxy section \*\//);
+  const depSection = pbx.match(/\/\* Begin PBXTargetDependency section \*\/[\s\S]*?\/\* End PBXTargetDependency section \*\//);
+  if (!proxySection || !depSection) return { pbx, changed: false };
+
+  const brokenProxyUuids = new Set();
+  const proxyBlock = proxySection[0];
+  const proxyEntryRe = /\t\t([0-9A-F]{24})\s*\/\*\s*[^*]*\*\/\s*=\s*\{[\s\S]*?remoteGlobalIDString = undefined[\s\S]*?\};/g;
+  let m;
+  while ((m = proxyEntryRe.exec(proxyBlock)) !== null) brokenProxyUuids.add(m[1]);
+
+  if (brokenProxyUuids.size === 0) return { pbx, changed: false };
+
+  const brokenDepUuids = new Set();
+  const depBlock = depSection[0];
+  for (const proxyUuid of brokenProxyUuids) {
+    const depEntryRe = new RegExp(
+      '\\t\\t([0-9A-F]{24})\\s*\\/\\*[^*]*\\*\\/\\s*=\\s*\\{[\\s\\S]*?targetProxy = ' + proxyUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?\\};',
+      'g'
+    );
+    let dm;
+    while ((dm = depEntryRe.exec(depBlock)) !== null) brokenDepUuids.add(dm[1]);
+  }
+
+  if (brokenDepUuids.size === 0) return { pbx, changed: false };
+
+  const mainTargetBlockRe = new RegExp(
+    '(' + mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*GrabDocs\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?dependencies = \\()([\\s\\S]*?)(\\n\\s*\\);)',
+    'g'
+  );
+  const before = pbx;
+  pbx = pbx.replace(mainTargetBlockRe, (_, prefix, depsContent, suffix) => {
+    const lines = depsContent.split('\n');
+    const kept = lines.filter((line) => {
+      const uuidMatch = line.match(/([0-9A-F]{24})/);
+      return !uuidMatch || !brokenDepUuids.has(uuidMatch[1]);
+    });
+    const newDeps = kept.join('\n').replace(/\n\s*\n/g, '\n').trim();
+    return prefix + (newDeps ? newDeps + '\n\t\t\t\t' : '\n\t\t\t\t') + suffix;
+  });
+  return { pbx, changed: pbx !== before };
+}
+
+/**
  * Ensure main app target has the extension in its Target Dependencies.
  * CocoaPods uses user_project.host_targets_for_embedded_target() which returns
  * targets that depend on the extension. Without this, "Unable to find host target(s)".
@@ -334,6 +396,7 @@ function ensureTargetDependency(pbx, extensionName) {
 `;
   const targetDependencyEntry = `\t\t${targetDependencyUuid} /* PBXTargetDependency */ = {
 \t\t\tisa = PBXTargetDependency;
+\t\t\ttarget = ${extensionTargetUuid};
 \t\t\ttargetProxy = ${containerProxyUuid} /* PBXContainerItemProxy */;
 \t\t};
 `;
@@ -389,6 +452,26 @@ if (!fs.existsSync(pbxPath)) {
 let pbx = fs.readFileSync(pbxPath, 'utf8');
 let changed = false;
 
+// Resolve extension target UUID once — used by several fixup functions below.
+function resolveExtensionTargetUuid(pbxContent, extensionName) {
+  const nativeTargetSection = pbxContent.match(/\/\* Begin PBXNativeTarget section \*\/[\s\S]*?\/\* End PBXNativeTarget section \*\//);
+  if (!nativeTargetSection) return null;
+  const m = nativeTargetSection[0].match(
+    new RegExp('([0-9A-F]{24})\\s*\\/\\*\\s*"?' + extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"?\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?productType = "com\\.apple\\.product-type\\.app-extension"')
+  );
+  return m ? m[1] : null;
+}
+const extensionTargetUuid = resolveExtensionTargetUuid(pbx, EXTENSION_NAME);
+
+// Remove main-target dependency refs that point to proxies with remoteGlobalIDString = undefined
+// (EAS then never resolves them and cannot hit "target with id 'undefined'").
+const brokenRefsResult = removeBrokenDependencyRefsFromMainTarget(pbx);
+if (brokenRefsResult.changed) {
+  pbx = brokenRefsResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Removed broken extension dependency refs from main target (EAS parse fix)');
+}
+
 // Fix literal "undefined" first - EAS parser can return JS undefined and fail with "target with id 'undefined'"
 const undefinedResult = fixUndefinedInPbxproj(pbx);
 if (undefinedResult.changed) {
@@ -405,11 +488,13 @@ if (remoteIdResult.changed) {
   console.log('[ensure-pbxproj-embed-phase] ✅ Fixed remoteGlobalIDString = undefined (EAS target lookup)');
 }
 
-const targetDepUndefResult = fixTargetDependencyTargetUndefined(pbx);
+// Fix target = undefined/empty in PBXTargetDependency — replacing (not removing) with the real UUID.
+// Removing the line leaves JS undefined when EAS reads the absent field, causing the same error.
+const targetDepUndefResult = fixTargetDependencyTargetUndefined(pbx, extensionTargetUuid);
 if (targetDepUndefResult.changed) {
   pbx = targetDepUndefResult.pbx;
   changed = true;
-  console.log('[ensure-pbxproj-embed-phase] ✅ Removed target = undefined from PBXTargetDependency (EAS target lookup)');
+  console.log('[ensure-pbxproj-embed-phase] ✅ Fixed target = undefined → real UUID in PBXTargetDependency (EAS target lookup)');
 }
 
 // Run target dependency first - CocoaPods needs this for host detection
