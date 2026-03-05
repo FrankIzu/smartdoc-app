@@ -293,6 +293,30 @@ function removeInstallExtensionProfileMainPhase(pbx) {
 }
 
 /**
+ * Remove "Install Extension Profile" phase from the extension target.
+ * EAS and the workflow install the profile; this run script can conflict with EAS signing
+ * and cause the extension to be signed with the main app profile. Removing it avoids that.
+ */
+function removeInstallExtensionProfilePhase(pbx) {
+  const phaseId = 'A1B2C3D4E5F60718293A4B5C6D7E8F90';
+  if (!pbx.includes('Install Extension Profile */ = {')) return { pbx, changed: false };
+  let next = pbx;
+  // Remove the phase reference from extension target's buildPhases (comment is "Install Extension Profile" without "(Main)")
+  const extPhaseRefRe = new RegExp(
+    '\\s*' + phaseId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Install Extension Profile\\s*\\*\\/,\\n?',
+    'g'
+  );
+  next = next.replace(extPhaseRefRe, '');
+  // Remove the phase block from PBXShellScriptBuildPhase section (block ends with \t\t};)
+  const phaseBlockRe = new RegExp(
+    '\\s*' + phaseId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\/\\*\\s*Install Extension Profile\\s*\\*\\/\\s*=\\s*\\{[\\s\\S]*?\\n\\t\\t\\};',
+    'g'
+  );
+  next = next.replace(phaseBlockRe, '');
+  return { pbx: next, changed: next !== pbx };
+}
+
+/**
  * Remove from the main target's dependencies list any ref that points to a
  * PBXTargetDependency whose proxy has remoteGlobalIDString = undefined.
  * EAS fails when it resolves such a ref and gets targetId "undefined".
@@ -531,6 +555,13 @@ if (removePhaseResult.changed) {
   pbx = removePhaseResult.pbx;
   changed = true;
   console.log('[ensure-pbxproj-embed-phase] ✅ Removed Install Extension Profile (Main) phase (profile already installed by build step)');
+}
+
+const removeExtPhaseResult = removeInstallExtensionProfilePhase(pbx);
+if (removeExtPhaseResult.changed) {
+  pbx = removeExtPhaseResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Removed Install Extension Profile phase from extension target (avoids EAS signing conflict)');
 }
 
 if (changed) {

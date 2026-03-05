@@ -162,23 +162,26 @@ build:
             exit 0
           fi
 
-          # If Gymfile already maps GrabDocsBroadcastUpload, skip
+          # EAS often maps the extension bundle ID to the main app profile — we must replace that with the extension profile UUID.
+          # Replace any existing mapping for the extension bundle ID (Ruby: "key" => "value" or "key" => 'value').
           if grep -q "GrabDocsBroadcastUpload" "$GYMFILE"; then
-            echo "Gymfile already references GrabDocsBroadcastUpload"
-            exit 0
+            sed -i '' "s|\"${EXT_BUNDLE}\" => \"[^\"]*\"|\"${EXT_BUNDLE}\" => \"${EXT_UUID}\"|g" "$GYMFILE"
+            sed -i '' "s|\"${EXT_BUNDLE}\" => '[^']*'|\"${EXT_BUNDLE}\" => \"${EXT_UUID}\"|g" "$GYMFILE"
+            echo "✅ Replaced extension bundle ID mapping with extension profile UUID in Gymfile"
           fi
 
-          # Patch using sed with | delimiter to avoid quoting/heredoc issues
-          if grep -q 'provisioningProfiles' "$GYMFILE"; then
-            sed -i '' "s|\"provisioningProfiles\" => {|\"provisioningProfiles\" => { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\",|" "$GYMFILE" 2>/dev/null \
-              || sed -i '' "s|provisioningProfiles: {|provisioningProfiles: { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\",|" "$GYMFILE"
-            echo "✅ Patched existing provisioningProfiles in Gymfile"
-          elif grep -q 'export_options' "$GYMFILE"; then
-            sed -i '' "s|export_options: {|export_options: { provisioningProfiles: { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\" },|" "$GYMFILE"
-            echo "✅ Added provisioningProfiles to Gymfile export_options"
-          else
-            echo "⚠️  Could not find provisioningProfiles or export_options in Gymfile; not patched"
-            cat "$GYMFILE"
+          # If extension was not in Gymfile, add it to provisioningProfiles
+          if ! grep -q "GrabDocsBroadcastUpload" "$GYMFILE"; then
+            if grep -q 'provisioningProfiles' "$GYMFILE"; then
+              sed -i '' "s|\"provisioningProfiles\" => {|\"provisioningProfiles\" => { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\",|" "$GYMFILE" 2>/dev/null \
+                || sed -i '' "s|provisioningProfiles: {|provisioningProfiles: { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\",|" "$GYMFILE"
+              echo "✅ Added extension to provisioningProfiles in Gymfile"
+            elif grep -q 'export_options' "$GYMFILE"; then
+              sed -i '' "s|export_options: {|export_options: { provisioningProfiles: { \"${EXT_BUNDLE}\" => \"${EXT_UUID}\" },|" "$GYMFILE"
+              echo "✅ Added provisioningProfiles with extension to Gymfile export_options"
+            else
+              echo "⚠️  Could not find provisioningProfiles or export_options in Gymfile"
+            fi
           fi
 
           echo "=== Gymfile after patch ==="
