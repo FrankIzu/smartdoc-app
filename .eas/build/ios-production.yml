@@ -27,50 +27,49 @@ build:
             sed -i '' -E 's/([a-zA-Z0-9_]+) = undefined/\1 = ""/g' "$PBXPROJ"
             echo "✅ Sanitized remaining undefined in project.pbxproj"
           fi
+    - eas/configure_eas_update
+    - eas/configure_ios_credentials
     - run:
-        name: Install GrabDocsBroadcastUpload provisioning profile
+        name: Install GrabDocsBroadcastUpload provisioning profile (after EAS credentials)
         command: |
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
 
-          # Support both: file path (e.g. GitHub Actions sets EXT_PROVISIONING_PROFILE=/tmp/ext.mobileprovision) or base64 content (EAS secret).
+          echo "=== Profiles installed by EAS configure_ios_credentials ==="
+          ls -la "$PROFILE_DIR/" 2>/dev/null || echo "(none)"
+          echo "==========================================================="
+
+          # EXT_PROVISIONING_PROFILE is set by GitHub Actions to /tmp/ext.mobileprovision
           if [ -n "$EXT_PROVISIONING_PROFILE" ] && [ -f "$EXT_PROVISIONING_PROFILE" ]; then
-            if [ "$EXT_PROVISIONING_PROFILE" != "/tmp/ext.mobileprovision" ]; then
-              cp "$EXT_PROVISIONING_PROFILE" /tmp/ext.mobileprovision
-            fi
+            [ "$EXT_PROVISIONING_PROFILE" != "/tmp/ext.mobileprovision" ] && cp "$EXT_PROVISIONING_PROFILE" /tmp/ext.mobileprovision
             echo "Using extension profile from path: $EXT_PROVISIONING_PROFILE"
           elif [ -n "$EXT_PROVISIONING_PROFILE" ]; then
             echo "$EXT_PROVISIONING_PROFILE" | base64 --decode > /tmp/ext.mobileprovision
-            echo "Decoded extension profile from base64 (EAS secret)"
+            echo "Decoded extension profile from base64"
           else
-            echo "::error::EXT_PROVISIONING_PROFILE not set. For EAS cloud: add base64-encoded .mobileprovision as EAS secret. For local/CI: set env to path of installed profile (e.g. /tmp/ext.mobileprovision)."
+            echo "::error::EXT_PROVISIONING_PROFILE not set."
             exit 1
           fi
 
           if [ ! -s /tmp/ext.mobileprovision ]; then
-            echo "::error::Extension profile file is empty or invalid."
+            echo "::error::Extension profile is empty or invalid."
             exit 1
           fi
 
-          # Extract the UUID (|| true so set -eo pipefail does not exit when PlistBuddy fails)
           RAW_UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null \
             | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null) || true
-          # Only use if it looks like a UUID (PlistBuddy may print "Error Reading File: ..." on failure)
           if [ -n "$RAW_UUID" ] && echo "$RAW_UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
             UUID="$RAW_UUID"
-          else
-            UUID=""
-          fi
-
-          if [ -n "$UUID" ]; then
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
             echo "✅ Installed extension profile: $UUID"
           else
             cp /tmp/ext.mobileprovision "$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
             echo "⚠️  Could not extract UUID, installed with fixed name"
           fi
-    - eas/configure_eas_update
-    - eas/configure_ios_credentials
+
+          echo "=== Profiles after installing extension profile ==="
+          ls -la "$PROFILE_DIR/" 2>/dev/null
+          echo "==================================================="
     - run:
         name: Set extension provisioning profile UUID in project (after credentials)
         command: |
