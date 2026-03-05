@@ -749,6 +749,17 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
         return config;
       }
 
+      // Fix undefined written by xcode addTargetDependency — EAS fails with "Could not find target with id 'undefined'"
+      // when PBXContainerItemProxy has remoteGlobalIDString = undefined or PBXTargetDependency has target = undefined.
+      if (pbx.includes('remoteGlobalIDString = undefined')) {
+        pbx = pbx.replace(/remoteGlobalIDString = undefined/g, `remoteGlobalIDString = ${extensionTargetUuid}`);
+        console.log('[ios-hms-screenshare] ✅ Fixed remoteGlobalIDString = undefined in PBXContainerItemProxy');
+      }
+      if (pbx.includes('target = undefined') || pbx.includes('target = ""')) {
+        pbx = pbx.replace(/\n\s*target = (?:undefined|"");\s*\n/g, '\n');
+        console.log('[ios-hms-screenshare] ✅ Removed target = undefined from PBXTargetDependency');
+      }
+
       // Check if extension is already in main target's dependencies (CocoaPods needs this for host detection)
       const mainTargetBlockRe = new RegExp(
         mainTargetUuid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?dependencies = \\(([\\s\\S]*?)\\)\\s*;',
