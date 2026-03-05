@@ -124,6 +124,24 @@ function fixRemoteGlobalIDStringUndefined(pbx, extensionName) {
   return { pbx, changed: true };
 }
 
+/**
+ * EAS "Could not find target with id 'undefined'" can also come from PBXTargetDependency
+ * having "target = undefined" or "target = \"\"". The Expo parser uses dep.target first;
+ * if it's a non-null value it never falls back to targetProxy/remoteGlobalIDString.
+ * Remove the line so the parser uses the proxy and the real extension target id.
+ */
+function fixTargetDependencyTargetUndefined(pbx) {
+  if (!pbx.includes('PBXTargetDependency')) return { pbx, changed: false };
+  const before = pbx;
+  // Remove target = undefined or target = "" only inside PBXTargetDependency blocks (optional key)
+  pbx = pbx.replace(/(\t\tisa = PBXTargetDependency;\s*\n)(\s*target = (?:undefined|"");\s*\n)(\s*targetProxy)/g, '$1$3');
+  if (pbx === before) {
+    pbx = pbx.replace(/\n\s*target = (?:undefined|"");\s*\n/g, '\n');
+  }
+  if (pbx === before) return { pbx, changed: false };
+  return { pbx, changed: true };
+}
+
 function fixExtensionEmbedPhaseForCocoaPods(pbx, extensionName) {
   const escapedAppex = extensionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.appex';
 
@@ -385,6 +403,13 @@ if (remoteIdResult.changed) {
   pbx = remoteIdResult.pbx;
   changed = true;
   console.log('[ensure-pbxproj-embed-phase] ✅ Fixed remoteGlobalIDString = undefined (EAS target lookup)');
+}
+
+const targetDepUndefResult = fixTargetDependencyTargetUndefined(pbx);
+if (targetDepUndefResult.changed) {
+  pbx = targetDepUndefResult.pbx;
+  changed = true;
+  console.log('[ensure-pbxproj-embed-phase] ✅ Removed target = undefined from PBXTargetDependency (EAS target lookup)');
 }
 
 // Run target dependency first - CocoaPods needs this for host detection
