@@ -33,7 +33,7 @@ build:
     - eas/configure_eas_update
     - eas/configure_ios_credentials
     - run:
-        name: Assign extension provisioning profile to extension target only
+        name: Set extension target to Automatic signing (override EAS manual assignment)
         command: |
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" ! -path "*/Pods/*" | head -1)
           if [ -z "$PBXPROJ" ]; then
@@ -41,68 +41,9 @@ build:
             exit 1
           fi
           echo "Using project: $PBXPROJ"
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          MAIN_BUNDLE="com.grabdocs.mobile"
-          EXT_UUID=""
-
-          echo "=== All installed provisioning profiles ==="
-          for profile in "$PROFILE_DIR"/*.mobileprovision; do
-            [ -f "$profile" ] || continue
-            TMPFILE=$(mktemp /tmp/profile_XXXXXX.plist)
-            security cms -D -i "$profile" -o "$TMPFILE" 2>/dev/null || { rm -f "$TMPFILE"; continue; }
-            APP_ID=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$TMPFILE" 2>/dev/null || true)
-            NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$TMPFILE" 2>/dev/null || true)
-            UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE" 2>/dev/null || true)
-            echo "  file=$(basename $profile) uuid=$UUID app-id=$APP_ID name=$NAME"
-            if echo "$APP_ID" | grep -q "GrabDocsBroadcastUpload"; then
-              EXT_UUID="$UUID"
-              echo "  -> matched as extension profile"
-            fi
-            rm -f "$TMPFILE"
-          done
-          echo "==========================================="
-
-          # Fallback: if EAS uses same profile name for both, pick the profile that is NOT the main bundle
-          if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
-            echo "No extension-specific profile found by bundle ID. Trying fallback: second profile by exclusion..."
-            MAIN_UUID=""
-            for profile in "$PROFILE_DIR"/*.mobileprovision; do
-              [ -f "$profile" ] || continue
-              TMPFILE=$(mktemp /tmp/profile_XXXXXX.plist)
-              security cms -D -i "$profile" -o "$TMPFILE" 2>/dev/null || { rm -f "$TMPFILE"; continue; }
-              APP_ID=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$TMPFILE" 2>/dev/null || true)
-              UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE" 2>/dev/null || true)
-              # Exact match for main bundle (no suffix)
-              if echo "$APP_ID" | grep -qE "\.$MAIN_BUNDLE\$"; then
-                MAIN_UUID="$UUID"
-                echo "  Main app profile: $UUID ($APP_ID)"
-              fi
-              rm -f "$TMPFILE"
-            done
-            # Pick the profile that is not the main app profile
-            for profile in "$PROFILE_DIR"/*.mobileprovision; do
-              [ -f "$profile" ] || continue
-              TMPFILE=$(mktemp /tmp/profile_XXXXXX.plist)
-              security cms -D -i "$profile" -o "$TMPFILE" 2>/dev/null || { rm -f "$TMPFILE"; continue; }
-              UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE" 2>/dev/null || true)
-              rm -f "$TMPFILE"
-              if [ -n "$UUID" ] && [ "$UUID" != "$MAIN_UUID" ]; then
-                EXT_UUID="$UUID"
-                echo "  -> Using non-main profile as extension profile: $EXT_UUID"
-                break
-              fi
-            done
-          fi
-
-          if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
-            echo "::error::Could not determine extension provisioning profile UUID."
-            echo "EAS must create two profiles: one for $MAIN_BUNDLE and one for $EXT_BUNDLE."
-            exit 1
-          fi
-
-          node scripts/patch-ext-profile.js "$PBXPROJ" "$EXT_UUID"
-          echo "✅ Assigned extension profile $EXT_UUID to GrabDocsBroadcastUpload target"
+          # EAS configure_ios_credentials assigns the main-app profile to BOTH targets.
+          # We fix this by setting the extension target to Automatic so Xcode manages it.
+          node scripts/patch-ext-profile.js "$PBXPROJ"
     - run:
         name: Write Gymfile
         command: |
@@ -116,7 +57,8 @@ build:
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
           printf 'skip_profile_detection true\n' >> "$GYMFILE"
-          echo "=== Gymfile (skip_profile_detection=true so gym does not override with wrong mapping) ==="
+          printf 'xcargs "-allowProvisioningUpdates"\n' >> "$GYMFILE"
+          echo "=== Gymfile ==="
           cat "$GYMFILE"
     - run:
         name: Run Fastlane gym

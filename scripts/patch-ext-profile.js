@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Usage: node scripts/patch-ext-profile.js <project.pbxproj path> <extension-profile-uuid>
-// Finds all XCBuildConfiguration blocks belonging to the extension target
-// and sets PROVISIONING_PROFILE to the supplied UUID and clears PROVISIONING_PROFILE_SPECIFIER.
+// Usage: node scripts/patch-ext-profile.js <project.pbxproj path>
+// After EAS configure_ios_credentials assigns the main-app profile to ALL targets,
+// this script resets the extension target to Automatic signing so Xcode handles it.
 
 const fs = require('fs');
-const [,, pbxPath, extUUID] = process.argv;
+const [,, pbxPath] = process.argv;
 
-if (!pbxPath || !extUUID) {
-  console.error('Usage: node patch-ext-profile.js <project.pbxproj> <ext-uuid>');
+if (!pbxPath) {
+  console.error('Usage: node patch-ext-profile.js <project.pbxproj>');
   process.exit(1);
 }
 
@@ -17,23 +17,17 @@ if (!fs.existsSync(pbxPath)) {
 }
 
 const EXT_BUNDLE = 'com.grabdocs.mobile.GrabDocsBroadcastUpload';
+const TEAM_ID = 'Q33K3Q7Q53';
 const content = fs.readFileSync(pbxPath, 'utf8');
 
-// ---- Diagnostic: show all PROVISIONING_PROFILE lines before patch ----
-console.log('=== PROVISIONING_PROFILE lines BEFORE patch ===');
+console.log('=== CODE_SIGN_STYLE / PROVISIONING_PROFILE lines BEFORE patch ===');
 content.split('\n').forEach((line, i) => {
-  if (line.includes('PROVISIONING_PROFILE')) {
+  if (line.includes('CODE_SIGN_STYLE') || line.includes('PROVISIONING_PROFILE')) {
     console.log(`  L${i + 1}: ${line.trim()}`);
   }
 });
-console.log('=================================================');
+console.log('=================================================================');
 
-// Match XCBuildConfiguration blocks.
-// The pbxproj format indents with tabs; each block ends with \n\t\t};
-// We match greedily per block using a split-and-reassemble approach
-// to avoid catastrophic backtracking on large files.
-
-// Case-insensitive hex — EAS may write lowercase UUIDs
 const BLOCK_START = /^\t\t[0-9A-Fa-f]{24} \/\* .+ \*\/ = \{$/;
 const BLOCK_END = /^\t\t\};$/;
 
@@ -59,52 +53,51 @@ for (let i = 0; i < lines.length; i++) {
     if (line.includes(EXT_BUNDLE)) blockHasExtBundle = true;
 
     if (BLOCK_END.test(line)) {
-      // End of block — patch if it belongs to extension
       if (blockHasExtBundle) {
-        const originalBlock = blockLines.join('\n');
-        let patchedBlock = originalBlock;
+        let patchedBlock = blockLines.join('\n');
+        const originalBlock = patchedBlock;
 
-        // 1. Set or add PROVISIONING_PROFILE to the extension UUID (manual signing by UUID)
-        if (/PROVISIONING_PROFILE = "[^"]*";/.test(patchedBlock)) {
+        // 1. Set CODE_SIGN_STYLE to Automatic (override Manual that EAS set)
+        if (/CODE_SIGN_STYLE = Manual;/.test(patchedBlock)) {
+          patchedBlock = patchedBlock.replace(/CODE_SIGN_STYLE = Manual;/g, 'CODE_SIGN_STYLE = Automatic;');
+        } else if (!/CODE_SIGN_STYLE/.test(patchedBlock)) {
           patchedBlock = patchedBlock.replace(
-            /PROVISIONING_PROFILE = "[^"]*";/g,
-            `PROVISIONING_PROFILE = "${extUUID}";`
+            /(\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "[^"]*";)/,
+            `$1\n\t\t\t\tCODE_SIGN_STYLE = Automatic;`
           );
-        } else {
-          // Block has SPECIFIER but no PROVISIONING_PROFILE — add after CODE_SIGN_STYLE or PRODUCT_BUNDLE_IDENTIFIER
-          if (/CODE_SIGN_STYLE = Manual;/.test(patchedBlock)) {
-            patchedBlock = patchedBlock.replace(
-              /(CODE_SIGN_STYLE = Manual;)/,
-              `$1\n\t\t\t\tPROVISIONING_PROFILE = "${extUUID}";`
-            );
-          } else {
-            patchedBlock = patchedBlock.replace(
-              /(\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "[^"]*";)/,
-              `$1\n\t\t\t\tPROVISIONING_PROFILE = "${extUUID}";`
-            );
-          }
         }
 
-        // 2. Remove PROVISIONING_PROFILE_SPECIFIER entirely so Xcode uses PROVISIONING_PROFILE (UUID) only.
-        // Setting to "" can leave Xcode using the wrong profile; delete the line.
-        patchedBlock = patchedBlock.replace(
-          /\s*PROVISIONING_PROFILE_SPECIFIER = "[^"]*";\s*\n?/g,
-          ''
-        );
-        // 3. Force Manual signing so the UUID we set is used
-        patchedBlock = patchedBlock.replace(
-          /CODE_SIGN_STYLE = Automatic;/g,
-          'CODE_SIGN_STYLE = Manual;'
-        );
+        // 2. Remove PROVISIONING_PROFILE (UUID) — not needed for automatic signing
+        patchedBlock = patchedBlock.replace(/\n?\t*PROVISIONING_PROFILE = "[^"]*";\n?/g, '\n');
+
+        // 3. Remove PROVISIONING_PROFILE_SPECIFIER — let Xcode auto-pick
+        patchedBlock = patchedBlock.replace(/\n?\t*PROVISIONING_PROFILE_SPECIFIER = "[^"]*";\n?/g, '\n');
+
+        // 4. Remove CODE_SIGN_IDENTITY if explicitly set (let Xcode auto-pick)
+        patchedBlock = patchedBlock.replace(/\n?\t*CODE_SIGN_IDENTITY = "[^"]*";\n?/g, '\n');
+
+        // 5. Ensure DEVELOPMENT_TEAM is set (required for automatic signing)
+        if (!patchedBlock.includes('DEVELOPMENT_TEAM')) {
+          patchedBlock = patchedBlock.replace(
+            /(\t\t\t\tCODE_SIGN_STYLE = Automatic;)/,
+            `$1\n\t\t\t\tDEVELOPMENT_TEAM = "${TEAM_ID}";`
+          );
+        }
+
+        // 6. Ensure CODE_SIGNING_ALLOWED = YES (not NO)
+        if (/CODE_SIGNING_ALLOWED = NO;/.test(patchedBlock)) {
+          patchedBlock = patchedBlock.replace(/CODE_SIGNING_ALLOWED = NO;/g, 'CODE_SIGNING_ALLOWED = YES;');
+        }
+
+        // Collapse any double blank lines introduced by deletions
+        patchedBlock = patchedBlock.replace(/\n{3,}/g, '\n\n');
 
         if (patchedBlock !== originalBlock) {
           changed = true;
-          console.log(`✅ Patched extension XCBuildConfiguration block (PROVISIONING_PROFILE → ${extUUID}, SPECIFIER cleared)`);
+          console.log('✅ Patched extension XCBuildConfiguration block → Automatic signing, removed manual profile refs');
         } else {
-          console.log('Extension block found but no changes needed (already correct?)');
-          console.log('Block snippet:', originalBlock.slice(0, 400));
+          console.log('Extension block found but no changes needed (already Automatic?)');
         }
-
         outLines.push(...patchedBlock.split('\n'));
       } else {
         outLines.push(...blockLines);
@@ -122,21 +115,19 @@ for (let i = 0; i < lines.length; i++) {
 
 if (changed) {
   fs.writeFileSync(pbxPath, outLines.join('\n'));
-  console.log('✅ project.pbxproj updated with extension provisioning profile UUID');
+  console.log('✅ project.pbxproj updated: extension target set to Automatic signing');
 
-  // Show result
   const result = fs.readFileSync(pbxPath, 'utf8');
-  console.log('=== PROVISIONING_PROFILE lines AFTER patch ===');
+  console.log('=== CODE_SIGN_STYLE / PROVISIONING_PROFILE lines AFTER patch ===');
   result.split('\n').forEach((line, i) => {
-    if (line.includes('PROVISIONING_PROFILE')) {
+    if (line.includes('CODE_SIGN_STYLE') || line.includes('PROVISIONING_PROFILE')) {
       console.log(`  L${i + 1}: ${line.trim()}`);
     }
   });
-  console.log('================================================');
+  console.log('================================================================');
 } else {
-  console.error('⚠️  No extension XCBuildConfiguration blocks were patched.');
-  console.error('This means the signing will remain incorrect. Dumping diagnostic info:');
-  console.log('Dumping all XCBuildConfiguration block starts that mention GrabDocsBroadcastUpload or Broadcast:');
+  console.warn('⚠️  No extension XCBuildConfiguration blocks were patched.');
+  console.warn('Dumping all blocks containing "Broadcast" or "GrabDocsBroadcastUpload":');
   let dump = false;
   let dumpLines = [];
   for (let i = 0; i < lines.length; i++) {
@@ -145,13 +136,12 @@ if (changed) {
       dumpLines.push(lines[i]);
       if (BLOCK_END.test(lines[i])) {
         if (dumpLines.some(l => l.includes('Broadcast') || l.includes('GrabDocsBroadcastUpload'))) {
-          console.log(dumpLines.slice(0, 20).join('\n'));
+          console.log(dumpLines.slice(0, 30).join('\n'));
           console.log('---');
         }
-      dump = false;
+        dump = false;
+      }
     }
   }
-  // Exit non-zero so we get diagnostic output; skip_profile_detection + Gymfile UUIDs may still allow build to succeed
   process.exit(1);
-}
 }
