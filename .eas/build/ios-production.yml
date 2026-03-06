@@ -43,31 +43,66 @@ build:
           echo "Using project: $PBXPROJ"
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
+          MAIN_BUNDLE="com.grabdocs.mobile"
           EXT_UUID=""
+
+          echo "=== All installed provisioning profiles ==="
           for profile in "$PROFILE_DIR"/*.mobileprovision; do
             [ -f "$profile" ] || continue
-            PLIST_OUT=$(security cms -D -i "$profile" 2>/dev/null)
-            APP_ID=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || true)
-            NAME=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print Name' /dev/stdin 2>/dev/null || true)
+            TMPFILE=$(mktemp /tmp/profile_XXXXXX.plist)
+            security cms -D -i "$profile" -o "$TMPFILE" 2>/dev/null || { rm -f "$TMPFILE"; continue; }
+            APP_ID=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$TMPFILE" 2>/dev/null || true)
+            NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$TMPFILE" 2>/dev/null || true)
+            UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE" 2>/dev/null || true)
+            echo "  file=$(basename $profile) uuid=$UUID app-id=$APP_ID name=$NAME"
             if echo "$APP_ID" | grep -q "GrabDocsBroadcastUpload"; then
-              EXT_UUID=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-              echo "Found extension profile (by app-id): $profile -> UUID $EXT_UUID"
-              break
+              EXT_UUID="$UUID"
+              echo "  -> matched as extension profile"
             fi
-            if echo "$NAME" | grep -qi "BroadcastUpload\|GrabDocsBroadcastUpload"; then
-              EXT_UUID=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-              echo "Found extension profile (by name): $profile -> UUID $EXT_UUID"
-              break
-            fi
+            rm -f "$TMPFILE"
           done
+          echo "==========================================="
+
+          # Fallback: if EAS uses same profile name for both, pick the profile that is NOT the main bundle
           if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
-            echo "::error::Extension provisioning profile (for $EXT_BUNDLE) not found in $PROFILE_DIR. EAS should create two profiles; check credentials."
+            echo "No extension-specific profile found by bundle ID. Trying fallback: second profile by exclusion..."
+            MAIN_UUID=""
+            for profile in "$PROFILE_DIR"/*.mobileprovision; do
+              [ -f "$profile" ] || continue
+              TMPFILE=$(mktemp /tmp/profile_XXXXXX.plist)
+              security cms -D -i "$profile" -o "$TMPFILE" 2>/dev/null || { rm -f "$TMPFILE"; continue; }
+              APP_ID=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$TMPFILE" 2>/dev/null || true)
+              UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE" 2>/dev/null || true)
+              # Exact match for main bundle (no suffix)
+              if echo "$APP_ID" | grep -qE "\.$MAIN_BUNDLE\$"; then
+                MAIN_UUID="$UUID"
+                echo "  Main app profile: $UUID ($APP_ID)"
+              fi
+              rm -f "$TMPFILE"
+            done
+            # Pick the profile that is not the main app profile
+            for profile in "$PROFILE_DIR"/*.mobileprovision; do
+              [ -f "$profile" ] || continue
+              TMPFILE=$(mktemp /tmp/profile_XXXXXX.plist)
+              security cms -D -i "$profile" -o "$TMPFILE" 2>/dev/null || { rm -f "$TMPFILE"; continue; }
+              UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE" 2>/dev/null || true)
+              rm -f "$TMPFILE"
+              if [ -n "$UUID" ] && [ "$UUID" != "$MAIN_UUID" ]; then
+                EXT_UUID="$UUID"
+                echo "  -> Using non-main profile as extension profile: $EXT_UUID"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
+            echo "::error::Could not determine extension provisioning profile UUID."
+            echo "EAS must create two profiles: one for $MAIN_BUNDLE and one for $EXT_BUNDLE."
             exit 1
           fi
+
           node scripts/patch-ext-profile.js "$PBXPROJ" "$EXT_UUID"
           echo "✅ Assigned extension profile $EXT_UUID to GrabDocsBroadcastUpload target"
-          echo "=== Extension target signing in pbxproj (expect PROVISIONING_PROFILE = $EXT_UUID) ==="
-          grep -A 2 "GrabDocsBroadcastUpload" "$PBXPROJ" | grep -E "PROVISIONING_PROFILE|CODE_SIGN_STYLE" || true
     - run:
         name: Write Gymfile
         command: |
