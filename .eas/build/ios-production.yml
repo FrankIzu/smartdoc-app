@@ -55,10 +55,25 @@ build:
           EXT_PROFILE_FILE="$PROFILE_DIR/ext-grabdocs-broadcast.mobileprovision"
           echo "$EXT_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$EXT_PROFILE_FILE"
 
-          # Extract UUID and App ID from the installed profile
+          # Extract UUID from the profile.
+          # A .mobileprovision is a CMS/PKCS7-signed plist. The UUID is stored as plain ASCII
+          # inside the binary, so grep works even when the keychain/security tool is unavailable.
+          EXT_UUID=""
           TMPFILE=$(mktemp /tmp/ext_profile_XXXXXX.plist)
-          security cms -D -i "$EXT_PROFILE_FILE" -o "$TMPFILE"
-          EXT_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE")
+
+          # Try openssl first (no keychain needed)
+          if openssl smime -verify -noverify -inform DER -in "$EXT_PROFILE_FILE" -out "$TMPFILE" 2>/dev/null; then
+            EXT_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE" 2>/dev/null || true)
+            echo "openssl decoded profile successfully"
+          fi
+
+          # Fallback: grep the raw binary — UUID is always ASCII in the embedded plist
+          if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
+            echo "openssl decode failed or gave no UUID; trying grep on raw binary..."
+            EXT_UUID=$(grep -aEo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$EXT_PROFILE_FILE" | head -1)
+          fi
+
+          # Also try to get app-id and name via openssl output if available
           EXT_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$TMPFILE" 2>/dev/null || true)
           EXT_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$TMPFILE" 2>/dev/null || true)
           rm -f "$TMPFILE"
@@ -67,9 +82,12 @@ build:
           echo "  UUID    = $EXT_UUID"
           echo "  App ID  = $EXT_APP_ID"
           echo "  Name    = $EXT_NAME"
+          echo "  File size = $(wc -c < "$EXT_PROFILE_FILE") bytes"
 
           if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
             echo "::error::Could not extract UUID from extension provisioning profile."
+            echo "File head (hex):"
+            xxd "$EXT_PROFILE_FILE" | head -4
             exit 1
           fi
 
