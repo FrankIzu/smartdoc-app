@@ -33,7 +33,7 @@ build:
     - eas/configure_eas_update
     - eas/configure_ios_credentials
     - run:
-        name: Set extension target to Automatic signing (override EAS manual assignment)
+        name: Install extension provisioning profile and patch pbxproj
         command: |
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" ! -path "*/Pods/*" | head -1)
           if [ -z "$PBXPROJ" ]; then
@@ -41,9 +41,44 @@ build:
             exit 1
           fi
           echo "Using project: $PBXPROJ"
-          # EAS configure_ios_credentials assigns the main-app profile to BOTH targets.
-          # We fix this by setting the extension target to Automatic so Xcode manages it.
-          node scripts/patch-ext-profile.js "$PBXPROJ"
+
+          if [ -z "$EXT_PROVISIONING_PROFILE_BASE64" ]; then
+            echo "::error::EXT_PROVISIONING_PROFILE_BASE64 is not set."
+            echo "Add the extension provisioning profile (App Store, for com.grabdocs.mobile.GrabDocsBroadcastUpload)"
+            echo "as a base64-encoded GitHub secret named EXT_PROVISIONING_PROFILE_BASE64."
+            exit 1
+          fi
+
+          # Install the extension profile
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          EXT_PROFILE_FILE="$PROFILE_DIR/ext-grabdocs-broadcast.mobileprovision"
+          echo "$EXT_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$EXT_PROFILE_FILE"
+
+          # Extract UUID and App ID from the installed profile
+          TMPFILE=$(mktemp /tmp/ext_profile_XXXXXX.plist)
+          security cms -D -i "$EXT_PROFILE_FILE" -o "$TMPFILE"
+          EXT_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$TMPFILE")
+          EXT_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$TMPFILE" 2>/dev/null || true)
+          EXT_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$TMPFILE" 2>/dev/null || true)
+          rm -f "$TMPFILE"
+
+          echo "Installed extension profile:"
+          echo "  UUID    = $EXT_UUID"
+          echo "  App ID  = $EXT_APP_ID"
+          echo "  Name    = $EXT_NAME"
+
+          if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
+            echo "::error::Could not extract UUID from extension provisioning profile."
+            exit 1
+          fi
+
+          # Rename file to UUID (standard Xcode convention)
+          mv "$EXT_PROFILE_FILE" "$PROFILE_DIR/${EXT_UUID}.mobileprovision"
+
+          # Patch pbxproj: set extension target to Manual signing with this UUID
+          node scripts/patch-ext-profile.js "$PBXPROJ" "$EXT_UUID"
+          echo "✅ Extension target patched with profile UUID $EXT_UUID"
     - run:
         name: Write Gymfile
         command: |
@@ -57,8 +92,7 @@ build:
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
           printf 'skip_profile_detection true\n' >> "$GYMFILE"
-          printf 'xcargs "-allowProvisioningUpdates"\n' >> "$GYMFILE"
-          echo "=== Gymfile ==="
+          echo "=== Gymfile (skip_profile_detection=true; both targets use manual pbxproj profiles) ==="
           cat "$GYMFILE"
     - run:
         name: Run Fastlane gym

@@ -64,8 +64,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Single-profile signing: plugin sets CODE_SIGN_STYLE = Automatic for both app and
-      # extension; EAS configure_ios_credentials creates profiles. No EXT_PROVISIONING_PROFILE_BASE64.
+      # Signing strategy: EAS provides the main app profile (Manual). The extension profile is
+      # installed from EXT_PROVISIONING_PROFILE_BASE64 (GitHub secret) inside the EAS build step,
+      # after eas/configure_ios_credentials, so EAS cannot override it.
 
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.15.2
@@ -237,6 +238,7 @@ jobs:
           EAS_DANGEROUS_OVERRIDE_IOS_BUNDLE_IDENTIFIER: "com.grabdocs.mobile"
           HOME: ${{ env.HOME || '/Users/runner' }}
           EXPO_DEBUG: "1"
+          EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
 
       - name: Upload Podfile for debugging (on failure)
         if: failure()
