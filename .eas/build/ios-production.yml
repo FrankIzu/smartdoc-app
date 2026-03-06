@@ -173,6 +173,11 @@ build:
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
           printf '\n' >> "$GYMFILE"
+          # Force automatic signing for the archive phase so Xcode picks the right
+          # profile per bundle ID from the locally installed profiles, rather than
+          # using whatever PROVISIONING_PROFILE_SPECIFIER EAS wrote in pbxproj.
+          printf 'xcargs "CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=%s"\n' "$TEAM_ID" >> "$GYMFILE"
+          printf '\n' >> "$GYMFILE"
           printf 'export_options(\n' >> "$GYMFILE"
           printf '  provisioningProfiles: {\n' >> "$GYMFILE"
           printf '    "%s" => "%s",\n' "$MAIN_BUNDLE" "$MAIN_UUID" >> "$GYMFILE"

@@ -33,7 +33,8 @@ console.log('=================================================');
 // We match greedily per block using a split-and-reassemble approach
 // to avoid catastrophic backtracking on large files.
 
-const BLOCK_START = /^\t\t[0-9A-F]{24} \/\* .+ \*\/ = \{$/;
+// Case-insensitive hex — EAS may write lowercase UUIDs
+const BLOCK_START = /^\t\t[0-9A-Fa-f]{24} \/\* .+ \*\/ = \{$/;
 const BLOCK_END = /^\t\t\};$/;
 
 const lines = content.split('\n');
@@ -120,7 +121,8 @@ if (changed) {
   });
   console.log('================================================');
 } else {
-  console.log('⚠️  No extension XCBuildConfiguration blocks were patched.');
+  console.error('⚠️  No extension XCBuildConfiguration blocks were patched.');
+  console.error('This means the signing will remain incorrect. Dumping diagnostic info:');
   console.log('Dumping all XCBuildConfiguration block starts that mention GrabDocsBroadcastUpload or Broadcast:');
   let dump = false;
   let dumpLines = [];
@@ -133,8 +135,11 @@ if (changed) {
           console.log(dumpLines.slice(0, 20).join('\n'));
           console.log('---');
         }
-        dump = false;
-      }
+      dump = false;
     }
   }
+  // Exit non-zero so the build fails clearly with our diagnostic output
+  // (automatic signing via xcargs is the real fix, but we want to know if this happens)
+  process.exit(1);
+}
 }
