@@ -64,21 +64,28 @@ for (let i = 0; i < lines.length; i++) {
         const originalBlock = blockLines.join('\n');
         let patchedBlock = originalBlock;
 
-        // 1. Set PROVISIONING_PROFILE to the extension UUID
+        // 1. Set or add PROVISIONING_PROFILE to the extension UUID (manual signing by UUID)
         if (/PROVISIONING_PROFILE = "[^"]*";/.test(patchedBlock)) {
           patchedBlock = patchedBlock.replace(
             /PROVISIONING_PROFILE = "[^"]*";/g,
             `PROVISIONING_PROFILE = "${extUUID}";`
           );
         } else {
-          // Insert it before the closing }; of buildSettings
-          patchedBlock = patchedBlock.replace(
-            /(\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "[^"]*";)/,
-            `$1\n\t\t\t\tPROVISIONING_PROFILE = "${extUUID}";`
-          );
+          // Block has SPECIFIER but no PROVISIONING_PROFILE — add after CODE_SIGN_STYLE or PRODUCT_BUNDLE_IDENTIFIER
+          if (/CODE_SIGN_STYLE = Manual;/.test(patchedBlock)) {
+            patchedBlock = patchedBlock.replace(
+              /(CODE_SIGN_STYLE = Manual;)/,
+              `$1\n\t\t\t\tPROVISIONING_PROFILE = "${extUUID}";`
+            );
+          } else {
+            patchedBlock = patchedBlock.replace(
+              /(\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "[^"]*";)/,
+              `$1\n\t\t\t\tPROVISIONING_PROFILE = "${extUUID}";`
+            );
+          }
         }
 
-        // 2. Clear PROVISIONING_PROFILE_SPECIFIER (EAS sets this to the main app profile name)
+        // 2. Clear PROVISIONING_PROFILE_SPECIFIER so Xcode uses PROVISIONING_PROFILE (UUID) only
         patchedBlock = patchedBlock.replace(
           /PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/g,
           'PROVISIONING_PROFILE_SPECIFIER = "";'
@@ -138,8 +145,7 @@ if (changed) {
       dump = false;
     }
   }
-  // Exit non-zero so the build fails clearly with our diagnostic output
-  // (automatic signing via xcargs is the real fix, but we want to know if this happens)
+  // Exit non-zero so we get diagnostic output; skip_profile_detection + Gymfile UUIDs may still allow build to succeed
   process.exit(1);
 }
 }

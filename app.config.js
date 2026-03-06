@@ -215,7 +215,8 @@ const config = {
   expo: {
     ...baseExpo,
     plugins,
-    runtimeVersion: baseExpo.version,
+    // Explicit fallback so EAS never resolves runtimeVersion as undefined
+    runtimeVersion: baseExpo.version || versions.version || "1.0.14",
     updates: {
       url: "https://u.expo.dev/341d1cdf-5759-41ef-8ae3-36e4cf7fab00",
     },

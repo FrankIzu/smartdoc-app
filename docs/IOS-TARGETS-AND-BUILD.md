@@ -18,6 +18,10 @@ Names are **case-sensitive** and must match exactly: `GrabDocs` and `GrabDocsBro
 
 **No.** The iOS build only compiles the app and extension; it does not call your API. Deploy the backend when you want the **running app** (after install) to talk to that environment.
 
+## If EAS assigns the same provisioning profile to both targets
+
+If build logs show the **same** provisioning profile being assigned to both `GrabDocs` and `GrabDocsBroadcastUpload`, EAS has only one profile stored. See **[EAS-IOS-EXTENSION-CREDENTIALS-FIX.md](./EAS-IOS-EXTENSION-CREDENTIALS-FIX.md)** for how to delete iOS credentials and force EAS to create a separate profile for the extension.
+
 ## If “Unable to find host target(s) for GrabDocsBroadcastUpload” still appears
 
 1. In the GitHub Actions run, open the **“Verify Podfile and install Pods”** step and check:
