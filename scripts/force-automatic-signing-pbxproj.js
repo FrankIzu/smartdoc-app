@@ -23,12 +23,14 @@ function forceAutomaticSigningInPbxForBundleId(pbx, bundleId, defaultTeamId) {
     'g'
   );
   return pbx.replace(blockRe, (_, bundleLine, restOfBuildSettings, closing) => {
+    // Remove any line containing these keys (EAS may inject PROVISIONING_PROFILE_SPECIFIER
+    // with values like *[expo]...; must strip so Xcode uses true automatic signing).
     let rest = restOfBuildSettings
-      .replace(/\s*CODE_SIGN_STYLE = "[^"]*";\s*\n?/g, '')
-      .replace(/\s*CODE_SIGNING_ALLOWED = "[^"]*";\s*\n?/g, '')
-      .replace(/\s*PROVISIONING_PROFILE = "[^"]*";\s*\n?/g, '')
-      .replace(/\s*PROVISIONING_PROFILE_SPECIFIER = "[^"]*";\s*\n?/g, '')
-      .replace(/\s*CODE_SIGN_IDENTITY = "[^"]*";\s*\n?/g, '');
+      .replace(/\s*CODE_SIGN_STYLE = [^\n]*\n?/g, '')
+      .replace(/\s*CODE_SIGNING_ALLOWED = [^\n]*\n?/g, '')
+      .replace(/\s*PROVISIONING_PROFILE = [^\n]*\n?/g, '')
+      .replace(/\s*PROVISIONING_PROFILE_SPECIFIER = [^\n]*\n?/g, '')
+      .replace(/\s*CODE_SIGN_IDENTITY = [^\n]*\n?/g, '');
     rest = rest.trimEnd() + '\n\t\t\t\tCODE_SIGN_STYLE = "Automatic";\n\t\t\t\tCODE_SIGNING_ALLOWED = "YES";\n\t\t';
     if (defaultTeamId && !rest.includes('DEVELOPMENT_TEAM')) {
       rest = rest.trimEnd() + '\n\t\t\t\tDEVELOPMENT_TEAM = "' + defaultTeamId + '";\n\t\t\t';
