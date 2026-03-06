@@ -6,7 +6,7 @@
  * Same logic as plugins/ios-hms-screenshare.js forceAutomaticSigningInPbxForBundleId.
  *
  * Usage: node scripts/force-automatic-signing-pbxproj.js [path/to/project.pbxproj]
- * Default path: ios/*/project.pbxproj (first match).
+ * Default path: ios/<app>.xcodeproj/project.pbxproj (first match).
  */
 
 const fs = require('fs');
