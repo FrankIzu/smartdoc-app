@@ -309,6 +309,7 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
               // Use Automatic signing so Xcode picks the profile we install (run script) by bundle ID.
               // Manual + PROVISIONING_PROFILE failed in EAS local (HOME/temp isolation); Automatic finds the profile in the standard dir.
               buildConfig.buildSettings.CODE_SIGN_STYLE = '"Automatic"';
+              buildConfig.buildSettings.CODE_SIGNING_ALLOWED = '"YES"';
               buildConfig.buildSettings.DEVELOPMENT_TEAM = '"Q33K3Q7Q53"';
               if (buildConfig.buildSettings.PROVISIONING_PROFILE) delete buildConfig.buildSettings.PROVISIONING_PROFILE;
               if (buildConfig.buildSettings.PROVISIONING_PROFILE_SPECIFIER) delete buildConfig.buildSettings.PROVISIONING_PROFILE_SPECIFIER;
@@ -316,6 +317,60 @@ function withBroadcastExtensionTarget(config, { extensionName }) {
           }
         }
       }
+    }
+
+    return config;
+  });
+}
+
+/**
+ * Enforce Automatic signing for every native target's build configurations.
+ * Iterates all targets (GrabDocs, GrabDocsBroadcastUpload, any future ones) so we
+ * are not dependent on bundle IDs or target names. Prevents Expo regeneration
+ * from reintroducing manual signing.
+ */
+function withForceAllTargetsAutomaticSigning(config) {
+  return withXcodeProject(config, async (config) => {
+    const project = config.modResults;
+    const nativeTargetSection = project.pbxNativeTargetSection && project.pbxNativeTargetSection();
+    const configSection = project.pbxXCBuildConfigurationSection && project.pbxXCBuildConfigurationSection();
+    const configListSection = project.pbxXCConfigurationList && project.pbxXCConfigurationList();
+
+    if (!nativeTargetSection || !configSection || !configListSection) {
+      return config;
+    }
+
+    const targetEntries = Object.values(nativeTargetSection);
+    let touched = 0;
+
+    for (const target of targetEntries) {
+      if (!target || !target.buildConfigurationList) continue;
+
+      const configListUuid = target.buildConfigurationList;
+      const configListEntry = configListSection[configListUuid];
+      if (!configListEntry || !configListEntry.buildConfigurations) continue;
+
+      const configUuids = configListEntry.buildConfigurations.map((c) =>
+        typeof c === 'object' && c != null && 'value' in c ? c.value : c
+      );
+
+      for (const uuid of configUuids) {
+        const buildConfig = configSection[uuid];
+        if (!buildConfig || !buildConfig.buildSettings) continue;
+
+        const settings = buildConfig.buildSettings;
+        settings.CODE_SIGN_STYLE = '"Automatic"';
+        settings.CODE_SIGNING_ALLOWED = '"YES"';
+        if (settings.PROVISIONING_PROFILE !== undefined) delete settings.PROVISIONING_PROFILE;
+        if (settings.PROVISIONING_PROFILE_SPECIFIER !== undefined) delete settings.PROVISIONING_PROFILE_SPECIFIER;
+        if (settings.CODE_SIGN_IDENTITY !== undefined) delete settings.CODE_SIGN_IDENTITY;
+        if (!settings.DEVELOPMENT_TEAM) settings.DEVELOPMENT_TEAM = '"Q33K3Q7Q53"';
+        touched++;
+      }
+    }
+
+    if (touched > 0) {
+      console.log('[ios-hms-screenshare] ✅ Forced CODE_SIGN_STYLE = Automatic for all', touched, 'build configuration(s) across all native targets');
     }
 
     return config;
@@ -689,15 +744,46 @@ function forceExtensionAutomaticSigningInPbx(pbx, extensionName) {
   return pbx.replace(blockRe, (_, bundleLine, restOfBuildSettings, closing) => {
     let rest = restOfBuildSettings
       .replace(/\s*CODE_SIGN_STYLE = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*CODE_SIGNING_ALLOWED = "[^"]*";\s*\n?/g, '')
       .replace(/\s*PROVISIONING_PROFILE = "[^"]*";\s*\n?/g, '')
       .replace(/\s*PROVISIONING_PROFILE_SPECIFIER = "[^"]*";\s*\n?/g, '')
-      .replace(/\s*CODE_SIGN_IDENTITY = "Apple Distribution";\s*\n?/g, '');
-    rest = rest.trimEnd() + '\n\t\t\t\tCODE_SIGN_STYLE = "Automatic";\n\t\t';
+      .replace(/\s*CODE_SIGN_IDENTITY = "[^"]*";\s*\n?/g, '');
+    rest = rest.trimEnd() + '\n\t\t\t\tCODE_SIGN_STYLE = "Automatic";\n\t\t\t\tCODE_SIGNING_ALLOWED = "YES";\n\t\t';
     if (!rest.includes('DEVELOPMENT_TEAM')) {
       rest = rest.trimEnd() + '\n\t\t\t\tDEVELOPMENT_TEAM = "Q33K3Q7Q53";\n\t\t\t';
     }
     return bundleLine + rest + closing;
   });
+}
+
+/**
+ * Force a target's build configurations to Automatic signing and remove manual
+ * profile keys. Used for both main app and extension (single-profile strategy).
+ */
+function forceAutomaticSigningInPbxForBundleId(pbx, bundleId, defaultTeamId) {
+  const escaped = bundleId.replace(/\./g, '\\.');
+  const blockRe = new RegExp(
+    '(PRODUCT_BUNDLE_IDENTIFIER = "' + escaped + '";)([\\s\\S]*?)(\\n\\s*\\};)',
+    'g'
+  );
+  return pbx.replace(blockRe, (_, bundleLine, restOfBuildSettings, closing) => {
+    let rest = restOfBuildSettings
+      .replace(/\s*CODE_SIGN_STYLE = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*CODE_SIGNING_ALLOWED = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*PROVISIONING_PROFILE = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*PROVISIONING_PROFILE_SPECIFIER = "[^"]*";\s*\n?/g, '')
+      .replace(/\s*CODE_SIGN_IDENTITY = "[^"]*";\s*\n?/g, '');
+    rest = rest.trimEnd() + '\n\t\t\t\tCODE_SIGN_STYLE = "Automatic";\n\t\t\t\tCODE_SIGNING_ALLOWED = "YES";\n\t\t';
+    if (defaultTeamId && !rest.includes('DEVELOPMENT_TEAM')) {
+      rest = rest.trimEnd() + '\n\t\t\t\tDEVELOPMENT_TEAM = "' + defaultTeamId + '";\n\t\t\t';
+    }
+    return bundleLine + rest + closing;
+  });
+}
+
+/** Force main app target to Automatic signing (single-profile strategy). */
+function forceMainAppAutomaticSigningInPbx(pbx) {
+  return forceAutomaticSigningInPbxForBundleId(pbx, 'com.grabdocs.mobile', 'Q33K3Q7Q53');
 }
 
 /**
@@ -845,9 +931,10 @@ function withPbxprojExtensionTargetDependency(config, { extensionName }) {
       // file ref must be in a group that's in the project hierarchy. Ensure it's in Products.
       pbx = ensureAppexInProductsGroup(pbx, extensionName);
 
-      // NOTE: do NOT force Automatic signing here. EAS credentials are now registered for
-      // com.grabdocs.mobile.GrabDocsBroadcastUpload via `eas credentials --platform ios`.
-      // EAS will correctly set Manual signing + the extension provisioning profile during build.
+      // Single-profile strategy: force Automatic signing for both targets so Xcode
+      // manages provisioning; no manual profile mapping (avoids CI credential breakage).
+      pbx = forceMainAppAutomaticSigningInPbx(pbx);
+      pbx = forceExtensionAutomaticSigningInPbx(pbx, extensionName);
 
       fs.writeFileSync(pbxPath, pbx);
       console.log('[ios-hms-screenshare] ✅ project.pbxproj: added extension as dependency of main target');
@@ -1017,8 +1104,9 @@ function withHmsScreenshareExtension(config, options = {}) {
   const podfileOpts = { extensionName };
   config = withBroadcastExtensionFiles(config, { appGroup, extensionName });
   config = withBroadcastExtensionTarget(config, { appGroup, extensionName });
+  config = withForceAllTargetsAutomaticSigning(config);
   config = withPbxprojExtensionTargetDependency(config, podfileOpts);
-  config = withExtensionProfileInstallPhase(config, { extensionName });
+  // No Install Extension Profile phase: single-profile strategy uses Xcode Automatic Signing.
   config = withPodfileEntry(config, podfileOpts);
   // Disk-level safety net: runs after withPodfile in Expo's pipeline; re-checks and re-patches if needed.
   config = withPodfilePatchOnDisk(config, podfileOpts);

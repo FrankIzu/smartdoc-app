@@ -64,49 +64,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Extension signing: We use EXT_PROVISIONING_PROFILE_BASE64 + eas-build-post-install.
-      # The post-install script installs the profile and patches project.pbxproj AFTER EAS
-      # credential manager runs, so no Mac or eas credentials needed for the extension.
-
-      # ios/ is NOT in .easignore; we prebuild+patch in CI. The plugin ios-hms-screenshare
-      # creates the Broadcast Upload Extension and patches the Podfile (nested target).
-      - name: Install extension provisioning profile (App Groups)
-        id: ext_profile
-        run: |
-          # EAS local build does not install extension profiles; Xcode needs the
-          # GrabDocsBroadcastUpload profile (with App Groups) so the extension target can sign.
-          # The profile MUST have App Groups capability and include group.com.grabdocs.mobile.
-          if [ -z "$EXT_PROVISIONING_PROFILE_BASE64" ]; then
-            echo "::error::EXT_PROVISIONING_PROFILE_BASE64 secret is not set. Add the base64-encoded GrabDocsBroadcastUpload .mobileprovision (with App Groups) as a GitHub secret."
-            exit 1
-          fi
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          FALLBACK_UUID="f5a9c6da-0810-4a56-8963-3cb9894f83a1"
-          mkdir -p "$PROFILE_DIR"
-          echo "$EXT_PROVISIONING_PROFILE_BASE64" | tr -d '\n' | base64 --decode > /tmp/ext.mobileprovision
-          if [ ! -s /tmp/ext.mobileprovision ]; then
-            echo "::error::Failed to decode EXT_PROVISIONING_PROFILE_BASE64 (empty or invalid base64). Ensure the secret is a single line, no line breaks."
-            exit 1
-          fi
-          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-          if [ -n "$UUID" ] && [ "${#UUID}" -eq 36 ] && echo "$UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
-            cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
-            echo "✅ Installed extension profile: $UUID"
-          else
-            cp /tmp/ext.mobileprovision "$PROFILE_DIR/$FALLBACK_UUID.mobileprovision"
-            echo "✅ Installed extension profile (fallback UUID: $FALLBACK_UUID)"
-            UUID="$FALLBACK_UUID"
-          fi
-          # Fail fast if the profile does not have App Groups (required for extension signing).
-          if ! security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:com.apple.security.application-groups' /dev/stdin 2>/dev/null | grep -q .; then
-            echo "::error::The provisioning profile in EXT_PROVISIONING_PROFILE_BASE64 does NOT have App Groups. In Apple Developer: App ID com.grabdocs.mobile.GrabDocsBroadcastUpload -> Capabilities -> enable App Groups and add group.com.grabdocs.mobile. Then create a new provisioning profile and update the secret."
-            exit 1
-          fi
-          echo "✅ Profile has App Groups entitlement"
-          echo "EXT_PROVISIONING_PROFILE=/tmp/ext.mobileprovision" >> "$GITHUB_ENV"
-          echo "EXT_PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
-        env:
-          EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
+      # Single-profile signing: plugin sets CODE_SIGN_STYLE = Automatic for both app and
+      # extension; EAS configure_ios_credentials creates profiles. No EXT_PROVISIONING_PROFILE_BASE64.
 
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.15.2
@@ -146,35 +105,30 @@ jobs:
           echo "----- END PODFILE -----"
           cd ios && pod install --repo-update
 
-      - name: Set extension provisioning profile UUID in project
-        run: |
-          # Plugin hardcodes a UUID; Xcode must use the actual UUID of the profile we installed.
-          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
-          if [ -z "$PBXPROJ" ] || [ ! -f /tmp/ext.mobileprovision ]; then
-            echo "Skipping extension profile UUID patch (no project or no profile)"
-            exit 0
-          fi
-          UUID=$(security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
-            echo "Could not extract UUID from extension profile; project will use plugin default."
-            exit 0
-          fi
-          # Replace hardcoded extension PROVISIONING_PROFILE with the profile's real UUID (only in extension target context).
-          sed -i '' "s/PROVISIONING_PROFILE = \"f5a9c6da-0810-4a56-8963-3cb9894f83a1\"/PROVISIONING_PROFILE = \"$UUID\"/g" "$PBXPROJ"
-          echo "✅ Set extension PROVISIONING_PROFILE to $UUID"
-
       - name: Dump extension signing state before EAS build
         run: |
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
           if [ -n "$PBXPROJ" ]; then
-            echo "===== Extension XCBuildConfiguration entries ====="
+            echo "===== Extension XCBuildConfiguration (expect CODE_SIGN_STYLE = Automatic) ====="
             grep -A 20 "GrabDocsBroadcastUpload" "$PBXPROJ" | grep -E "CODE_SIGN_STYLE|PROVISIONING_PROFILE|DEVELOPMENT_TEAM|CODE_SIGN_IDENTITY" || echo "(none found)"
-            echo "===== Provisioning profiles installed ====="
-            ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null | head -20 || echo "(none)"
-            echo "===== Extension profile bundle ID ====="
-            security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Name' /dev/stdin 2>/dev/null || echo "(could not read)"
-            security cms -D -i /tmp/ext.mobileprovision 2>/dev/null | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || echo "(could not read)"
           fi
+
+      - name: Verify signing settings (plugin worked)
+        run: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -z "$PBXPROJ" ]; then
+            echo "project.pbxproj not found, skipping"
+            exit 0
+          fi
+          echo "===== CODE_SIGN / PROVISIONING_PROFILE / DEVELOPMENT_TEAM in project.pbxproj ====="
+          grep -E "CODE_SIGN|PROVISIONING_PROFILE|DEVELOPMENT_TEAM" "$PBXPROJ" || true
+          echo "===== Expect: CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ... ====="
+          echo "===== Must NOT see: PROVISIONING_PROFILE, PROVISIONING_PROFILE_SPECIFIER, CODE_SIGN_IDENTITY ====="
+          if grep -E "^\s*PROVISIONING_PROFILE\s*=|^\s*PROVISIONING_PROFILE_SPECIFIER\s*=|^\s*CODE_SIGN_IDENTITY\s*=" "$PBXPROJ" 2>/dev/null; then
+            echo "::error::Manual signing keys still present; plugin may not have run or was overwritten."
+            exit 1
+          fi
+          echo "✅ No manual signing keys found"
 
       # Re-apply pbxproj fix and verify before EAS (patched ios/ is used; no prebuildCommand).
       - name: Re-apply pbxproj undefined fix (before EAS)
@@ -280,8 +234,6 @@ jobs:
           exit "${PIPESTATUS[0]:-0}"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXT_PROVISIONING_PROFILE: /tmp/ext.mobileprovision
-          EXT_PROFILE_UUID: ${{ env.EXT_PROFILE_UUID }}
           EAS_DANGEROUS_OVERRIDE_IOS_BUNDLE_IDENTIFIER: "com.grabdocs.mobile"
           HOME: ${{ env.HOME || '/Users/runner' }}
           EXPO_DEBUG: "1"

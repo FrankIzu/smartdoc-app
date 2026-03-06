@@ -1,5 +1,5 @@
 build:
-  name: iOS Production (with extension profile)
+  name: iOS Production (single-profile automatic signing)
   steps:
     - eas/checkout
     - eas/install_node_modules
@@ -12,6 +12,9 @@ build:
     - run:
         name: Patch Podfile for GrabDocsBroadcastUpload extension
         command: node scripts/ensure-podfile-extension.js && node scripts/ensure-pbxproj-embed-phase.js
+    - run:
+        name: Ensure extension entitlements have App Group
+        command: node scripts/ensure-extension-entitlements.js
     - run:
         name: Install CocoaPods dependencies
         command: cd ios && pod install
@@ -30,184 +33,25 @@ build:
     - eas/configure_eas_update
     - eas/configure_ios_credentials
     - run:
-        name: Install GrabDocsBroadcastUpload provisioning profile (after EAS credentials)
+        name: Write Gymfile (single-profile automatic signing; no provisioningProfiles)
         command: |
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILE_DIR"
-
-          echo "=== Profiles installed by EAS configure_ios_credentials ==="
-          ls -la "$PROFILE_DIR/" 2>/dev/null || echo "(none)"
-          echo "==========================================================="
-
-          # EXT_PROVISIONING_PROFILE is set by GitHub Actions to /tmp/ext.mobileprovision
-          if [ -n "$EXT_PROVISIONING_PROFILE" ] && [ -f "$EXT_PROVISIONING_PROFILE" ]; then
-            [ "$EXT_PROVISIONING_PROFILE" != "/tmp/ext.mobileprovision" ] && cp "$EXT_PROVISIONING_PROFILE" /tmp/ext.mobileprovision
-            echo "Using extension profile from path: $EXT_PROVISIONING_PROFILE"
-          elif [ -n "$EXT_PROVISIONING_PROFILE" ]; then
-            echo "$EXT_PROVISIONING_PROFILE" | base64 --decode > /tmp/ext.mobileprovision
-            echo "Decoded extension profile from base64"
-          else
-            echo "::error::EXT_PROVISIONING_PROFILE not set."
-            exit 1
-          fi
-
-          if [ ! -s /tmp/ext.mobileprovision ]; then
-            echo "::error::Extension profile is empty or invalid."
-            exit 1
-          fi
-
-          # Extract UUID via temp plist (PlistBuddy reading from stdin fails in this environment)
-          security cms -D -i /tmp/ext.mobileprovision -o /tmp/ext.plist 2>/dev/null || true
-          RAW_UUID=""
-          if [ -f /tmp/ext.plist ]; then
-            RAW_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /tmp/ext.plist 2>/dev/null || true)
-          fi
-          if [ -n "$RAW_UUID" ] && echo "$RAW_UUID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
-            UUID="$RAW_UUID"
-            cp /tmp/ext.mobileprovision "$PROFILE_DIR/$UUID.mobileprovision"
-            echo "✅ Installed extension profile: $UUID"
-          else
-            cp /tmp/ext.mobileprovision "$PROFILE_DIR/GrabDocsBroadcastUpload.mobileprovision"
-            echo "⚠️  Could not extract UUID, installed with fixed name"
-          fi
-
-          echo "=== Profiles after installing extension profile ==="
-          ls -la "$PROFILE_DIR/" 2>/dev/null
-          echo "==================================================="
-    - run:
-        name: Set extension provisioning profile UUID in project (after credentials)
-        command: |
-          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
-          if [ -z "$PBXPROJ" ]; then
-            echo "project.pbxproj not found, skipping"
-            exit 0
-          fi
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          UUID=""
-
-          # Prefer UUID from /tmp/ext.mobileprovision via temp plist (stdin pipe fails in EAS)
-          if [ -f /tmp/ext.mobileprovision ]; then
-            security cms -D -i /tmp/ext.mobileprovision -o /tmp/ext.plist 2>/dev/null || true
-            if [ -f /tmp/ext.plist ]; then
-              UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /tmp/ext.plist 2>/dev/null || true)
-              echo "UUID from /tmp/ext.mobileprovision (plist): $UUID"
-            fi
-          fi
-
-          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
-            for profile in "$PROFILE_DIR"/*.mobileprovision; do
-              [ -f "$profile" ] || continue
-              security cms -D -i "$profile" -o /tmp/check.plist 2>/dev/null || continue
-              APP_ID=$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /tmp/check.plist 2>/dev/null || true)
-              if echo "$APP_ID" | grep -q "$EXT_BUNDLE"; then
-                UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /tmp/check.plist 2>/dev/null || true)
-                echo "Found extension profile UUID from $profile: $UUID"
-                break
-              fi
-            done
-          fi
-
-          if [ -z "$UUID" ] || [ "${#UUID}" -ne 36 ]; then
-            echo "⚠️  Could not find extension profile UUID; pbxproj not patched"
-            exit 0
-          fi
-
-          # Use node script to patch all XCBuildConfiguration blocks for the extension target
-          node scripts/patch-ext-profile.js "$PBXPROJ" "$UUID"
-
-          echo "=== PROVISIONING_PROFILE lines after patch ==="
-          grep "PROVISIONING_PROFILE" "$PBXPROJ" | grep -v "SPECIFIER" || true
-    - run:
-        name: Write Gymfile with explicit provisioning profiles for both targets
-        command: |
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          MAIN_BUNDLE="com.grabdocs.mobile"
-          EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
-          MAIN_UUID=""
-          EXT_UUID=""
-          TEAM_ID=""
-
-          echo "=== Installed provisioning profiles ==="
-          ls -la "$PROFILE_DIR/" 2>/dev/null || echo "(none installed)"
-          echo "======================================="
-
-          for profile in "$PROFILE_DIR"/*.mobileprovision; do
-            [ -f "$profile" ] || continue
-            PLIST=$(security cms -D -i "$profile" 2>/dev/null) || continue
-            APP_ID=$(printf '%s' "$PLIST" | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || true)
-            UUID_VAL=$(printf '%s' "$PLIST" | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
-            TEAM_VAL=$(printf '%s' "$PLIST" | /usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' /dev/stdin 2>/dev/null || true)
-            echo "  profile=$profile  app-id=$APP_ID  uuid=$UUID_VAL  team=$TEAM_VAL"
-            # Exact match for main bundle (ends with com.grabdocs.mobile, no extension suffix)
-            if echo "$APP_ID" | grep -qE '\.com\.grabdocs\.mobile$'; then
-              MAIN_UUID="$UUID_VAL"
-              TEAM_ID="$TEAM_VAL"
-            elif echo "$APP_ID" | grep -q 'GrabDocsBroadcastUpload'; then
-              EXT_UUID="$UUID_VAL"
-            fi
-          done
-
-          # Fallback: extension from /tmp/ext.mobileprovision (temp plist for reliability)
-          if [ -z "$EXT_UUID" ] && [ -f /tmp/ext.mobileprovision ]; then
-            security cms -D -i /tmp/ext.mobileprovision -o /tmp/ext.plist 2>/dev/null || true
-            [ -f /tmp/ext.plist ] && EXT_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /tmp/ext.plist 2>/dev/null || true)
-            echo "Extension UUID from /tmp/ext.mobileprovision: $EXT_UUID"
-          fi
-
-          echo "Main app UUID : $MAIN_UUID"
-          echo "Extension UUID: $EXT_UUID"
-          echo "Team ID       : $TEAM_ID"
-
-          if [ -z "$MAIN_UUID" ]; then
-            echo "::error::Main app provisioning profile not found in $PROFILE_DIR"
-            exit 1
-          fi
-          if [ -z "$EXT_UUID" ]; then
-            echo "::error::Extension provisioning profile not found. Ensure EXT_PROVISIONING_PROFILE_BASE64 secret is valid."
-            exit 1
-          fi
-
-          # Write Gymfile to ios/ directory (where Fastlane runs)
-          # Gymfile DSL: top-level options, no gym() wrapper
+          # Single-profile strategy: no manual profile mapping; Xcode Automatic Signing
+          # uses EAS-generated distribution cert and profiles for both app and extension.
           GYMFILE="ios/Gymfile"
           printf 'workspace "./GrabDocs.xcworkspace"\n' > "$GYMFILE"
           printf 'scheme "GrabDocs"\n' >> "$GYMFILE"
           printf 'configuration "Release"\n' >> "$GYMFILE"
           printf 'clean false\n' >> "$GYMFILE"
-          printf '\n' >> "$GYMFILE"
           printf 'export_method "app-store"\n' >> "$GYMFILE"
-          printf 'export_team_id "%s"\n' "$TEAM_ID" >> "$GYMFILE"
-          printf '\n' >> "$GYMFILE"
+          printf 'export_team_id "Q33K3Q7Q53"\n' >> "$GYMFILE"
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
-          printf '\n' >> "$GYMFILE"
-          # Use our explicit UUID mapping; do not let gym overwrite with project specifiers
-          printf 'skip_profile_detection true\n' >> "$GYMFILE"
-          printf '\n' >> "$GYMFILE"
-          printf 'export_options(\n' >> "$GYMFILE"
-          printf '  provisioningProfiles: {\n' >> "$GYMFILE"
-          printf '    "%s" => "%s",\n' "$MAIN_BUNDLE" "$MAIN_UUID" >> "$GYMFILE"
-          printf '    "%s" => "%s"\n' "$EXT_BUNDLE" "$EXT_UUID" >> "$GYMFILE"
-          printf '  }\n' >> "$GYMFILE"
-          printf ')\n' >> "$GYMFILE"
-
-          echo "=== Gymfile written to $GYMFILE ==="
+          echo "=== Gymfile (no provisioningProfiles) ==="
           cat "$GYMFILE"
-          echo "===================================="
     - run:
         name: Run Fastlane gym
         command: |
           cd ios
           mkdir -p build
-          echo "=== Final Gymfile ==="
-          cat Gymfile
-          echo "===================="
-          echo "=== PROVISIONING_PROFILE in project.pbxproj ==="
-          grep "PROVISIONING_PROFILE" GrabDocs.xcodeproj/project.pbxproj | grep -v "SPECIFIER" || true
-          echo "=== PROVISIONING_PROFILE_SPECIFIER in project.pbxproj ==="
-          grep "PROVISIONING_PROFILE_SPECIFIER" GrabDocs.xcodeproj/project.pbxproj || true
-          echo "================================================"
           fastlane gym
     - eas/find_and_upload_build_artifacts

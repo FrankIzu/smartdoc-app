@@ -1,136 +1,150 @@
-# EAS iOS extension credentials fix
+# EAS iOS single-profile signing (app + Broadcast Extension)
 
-When EAS assigns the **same** provisioning profile to both the main app and the broadcast extension, builds fail because the extension needs its own profile. This guide forces EAS to register and use **separate** credentials for the extension.
+Both **com.grabdocs.mobile** and **com.grabdocs.mobile.GrabDocsBroadcastUpload** build correctly with screen sharing by using **Xcode Automatic Signing** for both targets. No manual provisioning profile mapping — which is what kept breaking CI.
 
-**Symptom in logs:**
-```text
-Assigning provisioning profile '*[expo] com.grabdocs.mobile AppStore...' to target 'GrabDocs'
-Assigning provisioning profile '*[expo] com.grabdocs.mobile AppStore...' to target 'GrabDocsBroadcastUpload'
-```
+## Overview
 
-EAS should show **two** profiles (one per target). If it shows one profile for both, follow the steps below.
+- **App** → Automatic signing  
+- **Extension** → Automatic signing  
+
+Same distribution certificate; Apple (and EAS) pick the correct provisioning profiles. No `EXT_PROVISIONING_PROFILE_BASE64` or profile UUID patching.
 
 ---
 
-## 1. Delete all iOS credentials from EAS
+## Step 1 — Clean out old credentials
 
-So EAS can regenerate credentials and create a **separate** profile for the extension.
+Remove all cached signing credentials from Expo so the next build starts fresh.
 
 1. Run:
    ```bash
    eas credentials -p ios
    ```
-2. In the interactive menu:
-   - Choose the **production** (or the profile you use for App Store) build profile.
-   - **Remove** the **Distribution certificate**.
-   - **Remove** the **Provisioning profile** (main app).
-   - If you see **Extension credentials** or any entry for `GrabDocsBroadcastUpload`, remove those too.
-3. Delete **everything** for that profile so the next build starts from a clean state.
-
-Result: EAS will have no stored iOS credentials for that profile and will create new ones (including for the extension) on the next build.
+2. Select **iOS** → **production** (or the profile you use for App Store).
+3. **Delete** for both **com.grabdocs.mobile** and **com.grabdocs.mobile.GrabDocsBroadcastUpload**:
+   - Distribution certificate
+   - Provisioning profile  
+4. Leave nothing in Expo credentials for that profile.
 
 ---
 
-## 2. Confirm extension bundle ID in the project
+## Step 2 — Verify Apple Developer configuration
 
-The extension must use bundle ID `com.grabdocs.mobile.GrabDocsBroadcastUpload`.
+1. Open [Identifiers](https://developer.apple.com/account/resources/identifiers/list).
 
-- **If you have an `ios` folder** (e.g. after running `npx expo prebuild`):
-  - Open `ios/GrabDocs.xcodeproj/project.pbxproj`.
-  - Search for `GrabDocsBroadcastUpload` and confirm:
-    ```text
-    PRODUCT_BUNDLE_IDENTIFIER = "com.grabdocs.mobile.GrabDocsBroadcastUpload";
-    ```
-  - If it says anything else, fix it (or fix the config plugin that generates it and run prebuild again).
+2. **Main app**  
+   - Identifier: `com.grabdocs.mobile`  
+   - Capabilities: **App Groups** → `group.com.grabdocs.mobile`
 
-- **If you don’t have `ios`** (managed workflow): the ID is set by the config plugin during prebuild. Step 3 and 4 ensure Expo/EAS know about the extension; the plugin writes the correct bundle ID when generating the Xcode project.
+3. **Broadcast extension**  
+   - Identifier: `com.grabdocs.mobile.GrabDocsBroadcastUpload`  
+   - Capabilities: **App Groups** → `group.com.grabdocs.mobile`, **Broadcast Upload Extension**  
+   - If **Broadcast Upload Extension** is missing, add it.
 
----
-
-## 3. Ensure Expo knows about the extension
-
-EAS must know about the extension **before** the Xcode project is generated, so it can create credentials for it. That’s done via `extra.eas.build.experimental.ios.appExtensions` in your app config.
-
-**This project already has it** in `app.config.js`:
-
-```javascript
-extra: {
-  eas: {
-    build: {
-      experimental: {
-        ios: {
-          appExtensions: [
-            {
-              targetName: "GrabDocsBroadcastUpload",
-              bundleIdentifier: "com.grabdocs.mobile.GrabDocsBroadcastUpload",
-              entitlements: {
-                "com.apple.security.application-groups": ["group.com.grabdocs.mobile"],
-              },
-            },
-          ],
-        },
-      },
-    },
-  },
-},
-```
-
-- **targetName**: must match the Xcode target name (`GrabDocsBroadcastUpload`).
-- **bundleIdentifier**: must be `com.grabdocs.mobile.GrabDocsBroadcastUpload`.
-- **entitlements**: must include the App Group used by the extension.
-
-If you ever change the extension name or bundle ID in the plugin, update this block to match. Without it, EAS will not generate a separate provisioning profile for the extension.
+4. **App Groups**  
+   - In **Identifiers → App Groups**, ensure `group.com.grabdocs.mobile` exists and is attached to both identifiers above.
 
 ---
 
-## 4. Regenerate credentials with a clean build
+## Step 3 — Entitlements (handled by project)
 
-After wiping credentials and confirming config:
+- **Extension**: `ios/GrabDocsBroadcastUpload/GrabDocsBroadcastUpload.entitlements`  
+  - Contains `com.apple.security.application-groups` → `group.com.grabdocs.mobile`  
+  - Created by the `ios-hms-screenshare` config plugin; `scripts/ensure-extension-entitlements.js` can fix/verify after prebuild.
 
-1. Run:
+- **Main app**: `ios/GrabDocs/GrabDocs.entitlements`  
+  - Also includes `com.apple.security.application-groups` → `group.com.grabdocs.mobile`  
+  - Set via `withAppGroupEntitlements` in the plugin.
+
+---
+
+## Step 4 — No manual signing in the project
+
+The config plugin and EAS build **do not** set:
+
+- `PROVISIONING_PROFILE`
+- `PROVISIONING_PROFILE_SPECIFIER`
+- `CODE_SIGN_IDENTITY`
+
+**CODE_SIGN_STYLE = Automatic** is enforced in `plugins/ios-hms-screenshare.js` in two ways:
+
+1. **All native targets**  
+   A `withXcodeProject` mod iterates every target from `pbxNativeTargetSection()`, and for each target’s build configuration list sets `CODE_SIGN_STYLE = Automatic` and strips manual signing keys. That covers **GrabDocs**, **GrabDocsBroadcastUpload**, and any other native targets regardless of name or bundle ID, and avoids Expo regeneration reintroducing manual signing.
+
+2. **Bundle-ID safety net**  
+   The `withPbxprojExtensionTargetDependency` (dangerous mod) also forces automatic signing for the main app and extension bundle IDs when it writes `project.pbxproj`, so both targets stay correct even if the project structure changes.
+
+---
+
+## Step 5 — Gymfile (no profile mapping)
+
+The EAS build workflow (`.eas/build/ios-production.yml`) writes a minimal Gymfile:
+
+- `workspace`, `scheme`, `configuration`, `clean false`
+- `export_method "app-store"`
+- `export_team_id "Q33K3Q7Q53"`
+- `output_directory`, `output_name`
+
+**No** `skip_profile_detection`, **no** `export_options(provisioningProfiles: ...)`.
+
+---
+
+## Step 6 — Clear EAS cache and build
+
+1. Clear cache and build:
    ```bash
-   eas build -p ios --profile production --clear-cache
+   eas build --platform ios --profile production --clear-cache
    ```
-   (Use your actual profile name if different, e.g. `preview`.)
+2. Or from CI (e.g. GitHub Actions): no `EXT_PROVISIONING_PROFILE_BASE64` secret; workflow runs prebuild and EAS handles credentials.
 
-2. During credential setup, EAS should show that it detected the extension and is creating a profile for it, for example:
-   - “Detected extension target: GrabDocsBroadcastUpload”
-   - “Creating provisioning profile for: com.grabdocs.mobile.GrabDocsBroadcastUpload”
+Expo/EAS will:
 
-3. If it **still** assigns the same profile to both targets, try once:
-   ```bash
-   eas build -p ios --profile production --clear-cache --non-interactive
-   ```
-   so EAS doesn’t reuse a cached credential mapping.
+- Create or use the distribution certificate
+- Create provisioning profiles for app and extension
+- Use automatic signing for both targets
 
 ---
 
-## 5. If the extension isn’t in the generated `ios` folder
+## Step 7 — Verify in logs
 
-EAS only sees the extension if it exists in the Xcode project. The project is generated by **prebuild** (during the EAS build or locally).
+After the build starts you should see logs like:
 
-1. Check that the extension target and folder exist **after** prebuild:
-   - In EAS build logs: look for the step that runs prebuild, then the step that runs “Patch Podfile for GrabDocsBroadcastUpload” (or similar). After that, the project should contain the extension.
-   - Locally: run prebuild and then look for `ios/GrabDocsBroadcastUpload/` and the `GrabDocsBroadcastUpload` target in `ios/GrabDocs.xcodeproj/project.pbxproj`.
+- `Using Automatic signing for target GrabDocs`
+- `Using Automatic signing for target GrabDocsBroadcastUpload`
 
-2. If the extension is missing:
-   - Run a **clean** prebuild locally:
-     ```bash
-     npx expo prebuild --platform ios --clean
-     ```
-   - Confirm that `ios/GrabDocsBroadcastUpload/` exists and that the plugin didn’t error.
-   - Then run the EAS build again (step 4). On EAS, prebuild runs with the same config, so the extension should appear there too.
+You should **not** see “Detected provisioning profile mapping” or manual profile UUID assignment for the extension.
 
 ---
 
-## Summary checklist
+## Expected result
 
-| Step | Action |
-|------|--------|
-| 1 | Run `eas credentials -p ios` and **remove all** iOS credentials (certificate, provisioning profile, extension credentials) for the build profile you use. |
-| 2 | Confirm in `ios/.../project.pbxproj` (if present) that `PRODUCT_BUNDLE_IDENTIFIER` for the extension is `com.grabdocs.mobile.GrabDocsBroadcastUpload`. |
-| 3 | Confirm `app.config.js` has `extra.eas.build.experimental.ios.appExtensions` with `GrabDocsBroadcastUpload` and bundle ID `com.grabdocs.mobile.GrabDocsBroadcastUpload`. |
-| 4 | Run `eas build -p ios --profile production --clear-cache` (and optionally `--non-interactive` if the mapping is still wrong). |
-| 5 | If the extension isn’t in the generated project, run `npx expo prebuild --platform ios --clean` and verify `ios/GrabDocsBroadcastUpload/`, then rebuild. |
+- Build succeeds without “profile doesn’t include certificate”, “profile doesn’t support app group”, or “profile mismatch”.
+- Screen share keeps working: entitlements, app group, and Broadcast Upload Extension capability are correct. Signing method does not change runtime behaviour.
 
-After this, EAS credentials should contain **two** profiles (main app + extension), and the build should assign the correct profile to each target.
+---
+
+## Common mistakes
+
+1. **App group missing from extension identifier**  
+   Most common cause of failure. Ensure `com.grabdocs.mobile.GrabDocsBroadcastUpload` has **App Groups** and **Broadcast Upload Extension**, and that `group.com.grabdocs.mobile` is attached.
+
+2. **Old profiles cached by Expo**  
+   Run `eas credentials -p ios`, delete credentials for the build profile, then build with `--clear-cache`.
+
+3. **Manual profile specifiers left in project**  
+   Any `PROVISIONING_PROFILE` or `PROVISIONING_PROFILE_SPECIFIER` in `project.pbxproj` can break automatic signing. The plugin strips these for both targets at prebuild.
+
+---
+
+## Architecture summary
+
+**Apple Developer**
+
+- Distribution certificate  
+- App ID: `com.grabdocs.mobile`  
+- App ID: `com.grabdocs.mobile.GrabDocsBroadcastUpload`  
+- App Group: `group.com.grabdocs.mobile`  
+
+**Xcode / EAS**
+
+- Both targets: **CODE_SIGN_STYLE = Automatic**
+- EAS generates distribution certificate and provisioning profiles; Xcode uses them automatically.
