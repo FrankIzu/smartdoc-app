@@ -85,10 +85,16 @@ for (let i = 0; i < lines.length; i++) {
           }
         }
 
-        // 2. Clear PROVISIONING_PROFILE_SPECIFIER so Xcode uses PROVISIONING_PROFILE (UUID) only
+        // 2. Remove PROVISIONING_PROFILE_SPECIFIER entirely so Xcode uses PROVISIONING_PROFILE (UUID) only.
+        // Setting to "" can leave Xcode using the wrong profile; delete the line.
         patchedBlock = patchedBlock.replace(
-          /PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/g,
-          'PROVISIONING_PROFILE_SPECIFIER = "";'
+          /\s*PROVISIONING_PROFILE_SPECIFIER = "[^"]*";\s*\n?/g,
+          ''
+        );
+        // 3. Force Manual signing so the UUID we set is used
+        patchedBlock = patchedBlock.replace(
+          /CODE_SIGN_STYLE = Automatic;/g,
+          'CODE_SIGN_STYLE = Manual;'
         );
 
         if (patchedBlock !== originalBlock) {

@@ -33,6 +33,42 @@ build:
     - eas/configure_eas_update
     - eas/configure_ios_credentials
     - run:
+        name: Assign extension provisioning profile to extension target only
+        command: |
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" ! -path "*/Pods/*" | head -1)
+          if [ -z "$PBXPROJ" ]; then
+            echo "::error::project.pbxproj not found under ios/ (excluding Pods)"
+            exit 1
+          fi
+          echo "Using project: $PBXPROJ"
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          EXT_BUNDLE="com.grabdocs.mobile.GrabDocsBroadcastUpload"
+          EXT_UUID=""
+          for profile in "$PROFILE_DIR"/*.mobileprovision; do
+            [ -f "$profile" ] || continue
+            PLIST_OUT=$(security cms -D -i "$profile" 2>/dev/null)
+            APP_ID=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' /dev/stdin 2>/dev/null || true)
+            NAME=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print Name' /dev/stdin 2>/dev/null || true)
+            if echo "$APP_ID" | grep -q "GrabDocsBroadcastUpload"; then
+              EXT_UUID=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+              echo "Found extension profile (by app-id): $profile -> UUID $EXT_UUID"
+              break
+            fi
+            if echo "$NAME" | grep -qi "BroadcastUpload\|GrabDocsBroadcastUpload"; then
+              EXT_UUID=$(echo "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin 2>/dev/null || true)
+              echo "Found extension profile (by name): $profile -> UUID $EXT_UUID"
+              break
+            fi
+          done
+          if [ -z "$EXT_UUID" ] || [ "${#EXT_UUID}" -ne 36 ]; then
+            echo "::error::Extension provisioning profile (for $EXT_BUNDLE) not found in $PROFILE_DIR. EAS should create two profiles; check credentials."
+            exit 1
+          fi
+          node scripts/patch-ext-profile.js "$PBXPROJ" "$EXT_UUID"
+          echo "✅ Assigned extension profile $EXT_UUID to GrabDocsBroadcastUpload target"
+          echo "=== Extension target signing in pbxproj (expect PROVISIONING_PROFILE = $EXT_UUID) ==="
+          grep -A 2 "GrabDocsBroadcastUpload" "$PBXPROJ" | grep -E "PROVISIONING_PROFILE|CODE_SIGN_STYLE" || true
+    - run:
         name: Write Gymfile
         command: |
           GYMFILE="ios/Gymfile"
@@ -44,7 +80,8 @@ build:
           printf 'export_team_id "Q33K3Q7Q53"\n' >> "$GYMFILE"
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
-          echo "=== Gymfile ==="
+          printf 'skip_profile_detection true\n' >> "$GYMFILE"
+          echo "=== Gymfile (skip_profile_detection=true so gym does not override with wrong mapping) ==="
           cat "$GYMFILE"
     - run:
         name: Run Fastlane gym
