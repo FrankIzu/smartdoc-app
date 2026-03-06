@@ -59,7 +59,8 @@ build:
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
           printf 'skip_profile_detection true\n' >> "$GYMFILE"
-          echo "=== Gymfile (skip_profile_detection=true, no provisioningProfiles) ==="
+          printf 'xcargs "-allowProvisioningUpdates"\n' >> "$GYMFILE"
+          echo "=== Gymfile (skip_profile_detection=true, xcargs -allowProvisioningUpdates) ==="
           cat "$GYMFILE"
     - run:
         name: Run Fastlane gym
