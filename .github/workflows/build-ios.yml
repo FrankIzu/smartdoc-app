@@ -239,6 +239,7 @@ jobs:
           HOME: ${{ env.HOME || '/Users/runner' }}
           EXPO_DEBUG: "1"
           EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
+          EXT_PROVISIONING_PROFILE_UUID: ${{ secrets.EXT_PROVISIONING_PROFILE_UUID }}
 
       - name: Upload Podfile for debugging (on failure)
         if: failure()
