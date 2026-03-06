@@ -35,8 +35,9 @@ build:
     - run:
         name: Write Gymfile (single-profile automatic signing; no provisioningProfiles)
         command: |
-          # Single-profile strategy: no manual profile mapping; Xcode Automatic Signing
-          # uses EAS-generated distribution cert and profiles for both app and extension.
+          # Single-profile strategy: no manual profile mapping. skip_profile_detection
+          # stops gym from auto-assigning one profile to both targets (which breaks the extension).
+          # Xcode Automatic Signing uses the correct profile per target.
           GYMFILE="ios/Gymfile"
           printf 'workspace "./GrabDocs.xcworkspace"\n' > "$GYMFILE"
           printf 'scheme "GrabDocs"\n' >> "$GYMFILE"
@@ -46,7 +47,8 @@ build:
           printf 'export_team_id "Q33K3Q7Q53"\n' >> "$GYMFILE"
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
-          echo "=== Gymfile (no provisioningProfiles) ==="
+          printf 'skip_profile_detection true\n' >> "$GYMFILE"
+          echo "=== Gymfile (skip_profile_detection=true, no provisioningProfiles) ==="
           cat "$GYMFILE"
     - run:
         name: Run Fastlane gym
