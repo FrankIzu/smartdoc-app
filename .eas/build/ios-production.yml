@@ -55,9 +55,11 @@ build:
           EXT_PROFILE_FILE="$PROFILE_DIR/ext-grabdocs-broadcast.mobileprovision"
           printf '%s' "$EXT_PROVISIONING_PROFILE_BASE64" | tr -d '\n\r\t ' | base64 --decode > "$EXT_PROFILE_FILE"
           FILESIZE=$(wc -c < "$EXT_PROFILE_FILE" | tr -d ' ')
-          echo "Decoded profile size: $FILESIZE bytes"
-          if [ "$FILESIZE" -lt 500 ]; then
-            echo "::error::Decoded profile too small ($FILESIZE bytes). Check EXT_PROVISIONING_PROFILE_BASE64 (no line breaks, full copy)."
+          echo "Decoded profile size: $FILESIZE bytes (expect 15000+ for a real .mobileprovision)"
+          if [ "$FILESIZE" -lt 10000 ]; then
+            echo "::error::Decoded profile too small ($FILESIZE bytes). EXT_PROVISIONING_PROFILE_BASE64 is truncated or invalid."
+            echo "Re-encode: PowerShell: [Convert]::ToBase64String([IO.File]::ReadAllBytes('path\to\file.mobileprovision'))"
+            echo "Paste the ENTIRE one-line output into the GitHub secret (no line breaks). Or set EXT_PROVISIONING_PROFILE_UUID and use GitHub CLI to set the base64: gh secret set EXT_PROVISIONING_PROFILE_BASE64 < encoded.txt"
             exit 1
           fi
 
