@@ -33,6 +33,9 @@ build:
     - eas/configure_eas_update
     - eas/configure_ios_credentials
     - run:
+        name: Re-apply Automatic signing after EAS credentials (prevent main-app profile on extension)
+        command: node scripts/force-automatic-signing-pbxproj.js
+    - run:
         name: Write Gymfile (single-profile automatic signing; no provisioningProfiles)
         command: |
           # Single-profile strategy: no manual profile mapping. skip_profile_detection
