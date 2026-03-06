@@ -33,8 +33,16 @@ build:
     - eas/configure_eas_update
     - eas/configure_ios_credentials
     - run:
-        name: Re-apply Automatic signing after EAS credentials (prevent main-app profile on extension)
-        command: node scripts/force-automatic-signing-pbxproj.js
+        name: Re-apply Automatic signing after EAS credentials (strip all manual profiles)
+        command: |
+          PBXPROJ=$(find ios -name "project.pbxproj" | head -1)
+          echo "Fixing signing in $PBXPROJ"
+          sed -i '' 's/CODE_SIGN_STYLE = Manual;/CODE_SIGN_STYLE = Automatic;/g' "$PBXPROJ"
+          sed -i '' '/PROVISIONING_PROFILE/d' "$PBXPROJ"
+          sed -i '' '/PROVISIONING_PROFILE_SPECIFIER/d' "$PBXPROJ"
+          sed -i '' '/EXPANDED_PROVISIONING_PROFILE/d' "$PBXPROJ"
+          sed -i '' '/CODE_SIGN_IDENTITY/d' "$PBXPROJ"
+          echo "✅ Removed provisioning profile overrides and forced automatic signing"
     - run:
         name: Write Gymfile (single-profile automatic signing; no provisioningProfiles)
         command: |
