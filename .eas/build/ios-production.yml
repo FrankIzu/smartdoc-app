@@ -180,27 +180,18 @@ build:
           echo "Extension profile UUID: ${EXT_UUID:-NOT FOUND}"
 
           # Write ExportOptions.plist with explicit profile mapping for both targets
-          cat > ios/ExportOptions.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key>
-    <string>app-store</string>
-    <key>teamID</key>
-    <string>Q33K3Q7Q53</string>
-    <key>signingStyle</key>
-    <string>manual</string>
-    <key>provisioningProfiles</key>
-    <dict>
-        <key>com.grabdocs.mobile</key>
-        <string>${MAIN_UUID}</string>
-        <key>com.grabdocs.mobile.GrabDocsBroadcastUpload</key>
-        <string>${EXT_UUID}</string>
-    </dict>
-</dict>
-</plist>
-EOF
+          EXPORT_PLIST="ios/ExportOptions.plist"
+          printf '<?xml version="1.0" encoding="UTF-8"?>\n' > "$EXPORT_PLIST"
+          printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' >> "$EXPORT_PLIST"
+          printf '<plist version="1.0">\n' >> "$EXPORT_PLIST"
+          printf '<dict>\n' >> "$EXPORT_PLIST"
+          printf '    <key>method</key>\n    <string>app-store</string>\n' >> "$EXPORT_PLIST"
+          printf '    <key>teamID</key>\n    <string>Q33K3Q7Q53</string>\n' >> "$EXPORT_PLIST"
+          printf '    <key>signingStyle</key>\n    <string>manual</string>\n' >> "$EXPORT_PLIST"
+          printf '    <key>provisioningProfiles</key>\n    <dict>\n' >> "$EXPORT_PLIST"
+          printf '        <key>com.grabdocs.mobile</key>\n        <string>%s</string>\n' "${MAIN_UUID}" >> "$EXPORT_PLIST"
+          printf '        <key>com.grabdocs.mobile.GrabDocsBroadcastUpload</key>\n        <string>%s</string>\n' "${EXT_UUID}" >> "$EXPORT_PLIST"
+          printf '    </dict>\n</dict>\n</plist>\n' >> "$EXPORT_PLIST"
           echo "=== ExportOptions.plist ==="
           cat ios/ExportOptions.plist
 
