@@ -121,5 +121,17 @@ build:
         command: |
           cd ios
           mkdir -p build
-          fastlane gym
+          fastlane gym; GYM_EXIT=$?
+          echo ""
+          echo "===== Xcodebuild/gym errors (for debugging) ====="
+          LOG="$HOME/Library/Logs/gym/GrabDocs-GrabDocs.log"
+          if [ -f "$LOG" ]; then
+            grep -n "error:\|Error:\|ARCHIVE FAILED\|failure\|doesn't include\|No profiles for\|signing certificate" "$LOG" | tail -60
+            echo ""
+            echo "===== Last 100 lines of gym log ====="
+            tail -100 "$LOG"
+          else
+            echo "Gym log not found at $LOG"
+          fi
+          exit $GYM_EXIT
     - eas/find_and_upload_build_artifacts
