@@ -164,12 +164,18 @@ build:
           set -e
           echo ""
           echo "===== BUILD RESULT: exit code $GYM_EXIT ====="
-          if [ "$GYM_EXIT" -ne 0 ]; then
-            echo "===== Errors in gym output (from captured log) ====="
-            grep -n "error:\|Error:\|ARCHIVE FAILED\|failure\|doesn't include\|No profiles for\|signing certificate\|rsync\|No such file\|exited with status" ../gym_output.log | tail -80
+          echo "PWD=$PWD"
+          LOG="../gym_output.log"
+          [ ! -f "$LOG" ] && LOG="gym_output.log"
+          [ ! -f "$LOG" ] && LOG="$HOME/Library/Logs/gym/GrabDocs-GrabDocs.log"
+          if [ -f "$LOG" ]; then
+            echo "===== Lines that may indicate failure (grep) ====="
+            grep -n "error:\|Error:\|ARCHIVE FAILED\|BUILD FAILED\|failure\|failed\|doesn't include\|No profiles for\|signing certificate\|rsync\|No such file\|exited with status\|Exit status\|timed out\|timeout\|killed\|signal\|\*\* ARCHIVE FAILED" "$LOG" | tail -100
             echo ""
-            echo "===== Last 120 lines of gym output ====="
-            tail -120 ../gym_output.log
+            echo "===== Last 180 lines of gym output (how the step ended) ====="
+            tail -180 "$LOG"
+          else
+            echo "::warning::gym_output.log not found (PWD=$PWD)"
           fi
           exit $GYM_EXIT
     - eas/find_and_upload_build_artifacts
