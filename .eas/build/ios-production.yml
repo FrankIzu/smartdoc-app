@@ -156,8 +156,55 @@ build:
             exit 1
           fi
     - run:
-        name: Write Gymfile
+        name: Write Gymfile and ExportOptions
         command: |
+          # Determine the main app and extension provisioning profile UUIDs from installed profiles
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          MAIN_UUID=$(ls "$PROFILE_DIR"/*.mobileprovision 2>/dev/null | while read f; do
+            plist=$(/usr/bin/security cms -D -i "$f" 2>/dev/null)
+            bid=$(echo "$plist" | /usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' /dev/stdin 2>/dev/null | sed 's/^[^.]*\.//')
+            if [ "$bid" = "com.grabdocs.mobile" ]; then
+              echo "$plist" | /usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin 2>/dev/null
+              break
+            fi
+          done)
+          EXT_UUID=$(ls "$PROFILE_DIR"/*.mobileprovision 2>/dev/null | while read f; do
+            plist=$(/usr/bin/security cms -D -i "$f" 2>/dev/null)
+            bid=$(echo "$plist" | /usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' /dev/stdin 2>/dev/null | sed 's/^[^.]*\.//')
+            if [ "$bid" = "com.grabdocs.mobile.GrabDocsBroadcastUpload" ]; then
+              echo "$plist" | /usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin 2>/dev/null
+              break
+            fi
+          done)
+          echo "Main app profile UUID: ${MAIN_UUID:-NOT FOUND}"
+          echo "Extension profile UUID: ${EXT_UUID:-NOT FOUND}"
+
+          # Write ExportOptions.plist with explicit profile mapping for both targets
+          cat > ios/ExportOptions.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store</string>
+    <key>teamID</key>
+    <string>Q33K3Q7Q53</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>com.grabdocs.mobile</key>
+        <string>${MAIN_UUID}</string>
+        <key>com.grabdocs.mobile.GrabDocsBroadcastUpload</key>
+        <string>${EXT_UUID}</string>
+    </dict>
+</dict>
+</plist>
+EOF
+          echo "=== ExportOptions.plist ==="
+          cat ios/ExportOptions.plist
+
+          # Write Gymfile pointing to ExportOptions.plist
           GYMFILE="ios/Gymfile"
           printf 'workspace "./GrabDocs.xcworkspace"\n' > "$GYMFILE"
           printf 'scheme "GrabDocs"\n' >> "$GYMFILE"
@@ -165,10 +212,11 @@ build:
           printf 'clean false\n' >> "$GYMFILE"
           printf 'export_method "app-store"\n' >> "$GYMFILE"
           printf 'export_team_id "Q33K3Q7Q53"\n' >> "$GYMFILE"
+          printf 'export_options "./ExportOptions.plist"\n' >> "$GYMFILE"
           printf 'output_directory "./build"\n' >> "$GYMFILE"
           printf 'output_name "GrabDocs.ipa"\n' >> "$GYMFILE"
           printf 'skip_profile_detection true\n' >> "$GYMFILE"
-          echo "=== Gymfile (skip_profile_detection=true; both targets use manual pbxproj profiles) ==="
+          echo "=== Gymfile ==="
           cat "$GYMFILE"
     - run:
         name: Run Fastlane gym
