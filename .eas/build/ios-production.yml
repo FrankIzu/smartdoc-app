@@ -31,6 +31,23 @@ build:
             echo "Retrying pod install..."
             pod install --repo-update 2>&1 | tee -a ../pod_install.log
           fi
+          # If Hermes XCFramework still missing, the [Hermes] Replace Hermes script and [CP] Copy XCFrameworks
+          # will fail during xcodebuild (tarball missing → destroot empty → rsync No such file).
+          # Explicitly download and extract the prebuilt tarball from Maven so it exists before archive.
+          RN_VERSION=$(node -p "require('../package.json').dependencies['react-native'] || require('../package.json').devDependencies['react-native'] || '0.81.5'" 2>/dev/null | tr -d "'" | sed 's/[\^~]//g')
+          HERMES_TAR="Pods/hermes-engine-artifacts/hermes-ios-${RN_VERSION}-release.tar.gz"
+          if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
+            echo "Hermes XCFramework or tarball missing; downloading prebuilt from Maven (RN $RN_VERSION)..."
+            mkdir -p Pods/hermes-engine-artifacts
+            MAVEN_URL="https://repo1.maven.org/maven2/com/facebook/react/react-native-artifacts/${RN_VERSION}/react-native-artifacts-${RN_VERSION}-hermes-ios-release.tar.gz"
+            if [ ! -f "$HERMES_TAR" ]; then
+              curl -f -L -o "$HERMES_TAR" "$MAVEN_URL" || { echo "::error::Failed to download Hermes from $MAVEN_URL"; exit 1; }
+              echo "Downloaded $HERMES_TAR"
+            fi
+            mkdir -p Pods/hermes-engine
+            (cd Pods/hermes-engine && tar -xzf "../hermes-engine-artifacts/hermes-ios-${RN_VERSION}-release.tar.gz")
+            echo "Extracted Hermes tarball into Pods/hermes-engine/destroot"
+          fi
           if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
             echo "::error::Hermes XCFramework still missing at $HERMES_XCFW."
             ls -la Pods/hermes-engine 2>/dev/null || true
