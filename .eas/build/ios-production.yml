@@ -19,17 +19,24 @@ build:
         name: Install CocoaPods dependencies
         command: |
           cd ios
-          # Force repo update so Hermes prebuilt XCFramework is fetched (avoids "[CP] Copy XCFrameworks" rsync missing path)
-          pod install --repo-update
+          # Ensure CocoaPods is recent (fixes XCFramework path bugs)
+          pod --version
+          # Clear hermes cache to force fresh download; then install
+          pod cache clean hermes-engine --all 2>/dev/null || true
+          pod install --repo-update 2>&1 | tee ../pod_install.log
           HERMES_XCFW="Pods/hermes-engine/destroot/Library/Frameworks/universal/hermes.xcframework/ios-arm64"
           if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
-            echo "::warning::Hermes XCFramework not found at $HERMES_XCFW after first pod install; retrying..."
-            pod install --repo-update
+            echo "::warning::Hermes not found after first pod install. Last 80 lines of pod_install.log:"
+            tail -80 ../pod_install.log
+            echo "Retrying pod install..."
+            pod install --repo-update 2>&1 | tee -a ../pod_install.log
           fi
           if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
-            echo "::error::Hermes XCFramework still missing at $HERMES_XCFW. Check hermes-engine pod and network."
+            echo "::error::Hermes XCFramework still missing at $HERMES_XCFW."
             ls -la Pods/hermes-engine 2>/dev/null || true
             ls -la Pods/hermes-engine/destroot 2>/dev/null || true
+            echo "=== pod_install.log (hermes grep) ==="
+            grep -i hermes ../pod_install.log || true
             exit 1
           fi
           echo "✅ Hermes XCFramework present at $HERMES_XCFW"
@@ -116,6 +123,21 @@ build:
           # Patch pbxproj: set extension target to Manual signing with this UUID
           node scripts/patch-ext-profile.js "$PBXPROJ" "$EXT_UUID"
           echo "✅ Extension target patched with profile UUID $EXT_UUID"
+    - run:
+        name: Verify Hermes XCFramework before archive
+        command: |
+          cd ios
+          HERMES_XCFW="Pods/hermes-engine/destroot/Library/Frameworks/universal/hermes.xcframework/ios-arm64"
+          echo "PWD=$PWD"
+          echo "Checking $HERMES_XCFW ..."
+          if [ -d "$HERMES_XCFW" ]; then
+            echo "Contents:"
+            ls -la "$HERMES_XCFW"
+          else
+            echo "::error::Hermes path missing before gym. Listing Pods/hermes-engine:"
+            ls -laR Pods/hermes-engine 2>/dev/null || true
+            exit 1
+          fi
     - run:
         name: Write Gymfile
         command: |
