@@ -174,6 +174,21 @@ build:
         name: Run Fastlane gym
         command: |
           cd ios
+          echo "PWD before gym: $PWD"
+          # Ensure Hermes is present in THIS directory (EAS may build from a different copy than Install CocoaPods step)
+          HERMES_XCFW="Pods/hermes-engine/destroot/Library/Frameworks/universal/hermes.xcframework/ios-arm64"
+          if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
+            echo "Hermes missing in build dir; downloading and extracting..."
+            RN_VERSION=$(node -p "require('../package.json').dependencies['react-native'] || require('../package.json').devDependencies['react-native'] || '0.81.5'" 2>/dev/null | tr -d "'" | sed 's/[\^~]//g')
+            mkdir -p Pods/hermes-engine-artifacts Pods/hermes-engine
+            HERMES_TAR="Pods/hermes-engine-artifacts/hermes-ios-${RN_VERSION}-release.tar.gz"
+            if [ ! -f "$HERMES_TAR" ]; then
+              curl -f -L -o "$HERMES_TAR" "https://repo1.maven.org/maven2/com/facebook/react/react-native-artifacts/${RN_VERSION}/react-native-artifacts-${RN_VERSION}-hermes-ios-release.tar.gz" || { echo "::error::Failed to download Hermes"; exit 1; }
+            fi
+            (cd Pods/hermes-engine && tar -xzf "../hermes-engine-artifacts/hermes-ios-${RN_VERSION}-release.tar.gz")
+            echo "Hermes ready at $HERMES_XCFW"
+          fi
+          [ ! -d "$HERMES_XCFW" ] && { echo "::error::Hermes still missing"; ls -la Pods/hermes-engine 2>/dev/null; exit 1; }
           mkdir -p build
           set +e
           fastlane gym 2>&1 | tee ../gym_output.log
