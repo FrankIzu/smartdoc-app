@@ -21,11 +21,11 @@ if (-not $ProfilePath) {
     $ProfilePath = $found.FullName
 }
 
-if (-not (Test-Path $ProfilePath)) {
+if (-not (Test-Path -LiteralPath $ProfilePath)) {
     Write-Error "File not found: $ProfilePath"
 }
 
-$bytes = [IO.File]::ReadAllBytes($ProfilePath)
+$bytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $ProfilePath).Path)
 $b64 = [Convert]::ToBase64String($bytes)
 $len = $b64.Length
 Write-Host "Profile: $ProfilePath"
