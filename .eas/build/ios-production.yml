@@ -17,7 +17,22 @@ build:
         command: node scripts/ensure-extension-entitlements.js
     - run:
         name: Install CocoaPods dependencies
-        command: cd ios && pod install
+        command: |
+          cd ios
+          # Force repo update so Hermes prebuilt XCFramework is fetched (avoids "[CP] Copy XCFrameworks" rsync missing path)
+          pod install --repo-update
+          HERMES_XCFW="Pods/hermes-engine/destroot/Library/Frameworks/universal/hermes.xcframework/ios-arm64"
+          if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
+            echo "::warning::Hermes XCFramework not found at $HERMES_XCFW after first pod install; retrying..."
+            pod install --repo-update
+          fi
+          if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
+            echo "::error::Hermes XCFramework still missing at $HERMES_XCFW. Check hermes-engine pod and network."
+            ls -la Pods/hermes-engine 2>/dev/null || true
+            ls -la Pods/hermes-engine/destroot 2>/dev/null || true
+            exit 1
+          fi
+          echo "✅ Hermes XCFramework present at $HERMES_XCFW"
     - run:
         name: Sanitize project.pbxproj (remove undefined / empty file types for Xcode)
         command: |
