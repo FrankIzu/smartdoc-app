@@ -266,16 +266,42 @@ jobs:
       - name: Extract and show build error from EAS log (on failure)
         if: failure()
         run: |
-          LOG="$RUNNER_TEMP/eas-build.log"
-          if [ ! -f "$LOG" ]; then
-            echo "(eas-build.log not found)"
-            exit 0
-          fi
-          echo "===== Likely failure (grep for error / fail / undefined) ====="
-          grep -n -E "error:|Error:|❌|ARCHIVE FAILED|Undefined symbols|ld: symbol|Code signing|Process crashed|exit code: [1-9]|non-zero code" "$LOG" | tail -80 || true
+          set -e
+          EAS_LOG="$RUNNER_TEMP/eas-build.log"
+          GYM_LOG="$HOME/Library/Logs/gym/GrabDocs-GrabDocs.log"
+          echo "===== Where we look for errors ====="
+          echo "EAS tee log: $EAS_LOG (exists: $([ -f "$EAS_LOG" ] && echo yes || echo no))"
+          echo "Gym xcodebuild log: $GYM_LOG (exists: $([ -f "$GYM_LOG" ] && echo yes || echo no))"
           echo ""
-          echo "===== Last 250 lines of EAS build log ====="
-          tail -250 "$LOG"
+
+          show_errors() {
+            local f="$1"
+            local name="$2"
+            if [ ! -f "$f" ]; then return; fi
+            echo "===== $name: failure-related lines ====="
+            grep -n -E "error:|Error:|ARCHIVE FAILED|BUILD FAILED|failed|Code signing|provisioning profile|No such file|Undefined symbols|ld: symbol|fatal error|Command failed|timed out|exited with|non-zero code" "$f" 2>/dev/null | tail -120 || true
+            echo ""
+            echo "===== $name: last 350 lines ====="
+            tail -350 "$f"
+          }
+
+          if [ -f "$EAS_LOG" ]; then
+            show_errors "$EAS_LOG" "EAS build log (eas-build.log)"
+          else
+            echo "(eas-build.log not found — EAS may not stream build output to stdout)"
+          fi
+
+          if [ -f "$GYM_LOG" ]; then
+            echo ""
+            show_errors "$GYM_LOG" "Gym/xcodebuild log (full build output)"
+          else
+            echo ""
+            echo "Gym log not at $GYM_LOG; searching for it..."
+            FOUND=$(find /Users/runner /var/folders -name "GrabDocs-GrabDocs.log" -type f 2>/dev/null | head -1)
+            if [ -n "$FOUND" ]; then
+              show_errors "$FOUND" "Gym log (found at $FOUND)"
+            fi
+          fi
         continue-on-error: true
 
       - name: Upload EAS full build log (on failure)
@@ -284,6 +310,26 @@ jobs:
         with:
           name: eas-build-full-log
           path: ${{ runner.temp }}/eas-build.log
+          if-no-files-found: ignore
+
+      # Full xcodebuild output (gym tees here); search this file for the real error.
+      - name: Upload gym/xcodebuild log (on failure)
+        if: failure()
+        run: |
+          GYM_LOG="$HOME/Library/Logs/gym/GrabDocs-GrabDocs.log"
+          if [ -f "$GYM_LOG" ]; then
+            cp "$GYM_LOG" "$RUNNER_TEMP/gym-xcodebuild.log"
+            echo "Copied gym log to $RUNNER_TEMP/gym-xcodebuild.log for artifact"
+          else
+            echo "Gym log not found at $GYM_LOG"
+          fi
+        continue-on-error: true
+      - name: Upload gym xcodebuild log artifact (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gym-xcodebuild-log
+          path: ${{ runner.temp }}/gym-xcodebuild.log
           if-no-files-found: ignore
 
       - name: Upload EAS build logs (on failure)
@@ -316,12 +362,32 @@ jobs:
           find /var/folders /Users/runner /tmp -path "*eas-build*" -name "*.log" 2>/dev/null | head -5 | while read f; do echo "--- $f ---"; tail -200 "$f" 2>/dev/null | grep -A 5 -B 2 -i "pod\|CocoaPods\|error\|Unable" || tail -50 "$f"; done || true
           echo "=============================================="
 
-      - name: Upload Xcode build logs
+      - name: Upload Xcode and gym build logs
+        if: always()
+        run: |
+          echo "===== Collecting build logs for artifact ====="
+          mkdir -p "$RUNNER_TEMP/build-logs"
+          # EAS tee log
+          [ -f "$RUNNER_TEMP/eas-build.log" ] && cp "$RUNNER_TEMP/eas-build.log" "$RUNNER_TEMP/build-logs/"
+          # Gym full xcodebuild output (where the real errors are)
+          GYM_LOG="$HOME/Library/Logs/gym/GrabDocs-GrabDocs.log"
+          if [ -f "$GYM_LOG" ]; then
+            cp "$GYM_LOG" "$RUNNER_TEMP/build-logs/gym-xcodebuild.log"
+            echo "Copied gym log ($(wc -l < "$GYM_LOG") lines)"
+          fi
+          # Any EAS local build logs
+          find /tmp /var/folders -path "*eas-build*" -name "*.log" -type f 2>/dev/null | head -20 | while read f; do
+            name=$(echo "$f" | tr '/' '_')
+            cp "$f" "$RUNNER_TEMP/build-logs/$name" 2>/dev/null || true
+          done
+          ls -la "$RUNNER_TEMP/build-logs/" || true
+        continue-on-error: true
+      - name: Upload build logs artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcode-build-logs
-          path: /tmp/eas-build-local-nodejs/**/logs/*.log
+          name: build-logs
+          path: ${{ runner.temp }}/build-logs/
           if-no-files-found: ignore
 
       - name: Fail if EAS build failed
