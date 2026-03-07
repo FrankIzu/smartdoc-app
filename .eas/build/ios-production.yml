@@ -175,20 +175,63 @@ build:
         command: |
           cd ios
           echo "PWD before gym: $PWD"
-          # Ensure Hermes is present in THIS directory (EAS may build from a different copy than Install CocoaPods step)
-          HERMES_XCFW="Pods/hermes-engine/destroot/Library/Frameworks/universal/hermes.xcframework/ios-arm64"
-          if [ ! -d "$HERMES_XCFW" ] || [ -z "$(ls -A "$HERMES_XCFW" 2>/dev/null)" ]; then
-            echo "Hermes missing in build dir; downloading and extracting..."
-            RN_VERSION=$(node -p "require('../package.json').dependencies['react-native'] || require('../package.json').devDependencies['react-native'] || '0.81.5'" 2>/dev/null | tr -d "'" | sed 's/[\^~]//g')
-            mkdir -p Pods/hermes-engine-artifacts Pods/hermes-engine
-            HERMES_TAR="Pods/hermes-engine-artifacts/hermes-ios-${RN_VERSION}-release.tar.gz"
-            if [ ! -f "$HERMES_TAR" ]; then
-              curl -f -L -o "$HERMES_TAR" "https://repo1.maven.org/maven2/com/facebook/react/react-native-artifacts/${RN_VERSION}/react-native-artifacts-${RN_VERSION}-hermes-ios-release.tar.gz" || { echo "::error::Failed to download Hermes"; exit 1; }
-            fi
-            (cd Pods/hermes-engine && tar -xzf "../hermes-engine-artifacts/hermes-ios-${RN_VERSION}-release.tar.gz")
-            echo "Hermes ready at $HERMES_XCFW"
+
+          RN_VERSION=$(node -p "require('../package.json').dependencies['react-native'] || require('../package.json').devDependencies['react-native'] || '0.81.5'" 2>/dev/null | tr -d "'" | sed 's/[\^~]//g')
+          HERMES_ARTIFACTS_DIR="Pods/hermes-engine-artifacts"
+          HERMES_TAR="${HERMES_ARTIFACTS_DIR}/hermes-ios-${RN_VERSION}-release.tar.gz"
+          HERMES_ENGINE_DIR="Pods/hermes-engine"
+          HERMES_DESTROOT="${HERMES_ENGINE_DIR}/destroot"
+          HERMES_XCFW_DIR="${HERMES_DESTROOT}/Library/Frameworks/universal/hermes.xcframework"
+          HERMES_IOS_ARM64="${HERMES_XCFW_DIR}/ios-arm64"
+
+          echo "===== Hermes state before gym ====="
+          echo "Tarball: $HERMES_TAR (exists: $([ -f "$HERMES_TAR" ] && echo yes || echo no))"
+          echo "destroot: $HERMES_DESTROOT (exists: $([ -d "$HERMES_DESTROOT" ] && echo yes || echo no))"
+          echo "xcfw dir: $HERMES_XCFW_DIR (exists: $([ -d "$HERMES_XCFW_DIR" ] && echo yes || echo no))"
+          if [ -d "$HERMES_XCFW_DIR" ]; then
+            echo "xcfw contents:"; ls -la "$HERMES_XCFW_DIR" 2>/dev/null
           fi
-          [ ! -d "$HERMES_XCFW" ] && { echo "::error::Hermes still missing"; ls -la Pods/hermes-engine 2>/dev/null; exit 1; }
+          echo "ios-arm64: $HERMES_IOS_ARM64 (exists: $([ -d "$HERMES_IOS_ARM64" ] && echo yes || echo no))"
+
+          # Download tarball if not present (needed by [Hermes] Replace Hermes build script at xcodebuild time)
+          mkdir -p "$HERMES_ARTIFACTS_DIR" "$HERMES_ENGINE_DIR"
+          if [ ! -f "$HERMES_TAR" ]; then
+            echo "Downloading Hermes tarball from Maven (RN $RN_VERSION)..."
+            MAVEN_URL="https://repo1.maven.org/maven2/com/facebook/react/react-native-artifacts/${RN_VERSION}/react-native-artifacts-${RN_VERSION}-hermes-ios-release.tar.gz"
+            curl -f -L -o "$HERMES_TAR" "$MAVEN_URL" || { echo "::error::Failed to download $MAVEN_URL"; exit 1; }
+            echo "Downloaded: $(wc -c < "$HERMES_TAR") bytes"
+          else
+            echo "Tarball already present: $(wc -c < "$HERMES_TAR") bytes"
+          fi
+
+          # Inspect tarball structure to know what it contains
+          echo "===== Tarball top-level contents (first 30 entries) ====="
+          tar -tzf "$HERMES_TAR" 2>/dev/null | head -30
+
+          # Ensure destroot is populated with the correct hermes.xcframework/ios-arm64 slice.
+          # The [Hermes] Replace Hermes script will remove destroot and re-extract during xcodebuild;
+          # we pre-populate here so any mis-extraction by that script doesn't leave ios-arm64 missing.
+          echo "===== Extracting Hermes tarball into $HERMES_ENGINE_DIR ====="
+          (cd "$HERMES_ENGINE_DIR" && tar -xzf "../hermes-engine-artifacts/hermes-ios-${RN_VERSION}-release.tar.gz")
+          echo "After extraction:"
+          [ -d "$HERMES_XCFW_DIR" ] && ls -la "$HERMES_XCFW_DIR" || echo "(xcfw dir not found after extraction)"
+
+          # If ios-arm64 still missing, check other slice names and create a symlink
+          if [ ! -d "$HERMES_IOS_ARM64" ]; then
+            echo "ios-arm64 not found; checking for other slice dirs in xcfw..."
+            if [ -d "$HERMES_XCFW_DIR" ]; then
+              ALT_SLICE=$(ls "$HERMES_XCFW_DIR" | grep -v "Info.plist" | head -1)
+              echo "Found alternative slice: '$ALT_SLICE'"
+              if [ -n "$ALT_SLICE" ] && [ -d "$HERMES_XCFW_DIR/$ALT_SLICE" ]; then
+                echo "Creating symlink ios-arm64 -> $ALT_SLICE"
+                (cd "$HERMES_XCFW_DIR" && ln -sf "$ALT_SLICE" ios-arm64)
+              fi
+            fi
+          fi
+
+          echo "Final ios-arm64 state:"
+          ls -la "$HERMES_IOS_ARM64" 2>/dev/null || echo "(still missing)"
+
           mkdir -p build
           set +e
           fastlane gym 2>&1 | tee ../gym_output.log
