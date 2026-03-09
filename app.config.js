@@ -20,8 +20,8 @@ const baseExpo = {
   },
   assetBundlePatterns: ["**/*"],
   ios: {
-    newArchEnabled: false,
-    jsEngine: "jsc",
+    newArchEnabled: true,
+    jsEngine: "hermes",
     supportsTablet: true,
     bundleIdentifier: "com.grabdocs.mobile",
     buildNumber: String(versions.ios?.buildNumber ?? "1"),
@@ -178,7 +178,7 @@ const baseExpo = {
       },
     ],
   ],
-  experiments: { typedRoutes: true, newArchEnabled: false },
+  experiments: { typedRoutes: true, newArchEnabled: true },
   extra: {
     router: {},
     eas: {
