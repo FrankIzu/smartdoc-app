@@ -27,6 +27,7 @@ interface Bookmark {
   file_count: number;
   created_at: string;
   is_active: boolean;
+  is_locked?: boolean;
 }
 
 export default function ManageBookmarksScreen() {
@@ -184,6 +185,40 @@ export default function ManageBookmarksScreen() {
         bookmark_file_count: bookmark.file_count.toString(),
       },
     });
+  };
+
+  const handleToggleLock = (item: Bookmark, e: any) => {
+    e?.stopPropagation?.();
+    const newLocked = !item.is_locked;
+
+    const doToggle = async () => {
+      try {
+        const response = await apiClient.updateBookmark(item.id, { is_locked: newLocked });
+        if (response.success) {
+          setBookmarks(prev => prev.map(b =>
+            b.id === item.id ? { ...b, is_locked: newLocked } : b
+          ));
+          Alert.alert('Success', newLocked ? 'Bookmark locked' : 'Bookmark unlocked');
+        } else {
+          Alert.alert('Error', response.message || 'Failed to update bookmark lock');
+        }
+      } catch (error: any) {
+        Alert.alert('Error', error.message || 'Failed to update bookmark lock');
+      }
+    };
+
+    if (!newLocked) {
+      Alert.alert(
+        'Unlock Bookmark',
+        `Unlock "${item.name}"? Files can be added or removed once unlocked.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Unlock', onPress: doToggle },
+        ]
+      );
+    } else {
+      doToggle();
+    }
   };
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
@@ -425,6 +460,9 @@ export default function ManageBookmarksScreen() {
         <View style={dynamicStyles.bookmarkInfo}>
           <View style={dynamicStyles.bookmarkNameRow}>
             <Text style={dynamicStyles.bookmarkName}>{item.name.length > 30 ? `${item.name.slice(0, 30)}...` : item.name}</Text>
+            {item.is_locked && (
+              <Ionicons name="lock-closed" size={16} color="#F59E0B" style={{ marginLeft: 4 }} />
+            )}
           </View>
           {item.description && (
             <Text style={dynamicStyles.bookmarkDescription}>{item.description}</Text>
@@ -442,23 +480,34 @@ export default function ManageBookmarksScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={dynamicStyles.chatgdButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              router.push({ pathname: '/bookmarks/detail', params: { id: item.id.toString(), addFiles: '1' } });
-            }}
-            accessibilityLabel="Add files to bookmark"
+            onPress={(e) => handleToggleLock(item, e)}
+            accessibilityLabel={item.is_locked ? 'Unlock bookmark' : 'Lock bookmark'}
           >
-            <Ionicons name="add" size={20} color="#007AFF" />
+            <Ionicons name={item.is_locked ? 'lock-open-outline' : 'lock-closed-outline'} size={20} color="#F59E0B" />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={dynamicStyles.deleteButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleDeleteBookmark(item);
-            }}
-          >
-            <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-          </TouchableOpacity>
+          {!item.is_locked && (
+            <TouchableOpacity
+              style={dynamicStyles.chatgdButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                router.push({ pathname: '/bookmarks/detail', params: { id: item.id.toString(), addFiles: '1' } });
+              }}
+              accessibilityLabel="Add files to bookmark"
+            >
+              <Ionicons name="add" size={20} color="#007AFF" />
+            </TouchableOpacity>
+          )}
+          {!item.is_locked && (
+            <TouchableOpacity
+              style={dynamicStyles.deleteButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleDeleteBookmark(item);
+              }}
+            >
+              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </TouchableOpacity>

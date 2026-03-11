@@ -34,6 +34,7 @@ interface Bookmark {
   color: string;
   file_count: number;
   is_active: boolean;
+  is_locked?: boolean;
 }
 
 interface Document {
@@ -115,10 +116,10 @@ export default function BookmarkDetailScreen() {
   }, [bookmarkId]);
 
   useEffect(() => {
-    if (bookmark && openAddFiles) {
+    if (bookmark && openAddFiles && !bookmark.is_locked) {
       handleShowAddFilesModal();
     }
-  }, [bookmark?.id, openAddFiles]);
+  }, [bookmark?.id, bookmark?.is_locked, openAddFiles]);
 
   const loadBookmarkDetails = async () => {
     if (!bookmarkId) return;
@@ -236,8 +237,44 @@ export default function BookmarkDetailScreen() {
     );
   };
 
+  const handleToggleLock = () => {
+    if (!bookmark) return;
+    const newLocked = !bookmark.is_locked;
+
+    const doToggle = async () => {
+      try {
+        const response = await apiClient.updateBookmark(bookmark.id, { is_locked: newLocked });
+        if (response.success) {
+          setBookmark(prev => prev ? { ...prev, is_locked: newLocked } : null);
+          Alert.alert('Success', newLocked ? 'Bookmark locked' : 'Bookmark unlocked');
+        } else {
+          Alert.alert('Error', response.message || 'Failed to update bookmark lock');
+        }
+      } catch (error: any) {
+        Alert.alert('Error', error.message || 'Failed to update bookmark lock');
+      }
+    };
+
+    if (!newLocked) {
+      Alert.alert(
+        'Unlock Bookmark',
+        `Unlock "${bookmark.name}"? Files can be added or removed once unlocked.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Unlock', onPress: doToggle },
+        ]
+      );
+    } else {
+      doToggle();
+    }
+  };
+
   const handleRemoveFile = (fileId: string) => {
     if (!bookmark) return;
+    if (bookmark.is_locked) {
+      Alert.alert('Bookmark locked', 'Unlock the bookmark to add or remove files.');
+      return;
+    }
 
     Alert.alert(
       'Remove File',
@@ -979,20 +1016,30 @@ export default function BookmarkDetailScreen() {
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
           <View style={dynamicStyles.headerActions}>
-            <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton} accessibilityLabel="Add files to bookmark">
-              <Ionicons name="add" size={24} color="#007AFF" />
+            <TouchableOpacity onPress={handleToggleLock} style={dynamicStyles.headerIconButton} accessibilityLabel={bookmark.is_locked ? 'Unlock bookmark' : 'Lock bookmark'}>
+              <Ionicons name={bookmark.is_locked ? 'lock-open' : 'lock-closed-outline'} size={24} color="#F59E0B" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleDeleteBookmark} style={dynamicStyles.headerIconButton}>
-              <Ionicons name="trash-outline" size={24} color="#FF3B30" />
-            </TouchableOpacity>
+            {!bookmark.is_locked && (
+              <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton} accessibilityLabel="Add files to bookmark">
+                <Ionicons name="add" size={24} color="#007AFF" />
+              </TouchableOpacity>
+            )}
+            {!bookmark.is_locked && (
+              <TouchableOpacity onPress={handleDeleteBookmark} style={dynamicStyles.headerIconButton}>
+                <Ionicons name="trash-outline" size={24} color="#FF3B30" />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </AnimatedHeaderContainer>
 
-      <TouchableOpacity style={dynamicStyles.bookmarkInfo} onPress={() => setShowEditModal(true)} activeOpacity={0.7}>
+      <TouchableOpacity style={dynamicStyles.bookmarkInfo} onPress={() => !bookmark.is_locked && setShowEditModal(true)} activeOpacity={0.7} disabled={bookmark.is_locked}>
         <View style={[dynamicStyles.colorIndicator, { backgroundColor: bookmark.color }]} />
         <View style={dynamicStyles.bookmarkDetails}>
-          <Text style={dynamicStyles.bookmarkName}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={dynamicStyles.bookmarkName}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
+            {bookmark.is_locked && <Ionicons name="lock-closed" size={18} color="#F59E0B" />}
+          </View>
           {bookmark.description && (
             <Text style={dynamicStyles.bookmarkDescription}>{bookmark.description}</Text>
           )}
@@ -1163,23 +1210,27 @@ export default function BookmarkDetailScreen() {
               <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
               <Text style={dynamicStyles.kebabMenuText}>Ask ChatGD</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleRemoveFromBookmark}>
-              <Ionicons name="bookmark" size={20} color="#FF9500" />
-              <Text style={dynamicStyles.kebabMenuText}>Remove from Bookmark</Text>
-            </TouchableOpacity>
+            {!bookmark.is_locked && (
+              <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleRemoveFromBookmark}>
+                <Ionicons name="bookmark" size={20} color="#FF9500" />
+                <Text style={dynamicStyles.kebabMenuText}>Remove from Bookmark</Text>
+              </TouchableOpacity>
+            )}
             {selectedDocumentForMenu && !isReceiptOrInvoice(selectedDocumentForMenu) && (
               <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleRenameDocument}>
                 <Ionicons name="pencil-outline" size={20} color="#6B7280" />
                 <Text style={dynamicStyles.kebabMenuText}>Rename</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
-              onPress={handleDeleteDocument}
-            >
-              <Ionicons name="trash-outline" size={20} color="#EF4444" />
-              <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
-            </TouchableOpacity>
+            {!bookmark.is_locked && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleDeleteDocument}
+              >
+                <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </TouchableOpacity>
       </Modal>

@@ -3777,7 +3777,7 @@ class ApiService {
     }
   }
 
-  async updateBookmark(bookmarkId: number, data: { name?: string; description?: string; color?: string }): Promise<ApiResponse> {
+  async updateBookmark(bookmarkId: number, data: { name?: string; description?: string; color?: string; is_locked?: boolean }): Promise<ApiResponse> {
     try {
       const response = await this.client.put(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}`, data);
       return response.data;

@@ -1776,7 +1776,7 @@ export default function UserChatScreen() {
                   }}
                   stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
-                  contentContainerStyle={{ paddingBottom: 100 }}
+                  contentContainerStyle={{ paddingBottom: 16 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
                   onContentSizeChange={() => scrollToBottom(true)}
                   onLayout={() => scrollToBottom(false)}
@@ -1916,7 +1916,7 @@ export default function UserChatScreen() {
                   }}
                   stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
-                  contentContainerStyle={{ paddingBottom: 100 }}
+                  contentContainerStyle={{ paddingBottom: 16 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
                   onContentSizeChange={() => scrollToBottom(true)}
                   onLayout={() => scrollToBottom(false)}

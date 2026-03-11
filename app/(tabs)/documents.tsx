@@ -2627,7 +2627,7 @@ export default function QuickFilesScreen() {
               <View style={[dynamicStyles.bookmarkDivider, { backgroundColor: colors.border }]} />
               <Text style={[dynamicStyles.bookmarkSectionLabel, { color: colors.textSecondary }]}>Existing bookmarks</Text>
               
-              {bookmarks.map((bookmark) => (
+              {bookmarks.filter((b: any) => !b.is_locked).map((bookmark) => (
                 <TouchableOpacity
                   key={bookmark.id}
                   style={dynamicStyles.bookmarkItem}
