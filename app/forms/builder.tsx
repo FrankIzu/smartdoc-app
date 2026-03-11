@@ -72,6 +72,24 @@ export default function FormBuilderScreen() {
   const [loadingResponses, setLoadingResponses] = useState(false);
   const [formId, setFormId] = useState<number | null>((params.formId as string) ? parseInt(params.formId as string) : null);
   const [formShareUrl, setFormShareUrl] = useState<string | null>(null);
+  const [isPublished, setIsPublished] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+
+  // Load form when formId is present (e.g. editing existing form) to get is_published
+  useEffect(() => {
+    const id = formId ?? (params.formId ? parseInt(params.formId as string) : null);
+    if (!id || !Number.isFinite(id)) return;
+    let cancelled = false;
+    apiService.getFormById(id).then((res: any) => {
+      if (cancelled) return;
+      const form = res?.form ?? res?.data ?? res;
+      if (form && typeof form.is_published === 'boolean') {
+        setIsPublished(form.is_published);
+      }
+      if (form?.share_url) setFormShareUrl(form.share_url);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [formId, params.formId]);
 
   useEffect(() => {
     if (params.fields) {
@@ -201,7 +219,15 @@ export default function FormBuilderScreen() {
 
         // Store the form ID and share URL so sharing works immediately
         if (savedFormId) {
-          setFormId(typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId));
+          const id = typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId);
+          setFormId(id);
+          // Publish new form so share link works
+          try {
+            await apiService.updateForm(id, { is_published: true });
+            setIsPublished(true);
+          } catch {
+            // Non-blocking; user can publish from builder
+          }
         }
         if (shareUrl) {
           setFormShareUrl(shareUrl);
@@ -272,7 +298,14 @@ export default function FormBuilderScreen() {
                   const shareUrl = createdForm?.share_url || createdForm?.form?.share_url;
                   
                   if (savedFormId) {
-                    setFormId(typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId));
+                    const id = typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId);
+                    setFormId(id);
+                    try {
+                      await apiService.updateForm(id, { is_published: true });
+                      setIsPublished(true);
+                    } catch {
+                      // Non-blocking
+                    }
                   }
                   if (shareUrl) {
                     setFormShareUrl(shareUrl);
@@ -280,7 +313,7 @@ export default function FormBuilderScreen() {
                   
                   // Now share the form
                   if (savedFormId) {
-                    handleShareForm(savedFormId);
+                    handleShareForm(typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId));
                   }
                 } else {
                   Alert.alert('Error', response?.message || 'Failed to save form');
@@ -301,6 +334,49 @@ export default function FormBuilderScreen() {
     
     // Form is saved, show sharing options
     handleShareForm(currentFormId);
+  };
+
+  const publishForm = async () => {
+    const id = formId ?? (params.formId ? parseInt(params.formId as string) : null);
+    if (!id || !Number.isFinite(id)) return;
+    try {
+      setPublishing(true);
+      await apiService.updateForm(id, { is_published: true });
+      setIsPublished(true);
+      Alert.alert('Success', 'Form is now published. Your share link will work for respondents.');
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'Failed to publish form');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const unpublishForm = async () => {
+    const id = formId ?? (params.formId ? parseInt(params.formId as string) : null);
+    if (!id || !Number.isFinite(id)) return;
+    Alert.alert(
+      'Unpublish form',
+      'Unpublishing will make the share link stop working for respondents. You can publish again anytime.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unpublish',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setPublishing(true);
+              await apiService.updateForm(id, { is_published: false });
+              setIsPublished(false);
+              Alert.alert('Done', 'Form is unpublished. Share link will no longer accept responses.');
+            } catch (err: any) {
+              Alert.alert('Error', err?.message ?? 'Failed to unpublish form');
+            } finally {
+              setPublishing(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleShareForm = async (formIdToShare: number) => {
@@ -1003,7 +1079,7 @@ export default function FormBuilderScreen() {
       {currentView !== 'responses' && (
         <View style={styles.footer}>
           {formId ? (
-            // Form is saved - show both Save and Share buttons side by side
+            // Form is saved - show Save, Publish (if not published), and Share
             <View style={styles.footerButtonsRow}>
               <TouchableOpacity 
                 style={[styles.footerButton, styles.saveButton, saving && styles.saveButtonDisabled]}
@@ -1019,6 +1095,37 @@ export default function FormBuilderScreen() {
                   </>
                 )}
               </TouchableOpacity>
+              {!isPublished ? (
+                <TouchableOpacity 
+                  style={[styles.footerButton, styles.publishButton, publishing && styles.saveButtonDisabled]}
+                  onPress={publishForm}
+                  disabled={publishing}
+                >
+                  {publishing ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="globe-outline" size={20} color="#fff" />
+                      <Text style={styles.saveButtonText}>Publish</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity 
+                  style={[styles.footerButton, styles.unpublishButton, publishing && styles.saveButtonDisabled]}
+                  onPress={unpublishForm}
+                  disabled={publishing}
+                >
+                  {publishing ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="eye-off-outline" size={20} color="#fff" />
+                      <Text style={styles.saveButtonText}>Unpublish</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
               <TouchableOpacity 
                 style={[styles.footerButton, styles.shareButton]}
                 onPress={shareForm}
@@ -1389,6 +1496,12 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  publishButton: {
+    backgroundColor: '#8B5CF6',
+  },
+  unpublishButton: {
+    backgroundColor: '#6B7280',
   },
   shareButton: {
     backgroundColor: '#10B981',

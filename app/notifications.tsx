@@ -62,18 +62,26 @@ export default function NotificationsScreen() {
         const count = withoutChat.filter((n: AppNotification) => !n.read).length;
         setNotifications(withoutChat);
         setUnreadCount(count);
+        if (withoutChat.length === 0) {
+          router.replace('/(tabs)' as any);
+          return;
+        }
       } else {
         setNotifications([]);
         setUnreadCount(0);
+        router.replace('/(tabs)' as any);
+        return;
       }
     } catch {
       setNotifications([]);
       setUnreadCount(0);
+      router.replace('/(tabs)' as any);
+      return;
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user]);
+  }, [user, router]);
 
   useEffect(() => {
     loadNotifications();
@@ -114,10 +122,11 @@ export default function NotificationsScreen() {
       await apiClient.clearAllNotifications();
       setNotifications([]);
       setUnreadCount(0);
+      router.replace('/(tabs)' as any);
     } catch {
       // ignore
     }
-  }, [notifications.length]);
+  }, [notifications.length, router]);
 
   const handleNotificationPress = useCallback(
     (n: AppNotification) => {

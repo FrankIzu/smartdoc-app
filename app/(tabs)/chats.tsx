@@ -18,6 +18,7 @@ import {
     RefreshControl,
     ScrollView,
     SectionList,
+    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -129,10 +130,10 @@ interface MessagesResponse {
   count: number;
 }
 
-// Create default ChatGD Assistant outside component to avoid recreation
+// Create default "Start New" chat entry outside component to avoid recreation
 const DEFAULT_CHAT_ASSISTANT: Chat = {
   id: -1,
-  title: 'ChatGD Assistant',
+  title: 'Start New',
   type: 'ai_assistant',
   participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
   last_message: 'Ask me anything about your documents',
@@ -384,6 +385,32 @@ export default function ChatsScreen() {
   const abortControllerRef = useRef<AbortController | null>(null);
   
   const messagesRef = useRef<SectionList>(null);
+  const scrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  /** Scroll to the very bottom of the message list using the underlying ScrollView.
+   *  scrollToEnd() is far more reliable than scrollToLocation() for variable-height items. */
+  const scrollToLastMessage = (animated = true) => {
+    scrollTimersRef.current.forEach(t => clearTimeout(t));
+    scrollTimersRef.current = [];
+
+    const attempt = () => {
+      const list = messagesRef.current;
+      if (!list) return;
+      // Access the underlying ScrollView's scrollToEnd – works regardless of item heights
+      const scrollResponder = (list as any).getScrollResponder?.();
+      if (scrollResponder?.scrollToEnd) {
+        scrollResponder.scrollToEnd({ animated });
+      }
+    };
+
+    // Deferred so it never runs synchronously inside onScrollToIndexFailed
+    scrollTimersRef.current.push(setTimeout(attempt, 50));
+    scrollTimersRef.current.push(setTimeout(attempt, 250));
+    scrollTimersRef.current.push(setTimeout(attempt, 600));
+  };
+
+  /** Kept in a ref so scrollToLastMessage can always read the current value without stale closures */
+  const messageSectionsRef = useRef<{ title: string; data: ChatMessage[] }[]>([]);
 
   // WebSocket for user chats (user_direct and workspace only)
   const socketRef = useRef<Socket | null>(null);
@@ -473,6 +500,18 @@ export default function ChatsScreen() {
       router.setParams({});
     }
   }, [params.documentId, params.documentName, params.documentType, params.documentCategory]);
+
+  // When coming from home screen (ChatGD stat or insight cards): open Start New conversation directly; back goes to chat list
+  useEffect(() => {
+    const openStartNew = params.openStartNew === '1' || params.openStartNew === true;
+    if (!openStartNew) return;
+    const defaultChat = chats.find(c => c.id === -1) ?? DEFAULT_CHAT_ASSISTANT;
+    setSelectedChat(defaultChat);
+    selectedChatRef.current = defaultChat;
+    setIsGoingBack(false);
+    loadMessages(-1, true);
+    router.setParams({});
+  }, [params.openStartNew]);
 
   // Handle fileId parameter from documents screen (fileName passed from Files to keep display name)
   useEffect(() => {
@@ -1546,8 +1585,24 @@ export default function ChatsScreen() {
     restLabels.forEach(title => sections.push({ title, data: byLabel.get(title)! }));
     if (byLabel.has('Yesterday')) sections.push({ title: 'Yesterday', data: byLabel.get('Yesterday')! });
     if (byLabel.has('Today')) sections.push({ title: 'Today', data: byLabel.get('Today')! });
+    messageSectionsRef.current = sections;
     return sections;
   }, [messages]);
+
+  // Scroll to last message whenever messageSections changes (new messages loaded or added)
+  useEffect(() => {
+    if (messageSections.length === 0) return;
+    const last = messageSections[messageSections.length - 1];
+    if (!last?.data.length) return;
+    scrollToLastMessage(false); // non-animated on initial load so it snaps instantly
+  }, [messageSections]);
+
+  // When keyboard opens, scroll so last message stays visible above the keyboard
+  useEffect(() => {
+    if (keyboardTop == null) return;
+    const t = setTimeout(() => scrollToLastMessage(false), 150);
+    return () => clearTimeout(t);
+  }, [keyboardTop]);
 
   // Sort chat list: ChatGD Assistant (id === -1) always first; favorites right after; then all others by last activity (most recent first).
   const sortChatsByLastMessage = (chatsToSort: Chat[]): Chat[] => {
@@ -2385,7 +2440,7 @@ export default function ChatsScreen() {
       let usersLoaded = false;
       
       try {
-        // Timeout is now handled in the API method itself (10s)
+        // Timeout handled in API (25s); on timeout returns empty list
         const response = await (api as any).getWorkspaceUsers();
         
         const r = response as any;
@@ -2599,17 +2654,10 @@ export default function ChatsScreen() {
     setMessagesLoading(true);
     
     try {
-      // If it's the ChatGD Assistant (id: -1), show welcome message
+      // Start New (id: -1): show empty chat
       if (chatId === -1) {
-        const welcomeMessage: ChatMessage = {
-          id: generateUniqueMessageId(),
-          content: 'Hello! I\'m your ChatGD Assistant. I can help you with questions about your documents, analyze files, and provide insights. How can I help you today?',
-          sender: { id: 1, username: 'AI Assistant', email: 'ai@grabdocs.com' },
-          is_own_message: false,
-          created_at: new Date().toISOString(), // This is fine for ChatGD Assistant as it's always current
-        };
-        setMessages([welcomeMessage]);
-        loadedChatIdRef.current = chatId; // Track that we've loaded this chat
+        setMessages([]);
+        loadedChatIdRef.current = chatId;
         return;
       }
       
@@ -4763,7 +4811,7 @@ export default function ChatsScreen() {
         bookmark_context: undefined,
         workspace: undefined,
         type: 'ai_assistant',
-        title: chat.title || 'ChatGD Assistant'
+        title: chat.title || 'Start New'
       };
       setSelectedChat(chatAssistantClean);
       
@@ -5034,7 +5082,7 @@ export default function ChatsScreen() {
             bookmark_context: undefined,
             workspace: undefined,
             type: 'ai_assistant' as const,
-            title: 'ChatGD Assistant'
+            title: 'Start New'
           } : chat
         );
         savePersistedChatContexts(updated);
@@ -5602,6 +5650,29 @@ export default function ChatsScreen() {
     }
   };
 
+  const handleShareConversation = async () => {
+    if (!selectedChat || messages.length === 0) return;
+    const now = new Date();
+    const dateTimeDisplay = now.toLocaleDateString() + ' ' + now.toLocaleTimeString();
+    const separator = '─'.repeat(50);
+    const lines = messages.map((msg, i) => {
+      const label = (selectedChat?.type === 'ai_assistant' || selectedChat?.type === 'document_focused' || selectedChat?.type === 'bookmark_focused')
+        ? (i % 2 === 0 ? 'You' : 'ChatGD')
+        : (msg.is_own_message ? 'You' : (msg.sender?.username || 'User'));
+      return `${label}: ${(msg.content || '').trim()}`;
+    });
+    const convoText = lines.join('\n\n');
+    const brandedText = `GrabDocs — ChatGD Conversation\n${dateTimeDisplay}\n${separator}\n\n${convoText}\n\n${separator}\nGenerated by GrabDocs`;
+    try {
+      await Share.share({
+        message: brandedText,
+        title: 'GrabDocs — ChatGD Conversation',
+      });
+    } catch {
+      // User cancelled or share failed; ignore
+    }
+  };
+
   const formatMessageTime = (dateString: string) => {
     try {
       if (!dateString) {
@@ -5978,7 +6049,7 @@ export default function ChatsScreen() {
             try {
               // Don't allow deleting the default ChatGD Assistant chat
               if (chatId === -1) {
-                Alert.alert('Error', 'Cannot delete the ChatGD Assistant chat');
+                Alert.alert('Error', 'Cannot delete the Start New chat');
                 return;
               }
               
@@ -6306,7 +6377,7 @@ export default function ChatsScreen() {
             })()}
           </Text>
           <Text style={dynamicStyles.chatSubtitle}>
-            {selectedChat?.type === 'ai_assistant' ? 'ChatGD Assistant' : 
+            {selectedChat?.type === 'ai_assistant' ? 'Start New' : 
              selectedChat?.type === 'document_focused' ? 'Document Chat' :
              selectedChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
              selectedChat?.type === 'workspace' ? 'Workspace Chat' :
@@ -6315,15 +6386,15 @@ export default function ChatsScreen() {
         </View>
 
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity 
-            style={dynamicStyles.searchTypeButton} 
-            onPress={onRefreshMessages}
-            disabled={refreshing || !selectedChat}
+          <TouchableOpacity
+            style={dynamicStyles.searchTypeButton}
+            onPress={handleShareConversation}
+            disabled={!selectedChat || messages.length === 0}
           >
-            <Ionicons 
-              name="refresh" 
-              size={26} 
-              color={refreshing || !selectedChat ? "#999" : "#007AFF"} 
+            <Ionicons
+              name="share-outline"
+              size={26}
+              color={!selectedChat || messages.length === 0 ? '#999' : '#007AFF'}
             />
           </TouchableOpacity>
           {/* + opens same chat types as listing page (New Chat modal) */}
@@ -6385,18 +6456,11 @@ export default function ChatsScreen() {
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
               }
               showsVerticalScrollIndicator={false}
-              onScrollToIndexFailed={() => {}}
-              onContentSizeChange={() => {
-                const list = messagesRef.current;
-                if (!list || !messageSections.length) return;
-                const lastSection = messageSections[messageSections.length - 1];
-                if (!lastSection.data.length) return;
-                list.scrollToLocation({
-                  sectionIndex: messageSections.length - 1,
-                  itemIndex: lastSection.data.length - 1,
-                  viewPosition: 1,
-                  animated: true,
-                });
+              onScrollToIndexFailed={() => {
+                // Must NOT call scrollToLastMessage synchronously here – that would create an
+                // infinite loop (scrollToLocation → onScrollToIndexFailed → scrollToLocation …).
+                // Schedule a single deferred retry instead.
+                setTimeout(() => scrollToLastMessage(false), 400);
               }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
@@ -6517,9 +6581,12 @@ export default function ChatsScreen() {
             dynamicStyles.inputContainer,
             {
               paddingBottom: 8,
-              marginBottom: keyboardTop != null
-                ? Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop)
-                : 0,
+              elevation: 10,
+              zIndex: 10,
+              // Android: KAV is a no-op, so push input above keyboard manually
+              ...(keyboardTop != null && {
+                marginBottom: Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop),
+              }),
             },
           ]}
           onLayout={(event) => {
@@ -6613,7 +6680,7 @@ export default function ChatsScreen() {
           >
             <Ionicons name="chatbubbles" size={24} color="#007AFF" />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={dynamicStyles.optionTitle}>ChatGD Assistant</Text>
+              <Text style={dynamicStyles.optionTitle}>Start New</Text>
               <Text style={dynamicStyles.optionSubtitle}>Chat with AI about your documents and meeting transcripts</Text>
             </View>
             {newChatType === 'ai_assistant' && (
@@ -7016,9 +7083,11 @@ export default function ChatsScreen() {
     },
     messagesList: {
       flex: 1,
+      zIndex: 0,
     },
     messagesContent: {
-      paddingVertical: 2, // Minimal vertical padding
+      paddingVertical: 2,
+      paddingBottom: 16,
     },
     messageContainer: {
       paddingHorizontal: 16,
@@ -7172,18 +7241,23 @@ export default function ChatsScreen() {
       borderTopWidth: 1,
       borderTopColor: colors.border,
       backgroundColor: colors.card,
+      elevation: 10,
+      zIndex: 10,
     },
     messageInput: {
       flex: 1,
       backgroundColor: colors.surface,
       borderRadius: 20,
       paddingHorizontal: 16,
-      paddingVertical: 8,
+      paddingVertical: 10,
+      paddingTop: 10,
       fontSize: 16,
       color: colors.text,
       marginRight: 8,
       minHeight: 40,
       maxHeight: 120,
+      textAlignVertical: 'top',
+      includeFontPadding: false,
     },
     sendButton: {
       width: 36,
@@ -7672,9 +7746,11 @@ const styles = StyleSheet.create({
   },
   messagesList: {
     flex: 1,
+    zIndex: 0,
   },
   messagesContent: {
-    paddingVertical: 2, // Minimal vertical padding
+    paddingVertical: 2,
+    paddingBottom: 16,
   },
   messageContainer: {
     paddingHorizontal: 12,
@@ -7753,18 +7829,23 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
     backgroundColor: '#fff',
+    elevation: 10,
+    zIndex: 10,
   },
   messageInput: {
     flex: 1,
     backgroundColor: '#f8f8f8',
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    paddingTop: 10,
     fontSize: 16,
     color: '#000',
     marginRight: 8,
     minHeight: 40,
     maxHeight: 120,
+    textAlignVertical: 'top',
+    includeFontPadding: false,
   },
   sendButton: {
     width: 36,

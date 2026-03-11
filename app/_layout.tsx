@@ -34,12 +34,10 @@ import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
-import { checkMinVersion, checkOtaAndFetch, checkSoftStoreUpdate, fetchAppConfig, reportUpdateTelemetry } from '../services/updateService';
-import type { MinVersionResult } from '../services/updateService';
+import { checkMinVersion, checkOtaAndFetch, checkSoftStoreUpdate, fetchAppConfig, reportUpdateTelemetry, setDismissedStoreUpdateVersion } from '../services/updateService';
 import AppLockScreen from './components/AppLockScreen';
 import OtaUpdateBanner from './components/OtaUpdateBanner';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
-import SoftStoreUpdateBanner from './components/SoftStoreUpdateBanner';
 import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
 import { getNotificationScreen, parseNotificationPath, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
@@ -217,9 +215,10 @@ function RootLayoutNav() {
 function AuthWrapper() {
   const { loading } = useAuth();
   const [updateRequired, setUpdateRequired] = useState<{ storeUrl: string; message?: string } | null>(null);
-  const [softWarning, setSoftWarning] = useState<MinVersionResult['softWarning']>(undefined);
-  const [softStoreUpdate, setSoftStoreUpdate] = useState<{ latestVersion: string; storeUrl: string } | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
+  // Track whether a soft-update alert has already been shown this session so we don't show it again
+  // when the app comes back to foreground.
+  const softAlertShownRef = useRef(false);
 
   useEffect(() => {
     if (!loading) {
@@ -231,46 +230,65 @@ function AuthWrapper() {
     }
   }, [loading]);
 
+  const showSoftUpdateAlert = useCallback((message: string, storeUrl: string, latestVersion?: string) => {
+    if (softAlertShownRef.current) return;
+    softAlertShownRef.current = true;
+    Alert.alert(
+      'Update Available',
+      message,
+      [
+        {
+          text: 'Later',
+          style: 'cancel',
+          onPress: () => {
+            if (latestVersion) {
+              // Persist dismiss so we don't prompt again for this exact version
+              setDismissedStoreUpdateVersion(latestVersion).catch(() => {});
+            }
+          },
+        },
+        {
+          text: 'Update Now',
+          onPress: () => {
+            reportUpdateTelemetry('soft_update_tapped', { latestVersion }).catch(() => {});
+            Linking.openURL(storeUrl).catch(() => {});
+          },
+        },
+      ],
+      { cancelable: false },
+    );
+  }, []);
+
   const runUpdateChecks = useCallback(async () => {
     const config = await fetchAppConfig();
     const minResult = await checkMinVersion(undefined, config);
     if (minResult.mustUpdate) {
-      reportUpdateTelemetry('min_version_blocked', {
-        currentVersion: undefined,
-        minVersion: undefined,
-      }).catch(() => {});
+      reportUpdateTelemetry('min_version_blocked', {}).catch(() => {});
       setUpdateRequired({ storeUrl: minResult.storeUrl, message: minResult.message });
-      setSoftWarning(undefined);
-      setSoftStoreUpdate(null);
-      return;
-    }
-    if (minResult.softWarning) {
-      setUpdateRequired(null);
-      setSoftWarning(minResult.softWarning);
-      setSoftStoreUpdate(null);
       return;
     }
     setUpdateRequired(null);
-    setSoftWarning(undefined);
+    if (minResult.softWarning) {
+      showSoftUpdateAlert(minResult.softWarning.message, minResult.softWarning.storeUrl);
+      return;
+    }
     const soft = await checkSoftStoreUpdate(undefined, config);
     if (soft.updateAvailable) {
-      setSoftStoreUpdate({ latestVersion: soft.latestVersion, storeUrl: soft.storeUrl });
-    } else {
-      setSoftStoreUpdate(null);
+      showSoftUpdateAlert(
+        `A new version of GrabDocs (${soft.latestVersion}) is available. Update for the latest features and fixes.`,
+        soft.storeUrl,
+        soft.latestVersion,
+      );
     }
-  }, []);
+  }, [showSoftUpdateAlert]);
 
   // Min version + soft store update: fetch config once, then run both checks.
   useEffect(() => {
     if (loading) return;
-    let mounted = true;
-    runUpdateChecks().then(() => {
-      if (!mounted) return;
-    });
-    return () => { mounted = false; };
+    runUpdateChecks();
   }, [loading, runUpdateChecks]);
 
-  // Re-check when app comes to foreground
+  // Re-check when app comes to foreground (but don't re-show alert if already dismissed this session)
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') runUpdateChecks();
@@ -298,23 +316,6 @@ function AuthWrapper() {
 
   return (
     <>
-      {softWarning && (
-        <SoftStoreUpdateBanner
-          message={softWarning.message}
-          storeUrl={softWarning.storeUrl}
-          latestVersion=""
-          onDismiss={() => setSoftWarning(undefined)}
-        />
-      )}
-      {softStoreUpdate && !softWarning && (
-        <SoftStoreUpdateBanner
-          message="A new version is available."
-          storeUrl={softStoreUpdate.storeUrl}
-          latestVersion={softStoreUpdate.latestVersion}
-          onDismiss={() => setSoftStoreUpdate(null)}
-          persistDismissForVersion={softStoreUpdate.latestVersion}
-        />
-      )}
       {updateReady && <OtaUpdateBanner />}
       <RootLayoutNav />
     </>

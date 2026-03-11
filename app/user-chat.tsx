@@ -114,23 +114,20 @@ export default function UserChatScreen() {
   const [otherUserOnline, setOtherUserOnline] = useState(false);
   const [typingUsers, setTypingUsers] = useState<{ [userId: number]: string }>({}); // userId -> username
 
-  // Track keyboard for Android input positioning
+  // Track keyboard so we can push input above it and scroll to last message when it opens
   useEffect(() => {
-    if (Platform.OS === 'android') {
-      const showEvent = 'keyboardDidShow';
-      const hideEvent = 'keyboardDidHide';
-      const keyboardShowListener = Keyboard.addListener(showEvent, (e) => {
-        setKeyboardTop(e.endCoordinates.screenY);
-      });
-      const keyboardHideListener = Keyboard.addListener(hideEvent, () => {
-        setKeyboardTop(null);
-      });
-
-      return () => {
-        keyboardShowListener.remove();
-        keyboardHideListener.remove();
-      };
-    }
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const keyboardShowListener = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardTop(e.endCoordinates.screenY);
+    });
+    const keyboardHideListener = Keyboard.addListener(hideEvent, () => {
+      setKeyboardTop(null);
+    });
+    return () => {
+      keyboardShowListener.remove();
+      keyboardHideListener.remove();
+    };
   }, []);
 
   // Initialize socket connection
@@ -404,19 +401,21 @@ export default function UserChatScreen() {
     }
   };
 
-  const scrollToBottom = () => {
-    setTimeout(() => {
+  const scrollToBottomTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const scrollToBottom = (animated = true) => {
+    scrollToBottomTimersRef.current.forEach(t => clearTimeout(t));
+    scrollToBottomTimersRef.current = [];
+    const attempt = () => {
       const list = messagesListRef.current;
-      if (!list || !messageSections.length) return;
-      const lastSection = messageSections[messageSections.length - 1];
-      if (!lastSection.data.length) return;
-      list.scrollToLocation({
-        sectionIndex: messageSections.length - 1,
-        itemIndex: lastSection.data.length - 1,
-        viewPosition: 1,
-        animated: true,
-      });
-    }, 100);
+      if (!list) return;
+      const scrollResponder = (list as any).getScrollResponder?.();
+      if (scrollResponder?.scrollToEnd) {
+        scrollResponder.scrollToEnd({ animated });
+      }
+    };
+    scrollToBottomTimersRef.current.push(setTimeout(attempt, 50));
+    scrollToBottomTimersRef.current.push(setTimeout(attempt, 250));
+    scrollToBottomTimersRef.current.push(setTimeout(attempt, 600));
   };
 
   useEffect(() => {
@@ -1064,6 +1063,20 @@ export default function UserChatScreen() {
     return sections;
   }, [messages]);
 
+  useEffect(() => {
+    if (messageSections.length === 0) return;
+    const last = messageSections[messageSections.length - 1];
+    if (!last?.data.length) return;
+    scrollToBottom(false);
+  }, [messageSections]);
+
+  // When keyboard opens, scroll so last message stays visible above the keyboard
+  useEffect(() => {
+    if (keyboardTop == null) return;
+    const t = setTimeout(() => scrollToBottom(false), 150);
+    return () => clearTimeout(t);
+  }, [keyboardTop]);
+
   // Handle add/remove favorite (syncs with web via PUT unified-history/user_<id>/favorite)
   const handleToggleFavorite = async (chatId: number) => {
     const isFavorite = favoriteChatIds.has(chatId);
@@ -1707,9 +1720,9 @@ export default function UserChatScreen() {
         </View>
 
         {Platform.OS === 'ios' ? (
-          <KeyboardAvoidingView 
+          <KeyboardAvoidingView
             style={{ flex: 1 }}
-            behavior="padding"
+            behavior={undefined}
             keyboardVerticalOffset={0}
           >
             <View style={{ flex: 1 }}>
@@ -1758,13 +1771,15 @@ export default function UserChatScreen() {
                       <Text style={dynamicStyles.messageDateSectionHeaderText}>{title}</Text>
                     </View>
                   )}
-                  onScrollToIndexFailed={() => {}}
+                  onScrollToIndexFailed={() => {
+                    setTimeout(() => scrollToBottom(false), 400);
+                  }}
                   stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
                   contentContainerStyle={{ paddingBottom: 100 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
-                  onContentSizeChange={() => scrollToBottom()}
-                  onLayout={() => scrollToBottom()}
+                  onContentSizeChange={() => scrollToBottom(true)}
+                  onLayout={() => scrollToBottom(false)}
                 />
               )}
               
@@ -1813,7 +1828,13 @@ export default function UserChatScreen() {
 
             <View 
               ref={inputContainerRef}
-              style={dynamicStyles.inputContainer}
+              style={[
+                dynamicStyles.inputContainer,
+                { elevation: 10, zIndex: 10 },
+                keyboardTop != null && {
+                  marginBottom: Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop),
+                },
+              ]}
             >
               <TextInput
                 ref={messageInputRef}
@@ -1890,13 +1911,15 @@ export default function UserChatScreen() {
                       <Text style={dynamicStyles.messageDateSectionHeaderText}>{title}</Text>
                     </View>
                   )}
-                  onScrollToIndexFailed={() => {}}
+                  onScrollToIndexFailed={() => {
+                    setTimeout(() => scrollToBottom(false), 400);
+                  }}
                   stickySectionHeadersEnabled={false}
                   style={dynamicStyles.messagesList}
                   contentContainerStyle={{ paddingBottom: 100 }}
                   refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => selectedChat && loadMessages(selectedChat.id)} />}
-                  onContentSizeChange={() => scrollToBottom()}
-                  onLayout={() => scrollToBottom()}
+                  onContentSizeChange={() => scrollToBottom(true)}
+                  onLayout={() => scrollToBottom(false)}
                 />
               )}
               
@@ -1947,6 +1970,7 @@ export default function UserChatScreen() {
               ref={inputContainerRef}
               style={[
                 dynamicStyles.inputContainer,
+                { elevation: 10, zIndex: 10 },
                 Platform.OS === 'android' && keyboardTop != null && {
                   marginBottom: Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop),
                 },

@@ -3452,9 +3452,8 @@ class ApiService {
       
       const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
       console.log('📁 API: Requesting files from mobile endpoint:', url);
-      // Use shorter timeout (10s) to fail faster and prevent blocking UI
       const response = await this.client.get(url, {
-        timeout: 10000
+        timeout: 25000 // 25s for slow backends; on timeout we return empty list below
       });
       console.log('📁 API: Files response success:', response.data?.success, 'Files count:', response.data?.files?.length || response.data?.data?.length || 0);
       
@@ -3479,13 +3478,16 @@ class ApiService {
       
       return response.data;
     } catch (error: any) {
-      // Log timeout but still throw - backend should be fixed to return data faster
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        console.error('❌ Documents request timed out after 10s - backend needs optimization');
-        throw new Error('Request timed out. The backend endpoint is taking too long. Please check backend performance.');
+        console.warn('⚠️ Documents request timed out - returning empty list for @ mentions');
+        return {
+          success: true,
+          data: [],
+          files: [],
+          pagination: { page, per_page: perPage, total: 0, has_more: false }
+        };
       }
       console.warn('📁 API: Mobile files endpoint failed, falling back to getFiles:', error.message);
-      // For backward compatibility, fall back to getFiles (only for non-timeout errors)
       return this.getFiles(page, perPage, search, category, workspaceId);
     }
   }
@@ -3983,15 +3985,15 @@ class ApiService {
   async getWorkspaceUsers(): Promise<ApiResponse> {
     try {
       const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_USERS, {
-        timeout: 10000
+        timeout: 25000 // 25s for slow backends; on timeout we return empty list below
       });
       return response.data;
     } catch (error: any) {
-      console.error('Get workspace users error:', error);
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        console.error('❌ Workspace users request timed out after 10s - backend needs optimization');
-        throw new Error('Request timed out. The backend endpoint is taking too long. Please check backend performance.');
+        console.warn('⚠️ Workspace users request timed out - returning empty list');
+        return { success: true, data: { users: [] } } as ApiResponse;
       }
+      console.error('Get workspace users error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch workspace users');
     }
   }

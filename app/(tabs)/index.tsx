@@ -700,7 +700,7 @@ function DashboardScreen() {
         router.push('/(tabs)/documents');
         break;
       case 'chat':
-        router.push('/(tabs)/chats');
+        router.push('/(tabs)/chats?openStartNew=1');
         break;
       case 'form':
       case 'analytics':
@@ -712,7 +712,9 @@ function DashboardScreen() {
   };
 
   const handleNotificationPress = () => {
-    router.push('/notifications');
+    if (stats.unreadNotifications > 0) {
+      router.push('/notifications');
+    }
   };
 
   const handleTestProgress = () => {
@@ -1261,7 +1263,7 @@ function DashboardScreen() {
               value={stats.chatSessions}
               icon="chatbubbles"
               color="#AF52DE"
-              onPress={() => router.push('/(tabs)/chats')}
+              onPress={() => router.push('/(tabs)/chats?openStartNew=1')}
             />
           </View>
         </View>
@@ -1362,7 +1364,7 @@ function DashboardScreen() {
         <View style={dynamicStyles.section}>
           <Text style={dynamicStyles.sectionTitle}>AI Insights</Text>
           <View style={dynamicStyles.insightsContainer}>
-            <TouchableOpacity key="insight-suggestions" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
+            <TouchableOpacity key="insight-suggestions" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats?openStartNew=1')}>
               <View style={dynamicStyles.insightIcon}>
                 <Ionicons name="bulb" size={26} color="#FF9500" />
               </View>
@@ -1378,7 +1380,7 @@ function DashboardScreen() {
               <Ionicons name="chevron-forward" size={16} color="#ccc" />
             </TouchableOpacity>
             
-            <TouchableOpacity key="insight-trends" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats')}>
+            <TouchableOpacity key="insight-trends" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats?openStartNew=1')}>
               <View style={dynamicStyles.insightIcon}>
                 <Ionicons name="trending-up" size={26} color="#34C759" />
               </View>

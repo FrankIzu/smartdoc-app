@@ -468,6 +468,6 @@ export default googleAuthService;
 
 // Export types
 export type {
-  GoogleAuthConfig, GoogleAuthResult, GoogleUserInfo, MobileGoogleLoginResponse
+    GoogleAuthConfig, GoogleAuthResult, GoogleUserInfo, MobileGoogleLoginResponse
 };
 
