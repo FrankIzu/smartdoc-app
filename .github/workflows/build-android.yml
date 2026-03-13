@@ -31,6 +31,11 @@ on:
           - alpha
           - beta
           - production
+      android_version_code:
+        description: 'Android versionCode for this build (must be > Play Console max). deploy.ps1 sets this automatically — avoids stale app.versions.json on checkout.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build:
@@ -76,6 +81,29 @@ jobs:
           git reset --hard HEAD 2>/dev/null || true
           git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
         continue-on-error: true
+
+      # Authoritative versionCode for CI: deploy.ps1 passes this when triggering. Without it, checkout
+      # can still see an old app.versions.json (race after push, or manual workflow run) → AAB duplicates Play.
+      - name: Apply Android versionCode (workflow input)
+        if: github.event.inputs.android_version_code != ''
+        run: |
+          CODE="${{ github.event.inputs.android_version_code }}"
+          if ! [[ "$CODE" =~ ^[0-9]+$ ]]; then
+            echo "::error::android_version_code must be a positive integer, got: $CODE"
+            exit 1
+          fi
+          node -e "
+            const fs = require('fs');
+            const p = 'app.versions.json';
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (!j.android) j.android = {};
+            j.android.versionCode = parseInt(process.env.VERSION_CODE, 10);
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+            console.log('app.versions.json android.versionCode set to', j.android.versionCode);
+          "
+          cat app.versions.json
+        env:
+          VERSION_CODE: ${{ github.event.inputs.android_version_code }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -190,10 +218,15 @@ jobs:
         run: |
           VERSION_CODE=$(node -e "const v=require('./app.versions.json'); console.log(v?.android?.versionCode ?? 0)")
           echo "app.versions.json versionCode: $VERSION_CODE"
+          if [ -z "$VERSION_CODE" ] || [ "$VERSION_CODE" = "0" ]; then
+            echo "::error::android versionCode missing in app.versions.json"
+            exit 1
+          fi
           if [ -f android/app/build.gradle ]; then
-            sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" android/app/build.gradle
-            echo "Patched android/app/build.gradle; versionCode in file:"
-            grep versionCode android/app/build.gradle || true
+            # Match versionCode followed by integer (defaultConfig or any line)
+            sed -i -E 's/(versionCode[[:space:]]+)[0-9]+/\1'"$VERSION_CODE"'/g' android/app/build.gradle
+            echo "Patched android/app/build.gradle; versionCode lines:"
+            grep -n versionCode android/app/build.gradle || true
           else
             echo "::warning::android/app/build.gradle not found, skipping sync"
           fi
@@ -231,6 +264,8 @@ jobs:
             exit 1
           fi
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          echo "Final android/app/build.gradle versionCode before eas build:"
+          grep -n versionCode android/app/build.gradle || true
           eas build --platform android --profile "$PROFILE" --local --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -245,6 +280,13 @@ jobs:
           path: ${{ env.GRADLE_USER_HOME }}
           key: gradle-${{ runner.os }}-${{ env.CACHE_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'package-lock.json') }}
 
+      - name: Record versionCode for logs
+        if: success()
+        run: |
+          VC=$(node -e "try{console.log(require('./app.versions.json').android.versionCode||'')}catch(e){console.log('')}")
+          echo "BUILD_ANDROID_VERSION_CODE=$VC" | tee android-build-version.txt
+          echo "If submit fails with duplicate version, Play max must be < this value."
+
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
@@ -253,6 +295,7 @@ jobs:
             build-*.aab
             *.apk
             android/app/build/outputs/mapping/release/mapping.txt
+            android-build-version.txt
           if-no-files-found: ignore
 
   submit:
@@ -282,6 +325,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: android-build
+
+      - name: Show built versionCode (must exceed Play Console max)
+        run: |
+          if [ -f android-build-version.txt ]; then cat android-build-version.txt; fi
+          find . -maxdepth 6 -name "*.aab" -type f 2>/dev/null | head -3 || true
 
       - name: Submit to Google Play
         run: |

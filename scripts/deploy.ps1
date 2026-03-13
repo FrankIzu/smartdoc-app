@@ -816,6 +816,15 @@ try {
         $triggered = $false
         $workflowName = if ($Platform -eq "android") { "Build Android (EAS local)" } else { "Build iOS (EAS local)" }
         $triggerArgs = @("-f", "profile=$profile", "--ref", "main")
+        # CI must use this versionCode when building — otherwise checkout can still be stale → duplicate Play upload.
+        if ($Platform -eq "android" -and $BuildNumber -match '^\d+$') {
+            $triggerArgs += @("-f", "android_version_code=$BuildNumber")
+            Write-Host "   Workflow will set android_version_code=$BuildNumber (authoritative for AAB)." -ForegroundColor Gray
+        }
+        if ($Platform -eq "android") {
+            Write-Host "   Waiting 20s so origin/main is consistent before Actions checkout..." -ForegroundColor Gray
+            Start-Sleep -Seconds 20
+        }
 
         for ($retry = 1; $retry -le $maxRetries; $retry++) {
             if ($retry -gt 1) {
