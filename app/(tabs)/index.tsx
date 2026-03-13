@@ -293,8 +293,15 @@ function DashboardScreen() {
           // Recent activities API not available, fallback to files below
         }
 
+        // Only fetch files when the activities API returned fewer than 10 items — avoids
+        // loading 50 full file records on every refresh when we already have enough data.
+        if (activitiesFromAPI.length >= 10) {
+          if (activitiesFromAPI.length > 0) setRecentActivities(activitiesFromAPI.slice(0, 10));
+          return activitiesFromAPI.slice(0, 10);
+        }
+
         // Also load recent files to include uploads and workspace shares
-        const filesResponse = await apiClient.getFiles(1, 50);
+        const filesResponse = await apiClient.getFiles(1, 10);
         
         // Handle both response formats: { files: [...] } or { data: { files: [...] } }
         let files: any[] = [];
@@ -379,21 +386,22 @@ function DashboardScreen() {
       }
     })();
     
-    // Wait for both to complete in parallel
-    await Promise.all([statsPromise, activitiesPromise]);
-    const loadTime = Date.now() - startTime;
-
-    // Bell count excludes chat messages (chat has its own in-conversation UX)
-    try {
-      const notifRes = await apiClient.getNotifications();
-      if (notifRes?.success && notifRes?.data?.notifications) {
-        const list = notifRes.data.notifications as { read?: boolean; type?: string }[];
-        const nonChatUnread = list.filter((n) => !n.read && n.type !== 'chat_message').length;
-        setStats((prev) => ({ ...prev, unreadNotifications: nonChatUnread }));
+    // Load notifications concurrently with stats + activities instead of sequentially
+    const notifPromise = (async () => {
+      try {
+        const notifRes = await apiClient.getNotifications();
+        if (notifRes?.success && notifRes?.data?.notifications) {
+          const list = notifRes.data.notifications as { read?: boolean; type?: string }[];
+          const nonChatUnread = list.filter((n) => !n.read && n.type !== 'chat_message').length;
+          setStats((prev) => ({ ...prev, unreadNotifications: nonChatUnread }));
+        }
+      } catch {
+        // keep existing badge count
       }
-    } catch {
-      // keep dashboard unread count as-is
-    }
+    })();
+
+    await Promise.all([statsPromise, activitiesPromise, notifPromise]);
+    const loadTime = Date.now() - startTime;
       
     } catch (error) {
       // console.error('🏠 Unexpected error in dashboard data loading:', error);
@@ -421,17 +429,12 @@ function DashboardScreen() {
     setRefreshing(false);
   }, [loadDashboardData]);
 
-  useEffect(() => {
-    // Load dashboard data regardless of user authentication status
-    // This allows the app to show data even if auth check fails
-    loadDashboardData();
-  }, [loadDashboardData]);
-
-  // Refetch when screen gains focus (e.g. returning from notifications screen) so badge count updates
+  // useFocusEffect fires on first mount AND on every subsequent focus — a separate mount
+  // useEffect would fire simultaneously on cold open, doubling all API requests (6-8 extra calls).
   useFocusEffect(
     useCallback(() => {
-      if (isAuthenticated && user) loadDashboardData();
-    }, [isAuthenticated, user, loadDashboardData])
+      loadDashboardData();
+    }, [loadDashboardData])
   );
 
   // Keep app icon badge in sync with unread notification count
@@ -453,22 +456,32 @@ function DashboardScreen() {
     return () => clearInterval(interval);
   }, [isAuthenticated, user, loadDashboardData]);
 
-  // When connection failed, retry quickly so banner clears as soon as connection is back
-  const CONNECTION_RETRY_MS = 2000;
+  // When connection failed, retry with exponential backoff so we don't hammer the server
   useEffect(() => {
     if (!connectionStatus || connectionStatus.success) return;
-    const id = setInterval(async () => {
+    let delay = 2000;
+    const MAX_DELAY = 30000;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+
+    const attempt = async () => {
+      if (cancelled) return;
       try {
         const result = await apiClient.checkAuth();
         if (result?.success) {
           setConnectionStatus({ success: true, message: '' });
-          loadDashboardData(); // refresh data now that we're back online
+          loadDashboardData();
+          return;
         }
       } catch {
-        // still offline, keep retrying
+        // still offline
       }
-    }, CONNECTION_RETRY_MS);
-    return () => clearInterval(id);
+      delay = Math.min(delay * 2, MAX_DELAY);
+      if (!cancelled) timeoutId = setTimeout(attempt, delay);
+    };
+
+    timeoutId = setTimeout(attempt, delay);
+    return () => { cancelled = true; clearTimeout(timeoutId); };
   }, [connectionStatus?.success, connectionStatus?.message, loadDashboardData]);
 
   // Cleanup upload timeout on unmount
@@ -1345,7 +1358,7 @@ function DashboardScreen() {
             {recentActivities.length > 0 ? (
               recentActivities.slice(0, 5).map((activity, index) => (
                 <ActivityItem 
-                  key={`activity-${activity.id || `fallback-${index}`}-${index}-${Date.now()}-${Math.random()}`} 
+                  key={`activity-${activity.id ?? index}`} 
                   activity={activity} 
                   onPress={() => handleActivityPress(activity)}
                 />

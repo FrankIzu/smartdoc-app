@@ -12,8 +12,14 @@ export interface CitationItem {
   filename?: string;
   excerpt?: string;
   chunk_content?: string;
-  document_id?: number;
-  source_id?: string;
+  snippet?: string;
+  document_id?: number | string;
+  source_id?: string | number;
+  paragraph?: string;
+  paragraph_start?: number;
+  paragraph_end?: number;
+  relevance_score?: number;
+  cite_index?: number;
 }
 
 export interface ChatMessageFooterProps {
@@ -35,6 +41,10 @@ export interface ChatMessageFooterProps {
   onFeedbackSubmitted?: (score: number | null) => void;
   /** When false, hide copy / like / dislike / citation (e.g. for user or workspace chat). Default true. */
   showActions?: boolean;
+  /** Show retry (same backend as web: retry + retry_replace_message_id) */
+  showRetry?: boolean;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
 }
 
 function truncateWithEllipsis(str: string, maxLen: number): string {
@@ -66,6 +76,9 @@ export function ChatMessageFooter({
   initialFeedbackScore = null,
   onFeedbackSubmitted,
   showActions = true,
+  showRetry = false,
+  onRetry,
+  retryDisabled = false,
 }: ChatMessageFooterProps) {
   const colors = useThemeColors();
   const [feedbackScore, setFeedbackScore] = useState<number | null>(initialFeedbackScore ?? null);
@@ -190,6 +203,20 @@ export function ChatMessageFooter({
               color={sourceList.length > 0 ? iconColor : (colors.textLight ?? '#999')}
             />
           </TouchableOpacity>
+          {showRetry && onRetry ? (
+            <TouchableOpacity
+              onPress={onRetry}
+              disabled={retryDisabled}
+              style={styles.iconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="refresh-outline"
+                size={20}
+                color={retryDisabled ? (colors.textLight ?? '#ccc') : '#007AFF'}
+              />
+            </TouchableOpacity>
+          ) : null}
         </View>
       )}
       <Text style={[styles.timestamp, { color: iconColor }]} numberOfLines={1}>

@@ -182,10 +182,11 @@ function RootLayoutNav() {
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
           <Stack.Screen name="login-success" options={{ headerShown: false }} />
           <Stack.Screen name="login-error" options={{ headerShown: false }} />
-          <Stack.Screen name="analytics" options={{ headerShown: false }} />
+          {/* Match file routes: app/analytics/dashboard.tsx — not "analytics" */}
+          <Stack.Screen name="analytics/dashboard" options={{ headerShown: false }} />
           <Stack.Screen name="bookmarks" options={{ headerShown: false }} />
           <Stack.Screen name="drafts" options={{ headerShown: false }} />
-          <Stack.Screen name="documents" options={{ headerShown: false }} />
+          {/* Documents tab lives under (tabs)/documents — no root app/documents */}
           <Stack.Screen name="forms" options={{ headerShown: false }} />
           <Stack.Screen name="quick-reach" options={{ headerShown: false }} />
           <Stack.Screen name="join-meeting" options={{ headerShown: false }} />
@@ -219,6 +220,8 @@ function AuthWrapper() {
   // Track whether a soft-update alert has already been shown this session so we don't show it again
   // when the app comes back to foreground.
   const softAlertShownRef = useRef(false);
+  const lastUpdateCheckRef = useRef(0);
+  const UPDATE_CHECK_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
   useEffect(() => {
     if (!loading) {
@@ -288,10 +291,14 @@ function AuthWrapper() {
     runUpdateChecks();
   }, [loading, runUpdateChecks]);
 
-  // Re-check when app comes to foreground (but don't re-show alert if already dismissed this session)
+  // Re-check when app comes to foreground, but throttle to once per 10 minutes
+  // to avoid hitting the config endpoint on every app switch.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') runUpdateChecks();
+      if (state !== 'active') return;
+      if (Date.now() - lastUpdateCheckRef.current < UPDATE_CHECK_COOLDOWN_MS) return;
+      lastUpdateCheckRef.current = Date.now();
+      runUpdateChecks();
     });
     return () => sub.remove();
   }, [runUpdateChecks]);

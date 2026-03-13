@@ -211,6 +211,8 @@ export default function QuickFilesScreen() {
   
   // Polling for pending files (classification polling)
   const classificationPollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  // In-flight guard: prevents concurrent loadDocuments calls from producing duplicate requests
+  const isLoadingDocumentsRef = React.useRef(false);
 
   const handleGalleryUpload = async () => {
     try {
@@ -582,6 +584,9 @@ export default function QuickFilesScreen() {
 
   // Optimized loadDocuments function with caching
   const loadDocuments = useCallback(async (forceRefresh = false) => {
+    // Skip if a request is already in-flight to prevent duplicate concurrent calls
+    if (isLoadingDocumentsRef.current) return;
+
     const now = Date.now();
     
     // Check cache first (unless force refresh)
@@ -597,6 +602,7 @@ export default function QuickFilesScreen() {
       return;
     }
 
+    isLoadingDocumentsRef.current = true;
     setError(null);
     setLoading(true);
     
@@ -759,6 +765,7 @@ export default function QuickFilesScreen() {
         setError(`Failed to load documents: ${err.message}`);
       }
     } finally {
+      isLoadingDocumentsRef.current = false;
       setLoading(false);
     }
   }, [searchQuery, filterBy, workspaceId]); // Add dependencies including workspaceId
@@ -871,6 +878,8 @@ export default function QuickFilesScreen() {
     if (!user) return;
 
     const interval = setInterval(async () => {
+      // Skip the 60s refresh when the faster 3s classification poll is already running
+      if (classificationPollingIntervalRef.current) return;
       console.log('🔄 Auto-refreshing documents...');
       setIsAutoRefreshing(true);
       await loadDocuments(true); // Force refresh to bypass cache

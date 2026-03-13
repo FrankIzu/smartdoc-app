@@ -2314,6 +2314,13 @@ class ApiService {
         if (filters.chat_history_id != null && filters.chat_history_id !== -1) {
           payload.chat_history_id = toNum(filters.chat_history_id);
         }
+
+        // Same as web upload.tsx /api/v1/web/chat/smart — retry replaces last assistant bubble
+        if (filters.retry === true && filters.retry_replace_message_id != null) {
+          payload.retry = true;
+          payload.retry_replace_message_id = toNum(filters.retry_replace_message_id);
+          payload.message = ''; // Backend resolves user query from saved conversation
+        }
       }
 
       // Use longer timeout for starting chat job (60s) to handle slow network conditions
@@ -3523,9 +3530,9 @@ class ApiService {
    * Get all user chats - Mobile-specific endpoint
    * Returns direct messages and workspace chats only
    */
-  async getChats(): Promise<ApiResponse> {
+  async getChats(limit: number = 50, offset: number = 0): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.USER_CHATS);
+      const response = await this.client.get(MOBILE_ENDPOINTS.USER_CHATS, { params: { limit, offset } });
       return response.data;
     } catch (error: any) {
       console.error('Get chats error:', error);

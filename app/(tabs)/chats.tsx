@@ -27,6 +27,7 @@ import {
 } from 'react-native';
 import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -36,6 +37,9 @@ import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { secureStorage } from '../../utils/storage';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
+import AssistantMessageBody from '../../components/AssistantMessageBody';
+import ChartImageModal from '../../components/ChartImageModal';
+import SermonViewerModal from '../../components/SermonViewerModal';
 import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
@@ -77,7 +81,23 @@ interface ChatMessage {
   /** When true, message is preview/streaming placeholder - show in grey to indicate not final */
   is_preview?: boolean;
   /** Sources/citations used for this response (assistant messages) */
-  citations?: Array<{ source_type?: string; source_name?: string; filename?: string; excerpt?: string; chunk_content?: string; document_id?: number; source_id?: string }> | null;
+  citations?: Array<{
+    source_type?: string;
+    source_name?: string;
+    filename?: string;
+    excerpt?: string;
+    chunk_content?: string;
+    snippet?: string;
+    document_id?: number | string;
+    source_id?: string | number;
+    paragraph?: string;
+    paragraph_start?: number;
+    paragraph_end?: number;
+    relevance_score?: number;
+  }> | null;
+  /** Chart image file id from backend (same as web chart_file_id) */
+  chartFileId?: number;
+  chartTitle?: string;
   document_context?: {
     id: number;
     name: string;
@@ -224,6 +244,8 @@ const loadPersistedChatContexts = async (): Promise<Map<string, {
   }
 };
 
+const CHATS_PAGE_SIZE = 20;
+
 export default function ChatsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -237,6 +259,13 @@ export default function ChatsScreen() {
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Pagination state for the chat list
+  const [aiChatOffset, setAiChatOffset] = useState(0);
+  const [userChatOffset, setUserChatOffset] = useState(0);
+  const [hasMoreAiChats, setHasMoreAiChats] = useState(false);
+  const [hasMoreUserChats, setHasMoreUserChats] = useState(false);
+  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [isGoingBack, setIsGoingBack] = useState(false); // Track if user is going back to chat list
@@ -260,6 +289,29 @@ export default function ChatsScreen() {
   const isFakeStreamingRef = useRef<boolean>(false); // Track if we're in fake streaming mode
   const isStreamCompleteRef = useRef<boolean>(false); // Track if stream is complete (no more chunks will arrive)
   const citationsFromStreamRef = useRef<ChatMessage['citations']>(null); // Citations from stream complete event
+  const chartFromStreamRef = useRef<{ chartFileId: number; chartTitle?: string } | null>(null);
+  /** Backend assistant message_id from complete event (for retry_replace_message_id) */
+  const assistantMessageIdFromStreamRef = useRef<number | null>(null);
+  /** Same index as send/retry polling onChunk (last assistant row replaced on retry) */
+  const pollingAssistantIndexRef = useRef<number>(0);
+  /** Placeholder row id for current stream — updates always target this row so we never overwrite the user message */
+  const streamingAssistantRowIdRef = useRef<number | null>(null);
+  /** Last smart-chat filters (context + chat_history_id) — retry reuses these */
+  const lastStreamFiltersRef = useRef<Record<string, any> | null>(null);
+  const smartChatPollingChunkRef = useRef<(type: string, data: any) => void>(() => {});
+
+  const [sermonModal, setSermonModal] = useState<{
+    visible: boolean;
+    fileId: number;
+    paragraph: number;
+    paragraphEnd?: number;
+    title?: string;
+  }>({ visible: false, fileId: 0, paragraph: 1 });
+  const [chartModal, setChartModal] = useState<{
+    visible: boolean;
+    chartFileId: number;
+    title?: string;
+  }>({ visible: false, chartFileId: 0 });
   const lastStreamedMessageIndexRef = useRef<number | null>(null); // Track which message index was last streamed
   const lastStreamCompleteTimeRef = useRef<number>(0); // Track when streaming last completed
   
@@ -272,6 +324,8 @@ export default function ChatsScreen() {
   const isSettingUpFileContextRef = useRef<boolean>(false); // Track if we're currently setting up file context to prevent unnecessary reloads
   const fileContextSetupStartTimeRef = useRef<number>(0); // Track when file context setup started
   const workspaceRequestRef = useRef<Promise<any> | null>(null); // Track in-flight workspace request to prevent duplicate calls
+  const documentRequestRef = useRef<Promise<any> | null>(null); // Dedup concurrent loadDocuments calls
+  const bookmarkRequestRef = useRef<Promise<any> | null>(null); // Dedup concurrent loadBookmarks calls
   const isPreservingContextRef = useRef<boolean>(false); // Track when we're preserving context to prevent loadChats from overwriting
   const contextPreservationTimeRef = useRef<number>(0); // Track when context was last preserved
   const pendingBookmarkFromParamsRef = useRef<Bookmark | null>(null); // Bookmark from nav params so loadChats can re-inject if it overwrites list
@@ -857,6 +911,8 @@ export default function ChatsScreen() {
       setStreamingMessageIndex(null); // Clear streaming message index to stop ProcessingMessageDisplay
     }
     
+    streamingAssistantRowIdRef.current = null;
+
     // CRITICAL: Reset sendingMessage state AFTER clearing streamingMessageIndex
     // This ensures ProcessingMessageDisplay receives isProcessing={false} and stops
     setSendingMessage(false);
@@ -1122,18 +1178,9 @@ export default function ChatsScreen() {
         }
       }, [selectedChat, isSocketConnected]);
 
-  useEffect(() => {
-    // Load all data in parallel for better performance
-    Promise.all([
-      loadChats(),
-      loadWorkspaces(),
-      loadDocuments(),
-      loadUsers(),
-      loadBookmarks()
-    ]).catch(error => {
-      console.error('❌ Error loading initial data:', error);
-    });
-  }, []);
+  // Initial data load is handled by useFocusEffect below — it fires on first mount AND
+  // on every subsequent screen focus, so a separate mount-only useEffect would cause a
+  // duplicate parallel network burst on every cold open (8 redundant requests).
 
   // Reload users when direct chat modal opens
   useEffect(() => {
@@ -1225,7 +1272,6 @@ export default function ChatsScreen() {
         loadFavorites(),
         loadWorkspaces(),
         loadDocuments(),
-        loadUsers(),
         loadBookmarks()
       ]).then(() => {
         const timeSinceLastMessage = Date.now() - lastMessageSentTimeRef.current;
@@ -1234,7 +1280,9 @@ export default function ChatsScreen() {
         const isTemporaryChat = currentSelectedChat && (currentSelectedChat.id === -2 || currentSelectedChat.id === -1);
         
         if (currentSelectedChat && currentSelectedChat.id && currentSelectedChat.id !== -1 && !isTemporaryChat && !shouldSkipReload) {
-            loadMessages(currentSelectedChat.id, true).then(() => {
+            // Use forceReload:false so the existing dedup logic in loadMessages handles
+            // the "already loaded for this chat" case without firing a redundant request.
+            loadMessages(currentSelectedChat.id, false).then(() => {
               // CRITICAL: Restore context after reloading messages to ensure it persists permanently
               // Find the updated chat from the chats list to get latest context
               setChats(prevChats => {
@@ -1632,62 +1680,62 @@ export default function ChatsScreen() {
     return result;
   };
 
-  const loadChats = async (limit: number = 50, offset: number = 0) => {
+  const loadChats = async (limit: number = CHATS_PAGE_SIZE, offset: number = 0) => {
     try {
       setLoading(true);
       
       // Load persisted chat contexts from AsyncStorage FIRST (survives app restart)
       const persistedContexts = await loadPersistedChatContexts();
-      
-      // Try to load chat histories from backend (AI chats) with pagination
+
+      // Parallel network: AI histories + user chats + favorites (was sequential; slowest path dominated load time)
       const { fetchChatHistories } = useChatStore.getState();
-      await fetchChatHistories(limit, offset);
-      
-      // Get the loaded histories from the store
-      const { histories, error, clearError } = useChatStore.getState();
-      
-      if (error) {
-        console.warn('AI chat history unavailable:', error, '- showing user chats and cached data');
-        clearError(); // avoid stale error; we degrade to user chats + persisted contexts
-      }
-      
-      // Load user chats (SAME endpoint as web chat.tsx - user-to-user and workspace only)
       let userChats: Chat[] = [];
       let rawUserChats: any[] = [];
-      try {
-        const userChatsResponse = await api.getChats();
-        if (userChatsResponse.success && (userChatsResponse as any).chats) {
-          rawUserChats = (userChatsResponse as any).chats;
-          // Web chat.tsx returns: { success: true, chats: Chat[] }
-          userChats = rawUserChats.map((chat: any) => ({
-            id: chat.id,
-            title: chat.display_name || 'Untitled Chat',
-            type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
-            source: 'user' as const,
-            participants: chat.participants || [],
-            last_message: chat.latest_message?.content || 'No messages yet',
-            updated_at: chat.last_message_at || new Date().toISOString(),
-            created_at: chat.created_at || new Date().toISOString(),
-            unread_count: chat.unread_count || 0,
-            last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
-            workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
-          }));
-        }
-      } catch (userChatError) {
-        if (__DEV__) console.warn('Failed to load user chats:', userChatError);
-      }
-
-      // Fetch server favorites (web + mobile use same DB) so web favorites show on mobile
+      let userChatHasMore = false;
       let serverFavoriteHistoryIds: number[] = [];
       let serverFavoriteChatIds: number[] = [];
-      try {
-        const favRes = await (api as any).getChatFavorites();
-        if (favRes?.success && (favRes.favorite_history_ids || favRes.favorite_chat_ids)) {
-          serverFavoriteHistoryIds = Array.isArray(favRes.favorite_history_ids) ? favRes.favorite_history_ids : [];
-          serverFavoriteChatIds = Array.isArray(favRes.favorite_chat_ids) ? favRes.favorite_chat_ids : [];
-        }
-      } catch (_) {
-        // non-critical; we still merge from list items below
+      let aiPagination: { has_more: boolean; total: number } = { has_more: false, total: 0 };
+      await Promise.all([
+        (async () => { aiPagination = await fetchChatHistories(limit, offset); })(),
+        (async () => {
+          try {
+            const userChatsResponse = await api.getChats(limit, offset);
+            if (userChatsResponse.success && (userChatsResponse as any).chats) {
+              rawUserChats = (userChatsResponse as any).chats;
+              userChatHasMore = (userChatsResponse as any).pagination?.has_more ?? false;
+              userChats = rawUserChats.map((chat: any) => ({
+                id: chat.id,
+                title: chat.display_name || 'Untitled Chat',
+                type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
+                source: 'user' as const,
+                participants: chat.participants || [],
+                last_message: chat.latest_message?.content || 'No messages yet',
+                updated_at: chat.last_message_at || new Date().toISOString(),
+                created_at: chat.created_at || new Date().toISOString(),
+                unread_count: chat.unread_count || 0,
+                last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
+                workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
+              }));
+            }
+          } catch (userChatError) {
+            if (__DEV__) console.warn('Failed to load user chats:', userChatError);
+          }
+        })(),
+        (async () => {
+          try {
+            const favRes = await (api as any).getChatFavorites();
+            if (favRes?.success && (favRes.favorite_history_ids || favRes.favorite_chat_ids)) {
+              serverFavoriteHistoryIds = Array.isArray(favRes.favorite_history_ids) ? favRes.favorite_history_ids : [];
+              serverFavoriteChatIds = Array.isArray(favRes.favorite_chat_ids) ? favRes.favorite_chat_ids : [];
+            }
+          } catch (_) { /* non-critical */ }
+        })(),
+      ]);
+
+      const { histories, error, clearError } = useChatStore.getState();
+      if (error) {
+        console.warn('AI chat history unavailable:', error, '- showing user chats and cached data');
+        clearError();
       }
 
       // Merge server favorites (from web or mobile) so favorites sync across devices
@@ -2343,6 +2391,12 @@ export default function ChatsScreen() {
         console.error('❌ Failed to persist chat contexts after loadChats:', error);
       });
 
+      // Store pagination state so the "Load More" button knows whether more data is available
+      setHasMoreAiChats(aiPagination?.has_more ?? false);
+      setAiChatOffset(limit); // next offset is the number of items we just loaded
+      setHasMoreUserChats(userChatHasMore);
+      setUserChatOffset(limit);
+
     } catch (error) {
       console.error('Failed to load chats:', error);
       // Fallback: just show default ChatGD Assistant
@@ -2350,6 +2404,109 @@ export default function ChatsScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  /**
+   * Append the next page of AI and/or user chats to the current list.
+   * Triggered by the "Load More" button in the chat list footer.
+   */
+  const loadMoreChats = async () => {
+    if (isLoadingMoreChats || (!hasMoreAiChats && !hasMoreUserChats)) return;
+    setIsLoadingMoreChats(true);
+    try {
+      const { fetchChatHistories } = useChatStore.getState();
+      let newAiOffset = aiChatOffset;
+      let newUserOffset = userChatOffset;
+
+      await Promise.all([
+        // Load next page of AI/LLM chats
+        hasMoreAiChats
+          ? (async () => {
+              const pagination = await fetchChatHistories(CHATS_PAGE_SIZE, aiChatOffset);
+              setHasMoreAiChats(pagination?.has_more ?? false);
+              newAiOffset = aiChatOffset + CHATS_PAGE_SIZE;
+              setAiChatOffset(newAiOffset);
+            })()
+          : Promise.resolve(),
+
+        // Load next page of user/direct chats
+        hasMoreUserChats
+          ? (async () => {
+              try {
+                const res = await api.getChats(CHATS_PAGE_SIZE, userChatOffset);
+                if (res.success && (res as any).chats) {
+                  const moreUserChats: Chat[] = ((res as any).chats as any[]).map((chat: any) => ({
+                    id: chat.id,
+                    title: chat.display_name || 'Untitled Chat',
+                    type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
+                    source: 'user' as const,
+                    participants: chat.participants || [],
+                    last_message: chat.latest_message?.content || 'No messages yet',
+                    updated_at: chat.last_message_at || new Date().toISOString(),
+                    created_at: chat.created_at || new Date().toISOString(),
+                    unread_count: chat.unread_count || 0,
+                    last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
+                    workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
+                  }));
+                  setChats(prev => {
+                    const existing = new Set(prev.map(c => `${c.type}-${c.id}`));
+                    const deduped = moreUserChats.filter(c => !existing.has(`${c.type}-${c.id}`));
+                    return sortChatsByLastMessage([...prev, ...deduped]);
+                  });
+                  setHasMoreUserChats((res as any).pagination?.has_more ?? false);
+                  newUserOffset = userChatOffset + CHATS_PAGE_SIZE;
+                  setUserChatOffset(newUserOffset);
+                }
+              } catch (err) {
+                if (__DEV__) console.warn('loadMoreChats: user chats failed', err);
+              }
+            })()
+          : Promise.resolve(),
+      ]);
+
+      // After fetchChatHistories appended new histories into the store, convert and append to UI
+      if (hasMoreAiChats) {
+        const { histories } = useChatStore.getState();
+        // The store appended new rows; take the slice we just fetched
+        const newHistories = histories.slice(aiChatOffset);
+        try {
+          const newAiChats: Chat[] = newHistories
+            .filter(h => h && h.id !== -1)
+            .map((history: any) => {
+              const messages = history.messages || history.conversation_data || [];
+              let lastMessage = 'No messages yet';
+              if (Array.isArray(messages) && messages.length > 0) {
+                const lastUserMsg = [...messages].reverse().find((m: any) => m?.role === 'user' || m?.is_own_message);
+                const raw = (lastUserMsg ? (lastUserMsg.content ?? '') : (messages[messages.length - 1]?.content ?? ''));
+                lastMessage = raw.length > 60 ? raw.substring(0, 60).trim() + '…' : raw;
+              }
+              return {
+                id: Number(history.id),
+                title: String(history.title || 'Untitled Chat'),
+                type: 'ai_assistant' as const,
+                source: 'llm' as const,
+                participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
+                last_message: lastMessage,
+                updated_at: String(history.last_message_at || history.updated_at || new Date().toISOString()),
+                created_at: String(history.created_at || new Date().toISOString()),
+                unread_count: 0,
+              } as Chat;
+            });
+          setChats(prev => {
+            const getChatKey = (c: Chat) => (c.type === 'user_direct' || c.type === 'workspace' ? 'user_' : 'ai_') + c.id;
+            const existing = new Set(prev.map(getChatKey));
+            const deduped = newAiChats.filter(c => !existing.has(getChatKey(c)));
+            return sortChatsByLastMessage([...prev, ...deduped]);
+          });
+        } catch (err) {
+          if (__DEV__) console.warn('loadMoreChats: AI chat conversion failed', err);
+        }
+      }
+    } catch (error) {
+      console.error('loadMoreChats failed:', error);
+    } finally {
+      setIsLoadingMoreChats(false);
     }
   };
 
@@ -2408,11 +2565,15 @@ export default function ChatsScreen() {
   };
 
   const loadDocuments = async () => {
+    // Reuse in-flight request to prevent duplicate parallel calls (e.g. mount + useFocusEffect)
+    if (documentRequestRef.current) {
+      try { await documentRequestRef.current; } catch { /* handled by original call */ }
+      return;
+    }
     try {
-      // Use getDocuments which uses the mobile endpoint and handles errors gracefully
-      const response = await api.getDocuments(1, 50); // Get up to 50 recent files for mentions
+      documentRequestRef.current = api.getDocuments(1, 50);
+      const response = await documentRequestRef.current;
       if (response && (response.success !== false)) {
-        // Handle different response formats (files or data array)
         const files = response.files || response.data || [];
         const docs = Array.isArray(files) ? files.map((file: any) => ({
           id: file.id,
@@ -2429,6 +2590,8 @@ export default function ChatsScreen() {
     } catch (error: any) {
       console.error('❌ Failed to load documents for @ mentions:', error?.message || error);
       setDocuments([]);
+    } finally {
+      documentRequestRef.current = null;
     }
   };
 
@@ -2582,33 +2745,31 @@ export default function ChatsScreen() {
   };
 
   const loadBookmarks = async () => {
+    // Reuse in-flight request to prevent duplicate parallel calls (e.g. mount + useFocusEffect)
+    if (bookmarkRequestRef.current) {
+      try { await bookmarkRequestRef.current; } catch { /* handled by original call */ }
+      return;
+    }
     try {
-      // Add timeout handling - if request takes too long, cancel it
-      const timeoutId = setTimeout(() => {
-        console.warn('⚠️ Bookmarks request taking too long, may timeout');
-      }, 25000); // Warn at 25 seconds
-      
-      const response = await (api as any).getBookmarks();
-      clearTimeout(timeoutId);
-      
+      bookmarkRequestRef.current = (api as any).getBookmarks();
+      const response = await bookmarkRequestRef.current;
       if (response.success && response.data) {
-        // Handle both response structures: data.bookmarks or data as array
-        const bookmarksData = Array.isArray(response.data) 
-          ? response.data 
+        const bookmarksData = Array.isArray(response.data)
+          ? response.data
           : (response.data.bookmarks || []);
-        
         setBookmarks(bookmarksData);
       } else {
         setBookmarks([]);
       }
     } catch (error: any) {
-      // Handle timeout errors gracefully
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         console.warn('⚠️ Bookmarks request timed out - this is non-critical, continuing without bookmarks');
       } else {
         if (__DEV__) console.warn('Failed to load bookmarks:', error);
       }
       setBookmarks([]);
+    } finally {
+      bookmarkRequestRef.current = null;
     }
   };
 
@@ -2884,6 +3045,14 @@ export default function ChatsScreen() {
                       backendMsg.role === 'assistant' && key && refs && refs[key]
                         ? (refs[key].citations ?? null)
                         : undefined;
+                    const chartFileIdFb =
+                      backendMsg.role === 'assistant' && backendMsg.chart_file_id != null
+                        ? Number(backendMsg.chart_file_id)
+                        : backendMsg.role === 'assistant' && key && refs?.[key]?.chart_file_id != null
+                          ? Number(refs[key].chart_file_id)
+                          : undefined;
+                    const chartTitleFb =
+                      backendMsg.chart_title || (key && refs?.[key]?.chart_title) || undefined;
                     return {
                       id: typeof messageId === 'number' ? messageId : generateUniqueMessageId(),
                       content: msg.content || '',
@@ -2891,6 +3060,9 @@ export default function ChatsScreen() {
                       is_own_message: msg.role === 'user',
                       created_at: timestamp || new Date().toISOString(),
                       citations: citations ?? undefined,
+                      ...(chartFileIdFb != null && !isNaN(chartFileIdFb)
+                        ? { chartFileId: chartFileIdFb, chartTitle: chartTitleFb }
+                        : {}),
                     };
                   });
                   // Deduplicate messages before setting to prevent duplicate key errors
@@ -3016,7 +3188,15 @@ export default function ChatsScreen() {
             backendMsg.role === 'assistant' && key && refs && refs[key]
               ? (refs[key].citations ?? undefined)
               : undefined;
-          
+          const chartFileId =
+            backendMsg.role === 'assistant' && backendMsg.chart_file_id != null
+              ? Number(backendMsg.chart_file_id)
+              : backendMsg.role === 'assistant' && key && refs?.[key]?.chart_file_id != null
+                ? Number(refs[key].chart_file_id)
+                : undefined;
+          const chartTitle =
+            backendMsg.chart_title || (key && refs?.[key]?.chart_title) || undefined;
+
           return {
             id: typeof messageId === 'number' ? messageId : generateUniqueMessageId(),
             content: msg.content || '',
@@ -3024,6 +3204,9 @@ export default function ChatsScreen() {
             is_own_message: msg.role === 'user',
             created_at: timestamp || new Date().toISOString(),
             citations,
+            ...(chartFileId != null && !isNaN(chartFileId)
+              ? { chartFileId, chartTitle }
+              : {}),
           };
         });
         
@@ -3119,11 +3302,15 @@ export default function ChatsScreen() {
     } catch (error: any) {
       console.error('Failed to load messages:', error);
       
-      // If it's a 404, the chat might not exist anymore - refresh chat list
+      // If it's a 404, the chat no longer exists. Mark it loaded (prevents infinite retries)
+      // and deselect it so the user returns to the chat list. A one-off loadChats() refreshes
+      // the list without risk of a retry loop (loadedChatIdRef guards the next loadMessages call).
       if (error.message?.includes('Chat not found') || error.message?.includes('404') || error.response?.status === 404) {
-        console.warn(`⚠️ Chat ${chatId} not found, refreshing chat list`);
+        console.warn(`⚠️ Chat ${chatId} not found — deselecting and refreshing list`);
         setMessages([]);
-        loadedChatIdRef.current = chatIdForApi; // Track even on error to prevent infinite retries
+        loadedChatIdRef.current = chatIdForApi;
+        setSelectedChat(null);
+        selectedChatRef.current = null;
         loadChats();
       } else {
         // Show error message for other errors - but preserve existing messages if any
@@ -3228,28 +3415,37 @@ export default function ChatsScreen() {
       
       console.log(`📝 Streaming ${isPreviewPhaseRef.current ? 'PREVIEW' : 'REFINEMENT'}: ${displayedCharsRef.current}/${contentBufferRef.current.length} chars`);
       
-      // Update UI with current content (like web: flushSync update)
+      // Update UI — always target assistant row by id so preview/refinement never overwrite the user bubble
       setMessages(prev => {
         const newMessages = [...prev];
-        if (newMessages[assistantMsgIndex]) {
-          newMessages[assistantMsgIndex] = {
-            ...newMessages[assistantMsgIndex],
+        const rowId = streamingAssistantRowIdRef.current;
+        let i =
+          rowId != null ? newMessages.findIndex(m => m.id === rowId) : -1;
+        if (i < 0) i = assistantMsgIndex;
+        if (i >= 0 && i < newMessages.length) {
+          newMessages[i] = {
+            ...newMessages[i],
             content: displayText,
             is_preview: isPreviewPhaseRef.current,
+            is_own_message: false,
+            sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
           };
-          console.log(`🔄 Updated message ${assistantMsgIndex} with content: "${displayText.substring(0, 50)}..."`);
+          streamingMessageIndexRef.current = i;
+          console.log(`🔄 Stream update row ${i} (id ${rowId}) content: "${displayText.substring(0, 50)}..."`);
         } else {
-          // Create new assistant message if it doesn't exist
           const assistantMessage: ChatMessage = {
-            id: generateUniqueMessageId(),
+            id: rowId ?? generateUniqueMessageId(),
             content: displayText,
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
             created_at: new Date().toISOString(),
             is_preview: isPreviewPhaseRef.current,
           };
+          if (streamingAssistantRowIdRef.current == null) {
+            streamingAssistantRowIdRef.current = assistantMessage.id;
+          }
           newMessages.push(assistantMessage);
-          console.log(`🔄 Created new assistant message with content: "${displayText.substring(0, 50)}..."`);
+          streamingMessageIndexRef.current = newMessages.length - 1;
         }
         return newMessages;
       });
@@ -3289,33 +3485,143 @@ export default function ChatsScreen() {
       console.log(`✅ Finalizing message with content length: ${finalContent.length}`);
       setMessages(prev => {
         const newMessages = [...prev];
+        const rowId = streamingAssistantRowIdRef.current;
+        let idx =
+          rowId != null ? newMessages.findIndex(m => m.id === rowId) : -1;
+        if (idx < 0) idx = assistantMsgIndex;
         // Always use the full content buffer, never clear it
-        const keepContent = finalContent || newMessages[assistantMsgIndex]?.content || '';
-        if (newMessages[assistantMsgIndex]) {
-          newMessages[assistantMsgIndex] = {
-            ...newMessages[assistantMsgIndex],
+        const keepContent = finalContent || newMessages[idx]?.content || '';
+        if (idx >= 0 && newMessages[idx]) {
+          const mid = assistantMessageIdFromStreamRef.current;
+          assistantMessageIdFromStreamRef.current = null;
+          newMessages[idx] = {
+            ...newMessages[idx],
+            ...(typeof mid === 'number' && mid > 0 ? { id: mid } : {}),
             content: keepContent,
-            is_preview: false, // Final text - show in normal color
+            is_preview: false,
+            is_own_message: false,
+            sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             citations: citationsFromStreamRef.current ?? undefined,
+            ...(chartFromStreamRef.current
+              ? {
+                  chartFileId: chartFromStreamRef.current.chartFileId,
+                  chartTitle: chartFromStreamRef.current.chartTitle,
+                }
+              : {}),
           };
           citationsFromStreamRef.current = null;
-          console.log(`✅ Updated message ${assistantMsgIndex} with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
+          chartFromStreamRef.current = null;
+          console.log(`✅ Finalized assistant row ${idx} final content length ${keepContent.length}`);
         } else {
+          const mid = assistantMessageIdFromStreamRef.current;
+          assistantMessageIdFromStreamRef.current = null;
           const assistantMessage: ChatMessage = {
-            id: generateUniqueMessageId(),
+            id: typeof mid === 'number' && mid > 0 ? mid : generateUniqueMessageId(),
             content: keepContent,
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
             created_at: new Date().toISOString(),
             is_preview: false,
             citations: citationsFromStreamRef.current ?? undefined,
+            ...(chartFromStreamRef.current
+              ? {
+                  chartFileId: chartFromStreamRef.current.chartFileId,
+                  chartTitle: chartFromStreamRef.current.chartTitle,
+                }
+              : {}),
           };
           citationsFromStreamRef.current = null;
+          chartFromStreamRef.current = null;
           newMessages.push(assistantMessage);
           console.log(`✅ Created new assistant message with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
         }
         return newMessages;
       });
+    }
+  };
+
+  /** Same backend as web: retry + retry_replace_message_id on /api/v1/mobile/chat/smart/start → smart_chat */
+  const handleRetryAssistant = async (assistantIndex: number, replaceMessageId: number) => {
+    if (sendingMessage || !selectedChat) return;
+    if (selectedChat.id <= 0) {
+      Toast.show({ type: 'error', text1: 'Open a saved chat to retry a reply.' });
+      return;
+    }
+    const base = lastStreamFiltersRef.current;
+    if (!base?.chat_history_id && selectedChat.id <= 0) {
+      Toast.show({ type: 'error', text1: 'Send a message first, then retry.' });
+      return;
+    }
+    const chunk = smartChatPollingChunkRef.current;
+    if (!chunk || replaceMessageId <= 0) {
+      Toast.show({ type: 'error', text1: 'Retry unavailable. Reload the chat and try again.' });
+      return;
+    }
+    try {
+      setSendingMessage(true);
+      startBounceAnimation();
+      abortControllerRef.current = new AbortController();
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+      contentBufferRef.current = '';
+      displayedCharsRef.current = 0;
+      isPreviewPhaseRef.current = true;
+      isStreamingRef.current = false;
+      isStreamCompleteRef.current = false;
+      citationsFromStreamRef.current = null;
+      chartFromStreamRef.current = null;
+      assistantMessageIdFromStreamRef.current = null;
+      isFakeStreamingRef.current = true;
+      pollingAssistantIndexRef.current = assistantIndex;
+      streamingMessageIndexRef.current = assistantIndex;
+      setStreamingMessageIndex(assistantIndex);
+      setMessages((prev) => {
+        const next = [...prev];
+        if (next[assistantIndex]) {
+          next[assistantIndex] = {
+            ...next[assistantIndex],
+            content: '',
+            citations: undefined,
+            chartFileId: undefined,
+            chartTitle: undefined,
+            is_preview: true,
+          };
+        }
+        return next;
+      });
+      const streamFilters = {
+        ...base,
+        chat_history_id: selectedChat.id > 0 ? selectedChat.id : base!.chat_history_id,
+        retry: true,
+        retry_replace_message_id: replaceMessageId,
+      };
+      await (api as any).sendChatMessagePolling('', streamFilters, abortControllerRef.current?.signal, chunk);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 409) {
+        Toast.show({
+          type: 'error',
+          text1: e?.response?.data?.message || 'Retry limit reached. Send a new message or rephrase.',
+        });
+      } else {
+        Toast.show({ type: 'error', text1: e?.message || 'Retry failed' });
+      }
+      setMessages((prev) => {
+        const next = [...prev];
+        if (next[assistantIndex]) {
+          next[assistantIndex] = {
+            ...next[assistantIndex],
+            content: next[assistantIndex].content || 'Retry failed.',
+            is_preview: false,
+          };
+        }
+        return next;
+      });
+    } finally {
+      setSendingMessage(false);
+      stopBounceAnimation();
     }
   };
 
@@ -3394,8 +3700,10 @@ export default function ChatsScreen() {
         lastStreamCompleteTimeRef.current = 0;
         
          // Create placeholder assistant message - fake streaming from file will populate it
+          const placeholderId = generateUniqueMessageId();
+          streamingAssistantRowIdRef.current = placeholderId;
           const placeholderMessage: ChatMessage = {
-            id: generateUniqueMessageId(),
+            id: placeholderId,
             content: '', // Fake streaming from file will populate this
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
@@ -3403,7 +3711,7 @@ export default function ChatsScreen() {
           };
         setMessages(prev => {
           assistantMessageIndex = prev.length; // Update to correct index after user message is added
-          console.log('📝 Created placeholder message at index', assistantMessageIndex, 'fake streaming from file will handle display');
+          console.log('📝 Created placeholder message at index', assistantMessageIndex, 'id', placeholderId, 'fake streaming from file will handle display');
           
           // CRITICAL: Set streamingMessageIndex INSIDE setMessages callback AND update ref immediately
           // This ensures ProcessingMessageDisplay can immediately show fake streaming
@@ -3589,13 +3897,14 @@ export default function ChatsScreen() {
           bookmarkContextId: selectedChat?.bookmark_context?.id
         });
 
+        pollingAssistantIndexRef.current = assistantMessageIndex;
+        lastStreamFiltersRef.current = { ...streamFilters };
+        assistantMessageIdFromStreamRef.current = null;
+
         // Use chunked polling for AI chat (resilient alternative to streaming)
         // Polling works better on mobile networks and survives app backgrounding
-        await (api as any).sendChatMessagePolling(
-          chatContext,
-          streamFilters,
-          abortControllerRef.current?.signal,
-          (type: string, data: any) => {
+        const smartChatOnChunk = (type: string, data: any) => {
+            const assistantMessageIndex = pollingAssistantIndexRef.current;
             // Handle different SSE event types
             switch (type) {
               case 'status':
@@ -4009,6 +4318,19 @@ export default function ChatsScreen() {
                 // Mark stream as complete so interval knows to stop when all content is displayed
                 isStreamCompleteRef.current = true;
                 citationsFromStreamRef.current = (data.citations && data.citations.length > 0) ? data.citations : null;
+                const midComplete = (data as any).message_id;
+                if (midComplete != null && !isNaN(Number(midComplete))) {
+                  assistantMessageIdFromStreamRef.current = Number(midComplete);
+                }
+                const cf = (data as any).chart_file_id;
+                if (cf != null && !isNaN(Number(cf))) {
+                  chartFromStreamRef.current = {
+                    chartFileId: Number(cf),
+                    chartTitle: (data as any).chart_title || undefined,
+                  };
+                } else {
+                  chartFromStreamRef.current = null;
+                }
                 
                 // Buffer already has full content from chunks, just ensure phase is correct
                 if (data.response != null && String(data.response).length > 0) {
@@ -4093,7 +4415,13 @@ export default function ChatsScreen() {
                   }
                 }
             }
-          }
+          };
+        smartChatPollingChunkRef.current = smartChatOnChunk;
+        await (api as any).sendChatMessagePolling(
+          chatContext,
+          streamFilters,
+          abortControllerRef.current?.signal,
+          smartChatOnChunk
         );
 
         // After streaming completes, update chat list
@@ -4759,43 +5087,44 @@ export default function ChatsScreen() {
     // Reset going back flag when selecting a chat
     setIsGoingBack(false);
     
-    // Abort any ongoing requests when switching chats
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    
-    // Stop streaming if active
-    if (streamingIntervalRef.current) {
-      clearInterval(streamingIntervalRef.current);
-      streamingIntervalRef.current = null;
-    }
-    
-    // CRITICAL: Reset all streaming state when switching chats to ensure messages load correctly
-    isStreamingRef.current = false;
-    isStreamCompleteRef.current = false;
-    lastStreamCompleteTimeRef.current = 0; // Reset completion time so streaming guard doesn't block
-    lastStreamedMessageIndexRef.current = null; // Reset last streamed message index
-    contentBufferRef.current = '';
-    displayedCharsRef.current = 0;
-    isPreviewPhaseRef.current = true;
-    isFakeStreamingRef.current = false;
-    streamingMessageIndexRef.current = null;
-    setStreamingMessageIndex(null);
-    
-    setSendingMessage(false);
-    stopBounceAnimation();
-    
-    // CRITICAL: Clear messages immediately when switching to a different chat
-    // This prevents messages from one chat appearing in another
+    // CRITICAL: Only abort/reset when genuinely switching to a different chat.
+    // Re-selecting the same chat ID (e.g. from a chat list refresh) must NOT abort an
+    // in-flight send or reset sendingMessage — that was the root cause of polling jobs
+    // being unexpectedly killed mid-stream.
     const previousChatId = selectedChat?.id;
     const newChatId = chat.id;
     if (previousChatId !== newChatId) {
+      // Abort any ongoing requests when switching chats
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      
+      // Stop streaming if active
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+      
+      // Reset all streaming state when switching chats to ensure messages load correctly
+      isStreamingRef.current = false;
+      isStreamCompleteRef.current = false;
+      lastStreamCompleteTimeRef.current = 0;
+      lastStreamedMessageIndexRef.current = null;
+      contentBufferRef.current = '';
+      displayedCharsRef.current = 0;
+      isPreviewPhaseRef.current = true;
+      isFakeStreamingRef.current = false;
+      streamingMessageIndexRef.current = null;
+      setStreamingMessageIndex(null);
+      
+      setSendingMessage(false);
+      stopBounceAnimation();
+      
+      // Clear messages immediately to prevent cross-chat contamination
       console.log(`🔄 Switching from chat ${previousChatId} to ${newChatId} - clearing messages and context`);
-      setMessages([]); // Clear messages immediately to prevent cross-chat contamination
-      loadedChatIdRef.current = null; // Reset loaded chat ID so loadMessages will reload
-      // CRITICAL: Clear context when switching to a different chat
-      // restoreChatContext will restore the correct context for the new chat
+      setMessages([]);
+      loadedChatIdRef.current = null;
       setSelectedMention(null);
     }
     
@@ -6145,8 +6474,9 @@ export default function ChatsScreen() {
     );
     // For user/workspace chats: derive from sender_id vs current user so alignment is correct even before profile loads
     const currentUserId = currentUserIdRef.current;
+    // ChatGD / document / bookmark: only user queries on the right (sender null). Assistant rows always left.
     const isOwnMessage = isDocumentOrBookmarkChat
-      ? item.is_own_message
+      ? Boolean(item.is_own_message && item.sender == null)
       : (currentUserId != null && item.sender_id != null)
         ? String(item.sender_id) === String(currentUserId)
         : item.is_own_message;
@@ -6208,9 +6538,47 @@ export default function ChatsScreen() {
                       onComplete={() => {}}
                     />
                   )
-                : hasContent
-                  ? renderMessageContent(item.content, false, item.is_preview)
-                  : null}
+                : hasContent ? (
+                  <>
+                    {!item.is_preview ? (
+                      <AssistantMessageBody
+                        content={item.content}
+                        citations={item.citations}
+                        isPreview={false}
+                        chartFileId={item.chartFileId}
+                        textColor={colors.text}
+                        previewColor="#9ca3af"
+                        onOpenSermon={(fileId, paragraph, title, paragraphEnd) =>
+                          setSermonModal({
+                            visible: true,
+                            fileId,
+                            paragraph,
+                            paragraphEnd,
+                            title,
+                          })
+                        }
+                      />
+                    ) : (
+                      renderMessageContent(item.content, false, true)
+                    )}
+                    {item.chartFileId && !item.is_preview ? (
+                      <TouchableOpacity
+                        onPress={() =>
+                          setChartModal({
+                            visible: true,
+                            chartFileId: item.chartFileId!,
+                            title: item.chartTitle || 'Chart',
+                          })
+                        }
+                        style={{ marginTop: 8 }}
+                      >
+                        <Text style={{ color: '#007AFF', textDecorationLine: 'underline', fontSize: 16 }}>
+                          View chart: {item.chartTitle || 'Chart'}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </>
+                ) : null}
               {showFooter && (
                 <ChatMessageFooter
                   chatHistoryId={selectedChat?.id}
@@ -6220,6 +6588,14 @@ export default function ChatsScreen() {
                   createdAt={item.created_at}
                   citations={item.citations}
                   showActions={true}
+                  showRetry={
+                    (selectedChat?.id ?? 0) > 0 &&
+                    !item.is_own_message &&
+                    (index === messages.length - 1 ||
+                      (index === messages.length - 2 && messages[messages.length - 1]?.is_own_message))
+                  }
+                  onRetry={() => handleRetryAssistant(index, item.id)}
+                  retryDisabled={sendingMessage}
                 />
               )}
             </View>
@@ -6330,6 +6706,21 @@ export default function ChatsScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ flexGrow: 1 }}
           onTouchStart={() => setShowQuickChatTypes(false)}
+          onEndReached={() => {
+            if (!searchQuery.trim() && (hasMoreAiChats || hasMoreUserChats)) {
+              loadMoreChats();
+            }
+          }}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={
+            isLoadingMoreChats ? (
+              <ActivityIndicator
+                size="small"
+                color={colors.primary ?? '#007AFF'}
+                style={{ marginVertical: 16 }}
+              />
+            ) : null
+          }
         />
       )}
       </TapToToggleHeaderView>
@@ -7548,6 +7939,20 @@ export default function ChatsScreen() {
       {shouldShowChatMessages ? renderChatMessages() : renderChatsList()}
       {renderNewChatModal()}
       {renderChatMenuModal()}
+      <SermonViewerModal
+        visible={sermonModal.visible}
+        fileId={sermonModal.fileId}
+        paragraph={sermonModal.paragraph}
+        paragraphEnd={sermonModal.paragraphEnd}
+        title={sermonModal.title}
+        onClose={() => setSermonModal((s) => ({ ...s, visible: false }))}
+      />
+      <ChartImageModal
+        visible={chartModal.visible}
+        chartFileId={chartModal.chartFileId}
+        title={chartModal.title}
+        onClose={() => setChartModal((c) => ({ ...c, visible: false }))}
+      />
       {/* Search Type Menu Modal */}
       <Modal
         visible={showSearchTypeMenu}

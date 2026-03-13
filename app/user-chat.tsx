@@ -75,12 +75,19 @@ export default function UserChatScreen() {
   const insets = useSafeAreaInsets();
   const { user: authUser } = useAuth();
 
+  const USER_CHAT_PAGE_SIZE = 20;
+
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Pagination for the chat list
+  const [chatOffset, setChatOffset] = useState(0);
+  const [hasMoreChats, setHasMoreChats] = useState(false);
+  const [isLoadingMoreChats, setIsLoadingMoreChats] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -569,40 +576,40 @@ export default function UserChatScreen() {
     }
   };
 
+  const rawChatToChat = (chat: any): Chat => {
+    let title = chat.display_name || 'Untitled Chat';
+    if (chat.type === 'workspace' && chat.workspace) {
+      title = `#${chat.workspace.name}`;
+    } else if (chat.type === 'workspace' && chat.display_name && !chat.display_name.startsWith('#')) {
+      title = `#${chat.display_name}`;
+    }
+    return {
+      id: chat.id,
+      title,
+      type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
+      participants: chat.participants || [],
+      last_message: chat.latest_message?.content || 'No messages yet',
+      updated_at: chat.last_message_at || new Date().toISOString(),
+      created_at: chat.created_at || new Date().toISOString(),
+      unread_count: chat.unread_count || 0,
+      workspace: chat.workspace_id ? {
+        id: chat.workspace_id,
+        name: chat.workspace?.name || chat.display_name?.replace(/^#/, '') || 'Workspace',
+        slug: chat.workspace?.slug || ''
+      } : undefined,
+    };
+  };
+
   const loadChats = async () => {
     try {
       setLoading(true);
-      const response = await api.getChats();
+      const response = await api.getChats(USER_CHAT_PAGE_SIZE, 0);
       if (response.success && (response as any).chats) {
         const rawChats = (response as any).chats as any[];
-        const userChats = rawChats.map((chat: any) => {
-          // For workspace chats, use #{workspace.name} format like web
-          let title = chat.display_name || 'Untitled Chat';
-          if (chat.type === 'workspace' && chat.workspace) {
-            title = `#${chat.workspace.name}`;
-          } else if (chat.type === 'workspace' && chat.display_name && !chat.display_name.startsWith('#')) {
-            // If display_name doesn't start with #, add it
-            title = `#${chat.display_name}`;
-          }
-          
-          return {
-            id: chat.id,
-            title: title,
-            type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
-            participants: chat.participants || [],
-            last_message: chat.latest_message?.content || 'No messages yet',
-            updated_at: chat.last_message_at || new Date().toISOString(),
-            created_at: chat.created_at || new Date().toISOString(),
-            unread_count: chat.unread_count || 0,
-            workspace: chat.workspace_id ? { 
-              id: chat.workspace_id, 
-              name: chat.workspace?.name || chat.display_name?.replace(/^#/, '') || 'Workspace', 
-              slug: chat.workspace?.slug || '' 
-            } : undefined,
-          };
-        });
-        setChats(userChats);
-        // Merge server favorites (from web or mobile) so favorites sync across devices
+        setChats(rawChats.map(rawChatToChat));
+        setHasMoreChats((response as any).pagination?.has_more ?? false);
+        setChatOffset(USER_CHAT_PAGE_SIZE);
+        // Merge server favorites so web favorites show on mobile
         setFavoriteChatIds(prev => {
           const next = new Set(prev);
           rawChats.forEach((c: any) => {
@@ -617,6 +624,36 @@ export default function UserChatScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const loadMoreChats = async () => {
+    if (isLoadingMoreChats || !hasMoreChats) return;
+    setIsLoadingMoreChats(true);
+    try {
+      const response = await api.getChats(USER_CHAT_PAGE_SIZE, chatOffset);
+      if (response.success && (response as any).chats) {
+        const rawChats = (response as any).chats as any[];
+        const newChats = rawChats.map(rawChatToChat);
+        setChats(prev => {
+          const existing = new Set(prev.map(c => c.id));
+          return [...prev, ...newChats.filter(c => !existing.has(c.id))];
+        });
+        setHasMoreChats((response as any).pagination?.has_more ?? false);
+        setChatOffset(prev => prev + USER_CHAT_PAGE_SIZE);
+        setFavoriteChatIds(prev => {
+          const next = new Set(prev);
+          rawChats.forEach((c: any) => {
+            if (c.is_favorite) next.add(Number(c.id));
+          });
+          AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(next)));
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error('loadMoreChats failed:', error);
+    } finally {
+      setIsLoadingMoreChats(false);
     }
   };
 
@@ -2141,6 +2178,21 @@ export default function UserChatScreen() {
           keyExtractor={(item) => item.id.toString()}
           style={dynamicStyles.chatsList}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadChats} />}
+          onEndReached={() => {
+            if (!searchQuery.trim() && hasMoreChats) {
+              loadMoreChats();
+            }
+          }}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={
+            isLoadingMoreChats ? (
+              <ActivityIndicator
+                size="small"
+                color={colors.primary}
+                style={{ marginVertical: 16 }}
+              />
+            ) : null
+          }
         />
       )}
 

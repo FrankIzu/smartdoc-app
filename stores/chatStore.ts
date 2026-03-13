@@ -4,7 +4,7 @@ import { ChatHistory, ChatMessage, ChatRequest, ChatState } from '../types';
 
 interface ChatStore extends ChatState {
   // Actions
-  fetchChatHistories: (limit?: number, offset?: number) => Promise<void>;
+  fetchChatHistories: (limit?: number, offset?: number) => Promise<{ has_more: boolean; total: number }>;
   fetchChatConversation: (id: number) => Promise<void>;
   sendMessage: (request: ChatRequest) => Promise<boolean>;
   createNewChat: (title?: string) => Promise<number | null>;
@@ -41,6 +41,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           isLoading: false,
           error: null,
         });
+
+        const pagination = (response as any).pagination;
+        return {
+          has_more: pagination?.has_more ?? false,
+          total: pagination?.total ?? newHistories.length,
+        };
       } else {
         set({
           isLoading: false,
@@ -53,6 +59,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         error: error.message || 'Failed to fetch chat histories',
       });
     }
+    return { has_more: false, total: 0 };
   },
 
   fetchChatConversation: async (id: number) => {

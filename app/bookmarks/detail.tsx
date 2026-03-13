@@ -510,9 +510,10 @@ export default function BookmarkDetailScreen() {
       let allFiles: any[] = [];
       let page = 1;
       const perPage = 100;
+      const maxPages = 15; // cap ~1500 files; avoids N sequential API calls for huge libraries
       let hasMore = true;
 
-      while (hasMore) {
+      while (hasMore && page <= maxPages) {
         const response = await apiClient.getFiles(page, perPage);
 
         if (response.success && response.files) {

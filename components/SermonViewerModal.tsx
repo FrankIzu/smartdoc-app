@@ -1,0 +1,239 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { WebView } from 'react-native-webview';
+import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
+import { secureStorage } from '../utils/storage';
+
+export interface SermonViewerModalProps {
+  visible: boolean;
+  fileId: number;
+  paragraph: number;
+  paragraphEnd?: number;
+  title?: string;
+  onClose: () => void;
+}
+
+/**
+ * Full HTML document wrapper only — sermon fragment in <body>.
+ * Highlight/scroll run via injectedJavaScript so </script> inside sermon HTML cannot break the page.
+ */
+function buildSermonDocument(bodyHtml: string): string {
+  return `<!DOCTYPE html><html><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<style>
+html, body { margin: 0; padding: 0; min-height: 100%; }
+body { font-family: -apple-system, system-ui, sans-serif; padding: 14px; font-size: 16px; line-height: 1.55; color: #111; background: #fff; }
+.sermon-para-highlight { background: #fff8c5 !important; padding: 8px 6px; border-radius: 6px; box-sizing: border-box; }
+.sermon-para-num { margin-right: 0.35em; color: #555; font-weight: 600; }
+p { margin: 0.65em 0; }
+</style></head><body>${bodyHtml}</body></html>`;
+}
+
+export default function SermonViewerModal({
+  visible,
+  fileId,
+  paragraph,
+  paragraphEnd,
+  title,
+  onClose,
+}: SermonViewerModalProps) {
+  const { height: windowHeight } = useWindowDimensions();
+  const sheetHeight = Math.round(windowHeight * 0.88);
+  const webMinHeight = Math.max(320, Math.round(windowHeight * 0.62));
+
+  const [htmlDoc, setHtmlDoc] = useState<string>('');
+  const [fetching, setFetching] = useState(false);
+  const [webReady, setWebReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const webRef = useRef<WebView>(null);
+
+  const start = paragraph;
+  const end =
+    paragraphEnd != null && paragraphEnd >= start ? paragraphEnd : start;
+
+  const highlightScript = `
+    (function(){
+      try {
+        var s = ${start}, e = ${end};
+        document.querySelectorAll('p[id^="para-"]').forEach(function(p){
+          var m = p.id.match(/^para-(\\d+)$/);
+          if (m && !p.querySelector('.sermon-para-num')) {
+            var span = document.createElement('span');
+            span.className = 'sermon-para-num';
+            span.textContent = m[1] + '. ';
+            p.insertBefore(span, p.firstChild);
+          }
+        });
+        var first = document.getElementById('para-' + s);
+        if (first) {
+          first.scrollIntoView({ behavior: 'auto', block: 'start' });
+        }
+        for (var n = s; n <= e; n++) {
+          var el = document.getElementById('para-' + n);
+          if (el) el.classList.add('sermon-para-highlight');
+        }
+      } catch (e) {}
+      true;
+    })();
+  `;
+
+  const load = useCallback(async () => {
+    if (!visible || !fileId) return;
+    setFetching(true);
+    setWebReady(false);
+    setError(null);
+    setHtmlDoc('');
+    try {
+      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      const url = `${API_BASE_URL}/api/v1/web/files/${fileId}/sermon-html`;
+      const res = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        if (res.status === 404) throw new Error('Sermon text is not available for this document.');
+        throw new Error(res.statusText || 'Failed to load sermon.');
+      }
+      const data = await res.json();
+      if (!data?.success || typeof data?.html !== 'string' || !data.html.trim()) {
+        setError('Sermon text is not available.');
+        return;
+      }
+      setHtmlDoc(buildSermonDocument(data.html));
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load sermon.');
+    } finally {
+      setFetching(false);
+    }
+  }, [visible, fileId]);
+
+  useEffect(() => {
+    if (visible) load();
+    else {
+      setHtmlDoc('');
+      setWebReady(false);
+      setError(null);
+    }
+  }, [visible, fileId, load]);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Dismiss" />
+        <View style={[styles.sheet, { height: sheetHeight }]} onStartShouldSetResponder={() => true}>
+          <View style={styles.header}>
+            <Text style={styles.title} numberOfLines={2}>
+              {title || 'Sermon'}
+              {paragraph > 0
+                ? ` — ¶${paragraphEnd != null && paragraphEnd > paragraph ? `${paragraph}–${paragraphEnd}` : paragraph}`
+                : ''}
+            </Text>
+            <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={12}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+
+          <View style={[styles.body, { minHeight: webMinHeight }]}>
+            {fetching && (
+              <View style={styles.loadingOverlay} pointerEvents="none">
+                <ActivityIndicator size="large" color="#007AFF" />
+                <Text style={styles.muted}>Loading sermon…</Text>
+              </View>
+            )}
+            {error && !fetching && (
+              <View style={styles.centered}>
+                <Text style={styles.error}>{error}</Text>
+              </View>
+            )}
+            {!error && htmlDoc ? (
+              <WebView
+                originWhitelist={['*']}
+                source={{ html: htmlDoc, baseUrl: API_BASE_URL || 'https://grabdocs.com' }}
+                style={[styles.web, { minHeight: webMinHeight }]}
+                scrollEnabled
+                javaScriptEnabled
+                domStorageEnabled
+                startInLoadingState={false}
+                ref={webRef}
+                onLoadEnd={() => {
+                  webRef.current?.injectJavaScript(highlightScript);
+                  setTimeout(() => webRef.current?.injectJavaScript(highlightScript), 120);
+                  setWebReady(true);
+                }}
+                onError={() => setError('Could not display sermon.')}
+                onHttpError={() => setError('Could not display sermon.')}
+                injectedJavaScript={highlightScript}
+              />
+            ) : null}
+            {!fetching && !error && htmlDoc && !webReady ? (
+              <View style={[styles.loadingOverlay, { backgroundColor: 'rgba(255,255,255,0.85)' }]}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#ddd',
+    flexShrink: 0,
+  },
+  title: { flex: 1, fontSize: 16, fontWeight: '600', marginRight: 8 },
+  closeBtn: { paddingVertical: 6, paddingHorizontal: 10 },
+  closeText: { color: '#007AFF', fontSize: 16 },
+  body: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#fff',
+    position: 'relative',
+  },
+  web: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#fff',
+    opacity: 1,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    zIndex: 2,
+  },
+  centered: { flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center' },
+  muted: { marginTop: 12, color: '#666', fontSize: 15 },
+  error: { color: '#c00', textAlign: 'center', fontSize: 15 },
+});
