@@ -40,6 +40,68 @@ export function stripCiteAnchors(text: string): string {
   return (text || '').replace(/\[\[cite:\s*\d+\s*[^\]]*\]\]/g, '').replace(/  +/g, ' ');
 }
 
+/**
+ * Break run-on list lines: `**A**: "x". - **B**` → newline bullets so UI can show one row per item.
+ * Same idea as web sermonParagraphLinks (dense model output).
+ */
+export function normalizeAssistantListMarkdown(text: string): string {
+  let s = text || '';
+  s = s.replace(/\.\s*-\s*\*\*/g, '\n- **');
+  s = s.replace(/\.\s+-\s+\*\*/g, '\n- **');
+  s = s.replace(/:\s*-\s*\*\*/g, ':\n\n- **');
+  s = s.replace(/(["'])\s*-\s*\*\*/g, '$1\n- **');
+  return s;
+}
+
+export type AssistantBodySegment =
+  | { type: 'prose'; text: string }
+  | { type: 'ul'; items: string[] };
+
+/**
+ * Split normalized body into prose blocks and markdown-style bullet runs (- / * / •).
+ */
+export function segmentAssistantBody(text: string): AssistantBodySegment[] {
+  const raw = (text || '').split(/\n/);
+  const segments: AssistantBodySegment[] = [];
+  let ulItems: string[] = [];
+  let proseLines: string[] = [];
+
+  const flushProse = () => {
+    const t = proseLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (t) segments.push({ type: 'prose', text: t });
+    proseLines = [];
+  };
+  const flushUl = () => {
+    if (ulItems.length) {
+      segments.push({ type: 'ul', items: [...ulItems] });
+      ulItems = [];
+    }
+  };
+
+  for (const line of raw) {
+    const t = line.trim();
+    if (!t) {
+      flushUl();
+      if (proseLines.length) proseLines.push('');
+      continue;
+    }
+    const isBullet =
+      /^[-*•]\s+\S/.test(t) ||
+      /^-\s*\*\*/.test(t) ||
+      /^\*\s+\S/.test(t);
+    if (isBullet) {
+      flushProse();
+      ulItems.push(t);
+    } else {
+      flushUl();
+      proseLines.push(line);
+    }
+  }
+  flushProse();
+  flushUl();
+  return segments;
+}
+
 export type ParagraphLinkOpen = (
   fileId: number,
   paragraph: number,
