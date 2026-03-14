@@ -2248,8 +2248,8 @@ class ApiService {
       const payload: any = {
         message,
         response_mode: filters?.response_mode || 'flexible',
-        stream: false, // Backend will use non-streaming mode
-        preview_mode: false, // Polling doesn't use preview mode
+        stream: false, // Job-based polling; server still emits preview/refinement chunks to the job
+        preview_mode: false,
         search_type: filters?.search_type || 'refined',
       };
 
@@ -2315,11 +2315,20 @@ class ApiService {
           payload.chat_history_id = toNum(filters.chat_history_id);
         }
 
-        // Same as web upload.tsx /api/v1/web/chat/smart — retry replaces last assistant bubble
+        // Same as web — retry replaces that assistant bubble (do not combine with additional_response)
         if (filters.retry === true && filters.retry_replace_message_id != null) {
           payload.retry = true;
           payload.retry_replace_message_id = toNum(filters.retry_replace_message_id);
           payload.message = ''; // Backend resolves user query from saved conversation
+        } else if (filters.additional_response_for_message_id != null) {
+          // More sources: append user stub + new assistant; server excludes chunks from this message
+          payload.additional_response_for_message_id = toNum(filters.additional_response_for_message_id);
+          payload.message =
+            typeof filters.message === 'string' && filters.message.trim()
+              ? filters.message.trim()
+              : 'Additional sources (same topic).';
+          payload.preview_mode = true;
+          payload.enable_preview_mode = true;
         }
       }
 
@@ -2332,7 +2341,10 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       console.error('❌ [POLLING] Failed to start chat job:', error);
-      
+      // Preserve 409 (e.g. additional_limit) for callers that remove placeholder rows
+      if (error.response?.status === 409) {
+        throw error;
+      }
       // Handle network errors (connection refused, DNS failure, etc.)
       if (error.message === 'Network Error' || error.code === 'ERR_NETWORK' || error.code === 'ECONNREFUSED') {
         const errorMsg = 'Cannot connect to server. Please check:\n' +

@@ -29,6 +29,9 @@ import { RectButton, Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import { io, Socket } from 'socket.io-client';
+import AssistantMessageBody from '../../components/AssistantMessageBody';
+import ChartImageModal from '../../components/ChartImageModal';
+import SermonViewerModal from '../../components/SermonViewerModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
@@ -37,9 +40,6 @@ import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { secureStorage } from '../../utils/storage';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
-import AssistantMessageBody from '../../components/AssistantMessageBody';
-import ChartImageModal from '../../components/ChartImageModal';
-import SermonViewerModal from '../../components/SermonViewerModal';
 import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
@@ -299,6 +299,8 @@ export default function ChatsScreen() {
   /** Last smart-chat filters (context + chat_history_id) — retry reuses these */
   const lastStreamFiltersRef = useRef<Record<string, any> | null>(null);
   const smartChatPollingChunkRef = useRef<(type: string, data: any) => void>(() => {});
+  /** True after first AI send built smartChatOnChunk — retry/more sources need this (polling promise returns immediately). */
+  const smartChatPollingChunkReadyRef = useRef(false);
 
   const [sermonModal, setSermonModal] = useState<{
     visible: boolean;
@@ -3553,8 +3555,11 @@ export default function ChatsScreen() {
       return;
     }
     const chunk = smartChatPollingChunkRef.current;
-    if (!chunk || replaceMessageId <= 0) {
-      Toast.show({ type: 'error', text1: 'Retry unavailable. Reload the chat and try again.' });
+    if (!smartChatPollingChunkReadyRef.current || replaceMessageId <= 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Send a message in this chat once, then retry. (Reload if you only opened history.)',
+      });
       return;
     }
     try {
@@ -3580,6 +3585,7 @@ export default function ChatsScreen() {
       setMessages((prev) => {
         const next = [...prev];
         if (next[assistantIndex]) {
+          streamingAssistantRowIdRef.current = next[assistantIndex].id;
           next[assistantIndex] = {
             ...next[assistantIndex],
             content: '',
@@ -3597,6 +3603,8 @@ export default function ChatsScreen() {
         retry: true,
         retry_replace_message_id: replaceMessageId,
       };
+      // sendChatMessagePolling resolves immediately (poll loop is not awaited) — do NOT clear
+      // sendingMessage in finally or fake streaming dies before any chunks arrive (same as send path).
       await (api as any).sendChatMessagePolling('', streamFilters, abortControllerRef.current?.signal, chunk);
     } catch (e: any) {
       const status = e?.response?.status;
@@ -3619,7 +3627,125 @@ export default function ChatsScreen() {
         }
         return next;
       });
-    } finally {
+      setSendingMessage(false);
+      stopBounceAnimation();
+    }
+  };
+
+  const ADDITIONAL_SOURCES_STUB = 'Additional sources (same topic).';
+
+  /**
+   * More sources — same smart/start + polling as web: additional_response_for_message_id.
+   * Appends user stub + new assistant row; does not replace the tapped assistant.
+   */
+  const handleMoreSourcesAssistant = async (assistantIndex: number, sourceAssistantMessageId: number) => {
+    if (sendingMessage || !selectedChat) return;
+    if (selectedChat.id <= 0) {
+      Toast.show({ type: 'error', text1: 'Open a saved chat to get more sources.' });
+      return;
+    }
+    const base = lastStreamFiltersRef.current;
+    if (!base?.chat_history_id && selectedChat.id <= 0) {
+      Toast.show({ type: 'error', text1: 'Send a message first.' });
+      return;
+    }
+    const chunk = smartChatPollingChunkRef.current;
+    if (!smartChatPollingChunkReadyRef.current || sourceAssistantMessageId <= 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Send a message in this chat once, then try More sources. (Reload if you only opened history.)',
+      });
+      return;
+    }
+    const userStubId = generateUniqueMessageId();
+    const assistantPlaceholderId = generateUniqueMessageId();
+    const newAssistantIndex = assistantIndex + 2;
+
+    try {
+      setSendingMessage(true);
+      startBounceAnimation();
+      abortControllerRef.current = new AbortController();
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+      contentBufferRef.current = '';
+      displayedCharsRef.current = 0;
+      isPreviewPhaseRef.current = true;
+      isStreamingRef.current = false;
+      isStreamCompleteRef.current = false;
+      citationsFromStreamRef.current = null;
+      chartFromStreamRef.current = null;
+      assistantMessageIdFromStreamRef.current = null;
+      isFakeStreamingRef.current = true;
+      pollingAssistantIndexRef.current = newAssistantIndex;
+      streamingAssistantRowIdRef.current = assistantPlaceholderId;
+
+      setMessages((prev) => {
+        const next = [...prev];
+        const u: ChatMessage = {
+          id: userStubId,
+          content: ADDITIONAL_SOURCES_STUB,
+          sender: null,
+          is_own_message: true,
+          created_at: new Date().toISOString(),
+        };
+        const a: ChatMessage = {
+          id: assistantPlaceholderId,
+          content: '',
+          sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
+          is_own_message: false,
+          created_at: new Date().toISOString(),
+          is_preview: true,
+        };
+        next.splice(assistantIndex + 1, 0, u, a);
+        return next;
+      });
+
+      setStreamingMessageIndex(newAssistantIndex);
+      streamingMessageIndexRef.current = newAssistantIndex;
+
+      const streamFilters = {
+        ...base,
+        chat_history_id: selectedChat.id > 0 ? selectedChat.id : base!.chat_history_id,
+        message: ADDITIONAL_SOURCES_STUB,
+        additional_response_for_message_id: sourceAssistantMessageId,
+      };
+      delete (streamFilters as any).retry;
+      delete (streamFilters as any).retry_replace_message_id;
+
+      // Polling promise resolves immediately; sendingMessage cleared on complete/error in chunk handler.
+      await (api as any).sendChatMessagePolling(
+        ADDITIONAL_SOURCES_STUB,
+        streamFilters,
+        abortControllerRef.current?.signal,
+        chunk
+      );
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const msg =
+        e?.response?.data?.message ||
+        (e?.response?.data?.error === 'additional_limit' ? e?.response?.data?.message : null) ||
+        e?.message ||
+        'More sources failed';
+      if (status === 409 || e?.response?.data?.error === 'additional_limit') {
+        Toast.show({ type: 'error', text1: msg });
+      } else {
+        Toast.show({ type: 'error', text1: msg });
+      }
+      setMessages((prev) => {
+        const next = [...prev];
+        const i = next.findIndex((m) => m.id === userStubId);
+        if (i >= 0 && next[i + 1]?.id === assistantPlaceholderId) {
+          next.splice(i, 2);
+        } else {
+          const j = next.findIndex((m) => m.id === assistantPlaceholderId);
+          if (j >= 0) next.splice(j, 1);
+          const k = next.findIndex((m) => m.id === userStubId);
+          if (k >= 0) next.splice(k, 1);
+        }
+        return next;
+      });
       setSendingMessage(false);
       stopBounceAnimation();
     }
@@ -4417,6 +4543,7 @@ export default function ChatsScreen() {
             }
           };
         smartChatPollingChunkRef.current = smartChatOnChunk;
+        smartChatPollingChunkReadyRef.current = true;
         await (api as any).sendChatMessagePolling(
           chatContext,
           streamFilters,
@@ -6588,6 +6715,19 @@ export default function ChatsScreen() {
                   createdAt={item.created_at}
                   citations={item.citations}
                   showActions={true}
+                  showMoreSources={
+                    (selectedChat?.id ?? 0) > 0 &&
+                    !item.is_own_message &&
+                    !item.is_preview &&
+                    typeof item.id === 'number' &&
+                    item.id > 0 &&
+                    Array.isArray(item.citations) &&
+                    item.citations.length > 0 &&
+                    (index === messages.length - 1 ||
+                      (index === messages.length - 2 && messages[messages.length - 1]?.is_own_message))
+                  }
+                  onMoreSources={() => handleMoreSourcesAssistant(index, item.id as number)}
+                  moreSourcesDisabled={sendingMessage}
                   showRetry={
                     (selectedChat?.id ?? 0) > 0 &&
                     !item.is_own_message &&

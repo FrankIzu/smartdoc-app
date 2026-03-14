@@ -20,9 +20,8 @@ on:
           - preview
           - development
       ios_build_number:
-        description: 'iOS CFBundleVersion (build number); must be new on App Store Connect. deploy.ps1 sets this automatically.'
-        required: false
-        default: ''
+        description: 'CFBundleVersion — MUST be higher than last App Store upload (e.g. 2 if last was 1). deploy.ps1 -BuildNumber 2'
+        required: true
         type: string
 
 jobs:
@@ -54,28 +53,6 @@ jobs:
           git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
         continue-on-error: true
 
-      # Must run BEFORE prebuild: CFBundleVersion comes from app.config → app.versions.json → native project.
-      - name: Apply iOS build number (workflow input)
-        if: github.event.inputs.ios_build_number != ''
-        run: |
-          BN="${{ github.event.inputs.ios_build_number }}"
-          if ! [[ "$BN" =~ ^[0-9]+$ ]]; then
-            echo "::error::ios_build_number must be digits only (CFBundleVersion), got: $BN"
-            exit 1
-          fi
-          node -e "
-            const fs = require('fs');
-            const p = 'app.versions.json';
-            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-            if (!j.ios) j.ios = {};
-            j.ios.buildNumber = String(process.env.BN);
-            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
-            console.log('app.versions.json ios.buildNumber =', j.ios.buildNumber);
-          "
-          cat app.versions.json
-        env:
-          BN: ${{ github.event.inputs.ios_build_number }}
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -90,6 +67,28 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Required input — always rewrite app.versions.json BEFORE prebuild (Expo reads it for native buildNumber).
+      - name: Apply iOS build number (workflow input)
+        run: |
+          BN="${{ github.event.inputs.ios_build_number }}"
+          if ! [[ "$BN" =~ ^[0-9]+$ ]]; then
+            echo "::error::ios_build_number must be digits only, got: $BN"
+            exit 1
+          fi
+          node -e "
+            const fs = require('fs');
+            const p = 'app.versions.json';
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (!j.ios) j.ios = {};
+            j.ios.buildNumber = String(process.env.BN);
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+            console.log('app.versions.json ios.buildNumber =', j.ios.buildNumber);
+          "
+          echo "IOS_BUILD_NUMBER=$BN" >> $GITHUB_ENV
+          cat app.versions.json
+        env:
+          BN: ${{ github.event.inputs.ios_build_number }}
 
       # Signing strategy: EAS provides the main app profile (Manual). The extension profile is
       # installed from EXT_PROVISIONING_PROFILE_BASE64 (GitHub secret) inside the EAS build step,
@@ -219,9 +218,10 @@ jobs:
           PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
           if [ -n "$PBXPROJ" ]; then
             sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $V/g" "$PBXPROJ"
-            sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = $B/g" "$PBXPROJ"
+            # Every CURRENT_PROJECT_VERSION line (main + extension targets)
+            sed -i '' -E "s/CURRENT_PROJECT_VERSION = [0-9]+/CURRENT_PROJECT_VERSION = $B/g" "$PBXPROJ"
             echo "Synced version=$V buildNumber=$B into $PBXPROJ"
-            grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" "$PBXPROJ" | head -10
+            grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" "$PBXPROJ" | head -20
           fi
 
       # Final undefined fix before EAS reads project (EAS fails with "target with id 'undefined'" otherwise).
@@ -249,6 +249,27 @@ jobs:
         run: node scripts/diagnose-pbxproj-targets.js
         continue-on-error: true
 
+      - name: Force CFBundleVersion everywhere (last line of defense before archive)
+        run: |
+          B="${IOS_BUILD_NUMBER:-$(node -e "console.log(require('./app.versions.json').ios?.buildNumber||'1')")}"
+          V=$(node -e "console.log(require('./app.versions.json').version||'1.0.0')")
+          PBXPROJ=$(find ios -name "project.pbxproj" -path "*.xcodeproj/*" | head -1)
+          if [ -n "$PBXPROJ" ]; then
+            sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $V/g" "$PBXPROJ"
+            sed -i '' -E "s/CURRENT_PROJECT_VERSION = [0-9]+/CURRENT_PROJECT_VERSION = $B/g" "$PBXPROJ"
+          fi
+          # App + extension Info.plist (skip Pods)
+          find ios -name Info.plist -not -path "*/Pods/*" | while read -r PL; do
+            plutil -replace CFBundleVersion -string "$B" "$PL" 2>/dev/null || true
+            plutil -replace CFBundleShortVersionString -string "$V" "$PL" 2>/dev/null || true
+          done
+          if command -v agvtool >/dev/null 2>&1; then
+            (cd ios && agvtool new-marketing-version "$V" && agvtool new-version -all "$B") || true
+          fi
+          echo "===== CFBundleVersion in app Info.plists (expect $B) ====="
+          find ios -name Info.plist -not -path "*/Pods/*" -exec sh -c 'echo "--- $1"; plutil -extract CFBundleVersion xml1 -o - "$1" 2>/dev/null || grep -A1 CFBundleVersion "$1" | head -3' _ {} \;
+          echo "===== CURRENT_PROJECT_VERSION in pbxproj ====="
+          grep CURRENT_PROJECT_VERSION "$PBXPROJ" | head -15 || true
       - name: EAS Build (local)
         id: eas_build
         continue-on-error: true

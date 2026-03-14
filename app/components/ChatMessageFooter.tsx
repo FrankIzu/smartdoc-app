@@ -1,5 +1,4 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import React, { useState } from 'react';
 import { Modal, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
@@ -39,12 +38,16 @@ export interface ChatMessageFooterProps {
   initialFeedbackScore?: number | null;
   /** Called after feedback is submitted so parent can persist */
   onFeedbackSubmitted?: (score: number | null) => void;
-  /** When false, hide copy / like / dislike / citation (e.g. for user or workspace chat). Default true. */
+  /** When false, hide like / dislike / citation (e.g. for user or workspace chat). Default true. */
   showActions?: boolean;
   /** Show retry (same backend as web: retry + retry_replace_message_id) */
   showRetry?: boolean;
   onRetry?: () => void;
   retryDisabled?: boolean;
+  /** More sources — additional_response_for_message_id flow (append, not replace) */
+  showMoreSources?: boolean;
+  onMoreSources?: () => void;
+  moreSourcesDisabled?: boolean;
 }
 
 function truncateWithEllipsis(str: string, maxLen: number): string {
@@ -79,25 +82,15 @@ export function ChatMessageFooter({
   showRetry = false,
   onRetry,
   retryDisabled = false,
+  showMoreSources = false,
+  onMoreSources,
+  moreSourcesDisabled = false,
 }: ChatMessageFooterProps) {
   const colors = useThemeColors();
   const [feedbackScore, setFeedbackScore] = useState<number | null>(initialFeedbackScore ?? null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [showSourcesModal, setShowSourcesModal] = useState(false);
   const sourceList = citations && citations.length > 0 ? citations : [];
-
-  const handleCopy = async () => {
-    if (!responseText) return;
-    try {
-      await Clipboard.setStringAsync(responseText);
-      setCopied(true);
-      Toast.show({ type: 'success', text1: 'Copied to clipboard', visibilityTime: 2000 });
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      Toast.show({ type: 'error', text1: 'Failed to copy' });
-    }
-  };
 
   const handleShareResponse = async () => {
     if (!responseText) return;
@@ -148,18 +141,35 @@ export function ChatMessageFooter({
     <View style={[styles.row, styles.footerBelowResponse]}>
       {showActions && (
         <View style={styles.icons}>
-          <TouchableOpacity
-            onPress={handleCopy}
-            disabled={!responseText}
-            style={styles.iconBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons
-              name={copied ? 'checkmark' : 'copy-outline'}
-              size={18}
-              color={copied ? '#007AFF' : iconColor}
-            />
-          </TouchableOpacity>
+          {/* Web order: Retry (circular arrow) → More sources (circle +) → Share → thumbs → Sources */}
+          {showRetry && onRetry ? (
+            <TouchableOpacity
+              onPress={onRetry}
+              disabled={retryDisabled}
+              style={styles.iconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="refresh-outline"
+                size={20}
+                color={retryDisabled ? (colors.textLight ?? '#ccc') : iconColor}
+              />
+            </TouchableOpacity>
+          ) : null}
+          {showMoreSources && onMoreSources ? (
+            <TouchableOpacity
+              onPress={onMoreSources}
+              disabled={moreSourcesDisabled}
+              style={styles.iconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="add-circle-outline"
+                size={20}
+                color={moreSourcesDisabled ? (colors.textLight ?? '#ccc') : iconColor}
+              />
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             onPress={handleShareResponse}
             disabled={!responseText}
@@ -203,20 +213,6 @@ export function ChatMessageFooter({
               color={sourceList.length > 0 ? iconColor : (colors.textLight ?? '#999')}
             />
           </TouchableOpacity>
-          {showRetry && onRetry ? (
-            <TouchableOpacity
-              onPress={onRetry}
-              disabled={retryDisabled}
-              style={styles.iconBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons
-                name="refresh-outline"
-                size={20}
-                color={retryDisabled ? (colors.textLight ?? '#ccc') : '#007AFF'}
-              />
-            </TouchableOpacity>
-          ) : null}
         </View>
       )}
       <Text style={[styles.timestamp, { color: iconColor }]} numberOfLines={1}>

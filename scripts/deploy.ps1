@@ -5,7 +5,10 @@
 # Usage:
 #   Interactive mode: .\scripts\deploy.ps1
 #   Direct parameters (Android): .\scripts\deploy.ps1 -Platform android -Environment prod -BuildNumber 11 -Version 1.0.3
-#   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 2 -Version 1.0.3
+#   Direct parameters (iOS):    .\scripts\deploy.ps1 -Platform ios -Environment prod -BuildNumber 1 -Version 1.0.18
+#   iOS App Store: -Version = CFBundleShortVersionString (user-facing). After a version is live, bump -Version; build (-BuildNumber)
+#   can restart at 1 for that new version. Re-using the same (version + build) as an already-uploaded binary always fails—usually
+#   because the IPA still had the old version/build (CI not updating app.versions.json / workflow inputs), not because Apple ignores version.
 #   With update reason: .\scripts\deploy.ps1 -Platform android -Environment prod -Version 1.0.4 -UpdateReason security
 #   Local build (no EAS cloud): .\scripts\deploy.ps1 -Platform android -Environment prod -Local
 #   Local build (iOS, requires macOS): .\scripts\deploy.ps1 -Platform ios -Environment prod -Local
@@ -831,9 +834,13 @@ try {
             $triggerArgs += @("-f", "android_version_code=$BuildNumber")
             Write-Host "   Workflow will set android_version_code=$BuildNumber (authoritative for AAB)." -ForegroundColor Gray
         }
-        if ($Platform -eq "ios" -and $BuildNumber -match '^\d+$') {
+        if ($Platform -eq "ios") {
+            if ($BuildNumber -notmatch '^\d+$') {
+                Write-Host "❌ iOS GitHub Actions requires -BuildNumber <n> (CFBundleVersion). Example: -BuildNumber 2 if App Store max is 1.0.17 (1)." -ForegroundColor Red
+                exit 1
+            }
             $triggerArgs += @("-f", "ios_build_number=$BuildNumber")
-            Write-Host "   Workflow will set ios_build_number=$BuildNumber (CFBundleVersion; must be new on App Store Connect)." -ForegroundColor Gray
+            Write-Host "   Workflow input ios_build_number=$BuildNumber (required on build-ios.yml)." -ForegroundColor Gray
         }
         if ($Platform -eq "android" -or $Platform -eq "ios") {
             Write-Host "   Waiting 20s so origin/main is consistent before Actions checkout..." -ForegroundColor Gray
@@ -903,9 +910,10 @@ try {
             
             Write-Host "`n   Next steps:" -ForegroundColor Cyan
             Write-Host "   1. Wait 60-120 seconds for GitHub to sync, then run: gh workflow run `"$workflowName`" -f profile=$profile --ref main" -ForegroundColor Gray
-            Write-Host "   2. Or use GitHub UI: Actions → $workflowFile → Run workflow (choose main, profile $profile)" -ForegroundColor Gray
-            Write-Host "   3. If you see 'workflow_dispatch' 422: workflow on default branch may be stale. Push a tiny change to .github/workflows/$workflowFile (e.g. add a comment), wait 60s, then trigger again." -ForegroundColor Gray
-            Write-Host "   4. Verify: gh workflow view $workflowFile --ref main" -ForegroundColor Gray
+            Write-Host "   2. iOS: gh workflow run build-ios.yml -f profile=production -f ios_build_number=2 --ref main" -ForegroundColor Gray
+            Write-Host "   3. Or GitHub UI: ios_build_number required (e.g. 2 after 1.0.17(1))" -ForegroundColor Gray
+            Write-Host "   4. workflow_dispatch 422: push workflow file to main, wait 60s, retry" -ForegroundColor Gray
+            Write-Host "   5. gh workflow view $workflowFile --ref main" -ForegroundColor Gray
         }
         exit 0
     }
