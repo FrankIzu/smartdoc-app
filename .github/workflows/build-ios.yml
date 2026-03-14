@@ -19,6 +19,11 @@ on:
           - production
           - preview
           - development
+      ios_build_number:
+        description: 'iOS CFBundleVersion (build number); must be new on App Store Connect. deploy.ps1 sets this automatically.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build:
@@ -48,6 +53,28 @@ jobs:
           # Verify git is working
           git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
         continue-on-error: true
+
+      # Must run BEFORE prebuild: CFBundleVersion comes from app.config → app.versions.json → native project.
+      - name: Apply iOS build number (workflow input)
+        if: github.event.inputs.ios_build_number != ''
+        run: |
+          BN="${{ github.event.inputs.ios_build_number }}"
+          if ! [[ "$BN" =~ ^[0-9]+$ ]]; then
+            echo "::error::ios_build_number must be digits only (CFBundleVersion), got: $BN"
+            exit 1
+          fi
+          node -e "
+            const fs = require('fs');
+            const p = 'app.versions.json';
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (!j.ios) j.ios = {};
+            j.ios.buildNumber = String(process.env.BN);
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+            console.log('app.versions.json ios.buildNumber =', j.ios.buildNumber);
+          "
+          cat app.versions.json
+        env:
+          BN: ${{ github.event.inputs.ios_build_number }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

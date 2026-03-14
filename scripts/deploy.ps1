@@ -419,6 +419,16 @@ try {
                     Write-Host "⚠️  Warning: Using same version code as current. Android builds typically require incrementing." -ForegroundColor Yellow
                 }
             }
+            if ($Platform -eq "ios" -and $currentBuildNumber) {
+                $buildNumberInt = [int]$BuildNumber
+                $currentBuildNumberInt = [int]$currentBuildNumber
+                if ($buildNumberInt -lt $currentBuildNumberInt) {
+                    Write-Host "❌ Invalid iOS build number. Must be >= current ($currentBuildNumber)." -ForegroundColor Red
+                    exit 1
+                } elseif ($buildNumberInt -eq $currentBuildNumberInt) {
+                    Write-Host "⚠️  Same iOS build number as repo. Apple rejects duplicate CFBundleVersion — increment for a new upload." -ForegroundColor Yellow
+                }
+            }
             
             try {
                 Update-BuildNumber -Platform $Platform -BuildNumber $BuildNumber
@@ -821,7 +831,11 @@ try {
             $triggerArgs += @("-f", "android_version_code=$BuildNumber")
             Write-Host "   Workflow will set android_version_code=$BuildNumber (authoritative for AAB)." -ForegroundColor Gray
         }
-        if ($Platform -eq "android") {
+        if ($Platform -eq "ios" -and $BuildNumber -match '^\d+$') {
+            $triggerArgs += @("-f", "ios_build_number=$BuildNumber")
+            Write-Host "   Workflow will set ios_build_number=$BuildNumber (CFBundleVersion; must be new on App Store Connect)." -ForegroundColor Gray
+        }
+        if ($Platform -eq "android" -or $Platform -eq "ios") {
             Write-Host "   Waiting 20s so origin/main is consistent before Actions checkout..." -ForegroundColor Gray
             Start-Sleep -Seconds 20
         }
