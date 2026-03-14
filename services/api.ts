@@ -2464,11 +2464,17 @@ class ApiService {
       const maxDelay = 5000; // Maximum delay (5 seconds)
       const maxFailures = 10; // Maximum consecutive failures before giving up
       
-      // Helper function to classify errors
+      // Helper: Axios sometimes exposes status as string — [].includes('404') is false, so 404 was retried for 5min.
+      const httpStatus = (error: any): number | undefined => {
+        const s = error?.response?.status;
+        if (s == null || s === '') return undefined;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : undefined;
+      };
+      // Permanent errors: 401, 403, 404, 410 — stop immediately with a clear message (no spin until timeout)
       const isPermanentError = (error: any): boolean => {
-        const status = error?.response?.status;
-        if (!status) return false;
-        // Permanent errors: 401 (unauthorized), 403 (forbidden), 404 (not found), 410 (gone/expired)
+        const status = httpStatus(error);
+        if (status == null) return false;
         return [401, 403, 404, 410].includes(status);
       };
       
@@ -2787,13 +2793,26 @@ class ApiService {
           }
 
         } catch (error: any) {
+          const status = httpStatus(error);
+          if (isPermanentError(error)) {
+            const msg =
+              status === 404
+                ? 'Chat poll 404 — job not found on this server (often: load balancer sent start vs chunk to different instances). Fix: sticky sessions or shared job store (Redis) for /smart/start + /smart/chunk. Also ensure GET /api/v1/mobile/chat/smart/chunk is deployed.'
+                : status === 401 || status === 403
+                  ? 'Not authorized to poll chat job.'
+                  : error?.response?.data?.message || error.message || 'Chat job unavailable.';
+            console.error('❌ [POLLING] Stopping (HTTP ' + String(status) + '):', msg);
+            if (onChunk) {
+              onChunk('error', { type: 'error', message: msg, error: 'PollPermanentError', status });
+            }
+            return;
+          }
           const isTimeout = error?.code === 'ECONNABORTED' || error?.message?.includes('timeout') || error?.message?.includes('exceeded');
           if (isTimeout) {
             console.warn('⚠️ [POLLING] Chunk request timed out (backend may be slow), retrying…');
           } else {
             console.error('❌ [POLLING] Polling error:', error);
           }
-          // Continue polling on error (network resilience); timeout is expected when backend is slow
           if (Date.now() - startTime < maxPollTime && !signal?.aborted) {
             pollCount++;
             const currentInterval = pollCount <= 10 ? initialPollInterval : pollInterval;

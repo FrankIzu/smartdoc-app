@@ -20,7 +20,11 @@ on:
           - preview
           - development
       ios_build_number:
-        description: 'CFBundleVersion — MUST be higher than last App Store upload (e.g. 2 if last was 1). deploy.ps1 -BuildNumber 2'
+        description: 'CFBundleVersion (build). deploy.ps1 -BuildNumber'
+        required: true
+        type: string
+      ios_app_version:
+        description: 'Marketing version CFBundleShortVersionString (e.g. 1.0.19). deploy.ps1 -Version — must match what you want on App Store Connect.'
         required: true
         type: string
 
@@ -68,12 +72,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Required input — always rewrite app.versions.json BEFORE prebuild (Expo reads it for native buildNumber).
-      - name: Apply iOS build number (workflow input)
+      # Authoritative app.versions.json BEFORE prebuild (stale checkout cannot ship wrong IPA).
+      - name: Apply iOS version + build (workflow inputs)
         run: |
           BN="${{ github.event.inputs.ios_build_number }}"
+          VER="${{ github.event.inputs.ios_app_version }}"
           if ! [[ "$BN" =~ ^[0-9]+$ ]]; then
             echo "::error::ios_build_number must be digits only, got: $BN"
+            exit 1
+          fi
+          if [ -z "$VER" ] || [[ "$VER" =~ [[:space:]] ]]; then
+            echo "::error::ios_app_version must be non-empty (e.g. 1.0.19)"
             exit 1
           fi
           node -e "
@@ -81,14 +90,17 @@ jobs:
             const p = 'app.versions.json';
             const j = JSON.parse(fs.readFileSync(p, 'utf8'));
             if (!j.ios) j.ios = {};
+            j.version = process.env.VER;
             j.ios.buildNumber = String(process.env.BN);
             fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
-            console.log('app.versions.json ios.buildNumber =', j.ios.buildNumber);
+            console.log('app.versions.json version =', j.version, 'ios.buildNumber =', j.ios.buildNumber);
           "
           echo "IOS_BUILD_NUMBER=$BN" >> $GITHUB_ENV
+          echo "IOS_APP_VERSION=$VER" >> $GITHUB_ENV
           cat app.versions.json
         env:
           BN: ${{ github.event.inputs.ios_build_number }}
+          VER: ${{ github.event.inputs.ios_app_version }}
 
       # Signing strategy: EAS provides the main app profile (Manual). The extension profile is
       # installed from EXT_PROVISIONING_PROFILE_BASE64 (GitHub secret) inside the EAS build step,
@@ -442,12 +454,43 @@ jobs:
         if: steps.eas_build.outcome == 'failure'
         run: exit 1
 
+      # Prove the IPA matches workflow inputs (stops duplicate-submit mystery when binary was still 1.0.17 (1)).
+      - name: Verify IPA CFBundleVersion + CFBundleShortVersionString
+        run: |
+          set -e
+          EXP_B="${IOS_BUILD_NUMBER:?}"
+          EXP_V="${IOS_APP_VERSION:?}"
+          IPA=$(find "$GITHUB_WORKSPACE" -maxdepth 6 -name "*.ipa" -type f 2>/dev/null | head -1)
+          if [ -z "$IPA" ]; then
+            echo "::error::No .ipa found under workspace"
+            exit 1
+          fi
+          echo "IPA: $IPA"
+          PLIST_PATH=$(unzip -Z1 "$IPA" 2>/dev/null | grep -E 'Payload/[^/]+\.app/Info\.plist$' | head -1)
+          if [ -z "$PLIST_PATH" ]; then
+            echo "::error::Could not find Payload/*.app/Info.plist inside IPA"
+            unzip -Z1 "$IPA" | head -30
+            exit 1
+          fi
+          unzip -p "$IPA" "$PLIST_PATH" > /tmp/ipa-info.plist
+          GOT_B=$(plutil -extract CFBundleVersion raw /tmp/ipa-info.plist 2>/dev/null || echo "")
+          GOT_V=$(plutil -extract CFBundleShortVersionString raw /tmp/ipa-info.plist 2>/dev/null || echo "")
+          echo "Expected CFBundleShortVersionString=$EXP_V CFBundleVersion=$EXP_B"
+          echo "Actual   CFBundleShortVersionString=$GOT_V CFBundleVersion=$GOT_B"
+          if [ "$GOT_B" != "$EXP_B" ] || [ "$GOT_V" != "$EXP_V" ]; then
+            echo "::error::IPA Info.plist does not match workflow inputs. EAS/archive used wrong version — check prebuild copy / eas-build dir."
+            exit 1
+          fi
+          echo "EXPECTED_IOS_SUBMIT=$EXP_V($EXP_B)" > ios-submit-expected.txt
+          cat ios-submit-expected.txt
+
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-build
           path: |
             *.ipa
+            ios-submit-expected.txt
           if-no-files-found: ignore
 
       # dSYM for symbolication: EAS working dir is $GITHUB_WORKSPACE/eas-build; xcarchive may be in project subdir or Xcode default Archives.
@@ -525,6 +568,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ios-build
+
+      - name: Re-verify IPA before submit
+        run: |
+          EXP=$(cat ios-submit-expected.txt 2>/dev/null || echo "")
+          echo "$EXP"
+          IPA=$(find . -maxdepth 8 -name "*.ipa" -type f | head -1)
+          PLIST_PATH=$(unzip -Z1 "$IPA" | grep -E 'Payload/[^/]+\.app/Info\.plist$' | head -1)
+          unzip -p "$IPA" "$PLIST_PATH" > /tmp/s.plist
+          echo "Submitting IPA with CFBundleShortVersionString=$(plutil -extract CFBundleShortVersionString raw /tmp/s.plist) CFBundleVersion=$(plutil -extract CFBundleVersion raw /tmp/s.plist)"
 
       - name: Submit to App Store
         run: |

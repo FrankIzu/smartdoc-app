@@ -422,17 +422,8 @@ try {
                     Write-Host "⚠️  Warning: Using same version code as current. Android builds typically require incrementing." -ForegroundColor Yellow
                 }
             }
-            if ($Platform -eq "ios" -and $currentBuildNumber) {
-                $buildNumberInt = [int]$BuildNumber
-                $currentBuildNumberInt = [int]$currentBuildNumber
-                if ($buildNumberInt -lt $currentBuildNumberInt) {
-                    Write-Host "❌ Invalid iOS build number. Must be >= current ($currentBuildNumber)." -ForegroundColor Red
-                    exit 1
-                } elseif ($buildNumberInt -eq $currentBuildNumberInt) {
-                    Write-Host "⚠️  Same iOS build number as repo. Apple rejects duplicate CFBundleVersion — increment for a new upload." -ForegroundColor Yellow
-                }
-            }
-            
+            # iOS: no min check — new marketing version often resets build to 1; workflow + App Store enforce duplicates.
+
             try {
                 Update-BuildNumber -Platform $Platform -BuildNumber $BuildNumber
             } catch {
@@ -836,11 +827,15 @@ try {
         }
         if ($Platform -eq "ios") {
             if ($BuildNumber -notmatch '^\d+$') {
-                Write-Host "❌ iOS GitHub Actions requires -BuildNumber <n> (CFBundleVersion). Example: -BuildNumber 2 if App Store max is 1.0.17 (1)." -ForegroundColor Red
+                Write-Host "❌ iOS GitHub Actions requires -BuildNumber <n> (CFBundleVersion)." -ForegroundColor Red
                 exit 1
             }
-            $triggerArgs += @("-f", "ios_build_number=$BuildNumber")
-            Write-Host "   Workflow input ios_build_number=$BuildNumber (required on build-ios.yml)." -ForegroundColor Gray
+            if ([string]::IsNullOrWhiteSpace($Version)) {
+                Write-Host "❌ iOS GitHub Actions requires -Version <marketing> (e.g. 1.0.19) so the IPA matches App Store Connect." -ForegroundColor Red
+                exit 1
+            }
+            $triggerArgs += @("-f", "ios_build_number=$BuildNumber", "-f", "ios_app_version=$Version")
+            Write-Host "   Workflow: ios_build_number=$BuildNumber ios_app_version=$Version" -ForegroundColor Gray
         }
         if ($Platform -eq "android" -or $Platform -eq "ios") {
             Write-Host "   Waiting 20s so origin/main is consistent before Actions checkout..." -ForegroundColor Gray
@@ -910,8 +905,8 @@ try {
             
             Write-Host "`n   Next steps:" -ForegroundColor Cyan
             Write-Host "   1. Wait 60-120 seconds for GitHub to sync, then run: gh workflow run `"$workflowName`" -f profile=$profile --ref main" -ForegroundColor Gray
-            Write-Host "   2. iOS: gh workflow run build-ios.yml -f profile=production -f ios_build_number=2 --ref main" -ForegroundColor Gray
-            Write-Host "   3. Or GitHub UI: ios_build_number required (e.g. 2 after 1.0.17(1))" -ForegroundColor Gray
+            Write-Host "   2. iOS: gh workflow run build-ios.yml -f profile=production -f ios_build_number=2 -f ios_app_version=1.0.19 --ref main" -ForegroundColor Gray
+            Write-Host "   3. UI: set ios_build_number + ios_app_version (must match new App Store version)" -ForegroundColor Gray
             Write-Host "   4. workflow_dispatch 422: push workflow file to main, wait 60s, retry" -ForegroundColor Gray
             Write-Host "   5. gh workflow view $workflowFile --ref main" -ForegroundColor Gray
         }
