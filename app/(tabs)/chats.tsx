@@ -17,7 +17,6 @@ import {
     Platform,
     RefreshControl,
     ScrollView,
-    SectionList,
     Share,
     StyleSheet,
     Text,
@@ -440,7 +439,7 @@ export default function ChatsScreen() {
   const bounceAnim = useRef(new Animated.Value(1)).current;
   const abortControllerRef = useRef<AbortController | null>(null);
   
-  const messagesRef = useRef<SectionList>(null);
+  const messagesRef = useRef<FlatList>(null);
   const scrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   /** Scroll to the very bottom of the message list using the underlying ScrollView.
@@ -1639,13 +1638,47 @@ export default function ChatsScreen() {
     return sections;
   }, [messages]);
 
-  // Scroll to last message whenever messageSections changes (new messages loaded or added)
+  /** Flat list of header + message items with global indices — avoids SectionList index confusion that caused response text to appear in query bubbles */
+  const flatMessageData = useMemo(() => {
+    type FlatItem = { type: 'header'; title: string } | { type: 'message'; message: ChatMessage; globalIndex: number };
+    const flat: FlatItem[] = [];
+    const list = messages || [];
+    if (list.length === 0) return flat;
+    const byLabel = new Map<string, ChatMessage[]>();
+    for (const msg of list) {
+      const ts = new Date(msg.created_at || 0).getTime();
+      const label = getDateSectionLabel(ts);
+      if (!byLabel.has(label)) byLabel.set(label, []);
+      byLabel.get(label)!.push(msg);
+    }
+    const restLabels = Array.from(byLabel.keys()).filter(l => l !== 'Today' && l !== 'Yesterday');
+    restLabels.sort((a, b) => {
+      const dataA = byLabel.get(a)!;
+      const dataB = byLabel.get(b)!;
+      const maxTsA = Math.max(...dataA.map(m => new Date(m.created_at).getTime()));
+      const maxTsB = Math.max(...dataB.map(m => new Date(m.created_at).getTime()));
+      return maxTsA - maxTsB;
+    });
+    const orderedLabels = [...restLabels];
+    if (byLabel.has('Yesterday')) orderedLabels.push('Yesterday');
+    if (byLabel.has('Today')) orderedLabels.push('Today');
+    let globalIndex = 0;
+    for (const title of orderedLabels) {
+      const data = byLabel.get(title)!;
+      flat.push({ type: 'header', title });
+      for (const msg of data) {
+        flat.push({ type: 'message', message: msg, globalIndex });
+        globalIndex++;
+      }
+    }
+    return flat;
+  }, [messages]);
+
+  // Scroll to last message whenever flatMessageData changes (new messages loaded or added)
   useEffect(() => {
-    if (messageSections.length === 0) return;
-    const last = messageSections[messageSections.length - 1];
-    if (!last?.data.length) return;
+    if (flatMessageData.length === 0) return;
     scrollToLastMessage(false); // non-animated on initial load so it snaps instantly
-  }, [messageSections]);
+  }, [flatMessageData]);
 
   // When keyboard opens, scroll so last message stays visible above the keyboard
   useEffect(() => {
@@ -3424,7 +3457,10 @@ export default function ChatsScreen() {
         let i =
           rowId != null ? newMessages.findIndex(m => m.id === rowId) : -1;
         if (i < 0) i = assistantMsgIndex;
-        if (i >= 0 && i < newMessages.length) {
+        // CRITICAL: Never overwrite a user message with response content — only update assistant messages
+        const targetMsg = i >= 0 && i < newMessages.length ? newMessages[i] : null;
+        const isUserMessage = targetMsg?.is_own_message === true;
+        if (i >= 0 && i < newMessages.length && !isUserMessage) {
           newMessages[i] = {
             ...newMessages[i],
             content: displayText,
@@ -3491,9 +3527,12 @@ export default function ChatsScreen() {
         let idx =
           rowId != null ? newMessages.findIndex(m => m.id === rowId) : -1;
         if (idx < 0) idx = assistantMsgIndex;
+        // CRITICAL: Never overwrite a user message with response content — only update assistant messages
+        const targetMsg = idx >= 0 && newMessages[idx] ? newMessages[idx] : null;
+        const isUserMessage = targetMsg?.is_own_message === true;
         // Always use the full content buffer, never clear it
         const keepContent = finalContent || newMessages[idx]?.content || '';
-        if (idx >= 0 && newMessages[idx]) {
+        if (idx >= 0 && newMessages[idx] && !isUserMessage) {
           const mid = assistantMessageIdFromStreamRef.current;
           assistantMessageIdFromStreamRef.current = null;
           newMessages[idx] = {
@@ -3562,6 +3601,17 @@ export default function ChatsScreen() {
       });
       return;
     }
+    // Backend validates message length; empty body → 400 "Message too short". Send same query again.
+    const priorUser =
+      assistantIndex > 0 ? messages[assistantIndex - 1] : null;
+    const retryMessage = (priorUser?.content || '').trim();
+    if (!retryMessage) {
+      Toast.show({
+        type: 'error',
+        text1: 'Could not find your question to retry. Send a new message.',
+      });
+      return;
+    }
     try {
       setSendingMessage(true);
       startBounceAnimation();
@@ -3605,7 +3655,12 @@ export default function ChatsScreen() {
       };
       // sendChatMessagePolling resolves immediately (poll loop is not awaited) — do NOT clear
       // sendingMessage in finally or fake streaming dies before any chunks arrive (same as send path).
-      await (api as any).sendChatMessagePolling('', streamFilters, abortControllerRef.current?.signal, chunk);
+      await (api as any).sendChatMessagePolling(
+        retryMessage,
+        streamFilters,
+        abortControllerRef.current?.signal,
+        chunk
+      );
     } catch (e: any) {
       const status = e?.response?.status;
       if (status === 409) {
@@ -3787,11 +3842,6 @@ export default function ChatsScreen() {
       // Save message text before clearing
       const messageText = newMessage.trim();
       
-      // Calculate assistant message index: it will be at messages.length after user message is added
-      assistantMessageIndex = messages.length;
-      
-      // Add user message
-      setMessages(prev => [...prev, userMessage]);
       setNewMessage('');
 
       // CRITICAL: Stop any existing streaming and clear state completely
@@ -3835,18 +3885,15 @@ export default function ChatsScreen() {
             is_own_message: false,
             created_at: new Date().toISOString()
           };
-        setMessages(prev => {
-          assistantMessageIndex = prev.length; // Update to correct index after user message is added
-          console.log('📝 Created placeholder message at index', assistantMessageIndex, 'id', placeholderId, 'fake streaming from file will handle display');
-          
-          // CRITICAL: Set streamingMessageIndex INSIDE setMessages callback AND update ref immediately
-          // This ensures ProcessingMessageDisplay can immediately show fake streaming
-          streamingMessageIndexRef.current = assistantMessageIndex; // Set ref immediately for synchronous access
-          setStreamingMessageIndex(assistantMessageIndex); // Set state for re-render
-          console.log('🎬 Started fake streaming for message index:', assistantMessageIndex, 'isFakeStreaming:', isFakeStreamingRef.current, 'sendingMessage:', true);
-          
-          return [...prev, placeholderMessage];
-        });
+        // CRITICAL: Set assistant index SYNCHRONOUSLY. Previously assistantMessageIndex was set inside
+        // setMessages — that callback runs async, so pollingAssistantIndexRef stayed at messages.length
+        // (the USER row). Streaming then wrote the first chars of the reply into the user bubble (right).
+        assistantMessageIndex = messages.length + 1; // user at messages.length, assistant right after
+        pollingAssistantIndexRef.current = assistantMessageIndex;
+        streamingMessageIndexRef.current = assistantMessageIndex;
+        setStreamingMessageIndex(assistantMessageIndex);
+        console.log('📝 Placeholder at sync index', assistantMessageIndex, 'id', placeholderId);
+        setMessages(prev => [...prev, userMessage, placeholderMessage]);
         
         // Fake streaming is now active - ProcessingMessageDisplay will show until preview arrives
         // Send the raw query as-is, without adding Document:/Question:/Context: prefixes
@@ -6591,7 +6638,7 @@ export default function ChatsScreen() {
     );
   };
 
-  const renderMessageItem = ({ item, index }: { item: ChatMessage; index: number }) => {
+  const renderMessageItem = ({ item, globalIndex }: { item: ChatMessage; globalIndex: number }) => {
     // Determine if assistant responses should use bubbles based on chat type
     // User messages always have bubbles, but assistant responses don't need bubbles in document/bookmark chats
     const isDocumentOrBookmarkChat = selectedChat && (
@@ -6647,8 +6694,9 @@ export default function ChatsScreen() {
       if (isDocumentOrBookmarkChat) {
         // No bubbles (ChatGPT style). Fake streaming runs IN THIS SAME SLOT (above the time), then preview/refinement replace it.
         // Footer (copy, thumbs, timestamp) shows only after streaming is done, below the response.
-        const messagePairIndex = Math.floor(index / 2);
-        const queryText = index > 0 ? messages[index - 1]?.content : undefined;
+        // CRITICAL: Use globalIndex with messages array — SectionList's per-section index caused response text to appear in query bubbles
+        const messagePairIndex = Math.floor(globalIndex / 2);
+        const queryText = globalIndex > 0 ? messages[globalIndex - 1]?.content : undefined;
         const showFooter = hasContent && !isStreamingActive && !item.is_preview;
         return (
           <View style={[
@@ -6723,18 +6771,18 @@ export default function ChatsScreen() {
                     item.id > 0 &&
                     Array.isArray(item.citations) &&
                     item.citations.length > 0 &&
-                    (index === messages.length - 1 ||
-                      (index === messages.length - 2 && messages[messages.length - 1]?.is_own_message))
+                    (globalIndex === messages.length - 1 ||
+                      (globalIndex === messages.length - 2 && messages[messages.length - 1]?.is_own_message))
                   }
-                  onMoreSources={() => handleMoreSourcesAssistant(index, item.id as number)}
+                  onMoreSources={() => handleMoreSourcesAssistant(globalIndex, item.id as number)}
                   moreSourcesDisabled={sendingMessage}
                   showRetry={
                     (selectedChat?.id ?? 0) > 0 &&
                     !item.is_own_message &&
-                    (index === messages.length - 1 ||
-                      (index === messages.length - 2 && messages[messages.length - 1]?.is_own_message))
+                    (globalIndex === messages.length - 1 ||
+                      (globalIndex === messages.length - 2 && messages[messages.length - 1]?.is_own_message))
                   }
-                  onRetry={() => handleRetryAssistant(index, item.id)}
+                  onRetry={() => handleRetryAssistant(globalIndex, item.id)}
                   retryDisabled={sendingMessage}
                 />
               )}
@@ -6745,8 +6793,8 @@ export default function ChatsScreen() {
         // User/workspace: we never add an empty assistant message, but guard anyway.
         // Footer shows only after streaming is done, below the bubble. No copy/like/dislike/citation for user/workspace.
         if (!hasContent) return null;
-        const messagePairIndex = Math.floor(index / 2);
-        const queryText = index > 0 ? messages[index - 1]?.content : undefined;
+        const messagePairIndex = Math.floor(globalIndex / 2);
+        const queryText = globalIndex > 0 ? messages[globalIndex - 1]?.content : undefined;
         const showFooter = !isStreamingActive && !item.is_preview;
         return (
           <View style={[
@@ -6960,17 +7008,22 @@ export default function ChatsScreen() {
           </View>
         ) : (
           <>
-            <SectionList
+            <FlatList
               ref={messagesRef}
-              sections={messageSections}
-              renderItem={({ item, index }) => renderMessageItem({ item, index })}
-              keyExtractor={(item, index) => `${item.id}-${index}`}
-              renderSectionHeader={({ section: { title } }) => (
-                <View style={dynamicStyles.messageDateSectionHeader}>
-                  <Text style={dynamicStyles.messageDateSectionHeaderText}>{title}</Text>
-                </View>
-              )}
-              stickySectionHeadersEnabled={false}
+              data={flatMessageData}
+              extraData={messages}
+              renderItem={({ item: flatItem }) =>
+                flatItem.type === 'header' ? (
+                  <View style={dynamicStyles.messageDateSectionHeader}>
+                    <Text style={dynamicStyles.messageDateSectionHeaderText}>{flatItem.title}</Text>
+                  </View>
+                ) : (
+                  renderMessageItem({ item: flatItem.message, globalIndex: flatItem.globalIndex })
+                )
+              }
+              keyExtractor={(flatItem) =>
+                flatItem.type === 'header' ? `header-${flatItem.title}` : `msg-${flatItem.message.id}`
+              }
               style={dynamicStyles.messagesList}
               ListFooterComponent={
                 // Typing Indicator for user chats
