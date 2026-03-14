@@ -1,4 +1,4 @@
-failed# Build iOS app with EAS local (no EAS cloud charge).
+# Build iOS app with EAS local (no EAS cloud charge).
 # Trigger: manual (workflow_dispatch) only. Deploy script triggers the selected platform (iOS or Android) via gh workflow run after push.
 # Requires: GitHub secret EXPO_TOKEN (Expo access token).
 # Auto-submit: Submit job runs after build; if it fails, re-run failed jobs to retry only submit.
