@@ -820,10 +820,13 @@ try {
         $triggered = $false
         $workflowName = if ($Platform -eq "android") { "Build Android (EAS local)" } else { "Build iOS (EAS local)" }
         $triggerArgs = @("-f", "profile=$profile", "--ref", "main")
-        # CI must use this versionCode when building — otherwise checkout can still be stale → duplicate Play upload.
-        if ($Platform -eq "android" -and $BuildNumber -match '^\d+$') {
+        if ($Platform -eq "android") {
+            if ($BuildNumber -notmatch '^\d+$') {
+                Write-Host "❌ Android GitHub Actions requires -BuildNumber <n> (versionCode)." -ForegroundColor Red
+                exit 1
+            }
             $triggerArgs += @("-f", "android_version_code=$BuildNumber")
-            Write-Host "   Workflow will set android_version_code=$BuildNumber (authoritative for AAB)." -ForegroundColor Gray
+            Write-Host "   Workflow: android_version_code=$BuildNumber" -ForegroundColor Gray
         }
         if ($Platform -eq "ios") {
             if ($BuildNumber -notmatch '^\d+$') {

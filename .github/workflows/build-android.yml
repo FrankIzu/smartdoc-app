@@ -32,9 +32,8 @@ on:
           - beta
           - production
       android_version_code:
-        description: 'Android versionCode for this build (must be > Play Console max). deploy.ps1 sets this automatically — avoids stale app.versions.json on checkout.'
-        required: false
-        default: ''
+        description: 'Android versionCode (must be > Play max). deploy.ps1 -BuildNumber'
+        required: true
         type: string
 
 jobs:
@@ -82,10 +81,8 @@ jobs:
           git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
         continue-on-error: true
 
-      # Authoritative versionCode for CI: deploy.ps1 passes this when triggering. Without it, checkout
-      # can still see an old app.versions.json (race after push, or manual workflow run) → AAB duplicates Play.
+      # Only touches android.versionCode — never overwrites version or ios.buildNumber.
       - name: Apply Android versionCode (workflow input)
-        if: github.event.inputs.android_version_code != ''
         run: |
           CODE="${{ github.event.inputs.android_version_code }}"
           if ! [[ "$CODE" =~ ^[0-9]+$ ]]; then
@@ -99,7 +96,7 @@ jobs:
             if (!j.android) j.android = {};
             j.android.versionCode = parseInt(process.env.VERSION_CODE, 10);
             fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
-            console.log('app.versions.json android.versionCode set to', j.android.versionCode);
+            console.log('app.versions.json android.versionCode =', j.android.versionCode, '(version, ios unchanged)');
           "
           cat app.versions.json
         env:
