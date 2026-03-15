@@ -6868,6 +6868,8 @@ export default function ChatsScreen() {
             onChangeText={setSearchQuery}
             placeholder="Search chats..."
             placeholderTextColor="#999"
+            returnKeyType="search"
+            onSubmitEditing={() => Keyboard.dismiss()}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')} style={dynamicStyles.searchIcon}>
@@ -7185,10 +7187,20 @@ export default function ChatsScreen() {
             placeholder="Ask questions from your documents"
             placeholderTextColor={colors.textSecondary}
             multiline
+            blurOnSubmit={true}
+            returnKeyType="send"
             maxLength={1000}
             onContentSizeChange={(event) => {
               const { height } = event.nativeEvent.contentSize;
               setTextInputHeight(height);
+            }}
+            onSubmitEditing={() => {
+              if (newMessage.trim() && !sendingMessage) sendMessage();
+            }}
+            onKeyPress={({ nativeEvent }) => {
+              if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && newMessage.trim() && !sendingMessage) {
+                sendMessage();
+              }
             }}
           />
           <Animated.View

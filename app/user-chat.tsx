@@ -1881,10 +1881,20 @@ export default function UserChatScreen() {
                 value={newMessage}
                 onChangeText={handleTyping}
                 multiline
+                blurOnSubmit={true}
+                returnKeyType="send"
                 maxLength={4000}
                 onContentSizeChange={(event) => {
                   const { height } = event.nativeEvent.contentSize;
                   setTextInputHeight(height);
+                }}
+                onSubmitEditing={() => {
+                  if ((newMessage.trim() || selectedRecipient) && !sendingMessage) handleSendMessage();
+                }}
+                onKeyPress={({ nativeEvent }) => {
+                  if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && (newMessage.trim() || selectedRecipient) && !sendingMessage) {
+                    handleSendMessage();
+                  }
                 }}
               />
               <TouchableOpacity 
@@ -2021,10 +2031,20 @@ export default function UserChatScreen() {
                 value={newMessage}
                 onChangeText={handleTyping}
                 multiline
+                blurOnSubmit={true}
+                returnKeyType="send"
                 maxLength={4000}
                 onContentSizeChange={(event) => {
                   const { height } = event.nativeEvent.contentSize;
                   setTextInputHeight(height);
+                }}
+                onSubmitEditing={() => {
+                  if ((newMessage.trim() || selectedRecipient) && !sendingMessage) handleSendMessage();
+                }}
+                onKeyPress={({ nativeEvent }) => {
+                  if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && (newMessage.trim() || selectedRecipient) && !sendingMessage) {
+                    handleSendMessage();
+                  }
                 }}
               />
               <TouchableOpacity 
@@ -2085,6 +2105,8 @@ export default function UserChatScreen() {
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
+            returnKeyType="search"
+            onSubmitEditing={() => Keyboard.dismiss()}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')} style={dynamicStyles.searchIcon}>

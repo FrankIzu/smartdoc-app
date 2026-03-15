@@ -124,6 +124,7 @@ const baseExpo = {
   },
   plugins: [
     "./plugins/android-pip",
+    "./plugins/android-edge-to-edge-opt-out",
     "./plugins/android-disable-release-lint",
     "./plugins/ios-pip",
     "expo-dev-client",

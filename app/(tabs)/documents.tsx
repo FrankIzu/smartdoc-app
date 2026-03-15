@@ -8,6 +8,7 @@ import {
     Alert,
     Animated,
     FlatList,
+    Keyboard,
     Modal,
     Platform,
     RefreshControl,
@@ -2246,6 +2247,8 @@ export default function QuickFilesScreen() {
           placeholder="Search files, tags, or categories..."
           value={searchQuery}
           onChangeText={setSearchQuery}
+          returnKeyType="search"
+          onSubmitEditing={() => Keyboard.dismiss()}
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity onPress={() => setSearchQuery('')}>
