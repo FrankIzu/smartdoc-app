@@ -323,10 +323,35 @@ jobs:
         with:
           name: android-build
 
-      - name: Show built versionCode (must exceed Play Console max)
+      - name: Verify versionCode before submit (fail if wrong)
         run: |
-          if [ -f android-build-version.txt ]; then cat android-build-version.txt; fi
-          find . -maxdepth 6 -name "*.aab" -type f 2>/dev/null | head -3 || true
+          set -e
+          EXP="${{ github.event.inputs.android_version_code }}"
+          if [ -z "$EXP" ]; then
+            echo "::error::android_version_code workflow input is empty"
+            exit 1
+          fi
+          AAB=$(find . -maxdepth 6 -name "*.aab" -type f 2>/dev/null | head -1)
+          if [ -z "$AAB" ]; then
+            echo "::error::No .aab file found in artifact"
+            exit 1
+          fi
+          echo "AAB: $AAB"
+          # Read the version code recorded at build time
+          if [ -f android-build-version.txt ]; then
+            cat android-build-version.txt
+            BUILT=$(grep -oP 'BUILD_ANDROID_VERSION_CODE=\K[0-9]+' android-build-version.txt 2>/dev/null || echo "")
+            if [ -n "$BUILT" ] && [ "$BUILT" != "$EXP" ]; then
+              echo "::error::versionCode mismatch — built=$BUILT but input=$EXP"
+              echo "::error::The AAB does not have the version code you intended. Run a full new build."
+              exit 1
+            fi
+            echo "✅ versionCode verified: $BUILT"
+          else
+            echo "android-build-version.txt not found — skipping cross-check (verify in Play Console after submit)"
+          fi
+          echo "NOTE: If Play still rejects with 'already submitted', Play already received versionCode=$EXP"
+          echo "      from a previous failed run. Increment android_version_code and run a full new build."
 
       - name: Submit to Google Play
         run: |

@@ -569,14 +569,31 @@ jobs:
         with:
           name: ios-build
 
-      - name: Re-verify IPA before submit
+      - name: Re-verify IPA before submit (fail if wrong version)
         run: |
-          EXP=$(cat ios-submit-expected.txt 2>/dev/null || echo "")
-          echo "$EXP"
+          set -e
+          EXP_B="${{ github.event.inputs.ios_build_number }}"
+          EXP_V="${{ github.event.inputs.ios_app_version }}"
           IPA=$(find . -maxdepth 8 -name "*.ipa" -type f | head -1)
-          PLIST_PATH=$(unzip -Z1 "$IPA" | grep -E 'Payload/[^/]+\.app/Info\.plist$' | head -1)
-          unzip -p "$IPA" "$PLIST_PATH" > /tmp/s.plist
-          echo "Submitting IPA with CFBundleShortVersionString=$(plutil -extract CFBundleShortVersionString raw /tmp/s.plist) CFBundleVersion=$(plutil -extract CFBundleVersion raw /tmp/s.plist)"
+          if [ -z "$IPA" ]; then
+            echo "::error::No .ipa found in artifact — build job did not upload the IPA."
+            exit 1
+          fi
+          # Use Python plistlib (Linux-compatible — submit runs on ubuntu-latest, not macOS, so plutil is not available).
+          # Single-line to avoid YAML heredoc / indentation conflicts.
+          READ_RESULT=$(python3 -c "import plistlib,zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);names=sorted([n for n in z.namelist() if n.startswith('Payload/') and n.endswith('.app/Info.plist')]);pl=plistlib.load(z.open(names[0]));print(pl.get('CFBundleVersion','MISSING'),pl.get('CFBundleShortVersionString','MISSING'))" "$IPA" 2>&1)
+          GOT_B=$(echo "$READ_RESULT" | awk '{print $1}')
+          GOT_V=$(echo "$READ_RESULT" | awk '{print $2}')
+          echo "Expected: version=$EXP_V build=$EXP_B"
+          echo "IPA has:  version=$GOT_V build=$GOT_B"
+          if [ "$GOT_B" != "$EXP_B" ] || [ "$GOT_V" != "$EXP_V" ]; then
+            echo "::error::IPA version mismatch — the binary Apple would receive does NOT match workflow inputs."
+            echo "::error::Do NOT retry submit-only; run a FULL new build with incremented ios_build_number."
+            exit 1
+          fi
+          echo "✅ IPA version verified: $GOT_V ($GOT_B) — safe to submit."
+          echo "NOTE: If Apple still rejects 'already submitted', Apple received a binary with this CFBundleVersion"
+          echo "      from a previous failed/cancelled run. Increment ios_build_number and run a full NEW build."
 
       - name: Submit to App Store
         run: |

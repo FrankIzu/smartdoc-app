@@ -375,12 +375,17 @@ try {
                 Write-Host "📦 Current ${buildLabel}: $currentBuildNumber" -ForegroundColor Cyan
                 
                 if ($Platform -eq "android") {
-                    Write-Host "⚠️  Android requires increasing version code for new builds" -ForegroundColor Yellow
-                    $useCurrentBuildNumber = Prompt-WithValidation "Do you want to continue with existing version code ($currentBuildNumber)? Note: Android requires incrementing for new builds. (y/n)" @("y", "n")
+                    Write-Host "" -ForegroundColor Yellow
+                    Write-Host "⚠️  ANDROID VERSION CODE RULES:" -ForegroundColor Yellow
+                    Write-Host "   • Must be STRICTLY GREATER than every code Google Play has ever received." -ForegroundColor Yellow
+                    Write-Host "   • This includes failed/cancelled submissions — Play indexes the upload, not the review result." -ForegroundColor Yellow
+                    Write-Host "   • If the last run failed at submit, Play already has $currentBuildNumber. You MUST use at least $([int]$currentBuildNumber + 1)." -ForegroundColor Yellow
+                    Write-Host "" -ForegroundColor Yellow
+                    $useCurrentBuildNumber = Prompt-WithValidation "Re-use EXISTING code $currentBuildNumber? Answer YES only if NO build with this code was ever uploaded to Play. (y/n)" @("y", "n")
                     if ($useCurrentBuildNumber -eq "y") {
                         $BuildNumber = $currentBuildNumber
                         Write-Host "ℹ️  Using current ${buildLabel}: $BuildNumber" -ForegroundColor Yellow
-                        Write-Host "⚠️  Warning: Android builds typically require incrementing version code. This may cause build issues." -ForegroundColor Yellow
+                        Write-Host "⚠️  If this fails with 'already submitted', increment the version code." -ForegroundColor Red
                     } else {
                         $BuildNumber = Read-Host "Enter new ${buildLabel} for production (must be greater than $currentBuildNumber)"
                         if ([string]::IsNullOrWhiteSpace($BuildNumber)) {
@@ -390,10 +395,18 @@ try {
                     }
                 } else {
                     # iOS
-                    $useCurrentBuildNumber = Prompt-WithValidation "Do you want to continue with existing build number ($currentBuildNumber)? (y/n)" @("y", "n")
+                    Write-Host "" -ForegroundColor Yellow
+                    Write-Host "⚠️  iOS BUILD NUMBER RULES:" -ForegroundColor Yellow
+                    Write-Host "   • Must be STRICTLY GREATER than every build number Apple has ever received for this (version, build) combo." -ForegroundColor Yellow
+                    Write-Host "   • This includes builds from FAILED submissions — Apple indexes the upload, not the outcome." -ForegroundColor Yellow
+                    Write-Host "   • If the last run failed at submit, Apple already has build $currentBuildNumber. You MUST use at least $([int]$currentBuildNumber + 1)." -ForegroundColor Yellow
+                    Write-Host "   • You CAN reset to 1 when you bump the marketing version (-Version)." -ForegroundColor Yellow
+                    Write-Host "" -ForegroundColor Yellow
+                    $useCurrentBuildNumber = Prompt-WithValidation "Re-use EXISTING build number $currentBuildNumber? Answer YES only if NO build with this number was ever uploaded to Apple. (y/n)" @("y", "n")
                     if ($useCurrentBuildNumber -eq "y") {
                         $BuildNumber = $currentBuildNumber
                         Write-Host "ℹ️  Using current ${buildLabel}: $BuildNumber" -ForegroundColor Yellow
+                        Write-Host "⚠️  If this fails with 'already submitted', increment the build number." -ForegroundColor Red
                     } else {
                         $BuildNumber = Read-Host "Enter new ${buildLabel} for production"
                         if ([string]::IsNullOrWhiteSpace($BuildNumber)) {
