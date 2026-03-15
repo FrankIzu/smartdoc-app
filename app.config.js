@@ -9,7 +9,8 @@ const baseExpo = {
   name: "GrabDocs",
   slug: "grabdocs",
   version: versions.version,
-  orientation: "portrait",
+  // Allow rotation for large screens (foldables, tablets); Android 16 ignores portrait lock on large devices
+  orientation: "default",
   icon: "./assets/images/grabdocs-brand-app-images/png/icon-1024-light.png",
   userInterfaceStyle: "automatic",
   scheme: "grabdocs",
@@ -124,6 +125,7 @@ const baseExpo = {
   },
   plugins: [
     "./plugins/android-pip",
+    "./plugins/android-large-screen",
     "./plugins/android-edge-to-edge-opt-out",
     "./plugins/android-disable-release-lint",
     "./plugins/ios-pip",
