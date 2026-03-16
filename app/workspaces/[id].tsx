@@ -15,6 +15,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 interface Workspace {
@@ -75,8 +76,34 @@ export default function WorkspaceDetailsScreen() {
   const [creatingMeeting, setCreatingMeeting] = useState(false);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
 
-  const loadWorkspaceDetails = async () => {
+  const WORKSPACE_DETAIL_CACHE_MS = 30_000;
+  const workspaceDetailCacheKey = `workspace_detail_${id}`;
+
+  interface WorkspaceDetailCache {
+    workspace: Workspace;
+    members: WorkspaceMember[];
+    invitations: any[];
+    recentActivities: any[];
+  }
+
+  const loadWorkspaceDetails = async (forceRefresh = false) => {
     if (!user) return;
+
+    if (!forceRefresh) {
+      const cached = screenCache.get<WorkspaceDetailCache>(
+        workspaceDetailCacheKey,
+        WORKSPACE_DETAIL_CACHE_MS
+      );
+      if (cached) {
+        setWorkspace(cached.workspace);
+        setMembers(cached.members);
+        setInvitations(cached.invitations);
+        setRecentActivities(cached.recentActivities);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
     
     try {
       // Get all workspaces and find the one with matching ID
@@ -176,6 +203,23 @@ export default function WorkspaceDetailsScreen() {
 
             setRecentActivities(activities);
             console.log('✅ Loaded workspace recent activities:', activities.length);
+
+            // Persist everything to cache so the next focus is instant
+            setWorkspace(ws => {
+              setMembers(ms => {
+                setInvitations(inv => {
+                  screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
+                    workspace: ws!,
+                    members: ms,
+                    invitations: inv,
+                    recentActivities: activities,
+                  });
+                  return inv;
+                });
+                return ms;
+              });
+              return ws;
+            });
           } catch (error: any) {
             console.warn('⚠️ Failed to load workspace files for recent activity:', error);
             setRecentActivities([]);
@@ -203,26 +247,17 @@ export default function WorkspaceDetailsScreen() {
     }
   };
 
-  // Add debounce to prevent excessive reloads
-  const lastLoadTimeRef = useRef<number>(0);
-  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
-  
   useFocusEffect(
     useCallback(() => {
-      if (user && id) {
-        const now = Date.now();
-        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
-          lastLoadTimeRef.current = now;
-          loadWorkspaceDetails();
-        }
-      }
+      if (user && id) loadWorkspaceDetails();
     }, [user, id])
   );
 
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
-    loadWorkspaceDetails();
+    screenCache.invalidate(workspaceDetailCacheKey);
+    loadWorkspaceDetails(true);
   };
 
   const handleInviteMember = async () => {
@@ -240,7 +275,8 @@ export default function WorkspaceDetailsScreen() {
         setInviteModalVisible(false);
         setInviteEmail('');
         setInviteRole('member');
-        loadWorkspaceDetails();
+        screenCache.invalidate(workspaceDetailCacheKey);
+        loadWorkspaceDetails(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to send invitation');
       }
@@ -297,7 +333,8 @@ export default function WorkspaceDetailsScreen() {
       const response = await apiService.resendWorkspaceInvitation(Number(id), selectedInvitation.id);
       if (response.success) {
         Alert.alert('Success', 'Invitation resent successfully');
-        loadWorkspaceDetails();
+        screenCache.invalidate(workspaceDetailCacheKey);
+        loadWorkspaceDetails(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to resend invitation');
       }
@@ -324,7 +361,8 @@ export default function WorkspaceDetailsScreen() {
               const response = await apiService.cancelWorkspaceInvitation(Number(id), selectedInvitation.id);
               if (response.success) {
                 Alert.alert('Success', 'Invitation cancelled');
-                loadWorkspaceDetails();
+                screenCache.invalidate(workspaceDetailCacheKey);
+                loadWorkspaceDetails(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to cancel invitation');
               }
@@ -344,7 +382,8 @@ export default function WorkspaceDetailsScreen() {
       const response = await apiService.updateWorkspaceMemberRole(Number(id), selectedMember.id, newRole);
       if (response.success) {
         Alert.alert('Success', `Member role updated to ${newRole}`);
-        loadWorkspaceDetails();
+        screenCache.invalidate(workspaceDetailCacheKey);
+        loadWorkspaceDetails(true);
         setSelectedMember(null);
       } else {
         Alert.alert('Error', response.message || 'Failed to update member role');
@@ -409,7 +448,8 @@ export default function WorkspaceDetailsScreen() {
               const response = await apiService.removeWorkspaceMember(Number(id), selectedMember.user_id);
               if (response.success) {
                 Alert.alert('Success', 'Member removed from workspace');
-                loadWorkspaceDetails();
+                screenCache.invalidate(workspaceDetailCacheKey);
+                loadWorkspaceDetails(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to remove member');
               }

@@ -179,6 +179,8 @@ export default function QuickFilesScreen() {
 
   // Bookmark state
   const [bookmarks, setBookmarks] = useState<any[]>([]);
+  /** File IDs that are in at least one locked bookmark; hidden from the files list */
+  const [fileIdsInLockedBookmarks, setFileIdsInLockedBookmarks] = useState<Set<string>>(new Set());
   const [showBookmarkModal, setShowBookmarkModal] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<any>(null);
   // Create new bookmark (from Add to Bookmark modal)
@@ -214,6 +216,9 @@ export default function QuickFilesScreen() {
   const classificationPollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   // In-flight guard: prevents concurrent loadDocuments calls from producing duplicate requests
   const isLoadingDocumentsRef = React.useRef(false);
+  // Persists locked-bookmark file IDs across renders so the filter can be applied
+  // immediately on subsequent loads without waiting for the background refresh.
+  const lockedFileIdsRef = React.useRef<Set<string>>(new Set());
 
   const handleGalleryUpload = async () => {
     try {
@@ -506,6 +511,11 @@ export default function QuickFilesScreen() {
   const filteredAndSortedDocuments = useMemo(() => {
     let filtered = documents;
 
+    // Hide files that are in a locked bookmark
+    if (fileIdsInLockedBookmarks.size > 0) {
+      filtered = filtered.filter(doc => !fileIdsInLockedBookmarks.has(doc.id));
+    }
+
     // Apply search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -581,7 +591,42 @@ export default function QuickFilesScreen() {
       });
 
     return filtered;
-  }, [documents, searchQuery, filterBy, sortBy]);
+  }, [documents, searchQuery, filterBy, sortBy, fileIdsInLockedBookmarks]);
+
+  /**
+   * Fetches IDs of all files that belong to at least one locked bookmark.
+   * Returns an empty Set on any error so it never blocks the files list.
+   */
+  const fetchLockedBookmarkFileIds = useCallback(async (): Promise<Set<string>> => {
+    try {
+      const response = await apiClient.getBookmarks();
+      if (!response.success || !response.data) return new Set();
+      const allBookmarks: any[] = Array.isArray(response.data)
+        ? response.data
+        : (response.data.bookmarks || []);
+
+      // Also keep the bookmark list in state for the "Add to bookmark" modal
+      setBookmarks(allBookmarks);
+
+      const locked = allBookmarks.filter((b: any) => b.is_locked);
+      const lockedFileIds = new Set<string>();
+      await Promise.all(locked.map(async (b: any) => {
+        try {
+          const fr = await apiClient.getBookmarkFiles(b.id);
+          const files = (fr as any).data ?? (fr as any).files ?? [];
+          (Array.isArray(files) ? files : []).forEach((f: any) => {
+            const id = f.id ?? f.file_id;
+            if (id != null) lockedFileIds.add(String(id));
+          });
+        } catch {
+          // ignore per-bookmark errors
+        }
+      }));
+      return lockedFileIds;
+    } catch {
+      return new Set();
+    }
+  }, []);
 
   // Optimized loadDocuments function with caching
   const loadDocuments = useCallback(async (forceRefresh = false) => {
@@ -598,7 +643,9 @@ export default function QuickFilesScreen() {
         apiCache.filterBy === filterBy &&
         apiCache.workspaceId === workspaceId) {
       console.log('📁 Using cached documents for workspaceId:', workspaceId);
-      setDocuments(apiCache.data);
+      // Filter out any files that have since been added to locked bookmarks
+      const filtered = apiCache.data.filter(doc => !lockedFileIdsRef.current.has(doc.id));
+      setDocuments(filtered);
       setLoading(false);
       return;
     }
@@ -606,50 +653,57 @@ export default function QuickFilesScreen() {
     isLoadingDocumentsRef.current = true;
     setError(null);
     setLoading(true);
-    
-    try {
-      // Test backend connectivity (non-blocking, don't wait for it)
-      // Run health check in background without blocking data load
-      apiClient.testConnectivity().catch((error) => {
-        console.warn('Connectivity test failed (non-blocking):', error);
-      });
-      
-      // Load data immediately without waiting for health check
-      let response;
-      
-      // If forms filter is selected, load recent forms instead of documents
+
+    // Test backend connectivity (non-blocking)
+    apiClient.testConnectivity().catch((error) => {
+      console.warn('Connectivity test failed (non-blocking):', error);
+    });
+
+    // Fetch locked bookmark file IDs and documents in parallel so we never show
+    // locked files — avoids the flash of locked files appearing then disappearing.
+    const fetchDocumentsResponse = async () => {
       if (filterBy === 'forms') {
-        try {
-          response = await apiClient.getForms();
-        } catch (err) {
-          console.error('Forms endpoint failed:', err);
-          throw err;
-        }
-      } else if (workspaceId != null) {
-        // Workspace context: show only files shared within this workspace (same as web)
-        try {
-          response = await apiClient.getWorkspaceFiles(workspaceId);
-        } catch (err) {
-          console.error('Workspace files endpoint failed:', err);
-          throw err;
-        }
-      } else {
-        try {
-          // All documents (no workspace filter)
-          console.log('📁 Loading documents (no workspace)');
-          response = await apiClient.getDocuments(1, 50, undefined, undefined);
-          console.log('📁 Documents response received:', response?.success, 'Files count:', (response as any)?.data?.length || (response as any)?.files?.length || 0);
-        } catch (err) {
-          console.warn('Documents endpoint failed, trying files endpoint:', err);
-          try {
-            response = await apiClient.getFiles(1, 50, undefined, undefined);
-            console.log('📁 Files response received:', response?.success, 'Files count:', (response as any)?.files?.length || 0);
-          } catch (fallbackErr) {
-            console.error('Both endpoints failed:', fallbackErr);
-            throw fallbackErr;
-          }
-        }
+        return apiClient.getForms();
       }
+      if (workspaceId != null) {
+        return apiClient.getWorkspaceFiles(workspaceId);
+      }
+      try {
+        console.log('📁 Loading documents (no workspace)');
+        const res = await apiClient.getDocuments(1, 50, undefined, undefined);
+        console.log('📁 Documents response received:', res?.success, 'Files count:', (res as any)?.data?.length || (res as any)?.files?.length || 0);
+        return res;
+      } catch (err) {
+        console.warn('Documents endpoint failed, trying files endpoint:', err);
+        return apiClient.getFiles(1, 50, undefined, undefined);
+      }
+    };
+
+    let response: any;
+    let lockedFileIds: Set<string>;
+    try {
+      [lockedFileIds, response] = await Promise.all([
+        fetchLockedBookmarkFileIds(),
+        fetchDocumentsResponse(),
+      ]);
+      lockedFileIdsRef.current = lockedFileIds;
+      setFileIdsInLockedBookmarks(lockedFileIds);
+    } catch (err) {
+      isLoadingDocumentsRef.current = false;
+      setLoading(false);
+      if (filterBy === 'forms') {
+        console.error('Forms endpoint failed:', err);
+        throw err;
+      }
+      if (workspaceId != null) {
+        console.error('Workspace files endpoint failed:', err);
+        throw err;
+      }
+      console.error('Documents endpoint failed:', err);
+      throw err;
+    }
+
+    try {
       
       // Handle forms data differently from documents
       if (filterBy === 'forms') {
@@ -689,57 +743,59 @@ export default function QuickFilesScreen() {
         // Handle documents data (non-forms)
         const docsArray = (response as any).data || (response as any).files || (response as any).documents || [];
         if (Array.isArray(docsArray)) {
-          const mappedDocs = docsArray.map((doc: ApiDocument) => {
-            const originalName = doc.original_filename || doc.filename || 'Untitled';
-            const fallbackName = removeFileExtension(originalName);
-            // For receipt: show store name; for invoice: show vendor name
-            let displayName = fallbackName;
-            const kind = doc.file_kind?.toLowerCase();
-            const data = doc.json_data && typeof doc.json_data === 'object' ? doc.json_data as Record<string, unknown> : null;
-            if (kind === 'receipt' && data) {
-              const storeName = (data.store_name || data.business_name || data.merchant_name ||
-                (data.receipt_data && typeof data.receipt_data === 'object' && (data.receipt_data as Record<string, unknown>).store_name)) as string | undefined;
-              if (storeName && String(storeName).trim()) displayName = String(storeName).trim();
-            } else if (kind === 'invoice' && data) {
-              const vendorName = (data.vendor_name || data.business_name || data.store_name ||
-                (data.invoice_data && typeof data.invoice_data === 'object' && (data.invoice_data as Record<string, unknown>).vendor_name)) as string | undefined;
-              if (vendorName && String(vendorName).trim()) displayName = String(vendorName).trim();
-            }
-            // Total amount for receipt/invoice (from json_data)
-            let totalAmount: number | undefined;
-            if ((kind === 'receipt' || kind === 'invoice') && data) {
-              const amt = data.total_amount ?? data.amount ?? data.total ?? (data as Record<string, unknown>).invoice_amount;
-              if (typeof amt === 'number' && !Number.isNaN(amt)) totalAmount = amt;
-              else if (typeof amt === 'string') {
-                const parsed = parseFloat(amt.replace(/[^0-9.-]/g, ''));
-                if (!Number.isNaN(parsed)) totalAmount = parsed;
+          const mappedDocs = docsArray
+            .filter((doc: ApiDocument) => !lockedFileIds.has(String(doc.id)))
+            .map((doc: ApiDocument) => {
+              const originalName = doc.original_filename || doc.filename || 'Untitled';
+              const fallbackName = removeFileExtension(originalName);
+              // For receipt: show store name; for invoice: show vendor name
+              let displayName = fallbackName;
+              const kind = doc.file_kind?.toLowerCase();
+              const data = doc.json_data && typeof doc.json_data === 'object' ? doc.json_data as Record<string, unknown> : null;
+              if (kind === 'receipt' && data) {
+                const storeName = (data.store_name || data.business_name || data.merchant_name ||
+                  (data.receipt_data && typeof data.receipt_data === 'object' && (data.receipt_data as Record<string, unknown>).store_name)) as string | undefined;
+                if (storeName && String(storeName).trim()) displayName = String(storeName).trim();
+              } else if (kind === 'invoice' && data) {
+                const vendorName = (data.vendor_name || data.business_name || data.store_name ||
+                  (data.invoice_data && typeof data.invoice_data === 'object' && (data.invoice_data as Record<string, unknown>).vendor_name)) as string | undefined;
+                if (vendorName && String(vendorName).trim()) displayName = String(vendorName).trim();
               }
-            }
-            // Determine status: pending if file_kind is 'pending' or processing_status is 'pending'/'processing'
-            const isPending = doc.file_kind?.toLowerCase() === 'pending' || 
-                             doc.processing_status === 'pending' || 
-                             doc.processing_status === 'processing';
-            const status = isPending ? 'pending' as const : 
-                          doc.processing_status === 'error' ? 'error' as const :
-                          'processed' as const;
-            
-            return {
-              id: String(doc.id),
-              name: displayName,
-              type: getFileTypeFromExtension(doc.original_filename || doc.filename),
-              size: formatFileSize(doc.file_size),
-              uploadDate: new Date(doc.created_at),
-              status: status,
-              tags: [],
-              category: doc.receipt_category || undefined, // Use receipt_category for the actual category (Supplies, Rent, etc.)
-              file_kind: doc.file_kind, // Store raw file_kind to check for receipts
-              totalAmount,
-              is_global: doc.is_global,
-              json_data: doc.json_data, // Store json_data to check if store name is populated
-              original_filename: doc.original_filename || doc.filename,
-              user_id: doc.user_id ?? (doc as any).owner?.id, // Store owner's user ID (workspace files use owner.id)
-            };
-          });
+              // Total amount for receipt/invoice (from json_data)
+              let totalAmount: number | undefined;
+              if ((kind === 'receipt' || kind === 'invoice') && data) {
+                const amt = data.total_amount ?? data.amount ?? data.total ?? (data as Record<string, unknown>).invoice_amount;
+                if (typeof amt === 'number' && !Number.isNaN(amt)) totalAmount = amt;
+                else if (typeof amt === 'string') {
+                  const parsed = parseFloat(amt.replace(/[^0-9.-]/g, ''));
+                  if (!Number.isNaN(parsed)) totalAmount = parsed;
+                }
+              }
+              // Determine status: pending if file_kind is 'pending' or processing_status is 'pending'/'processing'
+              const isPending = doc.file_kind?.toLowerCase() === 'pending' || 
+                               doc.processing_status === 'pending' || 
+                               doc.processing_status === 'processing';
+              const status = isPending ? 'pending' as const : 
+                            doc.processing_status === 'error' ? 'error' as const :
+                            'processed' as const;
+              
+              return {
+                id: String(doc.id),
+                name: displayName,
+                type: getFileTypeFromExtension(doc.original_filename || doc.filename),
+                size: formatFileSize(doc.file_size),
+                uploadDate: new Date(doc.created_at),
+                status: status,
+                tags: [],
+                category: doc.receipt_category || undefined, // Use receipt_category for the actual category (Supplies, Rent, etc.)
+                file_kind: doc.file_kind, // Store raw file_kind to check for receipts
+                totalAmount,
+                is_global: doc.is_global,
+                json_data: doc.json_data, // Store json_data to check if store name is populated
+                original_filename: doc.original_filename || doc.filename,
+                user_id: doc.user_id ?? (doc as any).owner?.id, // Store owner's user ID (workspace files use owner.id)
+              };
+            });
           
           setDocuments(mappedDocs);
           setLastLoadTime(now);
@@ -769,7 +825,7 @@ export default function QuickFilesScreen() {
       isLoadingDocumentsRef.current = false;
       setLoading(false);
     }
-  }, [searchQuery, filterBy, workspaceId]); // Add dependencies including workspaceId
+  }, [searchQuery, filterBy, workspaceId, fetchLockedBookmarkFileIds]); // Add dependencies including workspaceId
 
   // When connection error is shown, retry so it clears as soon as connection is back
   const CONNECTION_ERROR_MSG = 'Connection Error: Connecting you back ...';
@@ -1311,12 +1367,10 @@ export default function QuickFilesScreen() {
         setBookmarks(bookmarksData);
       } else {
         console.log('Failed to load bookmarks:', response.message);
-        // No fallback data needed, only load real data from backend db
         setBookmarks([]);
       }
     } catch (error) {
       console.log('Error loading bookmarks:', error);
-      // No fallback data needed, only load real data from backend db
       setBookmarks([]);
     }
   };
@@ -2449,13 +2503,15 @@ export default function QuickFilesScreen() {
               <Text style={dynamicStyles.kebabMenuText}>Ask ChatGD</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
-              onPress={handleShowBookmarkModal}
-            >
-              <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
-              <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
-            </TouchableOpacity>
+            {!fileIdsInLockedBookmarks.has(selectedDocumentForMenu?.id ?? '') && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={handleShowBookmarkModal}
+              >
+                <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
+                <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Edit as Draft: for editable text files (not Forms, not PDFs) */}
             {(() => {
@@ -2495,8 +2551,9 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             )}
 
-            {/* Rename: only for files that are not receipt or invoice */}
-            {(() => {
+            {/* Rename: only for files that are not receipt or invoice, and not in a locked bookmark */}
+            {!fileIdsInLockedBookmarks.has(selectedDocumentForMenu?.id ?? '') &&
+            (() => {
               const fk = selectedDocumentForMenu?.file_kind?.toLowerCase();
               const isReceiptOrInvoice = fk === 'receipt' || fk === 'receipts' || fk === 'invoice' || fk === 'invoices';
               return !isReceiptOrInvoice;
@@ -2510,16 +2567,18 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
-              onPress={() => {
-                console.log('🗑️ Delete button pressed in kebab menu');
-                handleDeleteDocument();
-              }}
-            >
-              <Ionicons name="trash-outline" size={20} color="#EF4444" />
-              <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
-            </TouchableOpacity>
+            {!fileIdsInLockedBookmarks.has(selectedDocumentForMenu?.id ?? '') && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={() => {
+                  console.log('🗑️ Delete button pressed in kebab menu');
+                  handleDeleteDocument();
+                }}
+              >
+                <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </TouchableOpacity>
       </Modal>

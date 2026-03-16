@@ -1,6 +1,6 @@
-# Connecting Your Phone to Expo (192.168.1.9)
+# Connecting Your Phone to Expo (192.168.1.4)
 
-If your phone can't connect to the dev server at `http://192.168.1.9:8081`, try these steps.
+If your phone can't connect to the dev server at `http://192.168.1.4:8081`, try these steps.
 
 ## 1. Same network
 
@@ -44,12 +44,23 @@ npx expo start --tunnel
 
 Then scan the new QR code with Expo Go. The first run may take a bit while the tunnel is set up.
 
-## 4. Check what the phone is using
+## 4. Force Metro to use your PC's IP (if QR shows wrong host)
 
-- In Expo Go, when you scan the QR code, it should open a URL like `exp://192.168.1.9:8081`.
+If the QR code or connection URL uses a different IP, start Expo with your machine's IP so the phone uses the right address:
+
+```bash
+set REACT_NATIVE_PACKAGER_HOST=192.168.1.4
+npx expo start --go
+```
+
+(On PowerShell: `$env:REACT_NATIVE_PACKAGER_HOST='192.168.1.4'; npx expo start --go`)
+
+## 5. Check what the phone is using
+
+- In Expo Go, when you scan the QR code, it should open a URL like `exp://192.168.1.4:8081`.
 - If your project uses a **development build** (expo-dev-client), the terminal may say “Scan with Expo Go” but the app might expect a dev build. Press **s** in the terminal to switch between “Expo Go” and “development build” and use the one that matches the app on your phone.
 
-## 5. Quick checklist
+## 6. Quick checklist
 
 - [ ] Phone and PC on same Wi‑Fi (not guest, mobile data off).
 - [ ] Node.js (or port 8081) allowed in Windows Firewall for Private (and Public if needed).

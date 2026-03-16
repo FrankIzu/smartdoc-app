@@ -8,10 +8,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
+    Animated,
     AppState,
     AppStateStatus,
     BackHandler,
     Linking,
+    Modal,
     NativeModules,
     Platform,
     StyleSheet,
@@ -20,7 +22,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { HMS_IOS_SCREENSHARE } from '../../constants/Config';
+import { API_BASE_URL, HMS_IOS_SCREENSHARE } from '../../constants/Config';
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
@@ -137,12 +139,62 @@ export default function HMSMeetingInterfaceScreen() {
   const pipFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [joinSoundReady, setJoinSoundReady] = useState(false);
 
+  // Network connectivity monitoring — shown as a friendly overlay instead of the raw HMS error
+  const [isNetworkDown, setIsNetworkDown] = useState(false);
+  const [showReconnected, setShowReconnected] = useState(false);
+  const networkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bannerAnim = useRef(new Animated.Value(0)).current;
+
   // Delay mounting MeetingJoinSound until after HMSPrebuilt has joined (useHMSPeerUpdates can crash without room context)
   useEffect(() => {
     if (!joinConfig || Platform.OS === 'web') return;
     setJoinSoundReady(false);
     const t = setTimeout(() => setJoinSoundReady(true), 5000);
     return () => clearTimeout(t);
+  }, [joinConfig]);
+
+  // Network connectivity monitor — poll the backend health endpoint every 5 s during a live call.
+  // When the connection drops we show our own friendly banner (which renders above the HMS native UI
+  // via a transparent Modal). When it recovers, we flash "Reconnected" for 3 s then hide the banner.
+  useEffect(() => {
+    // Only monitor while a call is active and HMS is available
+    if (!joinConfig || Platform.OS === 'web' || !HMSPrebuilt) return;
+
+    const checkConnectivity = async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      try {
+        await fetch(`${API_BASE_URL}/health`, {
+          method: 'HEAD',
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        // Connection restored
+        setIsNetworkDown(prev => {
+          if (prev) {
+            // Was offline — flash "Reconnected" banner for 3 s
+            setShowReconnected(true);
+            if (reconnectedTimerRef.current) clearTimeout(reconnectedTimerRef.current);
+            reconnectedTimerRef.current = setTimeout(() => setShowReconnected(false), 3000);
+          }
+          return false;
+        });
+      } catch {
+        clearTimeout(timeout);
+        setIsNetworkDown(true);
+      }
+    };
+
+    // Initial check after a short delay (give HMS time to settle)
+    const initialDelay = setTimeout(checkConnectivity, 3000);
+    networkPollRef.current = setInterval(checkConnectivity, 5000);
+
+    return () => {
+      clearTimeout(initialDelay);
+      if (networkPollRef.current) clearInterval(networkPollRef.current);
+      if (reconnectedTimerRef.current) clearTimeout(reconnectedTimerRef.current);
+    };
   }, [joinConfig]);
 
   // Configure 100ms room-kit join behavior: skip preview and join with camera off to avoid
@@ -939,6 +991,49 @@ export default function HMSMeetingInterfaceScreen() {
           {HMSPrebuilt && joinSoundReady && (
             <MeetingJoinSound enabled={!!authToken && !!meetingId} />
           )}
+
+          {/* Network status overlay — rendered as a Modal so it appears above the HMS native UI.
+              Shows a friendly banner instead of the raw "code: 1003" HMS error. */}
+          <Modal
+            visible={(isNetworkDown || showReconnected) && !!joinConfig && !hmsError && !hmsInitTimeout}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => {}}
+          >
+            <View style={styles.networkOverlay} pointerEvents="box-none">
+              <View style={[styles.networkBanner, showReconnected && !isNetworkDown && styles.networkBannerOnline]}>
+                {isNetworkDown ? (
+                  <>
+                    <View style={styles.networkDot} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.networkBannerTitle}>Connection lost</Text>
+                      <Text style={styles.networkBannerSubtitle}>Trying to reconnect…</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.networkLeaveButton}
+                      onPress={async () => {
+                        if (networkPollRef.current) clearInterval(networkPollRef.current);
+                        try { await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY); } catch {}
+                        try {
+                          if (meetingId) await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
+                        } catch {}
+                        router.replace('/quick-reach/meeting-call' as any);
+                      }}
+                    >
+                      <Text style={styles.networkLeaveButtonText}>Leave</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <View style={[styles.networkDot, { backgroundColor: '#34C759' }]} />
+                    <Text style={styles.networkBannerTitle}>Reconnected</Text>
+                  </>
+                )}
+              </View>
+            </View>
+          </Modal>
+
           <SafeAreaView style={styles.container}>
             <View style={styles.meetingContentWrapper}>
           {hmsError || hmsInitTimeout ? (
@@ -1321,6 +1416,59 @@ const styles = StyleSheet.create({
   leaveButtonText: {
     color: '#fff',
     fontSize: 18,
+    fontWeight: '600',
+  },
+  // Network overlay styles
+  networkOverlay: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+  },
+  networkBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(30, 30, 30, 0.95)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginHorizontal: 16,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 12,
+    minWidth: 240,
+  },
+  networkBannerOnline: {
+    backgroundColor: 'rgba(20, 50, 20, 0.95)',
+  },
+  networkDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FF3B30',
+  },
+  networkBannerTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  networkBannerSubtitle: {
+    color: '#aaa',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  networkLeaveButton: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  networkLeaveButtonText: {
+    color: '#fff',
+    fontSize: 13,
     fontWeight: '600',
   },
 });

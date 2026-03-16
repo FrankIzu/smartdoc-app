@@ -908,7 +908,8 @@ class ApiService {
    * Falls back to client filter if backend does not return only drafts.
    */
   async getDrafts(): Promise<ApiResponse> {
-    const res = await this.getFiles(1, 100, undefined, 'Draft');
+    // Use getDocuments for resilience: 25s timeout + fallback to getFiles on error
+    const res = await this.getDocuments(1, 100, undefined, 'Draft');
     const raw = res?.data?.files ?? res?.data?.data ?? res?.files ?? (Array.isArray(res?.data) ? res.data : []);
     const list = Array.isArray(raw) ? raw : [];
     const drafts = list.filter((f: any) => (f.file_kind || '').toString().toLowerCase() === 'draft');
@@ -2320,6 +2321,8 @@ class ApiService {
           payload.retry = true;
           payload.retry_replace_message_id = toNum(filters.retry_replace_message_id);
           payload.message = ''; // Backend resolves user query from saved conversation
+          payload.enable_preview_mode = true; // Match web: required for preview/refinement chunks
+          payload.enable_cot = true;
         } else if (filters.additional_response_for_message_id != null) {
           // More sources: append user stub + new assistant; server excludes chunks from this message
           payload.additional_response_for_message_id = toNum(filters.additional_response_for_message_id);
@@ -2776,6 +2779,7 @@ class ApiService {
                 content: finalContent, // Some handlers expect 'content'
                 citations: chunkResponse.citations || [],
                 chat_history_id: chunkResponse.chat_history_id,
+                message_id: chunkResponse.message_id, // Backend message_id for retry_replace_message_id
                 metadata: chunkResponse.metadata || {},
                 is_preview_phase: is_preview_phase !== undefined ? is_preview_phase : false // Include phase in complete event
               });
@@ -3476,7 +3480,7 @@ class ApiService {
 
   // ==================== MOBILE DOCUMENTS ====================
 
-  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number, onlyOwn = false): Promise<ApiResponse> {
+  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number, onlyOwn = false, metadataOnly = false, requestTimeoutMs?: number, signal?: AbortSignal): Promise<ApiResponse> {
     try {
       // Mobile app should use mobile endpoints, not web endpoints
       // Use the mobile files endpoint which supports workspace_id and only_own parameters
@@ -3487,12 +3491,12 @@ class ApiService {
       if (category) params.append('category', category);
       if (workspaceId != null) params.append('workspace_id', workspaceId.toString());
       if (onlyOwn) params.append('only_own', '1');
+      if (metadataOnly) params.append('metadata_only', '1');
       
       const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
+      const timeout = requestTimeoutMs ?? 25000;
       console.log('📁 API: Requesting files from mobile endpoint:', url);
-      const response = await this.client.get(url, {
-        timeout: 25000 // 25s for slow backends; on timeout we return empty list below
-      });
+      const response = await this.client.get(url, { timeout, signal });
       console.log('📁 API: Files response success:', response.data?.success, 'Files count:', response.data?.files?.length || response.data?.data?.length || 0);
       
       // Transform response format to match expected format
@@ -3520,6 +3524,7 @@ class ApiService {
         console.warn('⚠️ Documents request timed out - returning empty list for @ mentions');
         return {
           success: true,
+          timedOut: true,   // callers (e.g. searchDocumentsForMention) must not wipe existing results
           data: [],
           files: [],
           pagination: { page, per_page: perPage, total: 0, has_more: false }

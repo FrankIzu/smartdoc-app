@@ -18,6 +18,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
+import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 import { pushNotificationService } from '../services/pushNotifications';
 
@@ -68,6 +69,8 @@ function DashboardScreen() {
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
+  const DASHBOARD_CACHE_MS = 60000; // 60 s TTL for dashboard data
+  const DASHBOARD_CACHE_KEY = 'dashboard_data';
 
   /** Get user initials for header avatar: first+last name, else name, else username/email prefix, else null (show icon). */
   const getUserInitials = (u: { name?: string; email?: string; first_name?: string; last_name?: string; username?: string } | null): string | null => {
@@ -134,13 +137,27 @@ function DashboardScreen() {
     }
   };
 
-  const loadDashboardData = useCallback(async () => {
+  const loadDashboardData = useCallback(async (forceRefresh = false) => {
     // console.log('🏠 Starting dashboard data load...');
     
     // Check if user is authenticated before making API calls
     if (!isAuthenticated || !user) {
       setLoading(false);
       return;
+    }
+
+    // Serve cached data immediately (skip spinner on tab re-focus)
+    if (!forceRefresh) {
+      const cached = screenCache.get<{ stats: typeof stats; activities: RecentActivity[] }>(
+        DASHBOARD_CACHE_KEY,
+        DASHBOARD_CACHE_MS
+      );
+      if (cached) {
+        setStats(cached.stats);
+        setRecentActivities(cached.activities);
+        setLoading(false);
+        return;
+      }
     }
     
     try {
@@ -400,8 +417,17 @@ function DashboardScreen() {
       }
     })();
 
-    await Promise.all([statsPromise, activitiesPromise, notifPromise]);
+    const [resolvedStats] = await Promise.all([statsPromise, activitiesPromise, notifPromise]);
     const loadTime = Date.now() - startTime;
+
+    // Cache the freshly loaded data so subsequent tab-focuses are instant
+    setStats(prev => {
+      setRecentActivities(acts => {
+        screenCache.set(DASHBOARD_CACHE_KEY, { stats: prev, activities: acts });
+        return acts;
+      });
+      return prev;
+    });
       
     } catch (error) {
       // console.error('🏠 Unexpected error in dashboard data loading:', error);
@@ -425,7 +451,8 @@ function DashboardScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadDashboardData();
+    screenCache.invalidate(DASHBOARD_CACHE_KEY);
+    await loadDashboardData(true);
     setRefreshing(false);
   }, [loadDashboardData]);
 
@@ -449,8 +476,8 @@ function DashboardScreen() {
     if (!isAuthenticated || !user) return;
 
     const interval = setInterval(() => {
-      // console.log('🔄 Auto-refreshing dashboard...');
-      loadDashboardData();
+      screenCache.invalidate(DASHBOARD_CACHE_KEY);
+      loadDashboardData(true);
     }, AUTO_REFRESH_INTERVAL);
 
     return () => clearInterval(interval);

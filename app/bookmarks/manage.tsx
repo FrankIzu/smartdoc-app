@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 interface Bookmark {
@@ -51,11 +52,19 @@ export default function ManageBookmarksScreen() {
     '#AF52DE', '#5856D6', '#8E44AD', '#E74C3C'
   ];
 
-  useEffect(() => {
-    loadBookmarks();
-  }, []);
+  const BOOKMARKS_LIST_CACHE_KEY = 'bookmarks_list';
+  const BOOKMARKS_LIST_CACHE_MS = 30_000;
 
-  const loadBookmarks = async () => {
+  const loadBookmarks = async (forceRefresh = false) => {
+    if (!forceRefresh) {
+      const cached = screenCache.get<Bookmark[]>(BOOKMARKS_LIST_CACHE_KEY, BOOKMARKS_LIST_CACHE_MS);
+      if (cached) {
+        setBookmarks(cached);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
     try {
       setLoading(true);
       const response = await apiClient.getBookmarks();
@@ -66,6 +75,7 @@ export default function ManageBookmarksScreen() {
           : (response.data.bookmarks || []);
         
         setBookmarks(bookmarksData);
+        screenCache.set(BOOKMARKS_LIST_CACHE_KEY, bookmarksData);
       } else {
         setBookmarks([]);
       }
@@ -77,9 +87,18 @@ export default function ManageBookmarksScreen() {
     }
   };
 
+  // Reload on focus so the list reflects changes made inside a bookmark detail,
+  // but respect the cache TTL to avoid redundant calls on quick tab switches.
+  useFocusEffect(
+    useCallback(() => {
+      loadBookmarks();
+    }, [])
+  );
+
   const onRefresh = () => {
     setRefreshing(true);
-    loadBookmarks();
+    screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+    loadBookmarks(true);
   };
 
   const handleCreateBookmark = async () => {
@@ -101,7 +120,8 @@ export default function ManageBookmarksScreen() {
         setNewBookmarkName('');
         setNewBookmarkDescription('');
         setSelectedColor('#007AFF');
-        loadBookmarks();
+        screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+        loadBookmarks(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to create bookmark');
       }
@@ -124,7 +144,8 @@ export default function ManageBookmarksScreen() {
               const response = await apiClient.deleteBookmark(bookmark.id);
               if (response.success) {
                 Alert.alert('Success', 'Bookmark deleted successfully!');
-                loadBookmarks();
+                screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+                loadBookmarks(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete bookmark');
               }
@@ -162,7 +183,8 @@ export default function ManageBookmarksScreen() {
         setShowRenameModal(false);
         setBookmarkToRename(null);
         setRenameInputValue('');
-        loadBookmarks();
+        screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+        loadBookmarks(true);
         Alert.alert('Success', 'Bookmark renamed successfully');
       } else {
         Alert.alert('Error', response.message || 'Failed to rename bookmark');
@@ -198,6 +220,7 @@ export default function ManageBookmarksScreen() {
           setBookmarks(prev => prev.map(b =>
             b.id === item.id ? { ...b, is_locked: newLocked } : b
           ));
+          screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
           Alert.alert('Success', newLocked ? 'Bookmark locked' : 'Bookmark unlocked');
         } else {
           Alert.alert('Error', response.message || 'Failed to update bookmark lock');

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     ActivityIndicator,
     Alert,
+    AppState,
     Dimensions,
     Keyboard,
     KeyboardAvoidingView,
@@ -26,6 +27,7 @@ import { useHeaderVisibility } from '../../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiClient } from '../../../services/api';
 import { toAlertMessage } from '../../../utils/alertUtils';
+import { draftsCache, isNetworkError } from '../../../utils/draftsCache';
 import { secureStorage } from '../../../utils/storage';
 import { AnimatedHeaderContainer } from '../../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../../components/TapToToggleHeaderView';
@@ -130,9 +132,12 @@ export default function DraftEditScreen() {
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [showColorPicker, setShowColorPicker] = useState<'fore' | 'back' | null>(null);
+  const [isOffline, setIsOffline] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'local' | 'error' | null>(null);
   const initialFilenameRef = useRef<string | null>(null);
   const currentFilenameRef = useRef<string>('Untitled Draft');
   const renameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftLoadedRef = useRef(false);
   currentFilenameRef.current = filename;
 
   useEffect(() => {
@@ -269,37 +274,108 @@ export default function DraftEditScreen() {
     };
   }, []);
 
-  // Load draft content
+  // Load draft content — cache-first for instant offline access
   useEffect(() => {
     if (!draftId || isNaN(draftId)) return;
+    draftLoadedRef.current = false;
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
+
+        // 1. Load from local cache immediately (no network needed)
+        const cached = await draftsCache.getDraftContent(draftId);
+        if (cached && !cancelled) {
+          const cachedHtml = cached.content_html || '<p><br></p>';
+          setFilename(cached.filename || 'Untitled Draft');
+          initialFilenameRef.current = cached.filename || 'Untitled Draft';
+          setContentText(stripHtmlToText(cachedHtml));
+          setContentHtml(cachedHtml);
+          setInitialEditorHtml(cachedHtml);
+          contentToInjectRef.current = cachedHtml;
+          if (cached.version != null) lastKnownVersionRef.current = Number(cached.version);
+          if (cached.updated_at != null) lastKnownUpdatedAtRef.current = String(cached.updated_at);
+          ignoreFirstEmptyMessageRef.current = !!(cachedHtml && stripHtmlToText(cachedHtml).trim());
+          draftLoadedRef.current = true;
+          setLoading(false);
+        }
+
+        // 2. Fetch from API to get latest version
         const res = await apiClient.getDraftContent(draftId);
         if (cancelled) return;
         if ((res as any)?.success) {
           const data = (res as any).data ?? res;
           const html = (res as any).content_html ?? data?.content_html ?? '';
           const name = (res as any).filename ?? data?.filename ?? 'Untitled Draft';
-          setFilename(name);
-          initialFilenameRef.current = name;
-          setContentText(stripHtmlToText(html));
-          setContentHtml(html);
-          setInitialEditorHtml(html || '<p><br></p>');
-          contentToInjectRef.current = html || '<p><br></p>';
           const ver = (res as any).version ?? data?.version;
           const updatedAt = (res as any).updated_at ?? data?.updated_at;
-          if (ver != null) lastKnownVersionRef.current = Number(ver);
-          if (updatedAt != null) lastKnownUpdatedAtRef.current = String(updatedAt);
-          // Ignore first empty message from WebView (avoids overwriting loaded content with spurious empty)
-          ignoreFirstEmptyMessageRef.current = !!(html && stripHtmlToText(html).trim());
-        } else {
+
+          // Only update UI if server has newer content than cache
+          const serverVersion = ver != null ? Number(ver) : null;
+          const cacheVersion = cached?.version != null ? Number(cached.version) : null;
+          const serverIsNewer = serverVersion == null || cacheVersion == null || serverVersion > cacheVersion;
+
+          if (serverIsNewer || !cached) {
+            setFilename(name);
+            initialFilenameRef.current = name;
+            draftLoadedRef.current = true;
+            setContentText(stripHtmlToText(html));
+            setContentHtml(html);
+            const safeHtml = html || '<p><br></p>';
+            setInitialEditorHtml(safeHtml);
+            contentToInjectRef.current = safeHtml;
+            if (ver != null) lastKnownVersionRef.current = Number(ver);
+            if (updatedAt != null) lastKnownUpdatedAtRef.current = String(updatedAt);
+            ignoreFirstEmptyMessageRef.current = !!(html && stripHtmlToText(html).trim());
+            // Inject updated content into WebView if already rendered
+            if (cached) {
+              const script = `(function(){ var el=document.getElementById('content'); if(el) el.innerHTML=${JSON.stringify(safeHtml)}; })(); true;`;
+              webViewRef.current?.injectJavaScript(script);
+            }
+          }
+
+          setIsOffline(false);
+          // Persist to cache
+          await draftsCache.saveDraftContent(draftId, {
+            filename: name,
+            content_html: html,
+            version: ver != null ? Number(ver) : undefined,
+            updated_at: updatedAt != null ? String(updatedAt) : undefined,
+          });
+
+          // Retry any pending saves that were queued while offline
+          const pending = await draftsCache.getPendingSaves();
+          const thisPending = pending.find(p => p.id === draftId);
+          if (thisPending) {
+            // Server is available now — flush the pending save
+            try {
+              await apiClient.saveDraft(draftId, thisPending.html, thisPending.plainText);
+              await draftsCache.removePendingSave(draftId);
+              setSaveStatus('saved');
+            } catch (_) {
+              // Will retry next time
+            }
+          }
+        } else if (!cached) {
           Alert.alert('Error', 'Failed to load draft', [{ text: 'OK', onPress: () => router.back() }]);
         }
       } catch (e: any) {
-        if (!cancelled) {
-          Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to load draft'), [{ text: 'OK', onPress: () => router.back() }]);
+        if (cancelled) return;
+        if (isNetworkError(e)) {
+          setIsOffline(true);
+          if (!draftLoadedRef.current) {
+            // No cache and no network — go back
+            Alert.alert('Offline', 'This note is not available offline yet. Open it while online first to cache it locally.', [
+              { text: 'OK', onPress: () => router.back() },
+            ]);
+          }
+          // If we loaded from cache, stay on screen — already showing cached content
+        } else {
+          if (!draftLoadedRef.current) {
+            Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to load draft'), [
+              { text: 'OK', onPress: () => router.back() },
+            ]);
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -338,6 +414,8 @@ export default function DraftEditScreen() {
             user_id: currentUserId,
             display_name: displayName,
           });
+          // Network just came back — flush any locally queued save immediately
+          flushPendingSave();
         });
 
         socket.on('doc_presence_list', (data: { members?: Array<{ user_id: number; display_name: string }> }) => {
@@ -430,7 +508,17 @@ export default function DraftEditScreen() {
       html = normalizeHtml(html);
     }
     const plainText = stripHtmlToText(html);
+
+    // Always persist locally first so content is never lost
+    await draftsCache.saveDraftContent(draftId, {
+      filename: currentFilenameRef.current || 'Untitled Draft',
+      content_html: html,
+      version: lastKnownVersionRef.current ?? undefined,
+      updated_at: lastKnownUpdatedAtRef.current ?? undefined,
+    });
+
     setSaving(true);
+    setSaveStatus('saving');
     try {
       // Debug: verify HTML contains formatting tags
       if (__DEV__) {
@@ -442,27 +530,38 @@ export default function DraftEditScreen() {
       }
       const res = await apiClient.saveDraft(draftId, html, plainText);
       setHasUnsavedChanges(false);
+      setIsOffline(false);
+      setSaveStatus('saved');
+      // Remove from pending queue on successful save
+      await draftsCache.removePendingSave(draftId);
       const file = (res as any)?.file ?? (res as any)?.data?.file;
       if (file?.version != null) lastKnownVersionRef.current = Number(file.version);
       if (file?.updated_at != null) lastKnownUpdatedAtRef.current = String(file.updated_at);
+      // Update cache with server-confirmed version info
+      await draftsCache.saveDraftContent(draftId, {
+        filename: currentFilenameRef.current || 'Untitled Draft',
+        content_html: html,
+        version: lastKnownVersionRef.current ?? undefined,
+        updated_at: lastKnownUpdatedAtRef.current ?? undefined,
+      });
     } catch (e: any) {
       if (e?.message?.includes('409') || (e?.response?.status === 409)) {
+        setSaveStatus('error');
         Alert.alert('Someone else is editing', 'Your changes were not saved. Someone else is editing this draft.');
+      } else if (isNetworkError(e)) {
+        // Queue for later sync — content already saved locally above
+        setIsOffline(true);
+        setSaveStatus('local');
+        await draftsCache.addPendingSave({
+          id: draftId,
+          html,
+          plainText,
+          filename: currentFilenameRef.current || 'Untitled Draft',
+        });
+        setHasUnsavedChanges(false);
       } else {
-        // Do not show alert for network/offline errors; user already has offline indicator
-        const msg = (e?.message ?? e?.response?.data?.message ?? '').toString().toLowerCase();
-        const isNetworkError =
-          msg.includes('network') ||
-          msg.includes('err_network') ||
-          msg.includes('econnrefused') ||
-          msg.includes('timeout') ||
-          msg.includes('timed out') ||
-          msg.includes('connection') ||
-          e?.code === 'ERR_NETWORK' ||
-          e?.code === 'ECONNREFUSED';
-        if (!isNetworkError) {
-          Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to save draft'));
-        }
+        setSaveStatus('error');
+        Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to save draft'));
       }
     } finally {
       setSaving(false);
@@ -497,6 +596,40 @@ export default function DraftEditScreen() {
     refetchDraftContentRef.current = refetchDraftContent;
     return () => { refetchDraftContentRef.current = null; };
   }, [refetchDraftContent]);
+
+  /** Flush any pending save for this draft to the server. Safe to call speculatively. */
+  const flushPendingSave = useCallback(async () => {
+    if (!draftId || isNaN(draftId)) return;
+    const pending = await draftsCache.getPendingSaves();
+    const item = pending.find(p => p.id === draftId);
+    if (!item) return;
+    try {
+      await apiClient.saveDraft(draftId, item.html, item.plainText);
+      await draftsCache.removePendingSave(draftId);
+      setIsOffline(false);
+      setSaveStatus('saved');
+      setHasUnsavedChanges(false);
+      // Update cache with whatever filename was pending
+      if (item.filename) {
+        await draftsCache.saveDraftContent(draftId, {
+          filename: item.filename,
+          content_html: item.html,
+        });
+      }
+    } catch {
+      // Still offline — leave in queue
+    }
+  }, [draftId]);
+
+  // Sync pending save when app comes to foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        flushPendingSave();
+      }
+    });
+    return () => sub.remove();
+  }, [flushPendingSave]);
 
   const handleContentChange = useCallback((text: string) => {
     setContentText(text);
@@ -715,8 +848,15 @@ export default function DraftEditScreen() {
     const name = (currentFilenameRef.current || '').trim() || 'Untitled Draft';
     if (name === (initialFilenameRef.current ?? '')) return;
     if (!draftId || isNaN(draftId)) return;
-    await apiClient.renameFile(draftId, name);
+    // Always update local cache immediately
+    await draftsCache.updateCachedFilename(draftId, name);
     initialFilenameRef.current = name;
+    try {
+      await apiClient.renameFile(draftId, name);
+    } catch (e: any) {
+      if (!isNetworkError(e)) throw e;
+      // Offline: cache already updated, server will see it on next sync
+    }
   }, [draftId]);
 
   const handleRenameBlur = useCallback(async () => {
@@ -743,9 +883,9 @@ export default function DraftEditScreen() {
     }
   }, [router, persistFilenameIfChanged]);
 
-  // Debounced immediate save of filename when user types (persist after 600ms idle)
+  // Debounced immediate save of filename when user types (persist after 600ms idle). Only run after draft has loaded so we don't trigger a rename on open (e.g. shared file permission error).
   useEffect(() => {
-    if (!draftId || isNaN(draftId)) return;
+    if (!draftId || isNaN(draftId) || !draftLoadedRef.current) return;
     if (renameTimeoutRef.current) clearTimeout(renameTimeoutRef.current);
     const name = (filename || '').trim() || 'Untitled Draft';
     if (name === (initialFilenameRef.current ?? '')) return;
@@ -877,6 +1017,20 @@ export default function DraftEditScreen() {
     },
     headerActions: { flexDirection: 'row', alignItems: 'center' },
     headerBtn: { padding: 8 },
+    offlineBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#FF9500',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    offlineBannerText: {
+      fontSize: 12,
+      color: '#fff',
+      fontWeight: '600',
+      marginLeft: 6,
+      flex: 1,
+    },
     presenceBar: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1121,6 +1275,20 @@ export default function DraftEditScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          {isOffline && (
+            <View style={dynamicStyles.offlineBanner}>
+              <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
+              <Text style={dynamicStyles.offlineBannerText}>
+                {saveStatus === 'local' ? 'Offline — saved locally, will sync when online' : 'Offline — changes saved locally'}
+              </Text>
+            </View>
+          )}
+          {!isOffline && saveStatus === 'local' && (
+            <View style={[dynamicStyles.offlineBanner, { backgroundColor: '#34C759' }]}>
+              <Ionicons name="checkmark-circle-outline" size={14} color="#fff" />
+              <Text style={dynamicStyles.offlineBannerText}>Back online — syncing local changes...</Text>
+            </View>
+          )}
           {othersLabel ? (
             <TouchableOpacity
               style={dynamicStyles.presenceBar}

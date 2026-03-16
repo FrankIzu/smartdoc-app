@@ -21,6 +21,7 @@ import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
+import { screenCache } from '../../utils/screenCache';
 import deviceSecurityService from '../../services/deviceSecurity';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
@@ -180,7 +181,19 @@ export default function SettingsScreen() {
     }, [])
   );
 
-  const loadSettings = async () => {
+  const SETTINGS_CACHE_KEY = 'user_profile';
+  const SETTINGS_CACHE_MS = 5 * 60_000; // 5-minute TTL — profile rarely changes
+
+  const loadSettings = async (forceRefresh = false) => {
+    // Serve cached profile instantly; still load device/biometric info fresh each time
+    if (!forceRefresh) {
+      const cached = screenCache.get<UserProfile>(SETTINGS_CACHE_KEY, SETTINGS_CACHE_MS);
+      if (cached) {
+        setProfile(cached);
+        // Don't skip biometric/device checks below — those are local, not cached
+      }
+    }
+
     try {
       // Load user profile using the getUserProfile method
       const profileResponse = await api.getUserProfile();
@@ -198,6 +211,7 @@ export default function SettingsScreen() {
           created_at: userData.created_at || new Date().toISOString(),
         };
         setProfile(profileData);
+        screenCache.set(SETTINGS_CACHE_KEY, profileData);
       }
 
       // Set default preferences since we don't have a specific endpoint yet

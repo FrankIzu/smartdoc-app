@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 interface Workspace {
@@ -40,8 +41,21 @@ export default function WorkspacesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadWorkspaces = async () => {
+  const WORKSPACES_CACHE_KEY = 'workspaces_list';
+  const WORKSPACES_CACHE_MS = 30_000;
+
+  const loadWorkspaces = async (forceRefresh = false) => {
     if (!user) return;
+
+    if (!forceRefresh) {
+      const cached = screenCache.get<Workspace[]>(WORKSPACES_CACHE_KEY, WORKSPACES_CACHE_MS);
+      if (cached) {
+        setWorkspaces(cached);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
     
     try {
       const response = await apiService.getMobileWorkspaces();
@@ -53,6 +67,7 @@ export default function WorkspacesScreen() {
         
         console.log('✅ Loaded workspaces:', workspacesData.length);
         setWorkspaces(workspacesData);
+        screenCache.set(WORKSPACES_CACHE_KEY, workspacesData);
       } else {
         console.log('❌ No workspaces found:', response);
         setWorkspaces([]);
@@ -66,26 +81,17 @@ export default function WorkspacesScreen() {
     }
   };
 
-  // Add debounce to prevent excessive reloads
-  const lastLoadTimeRef = useRef<number>(0);
-  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
-  
   useFocusEffect(
     useCallback(() => {
-      if (user) {
-        const now = Date.now();
-        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
-          lastLoadTimeRef.current = now;
-          loadWorkspaces();
-        }
-      }
+      if (user) loadWorkspaces();
     }, [user])
   );
 
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
-    loadWorkspaces();
+    screenCache.invalidate(WORKSPACES_CACHE_KEY);
+    loadWorkspaces(true);
   };
 
   const handleDeleteWorkspace = (workspace: Workspace) => {
@@ -102,7 +108,8 @@ export default function WorkspacesScreen() {
               const response = await apiService.deleteWorkspace(workspace.id);
               if (response.success) {
                 Alert.alert('Success', 'Workspace deleted successfully');
-                loadWorkspaces();
+                screenCache.invalidate(WORKSPACES_CACHE_KEY);
+                loadWorkspaces(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete workspace');
               }
@@ -121,7 +128,8 @@ export default function WorkspacesScreen() {
         is_active: !workspace.is_active
       });
       if (response.success) {
-        loadWorkspaces();
+        screenCache.invalidate(WORKSPACES_CACHE_KEY);
+        loadWorkspaces(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to update workspace');
       }

@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -23,6 +23,7 @@ import DocumentViewer from '../../components/DocumentViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { formatDateToLocal } from '../../utils/timeFormatting';
+import { screenCache } from '../../utils/screenCache';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -109,20 +110,28 @@ export default function BookmarkDetailScreen() {
   const bookmarkId = params.id ? parseInt(params.id as string) : null;
   const openAddFiles = params.addFiles === '1' || params.addFiles === true;
 
-  useEffect(() => {
-    if (bookmarkId) {
-      loadBookmarkDetails();
-    }
-  }, [bookmarkId]);
+  const DETAIL_CACHE_MS = 30_000;
+  const detailCacheKey = bookmarkId ? `bookmark_detail_${bookmarkId}` : '';
 
-  useEffect(() => {
-    if (bookmark && openAddFiles && !bookmark.is_locked) {
-      handleShowAddFilesModal();
-    }
-  }, [bookmark?.id, bookmark?.is_locked, openAddFiles]);
-
-  const loadBookmarkDetails = async () => {
+  const loadBookmarkDetails = async (forceRefresh = false) => {
     if (!bookmarkId) return;
+
+    if (!forceRefresh) {
+      const cached = screenCache.get<{ bookmark: Bookmark; files: Document[] }>(
+        detailCacheKey,
+        DETAIL_CACHE_MS
+      );
+      if (cached) {
+        setBookmark(cached.bookmark);
+        setEditName(cached.bookmark.name);
+        setEditDescription(cached.bookmark.description || '');
+        setEditColor(cached.bookmark.color);
+        setFiles(cached.files);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
     
     try {
       setLoading(true);
@@ -162,6 +171,12 @@ export default function BookmarkDetailScreen() {
         }));
         
         setFiles(mappedFiles);
+
+        // Cache both bookmark metadata and files together
+        setBookmark(prev => {
+          if (prev) screenCache.set(detailCacheKey, { bookmark: prev, files: mappedFiles });
+          return prev;
+        });
       }
       
     } catch {
@@ -172,9 +187,18 @@ export default function BookmarkDetailScreen() {
     }
   };
 
+  // Reload on each focus so changes from "add files" flow are reflected,
+  // but use cache to avoid spinner on quick back-navigation.
+  useFocusEffect(
+    useCallback(() => {
+      if (bookmarkId) loadBookmarkDetails();
+    }, [bookmarkId])
+  );
+
   const onRefresh = () => {
     setRefreshing(true);
-    loadBookmarkDetails();
+    screenCache.invalidate(detailCacheKey);
+    loadBookmarkDetails(true);
   };
 
   const handleEditBookmark = async () => {
@@ -191,6 +215,8 @@ export default function BookmarkDetailScreen() {
       });
 
       if (response.success) {
+        screenCache.invalidate(detailCacheKey);
+        screenCache.invalidate('bookmarks_list');
         setBookmark(prev => prev ? {
           ...prev,
           name: editName.trim(),
@@ -245,6 +271,8 @@ export default function BookmarkDetailScreen() {
       try {
         const response = await apiClient.updateBookmark(bookmark.id, { is_locked: newLocked });
         if (response.success) {
+          screenCache.invalidate(detailCacheKey);
+          screenCache.invalidate('bookmarks_list');
           setBookmark(prev => prev ? { ...prev, is_locked: newLocked } : null);
           Alert.alert('Success', newLocked ? 'Bookmark locked' : 'Bookmark unlocked');
         } else {
@@ -288,6 +316,7 @@ export default function BookmarkDetailScreen() {
             try {
               const response = await apiClient.removeFileFromBookmark(bookmark.id, parseInt(fileId));
               if (response.success) {
+                screenCache.invalidate(detailCacheKey);
                 setFiles(prev => prev.filter(f => f.id !== fileId));
                 setBookmark(prev => prev ? { ...prev, file_count: prev.file_count - 1 } : null);
                 Alert.alert('Success', 'File removed from bookmark');
@@ -562,7 +591,8 @@ export default function BookmarkDetailScreen() {
       
       if (response.success) {
         // Reload bookmark details to get updated file list
-        await loadBookmarkDetails();
+        screenCache.invalidate(detailCacheKey);
+        await loadBookmarkDetails(true);
         setSelectedFiles(new Set());
         setShowAddFilesModal(false);
         Alert.alert('Success', `${fileIds.length} file(s) added to bookmark`);

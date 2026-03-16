@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { toAlertMessage } from '../../utils/alertUtils';
+import { CachedDraftMeta, draftsCache, isNetworkError } from '../../utils/draftsCache';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -66,16 +67,53 @@ export default function DraftsListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isOffline, setIsOffline] = useState(false);
 
-  const loadDrafts = useCallback(async () => {
+  const flushAllPendingSaves = useCallback(async () => {
+    const pending = await draftsCache.getPendingSaves();
+    if (pending.length === 0) return;
+    for (const item of pending) {
+      try {
+        await apiClient.saveDraft(item.id, item.html, item.plainText);
+        await draftsCache.removePendingSave(item.id);
+      } catch {
+        // Still offline or error — leave in queue
+        break;
+      }
+    }
+  }, []);
+
+  const loadDrafts = useCallback(async (fromRefresh = false) => {
     if (!user) return;
+
+    // Load from cache immediately so user sees data without waiting
+    const cached = await draftsCache.getDraftsList();
+    if (cached && cached.length > 0) {
+      setDrafts(cached as DraftItem[]);
+      setLoading(false);
+    }
+
     try {
       const res = await apiClient.getDrafts();
       const list = (res as any).drafts ?? (res?.data?.drafts ?? []) ?? [];
-      setDrafts(Array.isArray(list) ? list : []);
-    } catch (e) {
-      console.error('Failed to load drafts:', e);
-      setDrafts([]);
+      const arr: DraftItem[] = Array.isArray(list) ? list : [];
+      setDrafts(arr);
+      setIsOffline(false);
+      // Persist fetched list to cache
+      await draftsCache.saveDraftsList(arr as CachedDraftMeta[]);
+      // Network confirmed — flush all pending saves in the background
+      flushAllPendingSaves();
+    } catch (e: any) {
+      if (isNetworkError(e)) {
+        setIsOffline(true);
+        // Already showing cached data — no additional alert needed
+        if (!cached || cached.length === 0) {
+          setDrafts([]);
+        }
+      } else {
+        console.error('Failed to load drafts:', e);
+        if (!cached) setDrafts([]);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -84,13 +122,14 @@ export default function DraftsListScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      setLoading(true);
       loadDrafts();
     }, [loadDrafts])
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    loadDrafts();
+    loadDrafts(true);
   };
 
   const filteredDrafts = useMemo(() => {
@@ -121,16 +160,29 @@ export default function DraftsListScreen() {
 
   const handleNewDraft = async () => {
     if (creating) return;
+    if (isOffline) {
+      Alert.alert('Offline', 'Creating new notes requires a network connection. Your existing notes are available below.');
+      return;
+    }
     setCreating(true);
     try {
       const res = await apiClient.createDraft();
       if (res?.success && (res as any).draft?.id) {
-        router.push(`/drafts/edit/${(res as any).draft.id}`);
+        const newDraft = (res as any).draft;
+        // Add to cache immediately
+        const updated = [newDraft as CachedDraftMeta, ...drafts as CachedDraftMeta[]];
+        await draftsCache.saveDraftsList(updated);
+        router.push(`/drafts/edit/${newDraft.id}`);
       } else {
         Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to create draft'));
       }
     } catch (e: any) {
-      Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to create draft'));
+      if (isNetworkError(e)) {
+        setIsOffline(true);
+        Alert.alert('Offline', 'Creating new notes requires a network connection.');
+      } else {
+        Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to create draft'));
+      }
     } finally {
       setCreating(false);
     }
@@ -138,11 +190,6 @@ export default function DraftsListScreen() {
 
   const handleOpenDraft = (draft: DraftItem) => {
     router.push(`/drafts/edit/${draft.id}`);
-  };
-
-  const handleShareDraft = (draft: DraftItem, e: any) => {
-    e?.stopPropagation?.();
-    router.push(`/drafts/edit/${draft.id}?share=1`);
   };
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
@@ -168,6 +215,20 @@ export default function DraftsListScreen() {
       width: 28,
       height: 28,
       borderRadius: 14,
+    },
+    offlineBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#FF9500',
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+    },
+    offlineBannerText: {
+      fontSize: 13,
+      color: '#fff',
+      fontWeight: '600',
+      marginLeft: 6,
+      flex: 1,
     },
     sectionHeader: {
       paddingHorizontal: 16,
@@ -254,6 +315,12 @@ export default function DraftsListScreen() {
             )}
           </TouchableOpacity>
         </View>
+        {isOffline && (
+          <View style={dynamicStyles.offlineBanner}>
+            <Ionicons name="cloud-offline-outline" size={16} color="#fff" />
+            <Text style={dynamicStyles.offlineBannerText}>Offline — showing cached notes</Text>
+          </View>
+        )}
       </AnimatedHeaderContainer>
 
       {!loading && drafts.length > 0 && (
@@ -287,14 +354,20 @@ export default function DraftsListScreen() {
         >
           <Ionicons name="create-outline" size={56} color={colors.textSecondary} style={dynamicStyles.emptyIcon} />
           <Text style={dynamicStyles.emptyTitle}>No drafts yet</Text>
-          <Text style={dynamicStyles.emptySubtitle}>Create a draft or use "Edit as Draft" on a supported file.</Text>
-          <TouchableOpacity style={dynamicStyles.newButton} onPress={handleNewDraft} disabled={creating}>
-            {creating ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="add" size={18} color="#fff" />
-            )}
-          </TouchableOpacity>
+          <Text style={dynamicStyles.emptySubtitle}>
+            {isOffline
+              ? 'No cached drafts available. Connect to the internet to load your notes.'
+              : 'Create a draft or use "Edit as Draft" on a supported file.'}
+          </Text>
+          {!isOffline && (
+            <TouchableOpacity style={dynamicStyles.newButton} onPress={handleNewDraft} disabled={creating}>
+              {creating ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="add" size={18} color="#fff" />
+              )}
+            </TouchableOpacity>
+          )}
         </ScrollView>
       ) : filteredDrafts.length === 0 && searchQuery.trim() ? (
         <ScrollView
@@ -333,10 +406,6 @@ export default function DraftsListScreen() {
                       {draft.created_at ? new Date(draft.created_at).toLocaleDateString() : ''}
                     </Text>
                   </View>
-                  <TouchableOpacity onPress={(e) => handleShareDraft(draft, e)} style={{ padding: 8 }}>
-                    <Ionicons name="person-add-outline" size={22} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                  <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                 </TouchableOpacity>
               ))}
             </View>

@@ -136,7 +136,7 @@ export default function SermonViewerModal({
             <Text style={styles.title} numberOfLines={2}>
               {title || 'Sermon'}
               {paragraph > 0
-                ? ` — ¶${paragraphEnd != null && paragraphEnd > paragraph ? `${paragraph}–${paragraphEnd}` : paragraph}`
+                ? ` — par ${paragraphEnd != null && paragraphEnd > paragraph ? `${paragraph}–${paragraphEnd}` : paragraph}`
                 : ''}
             </Text>
             <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={12}>
