@@ -73,6 +73,16 @@
         "resourceClass": "large"
       }
     },
+    "production-ci": {
+      "extends": "production",
+      "ios": {
+        "resourceClass": "m-medium",
+        "distribution": "store",
+        "buildConfiguration": "Release",
+        "scheme": "GrabDocs",
+        "buildArtifactPaths": ["ios/build/*"]
+      }
+    },
     "minimal": {
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",

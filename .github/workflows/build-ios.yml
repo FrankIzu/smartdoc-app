@@ -1,7 +1,8 @@
 # Build iOS app with EAS local (no EAS cloud charge).
 # Trigger: manual (workflow_dispatch) only. Deploy script triggers the selected platform (iOS or Android) via gh workflow run after push.
 # Requires: GitHub secret EXPO_TOKEN (Expo access token).
-# Auto-submit: Submit job runs after build; if it fails, re-run failed jobs to retry only submit.
+# Auto-submit: Submit job runs after build. If submit fails with "already submitted", do NOT re-run
+# failed jobs — run a FULL new build with incremented version/build instead.
 #   Requires: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (or EXPO_APPLE_APP_SPECIFIC_PASSWORD) in GitHub Secrets.
 # Runs on macOS (uses GitHub-hosted macOS runner).
 
@@ -286,8 +287,13 @@ jobs:
         id: eas_build
         continue-on-error: true
         run: |
+          # Use production-ci (no custom config) so EAS uses our prebuilt ios/ with correct version.
+          # production profile uses ios-production.yml which runs its own prebuild and overwrote version with 1.0.11.
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
-          echo "Running EAS build with DEBUG=* for verbose logs..."
+          if [ "$PROFILE" = "production" ]; then
+            PROFILE="production-ci"
+          fi
+          echo "Running EAS build with profile=$PROFILE (DEBUG=*)..."
           export EAS_LOCAL_BUILD_SKIP_CLEANUP=1
           export EAS_LOCAL_BUILD_WORKINGDIR="$GITHUB_WORKSPACE/eas-build"
           mkdir -p "$EAS_LOCAL_BUILD_WORKINGDIR"
