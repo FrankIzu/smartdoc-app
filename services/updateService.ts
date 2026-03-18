@@ -14,6 +14,9 @@ import semver from 'semver';
 import { API_BASE_URL, API_ENDPOINTS, STORE_URLS } from '../constants/Config';
 
 const DISMISSED_STORE_UPDATE_KEY = 'dismissedStoreUpdateVersion';
+// After this many days, the "Later" dismiss expires and the prompt resurfaces even for the same version.
+const DISMISS_EXPIRY_DAYS = 3;
+const DISMISS_EXPIRY_MS = DISMISS_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
 
 export type UpdateReason = 'security' | 'breaking' | 'feature';
 
@@ -151,8 +154,16 @@ export async function checkSoftStoreUpdate(
     const current = getAppVersion();
     if (semver.gte(semver.coerce(current) ?? current, latest)) return { updateAvailable: false };
 
-    const dismissed = await AsyncStorage.getItem(DISMISSED_STORE_UPDATE_KEY);
-    if (dismissed === latest) return { updateAvailable: false };
+    const raw = await AsyncStorage.getItem(DISMISSED_STORE_UPDATE_KEY);
+    if (raw) {
+      try {
+        const { version: dismissedVersion, dismissedAt } = JSON.parse(raw);
+        const expired = Date.now() - (dismissedAt ?? 0) > DISMISS_EXPIRY_MS;
+        if (dismissedVersion === latest && !expired) return { updateAvailable: false };
+      } catch {
+        // Legacy plain-string format written before this change: treat as expired so the prompt shows.
+      }
+    }
 
     return { updateAvailable: true, latestVersion: latest, storeUrl: getStoreUrl(data) };
   } catch {
@@ -160,10 +171,11 @@ export async function checkSoftStoreUpdate(
   }
 }
 
-/** Persist "Later" for this store version so we don't show again until a newer version exists. */
+/** Persist "Later" for this store version. Re-prompts after DISMISS_EXPIRY_DAYS even for the same version. */
 export async function setDismissedStoreUpdateVersion(version: string): Promise<void> {
   try {
-    await AsyncStorage.setItem(DISMISSED_STORE_UPDATE_KEY, version);
+    const payload = JSON.stringify({ version, dismissedAt: Date.now() });
+    await AsyncStorage.setItem(DISMISSED_STORE_UPDATE_KEY, payload);
   } catch {
     // ignore
   }

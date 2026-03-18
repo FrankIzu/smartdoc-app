@@ -217,9 +217,9 @@ function AuthWrapper() {
   const { loading } = useAuth();
   const [updateRequired, setUpdateRequired] = useState<{ storeUrl: string; message?: string } | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
-  // Track whether a soft-update alert has already been shown this session so we don't show it again
-  // when the app comes back to foreground.
-  const softAlertShownRef = useRef(false);
+  // Track which version/key the soft-update alert was last shown for, so we don't re-show it within
+  // the same session for the same version, but do show it again if a newer version becomes available.
+  const softAlertShownForRef = useRef<string>('');
   const lastUpdateCheckRef = useRef(0);
   const UPDATE_CHECK_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -234,8 +234,9 @@ function AuthWrapper() {
   }, [loading]);
 
   const showSoftUpdateAlert = useCallback((message: string, storeUrl: string, latestVersion?: string) => {
-    if (softAlertShownRef.current) return;
-    softAlertShownRef.current = true;
+    const key = latestVersion ?? 'softWarning';
+    if (softAlertShownForRef.current === key) return;
+    softAlertShownForRef.current = key;
     Alert.alert(
       'Update Available',
       message,
