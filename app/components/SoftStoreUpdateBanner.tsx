@@ -8,7 +8,7 @@ import { reportUpdateTelemetry, setDismissedStoreUpdateVersion } from '../../ser
 interface SoftStoreUpdateBannerProps {
   message: string;
   storeUrl: string;
-  latestVersion: string;
+  latestVersion?: string;
   onDismiss: () => void;
   /** If set, "Later" will persist dismiss for this version so we don't show again until a newer version exists. */
   persistDismissForVersion?: string;
@@ -27,6 +27,7 @@ export default function SoftStoreUpdateBanner({
   const handleUpdate = () => {
     reportUpdateTelemetry('soft_update_tapped', { latestVersion }).catch(() => {});
     Linking.openURL(storeUrl);
+    onDismiss();
   };
 
   const handleLater = () => {

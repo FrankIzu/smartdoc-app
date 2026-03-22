@@ -446,44 +446,52 @@ export default function FormBuilderScreen() {
 
   const renderFieldItem = ({ item, index }: { item: FormField; index: number }) => {
     return (
-      <View style={styles.fieldItem}>
+      <View style={styles.fieldItem} accessibilityRole="listitem" accessibilityLabel={`Form field: ${item.label || 'Unnamed'}, ${FIELD_TYPES.find(t => t.id === item.type)?.name || item.type}`}>
         <View style={styles.fieldHeader}>
           <View style={styles.fieldInfo}>
             <Text style={styles.fieldLabel}>{item.label || 'Unnamed Field'}</Text>
             <Text style={styles.fieldType}>{FIELD_TYPES.find(t => t.id === item.type)?.name}</Text>
           </View>
         <View style={styles.fieldActions}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => moveField(item.id, 'up')}
             disabled={index === 0}
+            accessibilityLabel={`Move ${item.label || 'field'} up`}
+            accessibilityRole="button"
           >
-            <Ionicons 
-              name="chevron-up" 
-              size={20} 
-              color={index === 0 ? '#ccc' : '#666'} 
+            <Ionicons
+              name="chevron-up"
+              size={20}
+              color={index === 0 ? '#ccc' : '#666'}
             />
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => moveField(item.id, 'down')}
             disabled={index === formData.fields.length - 1}
+            accessibilityLabel={`Move ${item.label || 'field'} down`}
+            accessibilityRole="button"
           >
-            <Ionicons 
-              name="chevron-down" 
-              size={20} 
-              color={index === formData.fields.length - 1 ? '#ccc' : '#666'} 
+            <Ionicons
+              name="chevron-down"
+              size={20}
+              color={index === formData.fields.length - 1 ? '#ccc' : '#666'}
             />
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => editField(item)}
+            accessibilityLabel={`Edit ${item.label || 'field'}`}
+            accessibilityRole="button"
           >
             <Ionicons name="pencil" size={20} color="#007AFF" />
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => deleteField(item.id)}
+            accessibilityLabel={`Delete ${item.label || 'field'}`}
+            accessibilityRole="button"
           >
             <Ionicons name="trash" size={20} color="#FF3B30" />
           </TouchableOpacity>
@@ -869,9 +877,11 @@ export default function FormBuilderScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Form Fields</Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.addButton}
             onPress={() => setShowFieldTypeSelector(true)}
+            accessibilityLabel="Add field"
+            accessibilityRole="button"
           >
             <Ionicons name="add" size={20} color="#fff" />
             <Text style={styles.addButtonText}>Add Field</Text>
@@ -890,6 +900,8 @@ export default function FormBuilderScreen() {
             renderItem={renderFieldItem}
             keyExtractor={(item) => item.id}
             scrollEnabled={false}
+            accessibilityRole="list"
+            accessibilityLabel="Form fields"
           />
         )}
       </View>
@@ -1169,9 +1181,11 @@ export default function FormBuilderScreen() {
           <FlatList
             data={FIELD_TYPES}
             renderItem={({ item }) => (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.fieldTypeItem}
                 onPress={() => addField(item.id)}
+                accessibilityLabel={`Add ${item.name} field`}
+                accessibilityRole="button"
               >
                 <Ionicons name={item.icon as any} size={24} color="#007AFF" />
                 <Text style={styles.fieldTypeName}>{item.name}</Text>

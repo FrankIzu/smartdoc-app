@@ -81,6 +81,9 @@ export default function PersistentBottomNavigation() {
             style={styles.tab}
             onPress={() => handleTabPress(tab.route)}
             activeOpacity={0.7}
+            accessibilityLabel={`${tab.label}, tab`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
           >
             <Ionicons
               name={tab.icon as any}

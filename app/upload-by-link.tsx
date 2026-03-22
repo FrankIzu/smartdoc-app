@@ -15,7 +15,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '../constants/Config';
+import { useLimitError } from '../contexts/LimitErrorContext';
 import { useThemeColors } from '../hooks/useThemeColors';
+import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
 import DocumentViewer from '../components/DocumentViewer';
 
 interface UploadLinkInfo {
@@ -60,6 +62,7 @@ export default function UploadByLinkScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const router = useRouter();
   const colors = useThemeColors();
+  const { showLimitError } = useLimitError();
   const [uploadInfo, setUploadInfo] = useState<UploadLinkInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -247,9 +250,16 @@ export default function UploadByLinkScreen() {
             newProgress[fileKey] = 100;
             setUploadProgress({ ...newProgress });
           } else {
-            throw new Error(responseData.message || 'Upload failed');
+            const err = new Error(responseData.message || 'Upload failed');
+            (err as any).responseData = responseData;
+            throw err;
           }
         } catch (fileError: any) {
+          const limitData = extractLimitErrorData(getErrorResponseData(fileError));
+          if (limitData) {
+            showLimitError(limitData);
+            break;
+          }
           console.error(`❌ Failed to upload ${file.name}:`, fileError);
           const errorMessage = fileError.message || `Failed to upload ${file.name}`;
           Alert.alert('Upload Error', errorMessage);
@@ -273,7 +283,12 @@ export default function UploadByLinkScreen() {
           },
         },
       ]);
-    } catch (error) {
+    } catch (error: any) {
+      const limitData = extractLimitErrorData(getErrorResponseData(error));
+      if (limitData) {
+        showLimitError(limitData);
+        return;
+      }
       console.error('Upload failed:', error);
       Alert.alert('Error', 'Failed to upload files');
     } finally {

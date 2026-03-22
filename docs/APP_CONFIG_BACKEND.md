@@ -20,6 +20,17 @@ Add these in your Render service → Environment:
 
 You do **not** maintain any MIN_* in Render. deploy.ps1 updates **LATEST_APP_VERSION**, **LATEST_APP_VERSION_CODE_ANDROID** (from app.json), and **UPDATE_REASON**; the backend derives min supported from these.
 
+## How deploy.ps1 ties in
+
+When you run `.\scripts\deploy.ps1` for a production deploy, it automatically:
+
+1. Updates `app.versions.json` with the new version and build number
+2. Calls `Update-RenderAppConfig`, which updates `manager-francis/render.yaml` with `LATEST_APP_VERSION`, `LATEST_APP_VERSION_CODE_ANDROID`, and `UPDATE_REASON`
+3. When Render deploys the backend, these env vars are set
+4. The backend reads them and returns the app-config JSON
+
+**No manual steps needed** — deploy.ps1 keeps the backend in sync with each mobile release.
+
 ## Response shape
 
 **GET /api/app-config** must return JSON:
@@ -28,12 +39,27 @@ You do **not** maintain any MIN_* in Render. deploy.ps1 updates **LATEST_APP_VER
 {
   "minSupportedVersion": "1.0.6",
   "minSupportedBuildNumber": 2,
-  "minSupportedVersionCode": 32
+  "minSupportedVersionCode": 32,
+  "latestVersion": "1.0.7",
+  "storeUrls": { "ios": "...", "android": "..." },
+  "updateReason": "feature"
 }
 ```
+
+- **`latestVersion`** (required for soft update banner): Must come from `LATEST_APP_VERSION` env var. Without it, the mobile soft update banner will never show.
+- **`storeUrls`**, **`updateReason`**: Used for "Update" button and update reason.
 
 - Omit any field you don’t use (e.g. only `minSupportedVersion`).
 - **iOS:** The app compares only `version` (semver) to `minSupportedVersion`; iOS build number is not used.
 - **Android:** The app compares `version` (semver) and, if set, `versionCode` to `minSupportedVersionCode`. Shows full-screen "Update required" with store link when behind.
 
-The Flask backend in `manager-francis/backend/app.py` already implements this route; it reads the same env vars and returns the JSON above. Change the minimum anytime in Render → Environment; no app release needed.
+## Backend implementation
+
+The app-config route must include `latestVersion` in the response so the mobile soft update banner works. Add to the route:
+
+```python
+latest_version = os.environ.get('LATEST_APP_VERSION', '').strip()
+response['latestVersion'] = latest_version if latest_version else None
+```
+
+The Flask backend in `manager-francis/backend/app.py` implements this route. **Without `latestVersion` in the response, the mobile app's soft update banner will never show.**

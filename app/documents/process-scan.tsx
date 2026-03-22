@@ -4,9 +4,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLimitError } from '../../contexts/LimitErrorContext';
+import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
 export default function ProcessScanScreen() {
   const router = useRouter();
+  const { showLimitError } = useLimitError();
   const { imageUri } = useLocalSearchParams();
   const [processing, setProcessing] = useState(false);
   const [currentImage, setCurrentImage] = useState(imageUri);
@@ -116,7 +119,12 @@ export default function ProcessScanScreen() {
           fileStore.fetchFiles(1);
         }, 500);
         
-      } catch (error) {
+      } catch (error: any) {
+        const limitData = extractLimitErrorData(getErrorResponseData(error));
+        if (limitData) {
+          showLimitError(limitData);
+          return;
+        }
         console.error('❌ Error uploading document:', error);
         Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
       }

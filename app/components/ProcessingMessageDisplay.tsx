@@ -254,7 +254,7 @@ const ProcessingMessageDisplay: React.FC<ProcessingMessageDisplayProps> = ({
   }
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} accessibilityRole="status" accessibilityLabel={currentMessage.text}>
       <Text style={styles.message}>{currentMessage.text}</Text>
     </View>
   );

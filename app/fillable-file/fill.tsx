@@ -30,7 +30,13 @@ export default function FillableFillScreen() {
     return (
       <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn} hitSlop={12}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.closeBtn}
+            hitSlop={12}
+            accessibilityLabel="Close"
+            accessibilityRole="button"
+          >
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Fill Document</Text>
@@ -46,7 +52,13 @@ export default function FillableFillScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn} hitSlop={12}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.closeBtn}
+          hitSlop={12}
+          accessibilityLabel="Close"
+          accessibilityRole="button"
+        >
           <Ionicons name="close" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>

@@ -546,7 +546,12 @@ function DashboardScreen() {
     onPress?: () => void;
     badge?: number;
   }) => (
-    <TouchableOpacity style={[dynamicStyles.statCard, { borderLeftColor: color }]} onPress={onPress}>
+    <TouchableOpacity
+      style={[dynamicStyles.statCard, { borderLeftColor: color }]}
+      onPress={onPress}
+      accessibilityLabel={`${title}: ${value}`}
+      accessibilityRole="button"
+    >
       <View style={dynamicStyles.statContent}>
         <View style={dynamicStyles.statHeader}>
           <View style={{ position: 'relative' }}>
@@ -571,7 +576,12 @@ function DashboardScreen() {
     onPress: () => void;
     isNew?: boolean;
   }) => (
-    <TouchableOpacity style={dynamicStyles.quickActionCard} onPress={onPress}>
+    <TouchableOpacity
+      style={dynamicStyles.quickActionCard}
+      onPress={onPress}
+      accessibilityLabel={`${title}: ${subtitle}`}
+      accessibilityRole="button"
+    >
       <View style={[dynamicStyles.quickActionIcon, { backgroundColor: color }]}>
         <Ionicons name={icon as any} size={22} color="#fff" />
         {isNew ? <View style={dynamicStyles.newBadge}><Text style={dynamicStyles.newBadgeText}>NEW</Text></View> : null}
@@ -585,7 +595,12 @@ function DashboardScreen() {
   );
 
   const ActivityItem = ({ activity, onPress }: { activity: RecentActivity; onPress?: () => void }) => (
-    <TouchableOpacity style={dynamicStyles.activityItem} onPress={onPress}>
+    <TouchableOpacity
+      style={dynamicStyles.activityItem}
+      onPress={onPress}
+      accessibilityLabel={`${activity.title}: ${activity.subtitle}`}
+      accessibilityRole="button"
+    >
       <View style={[dynamicStyles.activityIcon, { backgroundColor: getActivityColor(activity.type) }]}>
         <Ionicons name={activity.icon as any} size={18} color="#fff" />
       </View>
@@ -1508,7 +1523,11 @@ function DashboardScreen() {
           >
             <View style={dynamicStyles.uploadOptionsHeader}>
               <Text style={dynamicStyles.uploadOptionsTitle}>Upload</Text>
-              <TouchableOpacity onPress={() => setShowUploadOptions(false)}>
+              <TouchableOpacity
+                onPress={() => setShowUploadOptions(false)}
+                accessibilityLabel="Close upload options"
+                accessibilityRole="button"
+              >
                 <Ionicons name="close" size={24} color="#666" />
               </TouchableOpacity>
             </View>

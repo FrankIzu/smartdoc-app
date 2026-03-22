@@ -64,6 +64,15 @@ logs/
 tmp/
 temp/
 
+# FAISS vector indexes (large local binaries; rebuild on backend — do not commit)
+/faiss_index
+/faiss_index_metadata.pkl
+/faiss_workspace_stats.pkl
+/faiss_ws_*
+
+# Local caches (tiktoken, etc.) — do not commit
+/storage/cache/
+
 # Editor directories and files
 .vscode/
 .idea/

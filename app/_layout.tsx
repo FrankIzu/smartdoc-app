@@ -2,7 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Linking, LogBox, StyleSheet } from 'react-native';
+import { AccessibilityInfo, Alert, AppState, findNodeHandle, Linking, LogBox, Pressable, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
 
@@ -34,12 +34,14 @@ import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
-import { checkMinVersion, checkOtaAndFetch, checkSoftStoreUpdate, fetchAppConfig, reportUpdateTelemetry, setDismissedStoreUpdateVersion } from '../services/updateService';
+import { checkMinVersion, checkOtaAndFetch, checkSoftStoreUpdate, fetchAppConfig, reportUpdateTelemetry } from '../services/updateService';
 import AppLockScreen from './components/AppLockScreen';
 import OtaUpdateBanner from './components/OtaUpdateBanner';
+import SoftStoreUpdateBanner from './components/SoftStoreUpdateBanner';
 import PersistentBottomNavigation from './components/PersistentBottomNavigation';
 import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
+import { LimitErrorProvider } from '../contexts/LimitErrorContext';
 import { getNotificationScreen, parseNotificationPath, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
 
 // Prevent the splash screen from auto-hiding (ignore if native splash not ready yet)
@@ -164,18 +166,35 @@ function RootLayoutNav() {
   }, [navigateFromNotificationData]);
 
   const showLock = !!user && appLockEnabled && isLocked;
+  const mainContentRef = useRef<any>(null);
+
+  const handleSkipToContent = () => {
+    const handle = findNodeHandle(mainContentRef.current);
+    if (handle != null) {
+      AccessibilityInfo.setAccessibilityFocus(handle);
+    }
+  };
 
   return (
     <>
       {showLock && <AppLockScreen />}
       <StatusBar style={isMeetingScreen ? "light" : isDark ? "light" : "dark"} />
+      {/* Skip to main content - WCAG 2.4.1 Bypass Blocks; visually hidden, first focusable for screen readers */}
+      <Pressable
+        onPress={handleSkipToContent}
+        style={styles.skipLink}
+        accessibilityLabel="Skip to main content"
+        accessibilityRole="button"
+      >
+        <View />
+      </Pressable>
       {/* Persistent Network Indicator - hidden on meeting screen for full-screen UX */}
       {!isMeetingScreen && (
         <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
           <NetworkIndicator compact persistent />
         </SafeAreaView>
       )}
-      <View style={[styles.mainContainer, { backgroundColor: isDark ? '#151718' : '#fff' }]}>
+      <View ref={mainContentRef} style={[styles.mainContainer, { backgroundColor: isDark ? '#151718' : '#fff' }]} accessibilityLabel="Main content">
         <HeaderVisibilityProvider>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -217,9 +236,11 @@ function AuthWrapper() {
   const { loading } = useAuth();
   const [updateRequired, setUpdateRequired] = useState<{ storeUrl: string; message?: string } | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
-  // Track which version/key the soft-update alert was last shown for, so we don't re-show it within
-  // the same session for the same version, but do show it again if a newer version becomes available.
-  const softAlertShownForRef = useRef<string>('');
+  const [softStoreUpdate, setSoftStoreUpdate] = useState<{
+    message: string;
+    storeUrl: string;
+    latestVersion?: string;
+  } | null>(null);
   const lastUpdateCheckRef = useRef(0);
   const UPDATE_CHECK_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -233,58 +254,38 @@ function AuthWrapper() {
     }
   }, [loading]);
 
-  const showSoftUpdateAlert = useCallback((message: string, storeUrl: string, latestVersion?: string) => {
-    const key = latestVersion ?? 'softWarning';
-    if (softAlertShownForRef.current === key) return;
-    softAlertShownForRef.current = key;
-    Alert.alert(
-      'Update Available',
-      message,
-      [
-        {
-          text: 'Later',
-          style: 'cancel',
-          onPress: () => {
-            if (latestVersion) {
-              // Persist dismiss so we don't prompt again for this exact version
-              setDismissedStoreUpdateVersion(latestVersion).catch(() => {});
-            }
-          },
-        },
-        {
-          text: 'Update Now',
-          onPress: () => {
-            reportUpdateTelemetry('soft_update_tapped', { latestVersion }).catch(() => {});
-            Linking.openURL(storeUrl).catch(() => {});
-          },
-        },
-      ],
-      { cancelable: false },
-    );
-  }, []);
-
   const runUpdateChecks = useCallback(async () => {
-    const config = await fetchAppConfig();
-    const minResult = await checkMinVersion(undefined, config);
-    if (minResult.mustUpdate) {
-      reportUpdateTelemetry('min_version_blocked', {}).catch(() => {});
-      setUpdateRequired({ storeUrl: minResult.storeUrl, message: minResult.message });
-      return;
+    try {
+      const config = await fetchAppConfig();
+      const minResult = await checkMinVersion(undefined, config);
+      if (minResult.mustUpdate) {
+        reportUpdateTelemetry('min_version_blocked', {}).catch(() => {});
+        setUpdateRequired({ storeUrl: minResult.storeUrl, message: minResult.message });
+        setSoftStoreUpdate(null);
+        return;
+      }
+      setUpdateRequired(null);
+      if (minResult.softWarning) {
+        setSoftStoreUpdate({
+          message: minResult.softWarning.message,
+          storeUrl: minResult.softWarning.storeUrl,
+        });
+        return;
+      }
+      const soft = await checkSoftStoreUpdate(undefined, config);
+      if (soft.updateAvailable) {
+        setSoftStoreUpdate({
+          message: `A new version of GrabDocs (${soft.latestVersion}) is available. Update for the latest features and fixes.`,
+          storeUrl: soft.storeUrl,
+          latestVersion: soft.latestVersion,
+        });
+      } else {
+        setSoftStoreUpdate(null);
+      }
+    } catch {
+      setSoftStoreUpdate(null);
     }
-    setUpdateRequired(null);
-    if (minResult.softWarning) {
-      showSoftUpdateAlert(minResult.softWarning.message, minResult.softWarning.storeUrl);
-      return;
-    }
-    const soft = await checkSoftStoreUpdate(undefined, config);
-    if (soft.updateAvailable) {
-      showSoftUpdateAlert(
-        `A new version of GrabDocs (${soft.latestVersion}) is available. Update for the latest features and fixes.`,
-        soft.storeUrl,
-        soft.latestVersion,
-      );
-    }
-  }, [showSoftUpdateAlert]);
+  }, []);
 
   // Min version + soft store update: fetch config once, then run both checks.
   useEffect(() => {
@@ -300,9 +301,15 @@ function AuthWrapper() {
       if (Date.now() - lastUpdateCheckRef.current < UPDATE_CHECK_COOLDOWN_MS) return;
       lastUpdateCheckRef.current = Date.now();
       runUpdateChecks();
+      // Also re-check OTA when returning to foreground (e.g. update published while app was backgrounded)
+      if (!updateRequired) {
+        checkOtaAndFetch().then(({ updateReady: ready }) => {
+          if (ready) setUpdateReady(true);
+        });
+      }
     });
     return () => sub.remove();
-  }, [runUpdateChecks]);
+  }, [runUpdateChecks, updateRequired]);
 
   // OTA: check and fetch silently; show banner when ready (user restarts when they want)
   useEffect(() => {
@@ -325,7 +332,18 @@ function AuthWrapper() {
   return (
     <>
       {updateReady && <OtaUpdateBanner />}
-      <RootLayoutNav />
+      {!updateReady && softStoreUpdate && (
+        <SoftStoreUpdateBanner
+          message={softStoreUpdate.message}
+          storeUrl={softStoreUpdate.storeUrl}
+          latestVersion={softStoreUpdate.latestVersion}
+          persistDismissForVersion={softStoreUpdate.latestVersion}
+          onDismiss={() => setSoftStoreUpdate(null)}
+        />
+      )}
+      <LimitErrorProvider>
+        <RootLayoutNav />
+      </LimitErrorProvider>
     </>
   );
 }
@@ -433,6 +451,14 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
+  skipLink: {
+    position: 'absolute',
+    left: -10000,
+    top: 0,
+    width: 1,
+    height: 1,
+    zIndex: 9999,
+  },
   mainContainer: {
     flex: 1,
   },

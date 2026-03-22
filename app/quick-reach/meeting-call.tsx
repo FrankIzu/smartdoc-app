@@ -41,6 +41,59 @@ interface Meeting {
   createdAt?: string;
 }
 
+/** Keys `id:<meetingId>` / `title:<normalized>` for meetings that have ≥1 asset (from getMeetingAssets). */
+function buildMeetingsWithAssetsMap(data: unknown): Record<string, boolean> {
+  const map: Record<string, boolean> = {};
+  const markId = (id: string | number | null | undefined) => {
+    if (id == null) return;
+    const s = String(id).trim();
+    if (s) map[`id:${s}`] = true;
+  };
+  const markTitle = (title: string | null | undefined) => {
+    const t = (title || '').toLowerCase().trim();
+    if (t) map[`title:${t}`] = true;
+  };
+
+  if (!data || typeof data !== 'object') return map;
+  const d = data as { meetings?: unknown[]; assets?: unknown[] };
+
+  if (Array.isArray(d.meetings)) {
+    for (const meet of d.meetings) {
+      if (!meet || typeof meet !== 'object') continue;
+      const m = meet as Record<string, unknown>;
+      const n =
+        (Array.isArray(m.assets) ? m.assets.length : 0) +
+        (Array.isArray(m.files) ? m.files.length : 0);
+      if (n === 0) continue;
+      markId(m.id as string | number);
+      markId(m.meeting_id as string | number);
+      markId(m.meetingId as string | number);
+      markId(m.hms_meeting_id as string | number);
+      markTitle(m.title as string);
+      markTitle(m.meeting_title as string);
+    }
+  }
+
+  if (Array.isArray(d.assets)) {
+    for (const asset of d.assets) {
+      if (!asset || typeof asset !== 'object') continue;
+      const a = asset as Record<string, unknown>;
+      markId((a.meeting_id ?? a.meetingId) as string | number);
+      markTitle(a.meeting_title as string);
+    }
+  }
+
+  return map;
+}
+
+function meetingHasKnownAssets(m: Meeting, presence: Record<string, boolean>): boolean {
+  const id = String(m.meetingId || m.id || '').trim();
+  const title = (m.title || '').toLowerCase().trim();
+  if (id && presence[`id:${id}`]) return true;
+  if (title && presence[`title:${title}`]) return true;
+  return false;
+}
+
 export default function MeetingCallScreen() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -53,6 +106,7 @@ export default function MeetingCallScreen() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [upcomingMeetings, setUpcomingMeetings] = useState<Meeting[]>([]);
   const [ongoingMeetings, setOngoingMeetings] = useState<Meeting[]>([]);
+  const [assetPresenceMap, setAssetPresenceMap] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
@@ -89,6 +143,7 @@ export default function MeetingCallScreen() {
   const loadMeetings = useCallback(async () => {
     if (!isAuthenticated) {
       console.log('📱 User not authenticated, skipping meetings load');
+      setAssetPresenceMap({});
       setLoading(false);
       setRefreshing(false);
       return;
@@ -97,8 +152,7 @@ export default function MeetingCallScreen() {
     try {
       setLoading(true);
       
-      // Load meetings only. Assets are fetched on meeting-details when user opens a meeting
-      // to avoid duplicate heavy fetches (N+1: list was fetching all assets then details did again).
+      // One getMeetingAssets() populates folder icons (cached for meeting-details — not N per row).
       const startTime = Date.now();
       const meetingsResponse = await apiClient.getMeetings(10, 0);
       const loadTime = Date.now() - startTime;
@@ -279,6 +333,18 @@ export default function MeetingCallScreen() {
         
         setUpcomingMeetings(upcoming);
         setOngoingMeetings(ongoing);
+
+        try {
+          const ar = await apiClient.getMeetingAssets();
+          if (ar?.success && ar.data) {
+            setAssetPresenceMap(buildMeetingsWithAssetsMap(ar.data));
+          } else {
+            setAssetPresenceMap({});
+          }
+        } catch (assetErr) {
+          console.warn('📱 Could not load asset presence for meeting list:', assetErr);
+          setAssetPresenceMap({});
+        }
         
         // Calculate recent meetings count (for logging)
         const recentCount = uniqueMeetings.filter(m => {
@@ -318,6 +384,7 @@ export default function MeetingCallScreen() {
       } else {
         // No meetings found or failed to load - show empty state (unless user has current meeting)
         console.log('📱 No meetings found or failed to load');
+        setAssetPresenceMap({});
         setMeetings([]);
         setUpcomingMeetings([]);
         const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
@@ -340,6 +407,7 @@ export default function MeetingCallScreen() {
       // This catch block should rarely be hit now since we use allSettled
       // But keep it as a safety net
       console.error('Unexpected error in loadMeetings:', error);
+      setAssetPresenceMap({});
       setMeetings([]);
       setUpcomingMeetings([]);
       setOngoingMeetings([]);
@@ -516,15 +584,15 @@ export default function MeetingCallScreen() {
     }
   };
 
-  const viewMeetingAssets = (meeting: Meeting) => {
-    // Navigate to meeting assets page with meeting details
+  const viewMeetingAssets = (meeting: Meeting, options?: { fromAssetsIcon?: boolean }) => {
     router.push({
       pathname: '/quick-reach/meeting-details',
       params: {
         meetingId: meeting.meetingId,
         meetingTitle: meeting.title,
-        roomCode: meeting.meetingId
-      }
+        roomCode: meeting.meetingId,
+        ...(options?.fromAssetsIcon ? { entry: 'assets' } : {}),
+      },
     });
   };
 
@@ -1366,6 +1434,19 @@ export default function MeetingCallScreen() {
         >
           <Ionicons name="copy" size={16} color="#5856D6" />
         </TouchableOpacity>
+
+        {meetingHasKnownAssets(item, assetPresenceMap) ? (
+          <TouchableOpacity
+            style={dynamicStyles.actionIcon}
+            accessibilityLabel="Meeting assets"
+            onPress={(e) => {
+              e.stopPropagation();
+              viewMeetingAssets(item, { fromAssetsIcon: true });
+            }}
+          >
+            <Ionicons name="folder-open-outline" size={16} color={colors.tint || '#007AFF'} />
+          </TouchableOpacity>
+        ) : null}
         
         <TouchableOpacity
           style={dynamicStyles.actionIcon}

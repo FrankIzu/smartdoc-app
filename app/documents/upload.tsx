@@ -4,10 +4,13 @@ import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLimitError } from '../../contexts/LimitErrorContext';
 import { apiService } from '../../services/api';
+import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
 export default function UploadScreen() {
   const router = useRouter();
+  const { showLimitError } = useLimitError();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -119,7 +122,15 @@ export default function UploadScreen() {
             console.error('Upload failed for:', file.name, uploadResult);
           }
 
-        } catch (error) {
+        } catch (error: any) {
+          const limitData = extractLimitErrorData(getErrorResponseData(error));
+          if (limitData) {
+            showLimitError(limitData);
+            setUploading(false);
+            setProgress(0);
+            fileStore.setDocumentPickerOpen(false);
+            return;
+          }
           failCount++;
           console.error('Error uploading file:', file.name, error);
         }
@@ -137,7 +148,12 @@ export default function UploadScreen() {
       } else {
         Alert.alert('Upload Failed', 'Failed to upload documents. Please try again.');
       }
-    } catch (error) {
+    } catch (error: any) {
+      const limitData = extractLimitErrorData(getErrorResponseData(error));
+      if (limitData) {
+        showLimitError(limitData);
+        return;
+      }
       console.error('Error picking document:', error);
       Alert.alert('Error', 'Failed to upload documents. Please try again.');
     } finally {
@@ -150,7 +166,12 @@ export default function UploadScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={handleClose} style={styles.closeButton}>
+        <Pressable
+          onPress={handleClose}
+          style={styles.closeButton}
+          accessibilityLabel="Close"
+          accessibilityRole="button"
+        >
           <MaterialIcons name="close" size={24} color="#007AFF" />
         </Pressable>
         <Text style={styles.title}>Upload Documents</Text>
@@ -162,6 +183,8 @@ export default function UploadScreen() {
           style={[styles.uploadArea, uploading && styles.uploadAreaDisabled]}
           onPress={handleUpload}
           disabled={uploading}
+          accessibilityLabel={uploading ? `Uploading, ${progress}%` : 'Select documents to upload'}
+          accessibilityRole="button"
         >
           {uploading ? (
             <View style={styles.uploadingContainer}>
@@ -184,7 +207,12 @@ export default function UploadScreen() {
         </Pressable>
         
         {!uploading && (
-          <Pressable style={styles.cancelButton} onPress={handleClose}>
+          <Pressable
+            style={styles.cancelButton}
+            onPress={handleClose}
+            accessibilityLabel="Cancel"
+            accessibilityRole="button"
+          >
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         )}

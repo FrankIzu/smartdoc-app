@@ -179,6 +179,8 @@ const MOBILE_ENDPOINTS = {
   MEETING_REPORT: (meetingId: string) => `/api/v1/mobile/meetings/${meetingId}/report`,
   MEETING_DOWNLOAD: (meetingId: string, assetType: string) => `/api/v1/mobile/meetings/${meetingId}/download/${assetType}`,
   MEETING_DELETE_ASSETS: (meetingId: string) => `/api/v1/video/room/${meetingId}/delete-assets`,
+  /** Same as web: public play page at /public/asset/{token} */
+  VIDEO_RECORDING_SHARE: (recordingId: number) => `/api/v1/video/recording/${recordingId}/share`,
   
   // Error Logging
   ERROR_LOG: '/api/v1/mobile/error-log',
@@ -735,7 +737,9 @@ class ApiService {
         } catch {
           errData = { message: text || response.statusText };
         }
-        throw new Error(errData.message || `Upload failed with status ${response.status}`);
+        const err = new Error(errData.message || `Upload failed with status ${response.status}`);
+        (err as any).responseData = errData;
+        throw err;
       }
 
       const data = await response.json();
@@ -1020,7 +1024,9 @@ class ApiService {
       });
       return response.data;
     } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to initialize upload');
+      const err = new Error(error.response?.data?.message || 'Failed to initialize upload');
+      (err as any).responseData = error.response?.data;
+      throw err;
     }
   }
 
@@ -4587,6 +4593,26 @@ class ApiService {
     } catch (error: any) {
       console.error('Get meeting report failed:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch meeting report');
+    }
+  }
+
+  /**
+   * Public GrabDocs play link (same as web meeting-assets copy). Opens in browser without sign-in.
+   */
+  async createOrGetRecordingShareUrl(recordingId: number): Promise<string> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.VIDEO_RECORDING_SHARE(recordingId));
+      const url = response.data?.share_url;
+      if (url && typeof url === 'string') return url;
+      throw new Error(response.data?.error || 'No share URL returned');
+    } catch (error: any) {
+      const msg =
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        error.message ||
+        'Failed to get recording share link';
+      console.error('Recording share link failed:', error);
+      throw new Error(msg);
     }
   }
 

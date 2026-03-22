@@ -13,12 +13,15 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLimitError } from '../../contexts/LimitErrorContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
 export default function CreateMeetingScreen() {
   const colors = useThemeColors();
   const router = useRouter();
+  const { showLimitError } = useLimitError();
   const [loading, setLoading] = useState(false);
   const [meetingData, setMeetingData] = useState({
     title: '',
@@ -203,7 +206,12 @@ export default function CreateMeetingScreen() {
       } else if (error.response?.status === 500) {
         Alert.alert('Server Error', 'There was a server error while creating the meeting. Please try again or contact support.');
       } else {
-        Alert.alert('Error', error.response?.data?.message || 'Failed to create meeting');
+        const limitData = extractLimitErrorData(getErrorResponseData(error));
+        if (limitData) {
+          showLimitError(limitData);
+        } else {
+          Alert.alert('Error', error.response?.data?.message || 'Failed to create meeting');
+        }
       }
     } finally {
       setLoading(false);

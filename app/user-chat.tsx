@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+    AccessibilityInfo,
     ActivityIndicator,
     Alert,
     Dimensions,
@@ -26,10 +27,12 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
+import { useLimitError } from '../contexts/LimitErrorContext';
 import { useAuth } from './context/auth';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService as api } from '../services/api';
 import { secureStorage } from '../utils/storage';
+import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
 
 interface ChatParticipant {
   id: number;
@@ -74,6 +77,7 @@ export default function UserChatScreen() {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const { user: authUser } = useAuth();
+  const { showLimitError } = useLimitError();
 
   const USER_CHAT_PAGE_SIZE = 20;
 
@@ -288,6 +292,10 @@ export default function UserChatScreen() {
                 }
                 return [...prev, newMsg];
               });
+              if (!isOwnMessage) {
+                const senderName = newMsg.sender?.username || data.message.sender?.username || 'Someone';
+                AccessibilityInfo.announceForAccessibilityWithOptions(`New message from ${senderName}`, { queue: true });
+              }
               scrollToBottom();
               
               // If message is from another user, they're definitely online
@@ -915,6 +923,7 @@ export default function UserChatScreen() {
           }
           return [...prev, messageObj];
         });
+        AccessibilityInfo.announceForAccessibility('Message sent');
         scrollToBottom();
         
         setChats(prev => prev.map(chat => 
@@ -926,6 +935,11 @@ export default function UserChatScreen() {
       setNewMessage('');
       console.log('📤 [USER-CHAT] Message sent successfully, cleared input');
     } catch (error: any) {
+      const limitData = extractLimitErrorData(getErrorResponseData(error));
+      if (limitData) {
+        showLimitError(limitData);
+        return;
+      }
       console.error('❌ [USER-CHAT] Failed to send message:', error);
       console.error('❌ [USER-CHAT] Error details:', {
         message: error?.message,
@@ -1780,12 +1794,22 @@ export default function UserChatScreen() {
                 <SectionList
                   ref={messagesListRef}
                   sections={messageSections}
+                  accessibilityRole="list"
+                  accessibilityLabel="Chat messages"
                   renderItem={({ item }) => {
                     const isOwnMessage = (currentUserIdRef.current != null && item.sender_id != null)
                       ? String(item.sender_id) === String(currentUserIdRef.current)
                       : item.is_own_message;
+                    const preview = (item.content || '').trim().substring(0, 80);
+                    const msgLabel = isOwnMessage
+                      ? `Your message${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`
+                      : `Message from ${item.sender?.username || 'unknown'}${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`;
                     return (
-                    <View style={[dynamicStyles.messageItem, isOwnMessage ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
+                    <View
+                      style={[dynamicStyles.messageItem, isOwnMessage ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}
+                      accessibilityRole="listitem"
+                      accessibilityLabel={msgLabel}
+                    >
                       <View style={{ maxWidth: '75%' }}>
                         {!isOwnMessage && item.sender && (
                           <Text style={dynamicStyles.senderName}>{item.sender.username}</Text>
@@ -1930,12 +1954,22 @@ export default function UserChatScreen() {
                 <SectionList
                   ref={messagesListRef}
                   sections={messageSections}
+                  accessibilityRole="list"
+                  accessibilityLabel="Chat messages"
                   renderItem={({ item }) => {
                     const isOwnMessage = (currentUserIdRef.current != null && item.sender_id != null)
                       ? String(item.sender_id) === String(currentUserIdRef.current)
                       : item.is_own_message;
+                    const preview = (item.content || '').trim().substring(0, 80);
+                    const msgLabel = isOwnMessage
+                      ? `Your message${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`
+                      : `Message from ${item.sender?.username || 'unknown'}${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`;
                     return (
-                    <View style={[dynamicStyles.messageItem, isOwnMessage ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}>
+                    <View
+                      style={[dynamicStyles.messageItem, isOwnMessage ? dynamicStyles.myMessage : dynamicStyles.otherMessage]}
+                      accessibilityRole="listitem"
+                      accessibilityLabel={msgLabel}
+                    >
                       <View style={{ maxWidth: '75%' }}>
                         {!isOwnMessage && item.sender && (
                           <Text style={dynamicStyles.senderName}>{item.sender.username}</Text>

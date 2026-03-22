@@ -148,6 +148,8 @@ export function ChatMessageFooter({
               disabled={retryDisabled}
               style={styles.iconBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Retry response"
+              accessibilityRole="button"
             >
               <Ionicons
                 name="refresh-outline"
@@ -162,6 +164,8 @@ export function ChatMessageFooter({
               disabled={moreSourcesDisabled}
               style={styles.iconBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Add more sources"
+              accessibilityRole="button"
             >
               <Ionicons
                 name="add-circle-outline"
@@ -175,6 +179,8 @@ export function ChatMessageFooter({
             disabled={!responseText}
             style={styles.iconBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Share response"
+            accessibilityRole="button"
           >
             <Ionicons name="share-outline" size={18} color={iconColor} />
           </TouchableOpacity>
@@ -183,6 +189,8 @@ export function ChatMessageFooter({
             disabled={isSubmitting}
             style={styles.iconBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={feedbackScore === 1 ? 'Remove helpful vote' : 'Mark as helpful'}
+            accessibilityRole="button"
           >
             <MaterialCommunityIcons
               name={feedbackScore === 1 ? 'thumb-up' : 'thumb-up-outline'}
@@ -195,6 +203,8 @@ export function ChatMessageFooter({
             disabled={isSubmitting}
             style={styles.iconBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={feedbackScore === -1 ? 'Remove unhelpful vote' : 'Mark as unhelpful'}
+            accessibilityRole="button"
           >
             <MaterialCommunityIcons
               name={feedbackScore === -1 ? 'thumb-down' : 'thumb-down-outline'}
@@ -206,6 +216,8 @@ export function ChatMessageFooter({
             onPress={() => setShowSourcesModal(true)}
             style={styles.iconBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel={sourceList.length > 0 ? `View ${sourceList.length} sources` : 'View sources'}
+            accessibilityRole="button"
           >
             <Ionicons
               name="book-outline"
@@ -233,7 +245,12 @@ export function ChatMessageFooter({
           <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.sourcesModal, { backgroundColor: colors.card }]}>
             <View style={[styles.sourcesModalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[styles.sourcesModalTitle, { color: colors.text }]}>Sources</Text>
-              <TouchableOpacity onPress={() => setShowSourcesModal(false)} hitSlop={12}>
+              <TouchableOpacity
+                onPress={() => setShowSourcesModal(false)}
+                hitSlop={12}
+                accessibilityLabel="Close sources"
+                accessibilityRole="button"
+              >
                 <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>

@@ -128,6 +128,8 @@ export default function GlobalProgressBar({
             transform: [{ translateY }],
           },
         ]}
+        accessibilityLabel={`Upload progress: ${progressData.filter((p) => p.status === 'completed').length} of ${progressData.length} complete`}
+        accessibilityRole="progressbar"
       >
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -138,14 +140,24 @@ export default function GlobalProgressBar({
           </Text>
         </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity onPress={onMinimize} style={styles.button}>
+          <TouchableOpacity
+            onPress={onMinimize}
+            style={styles.button}
+            accessibilityLabel={minimized ? 'Expand upload progress' : 'Minimize upload progress'}
+            accessibilityRole="button"
+          >
             <Ionicons
               name={minimized ? 'chevron-up' : 'chevron-down'}
               size={20}
               color="#6B7280"
             />
           </TouchableOpacity>
-          <TouchableOpacity onPress={onClose} style={styles.button}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.button}
+            accessibilityLabel="Close upload progress"
+            accessibilityRole="button"
+          >
             <Ionicons name="close" size={20} color="#6B7280" />
           </TouchableOpacity>
         </View>
@@ -154,7 +166,12 @@ export default function GlobalProgressBar({
       {!minimized && (
         <View style={styles.content}>
           {progressData.map((item) => (
-            <View key={item.id} style={styles.progressItem}>
+            <View
+              key={item.id}
+              style={styles.progressItem}
+              accessibilityLabel={`${item.title}: ${Math.round(item.progress)}% ${item.status === 'completed' ? 'complete' : item.status === 'error' ? 'failed' : 'in progress'}`}
+              accessibilityRole="progressbar"
+            >
               <View style={styles.progressBarContainer}>
                 <View style={styles.progressBar}>
                   <View

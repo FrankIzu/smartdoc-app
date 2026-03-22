@@ -1492,6 +1492,12 @@ export default function SettingsScreen() {
             onPress={() => router.push('/(tabs)/help')}
           />
           <InfoItem
+            icon="accessibility-outline"
+            title="Report Accessibility Issue"
+            value="Contact us about accessibility"
+            onPress={() => Linking.openURL('mailto:support@grabdocs.com?subject=Accessibility%20Support')}
+          />
+          <InfoItem
             icon="document-text-outline"
             title="Privacy Policy"
             value="Read our privacy policy"

@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '../constants/Config';
+import { useLimitError } from '../contexts/LimitErrorContext';
+import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
 
 interface UploadLinkInfo {
   name: string;
@@ -54,6 +56,7 @@ const api = {
 export default function PublicUploadScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const router = useRouter();
+  const { showLimitError } = useLimitError();
   const [uploadInfo, setUploadInfo] = useState<UploadLinkInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -193,7 +196,12 @@ export default function PublicUploadScreen() {
             newProgress[fileKey] = 100;
             setUploadProgress({ ...newProgress });
           }
-        } catch (fileError) {
+        } catch (fileError: any) {
+          const limitData = extractLimitErrorData(getErrorResponseData(fileError));
+          if (limitData) {
+            showLimitError(limitData);
+            break;
+          }
           console.error(`Failed to upload ${file.name}:`, fileError);
           Alert.alert('Upload Error', `Failed to upload ${file.name}`);
           break;
@@ -210,7 +218,12 @@ export default function PublicUploadScreen() {
           }
         }
       ]);
-    } catch (error) {
+    } catch (error: any) {
+      const limitData = extractLimitErrorData(getErrorResponseData(error));
+      if (limitData) {
+        showLimitError(limitData);
+        return;
+      }
       console.error('Upload failed:', error);
       Alert.alert('Error', 'Failed to upload files');
     } finally {

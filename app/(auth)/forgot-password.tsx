@@ -71,6 +71,8 @@ export default function ForgotPasswordScreen() {
               onChangeText={setEmail}
               autoCapitalize="none"
               keyboardType="email-address"
+              textContentType="emailAddress"
+              autoComplete="email"
             />
           </View>
 

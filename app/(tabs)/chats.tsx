@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+    AccessibilityInfo,
     ActivityIndicator,
     Alert,
     Animated,
@@ -48,6 +49,8 @@ import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
+import { useLimitError } from '../../contexts/LimitErrorContext';
+import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
 interface ChatParticipant {
   id: number;
@@ -256,6 +259,7 @@ export default function ChatsScreen() {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const { user: authUser } = useAuth();
+  const { showLimitError } = useLimitError();
 
   const [chats, setChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with ChatGD Assistant
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
@@ -1934,7 +1938,7 @@ export default function ChatsScreen() {
             .filter(history => history && history.id !== -1) // Only filter out the actual default chat (ID -1)
             .map(history => {
               try {
-                // Handle both new format (messages array) and existing format (conversation_data)
+                // Handle both new format (messages array), existing format (conversation_data), and lightweight list (latest_message)
                 const messages = (history as any).messages || (history as any).conversation_data || [];
                 let lastMessage = 'No messages yet';
                 if (Array.isArray(messages) && messages.length > 0) {
@@ -1948,6 +1952,14 @@ export default function ChatsScreen() {
                   const lastMsg = messages[messages.length - 1];
                   const raw = (lastUserMsg && contentFrom(lastUserMsg)) || contentFrom(lastMsg) || 'No messages yet';
                   lastMessage = raw.length > 60 ? raw.substring(0, 60).trim() + '…' : raw;
+                } else {
+                  // Lightweight list: backend returns only latest_message per chat (no full messages array)
+                  const lm = (history as any).latest_message;
+                  const raw = lm && (typeof lm === 'string' ? lm : (lm.content ?? lm.message ?? ''));
+                  if (raw && String(raw).trim()) {
+                    lastMessage = String(raw).trim();
+                    lastMessage = lastMessage.length > 60 ? lastMessage.substring(0, 60).trim() + '…' : lastMessage;
+                  }
                 }
                 
                 // Determine chat type based on selected context
@@ -2652,6 +2664,13 @@ export default function ChatsScreen() {
                 const lastUserMsg = [...messages].reverse().find((m: any) => m?.role === 'user' || m?.is_own_message);
                 const raw = (lastUserMsg ? (lastUserMsg.content ?? '') : (messages[messages.length - 1]?.content ?? ''));
                 lastMessage = raw.length > 60 ? raw.substring(0, 60).trim() + '…' : raw;
+              } else {
+                const lm = history.latest_message;
+                const raw = lm && (typeof lm === 'string' ? lm : (lm.content ?? lm.message ?? ''));
+                if (raw && String(raw).trim()) {
+                  lastMessage = String(raw).trim();
+                  lastMessage = lastMessage.length > 60 ? lastMessage.substring(0, 60).trim() + '…' : lastMessage;
+                }
               }
               return {
                 id: Number(history.id),
@@ -3765,6 +3784,7 @@ export default function ChatsScreen() {
           citationsFromStreamRef.current = null;
           chartFromStreamRef.current = null;
           console.log(`✅ Finalized assistant row ${idx} final content length ${keepContent.length}`);
+          AccessibilityInfo.announceForAccessibilityWithOptions('Assistant response complete', { queue: true });
         } else {
           const mid = assistantMessageIdFromStreamRef.current;
           assistantMessageIdFromStreamRef.current = null;
@@ -3787,6 +3807,7 @@ export default function ChatsScreen() {
           chartFromStreamRef.current = null;
           newMessages.push(assistantMessage);
           console.log(`✅ Created new assistant message with final content: "${keepContent.substring(0, 50)}${keepContent.length > 50 ? '...' : ''}"`);
+          AccessibilityInfo.announceForAccessibilityWithOptions('Assistant response complete', { queue: true });
         }
         return newMessages;
       });
@@ -3879,6 +3900,13 @@ export default function ChatsScreen() {
         chunk
       );
     } catch (e: any) {
+      const limitData = extractLimitErrorData(getErrorResponseData(e));
+      if (limitData) {
+        showLimitError(limitData);
+        setSendingMessage(false);
+        stopBounceAnimation();
+        return;
+      }
       const status = e?.response?.status;
       if (status === 409) {
         Toast.show({
@@ -3996,6 +4024,13 @@ export default function ChatsScreen() {
         chunk
       );
     } catch (e: any) {
+      const limitData = extractLimitErrorData(getErrorResponseData(e));
+      if (limitData) {
+        showLimitError(limitData);
+        setSendingMessage(false);
+        stopBounceAnimation();
+        return;
+      }
       const status = e?.response?.status;
       const msg =
         e?.response?.data?.message ||
@@ -4456,7 +4491,7 @@ export default function ChatsScreen() {
         setStreamingMessageIndex(assistantMessageIndex);
         console.log('📝 Placeholder at sync index', assistantMessageIndex, 'id', placeholderId);
         setMessages(prev => [...prev, userMessage, placeholderMessage]);
-        
+        AccessibilityInfo.announceForAccessibility('Message sent');
         // Fake streaming is now active - ProcessingMessageDisplay will show until preview arrives
         // Send the raw query as-is, without adding Document:/Question:/Context: prefixes
         // The backend will handle context via document_ids in streamFilters
@@ -5316,11 +5351,12 @@ export default function ChatsScreen() {
               created_at: newMsg.created_at || new Date().toISOString()
             }];
           });
-          
+          AccessibilityInfo.announceForAccessibility('Message sent');
+
           // Update chat list (set last_message_sender_id so unread badge stays hidden for sender)
           const userId = currentUserIdRef.current ?? userProfileRef.current?.data?.id ?? userProfileRef.current?.id;
-          setChats(prev => prev.map(chat => 
-            chat.id === selectedChat.id 
+          setChats(prev => prev.map(chat =>
+            chat.id === selectedChat.id
               ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString(), last_message_sender_id: userId ?? undefined }
               : chat
           ));
@@ -5454,6 +5490,7 @@ export default function ChatsScreen() {
               created_at: newMsg.created_at || new Date().toISOString()
             }];
           });
+          AccessibilityInfo.announceForAccessibility('Message sent');
           
           // Update chat list (set last_message_sender_id so unread badge stays hidden for sender)
           setChats(prev => prev.map(chat => 
@@ -5493,6 +5530,17 @@ export default function ChatsScreen() {
         }
         setSendingMessage(false);
         stopBounceAnimation();
+        return;
+      }
+      const limitData = extractLimitErrorData(getErrorResponseData(error));
+      if (limitData) {
+        if (isFakeStreamingRef.current) {
+          stopStreaming(assistantMessageIndex, false);
+          isFakeStreamingRef.current = false;
+        }
+        setSendingMessage(false);
+        stopBounceAnimation();
+        showLimitError(limitData);
         return;
       }
       console.error('❌ [CHATS-WEB] Failed to send message:', error);
@@ -7258,13 +7306,23 @@ export default function ChatsScreen() {
         ? String(item.sender_id) === String(currentUserId)
         : item.is_own_message;
 
+    // Build accessibility label for screen readers (WCAG 4.1.3)
+    const preview = (item.content || '').trim().substring(0, 80);
+    const msgLabel = isOwnMessage
+      ? `Your message${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`
+      : `Message from ${item.sender?.username || 'assistant'}${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`;
+
     // User messages always have bubbles (right); others on left
     if (isOwnMessage) {
       return (
-        <View style={[
-          dynamicStyles.messageContainer,
-          dynamicStyles.ownMessage
-        ]}>
+        <View
+          style={[
+            dynamicStyles.messageContainer,
+            dynamicStyles.ownMessage
+          ]}
+          accessibilityRole="listitem"
+          accessibilityLabel={msgLabel}
+        >
           <View style={[
             dynamicStyles.messageBubble,
             dynamicStyles.ownBubble
@@ -7302,10 +7360,14 @@ export default function ChatsScreen() {
         const queryText = globalIndex > 0 ? messages[globalIndex - 1]?.content : undefined;
         const showFooter = hasContent && !isStreamingActive && !item.is_preview;
         return (
-          <View style={[
-            dynamicStyles.messageContainerNoBubble,
-            dynamicStyles.otherMessageNoBubble
-          ]}>
+          <View
+            style={[
+              dynamicStyles.messageContainerNoBubble,
+              dynamicStyles.otherMessageNoBubble
+            ]}
+            accessibilityRole="listitem"
+            accessibilityLabel={msgLabel}
+          >
             <View style={{ flexDirection: 'column', width: '100%' }}>
               {(isFakeStreamingActive && !hasContent)
                 ? (
@@ -7411,10 +7473,14 @@ export default function ChatsScreen() {
         const queryText = globalIndex > 0 ? messages[globalIndex - 1]?.content : undefined;
         const showFooter = !isStreamingActive && !item.is_preview;
         return (
-          <View style={[
-            dynamicStyles.messageContainer,
-            dynamicStyles.otherMessage
-          ]}>
+          <View
+            style={[
+              dynamicStyles.messageContainer,
+              dynamicStyles.otherMessage
+            ]}
+            accessibilityRole="listitem"
+            accessibilityLabel={msgLabel}
+          >
             <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
               <View style={[
                 dynamicStyles.messageBubble,
@@ -7659,26 +7725,35 @@ export default function ChatsScreen() {
       <TapToToggleHeaderView style={dynamicStyles.container}>
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity 
-            style={dynamicStyles.backButton} 
+          <TouchableOpacity
+            style={dynamicStyles.backButton}
             onPress={() => router.back()}
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
           >
             <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity 
-              style={dynamicStyles.newChatButton} 
+            <TouchableOpacity
+              style={dynamicStyles.newChatButton}
               onPress={onRefresh}
               disabled={refreshing}
+              accessibilityLabel="Refresh chats"
+              accessibilityRole="button"
             >
-              <Ionicons 
-                name="refresh" 
-                size={26} 
-                color={refreshing ? "#999" : "#007AFF"} 
+              <Ionicons
+                name="refresh"
+                size={26}
+                color={refreshing ? "#999" : "#007AFF"}
               />
             </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.newChatButton} onPress={() => setShowNewChatModal(true)}>
+            <TouchableOpacity
+              style={dynamicStyles.newChatButton}
+              onPress={() => setShowNewChatModal(true)}
+              accessibilityLabel="New chat"
+              accessibilityRole="button"
+            >
               <Ionicons name="add" size={26} color="#007AFF" />
             </TouchableOpacity>
           </View>
@@ -7699,7 +7774,12 @@ export default function ChatsScreen() {
             onSubmitEditing={() => Keyboard.dismiss()}
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} style={dynamicStyles.searchIcon}>
+            <TouchableOpacity
+              onPress={() => setSearchQuery('')}
+              style={dynamicStyles.searchIcon}
+              accessibilityLabel="Clear search"
+              accessibilityRole="button"
+            >
               <Ionicons name="close-circle" size={20} color="#666" />
             </TouchableOpacity>
           )}
@@ -7751,8 +7831,8 @@ export default function ChatsScreen() {
       {/* Chat Header */}
       <AnimatedHeaderContainer height={64}>
         <View style={dynamicStyles.chatHeader}>
-        <TouchableOpacity 
-          style={dynamicStyles.backButton} 
+        <TouchableOpacity
+          style={dynamicStyles.backButton}
           onPress={() => {
             // Abort any ongoing streaming/requests before leaving
             if (abortControllerRef.current) {
@@ -7767,6 +7847,8 @@ export default function ChatsScreen() {
             isStreamCompleteRef.current = false;
             router.back();
           }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
         >
           <Ionicons name="arrow-back" size={24} color="#007AFF" />
         </TouchableOpacity>
@@ -7802,6 +7884,8 @@ export default function ChatsScreen() {
           <TouchableOpacity
             style={dynamicStyles.searchTypeButton}
             onPress={() => setShowHistoryModal(true)}
+            accessibilityLabel="Chat history"
+            accessibilityRole="button"
           >
             <Ionicons name="time-outline" size={26} color="#007AFF" />
           </TouchableOpacity>
@@ -7850,6 +7934,8 @@ export default function ChatsScreen() {
               ref={messagesRef}
               data={flatMessageData}
               extraData={messages}
+              accessibilityRole="list"
+              accessibilityLabel="Chat messages"
               renderItem={({ item: flatItem }) =>
                 flatItem.type === 'header' ? (
                   <View style={dynamicStyles.messageDateSectionHeader}>

@@ -1,3 +1,4 @@
+import { AccessibilityInfo } from 'react-native';
 import { create } from 'zustand';
 
 export interface ProgressData {
@@ -71,6 +72,18 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
         item.id === id ? { ...item, ...updates } : item
       ),
     }));
+    // Announce to screen readers when upload completes or fails (WCAG 4.1.3)
+    if (updates.status === 'completed' || updates.status === 'error') {
+      const item = get().progressData.find((p) => p.id === id);
+      if (item) {
+        const title = (updates.title ?? item.title) || 'Upload';
+        const announcement =
+          updates.status === 'completed'
+            ? `Upload complete: ${title}`
+            : `Upload failed: ${title}`;
+        AccessibilityInfo.announceForAccessibility(announcement);
+      }
+    }
   },
 
   removeProgress: (id) => {

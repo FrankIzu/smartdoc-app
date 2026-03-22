@@ -1657,6 +1657,8 @@ export default function QuickFilesScreen() {
       style={dynamicStyles.documentItem}
       onPress={() => handleDocumentPress(item)}
       onLongPress={(event) => handleKebabMenuPress(item, event)}
+      accessibilityRole="listitem"
+      accessibilityLabel={`${item.name}${item.file_kind ? `, ${item.file_kind.replace(/_/g, ' ')}` : ''}`}
     >
       <DocumentIcon item={item} />
       
@@ -1702,6 +1704,9 @@ export default function QuickFilesScreen() {
     <TouchableOpacity
       style={[dynamicStyles.filterButton, filterBy === option && dynamicStyles.filterButtonActive]}
       onPress={() => setFilterBy(option)}
+      accessibilityLabel={`Filter by ${label}`}
+      accessibilityRole="button"
+      accessibilityState={{ selected: filterBy === option }}
     >
       <Text style={[dynamicStyles.filterButtonText, filterBy === option && dynamicStyles.filterButtonTextActive]}>
         {label}
@@ -2242,9 +2247,11 @@ export default function QuickFilesScreen() {
       {/* Header */}
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={dynamicStyles.backButton}
             onPress={() => router.back()}
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
           >
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
@@ -2260,33 +2267,41 @@ export default function QuickFilesScreen() {
             )}
           </View>
           <View style={dynamicStyles.headerActions}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={dynamicStyles.headerButton}
               onPress={handleUploadFromFiles}
+              accessibilityLabel="Upload files"
+              accessibilityRole="button"
             >
               <Ionicons name="document" size={24} color="#007AFF" />
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={dynamicStyles.headerButton}
               onPress={() => router.push('/scanner')}
+              accessibilityLabel="Scan document"
+              accessibilityRole="button"
             >
               <Ionicons name="camera" size={24} color="#007AFF" />
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={dynamicStyles.headerButton}
               onPress={handleGalleryUpload}
+              accessibilityLabel="Upload from gallery"
+              accessibilityRole="button"
             >
               <Ionicons name="images" size={24} color="#5856D6" />
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
               onPress={onRefresh}
               disabled={refreshing}
+              accessibilityLabel="Refresh file list"
+              accessibilityRole="button"
             >
-              <Ionicons 
-                name="refresh" 
-                size={24} 
-                color={refreshing ? "#999" : "#007AFF"} 
+              <Ionicons
+                name="refresh"
+                size={24}
+                color={refreshing ? "#999" : "#007AFF"}
               />
             </TouchableOpacity>
           </View>
@@ -2305,7 +2320,11 @@ export default function QuickFilesScreen() {
           onSubmitEditing={() => Keyboard.dismiss()}
         />
         {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')}>
+          <TouchableOpacity
+            onPress={() => setSearchQuery('')}
+            accessibilityLabel="Clear search"
+            accessibilityRole="button"
+          >
             <Ionicons name="close-circle" size={20} color="#666" />
           </TouchableOpacity>
         )}
@@ -2357,6 +2376,8 @@ export default function QuickFilesScreen() {
               { text: 'Cancel', style: 'cancel' },
             ]);
           }}
+          accessibilityLabel={`Sort by ${sortBy}`}
+          accessibilityRole="button"
         >
           <Text style={dynamicStyles.sortButtonText}>
             {sortBy.charAt(0).toUpperCase() + sortBy.slice(1)}
@@ -2371,6 +2392,8 @@ export default function QuickFilesScreen() {
         renderItem={renderDocument}
         keyExtractor={(item) => (item as Document).id}
         style={dynamicStyles.documentsList}
+        accessibilityRole="list"
+        accessibilityLabel="Documents"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={

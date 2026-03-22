@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS, ResizeMode, Video } from 'expo-av';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -12,7 +13,9 @@ import {
   Linking,
   Modal,
   PanResponder,
+  Platform,
   RefreshControl,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -58,6 +61,9 @@ interface MeetingAsset {
   // Session information
   video_call_id?: string | number;
   session_number?: number;
+  /** CallRecording.id — used for /api/v1/video/recording/{id}/download when file_id is missing */
+  recording_db_id?: number;
+  track_type?: string;
 }
 
 interface AssetDetail {
@@ -81,11 +87,15 @@ export default function MeetingDetailsScreen() {
   const router = useRouter();
   const themeColors = useThemeColors();
   const insets = useSafeAreaInsets();
-  const { meetingId, meetingTitle, roomCode } = useLocalSearchParams<{
+  const { meetingId, meetingTitle, roomCode, entry } = useLocalSearchParams<{
     meetingId: string;
     meetingTitle: string;
     roomCode: string;
+    entry?: string;
   }>();
+
+  /** Folder icon on Reach: compact top bar on assets entry */
+  const fromAssetsShortcut = entry === 'assets';
   
   const [assets, setAssets] = useState<MeetingAsset[]>([]);
   const [sessionGroups, setSessionGroups] = useState<SessionGroup[]>([]);
@@ -113,6 +123,8 @@ export default function MeetingDetailsScreen() {
   const videoLoadingTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Timeout for video loading
   const videoBufferingCheckRef = useRef<NodeJS.Timeout | null>(null); // Interval to check buffering progress
   const currentVideoStreamUrlRef = useRef<string | null>(null); // Stream URL we're playing (so we can switch to cache when download completes)
+  /** Same as web: cache POST /recording/{id}/share share_url per session */
+  const recordingShareUrlCacheRef = useRef<Record<number, string>>({});
   const [menuAsset, setMenuAsset] = useState<MeetingAsset | null>(null);
   const [showTextViewer, setShowTextViewer] = useState(false);
   const [textViewerContent, setTextViewerContent] = useState<string>('');
@@ -152,7 +164,7 @@ export default function MeetingDetailsScreen() {
 
   useEffect(() => {
     organizeAssetsBySession();
-  }, [assets, searchQuery]);
+  }, [assets, searchQuery, meetingId, meetingTitle]);
 
   useEffect(() => {
     // Cleanup video when component unmounts
@@ -540,12 +552,8 @@ export default function MeetingDetailsScreen() {
         const meetingTitle = firstAsset.meeting_title || firstAsset.title || 'Unknown Meeting';
         const sessionNumber = firstAsset.session_number || 0;
         
-        // Use the earliest date in the session for consistent display
-        const sessionDate = sessionAssets.reduce((earliest, asset) => {
-          const assetDate = new Date(asset.date).getTime();
-          const earliestDate = new Date(earliest).getTime();
-          return assetDate < earliestDate ? asset.date : earliest;
-        }, firstAsset.date);
+        // Newest-first sort above: show the latest asset date on the session header
+        const sessionDate = firstAsset.date;
         
         return {
           sessionId: sessionKey, // Using sessionKey as unique identifier
@@ -553,7 +561,7 @@ export default function MeetingDetailsScreen() {
           sessionTitle: `Session ${sessionNumber}`,
           date: sessionDate,
           assets: sessionAssets,
-          isExpanded: false  // Start collapsed by default
+          isExpanded: false, // set below: exactly one group expanded
         };
       })
       .sort((a, b) => {
@@ -561,17 +569,53 @@ export default function MeetingDetailsScreen() {
         return new Date(b.date).getTime() - new Date(a.date).getTime();
       });
 
-    setSessionGroups(groups);
+    const routeId = String(meetingId || '').trim();
+    const routeTitle = (meetingTitle || '').toLowerCase().trim();
+
+    const groupMatchesOpenedMeeting = (g: SessionGroup) =>
+      g.assets.some((asset) => {
+        const aid = String(asset.meeting_id ?? asset.meetingId ?? '').trim();
+        const atitle = (asset.meeting_title || asset.title || '').toLowerCase().trim();
+        const idMatch = !!routeId && !!aid && aid === routeId;
+        const titleMatch = !!routeTitle && atitle === routeTitle;
+        return idMatch || titleMatch;
+      });
+
+    // Expand only the newest session that belongs to the meeting we opened (same id/title rules as asset filter).
+    let expandedSessionId: string | null = null;
+    if (groups.length === 1) {
+      expandedSessionId = groups[0].sessionId;
+    } else if (groups.length > 1) {
+      const match = groups.find(groupMatchesOpenedMeeting);
+      expandedSessionId = match ? match.sessionId : groups[0].sessionId;
+    }
+
+    const withExpansion = groups.map((g) => ({
+      ...g,
+      isExpanded: expandedSessionId != null && g.sessionId === expandedSessionId,
+    }));
+
+    setSessionGroups(withExpansion);
   };
 
+  /** Accordion: at most one session expanded; opening one collapses all others. */
   const toggleSessionGroup = (sessionId: string) => {
-    setSessionGroups(prev => 
-      prev.map(group => 
-        group.sessionId === sessionId 
-          ? { ...group, isExpanded: !group.isExpanded }
-          : group
-      )
-    );
+    setSessionGroups((prev) => {
+      if (prev.length <= 1) {
+        return prev.map((group) =>
+          group.sessionId === sessionId ? { ...group, isExpanded: !group.isExpanded } : group
+        );
+      }
+
+      const clicked = prev.find((g) => g.sessionId === sessionId);
+      if (!clicked) return prev;
+
+      const opening = !clicked.isExpanded;
+      return prev.map((group) => ({
+        ...group,
+        isExpanded: opening ? group.sessionId === sessionId : false,
+      }));
+    });
   };
 
   const playRecording = async (asset: MeetingAsset) => {
@@ -1289,11 +1333,459 @@ export default function MeetingDetailsScreen() {
     }
   };
 
+  const getShareMimeType = (extension: string): string => {
+    const mimeTypes: Record<string, string> = {
+      pdf: 'application/pdf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      txt: 'text/plain',
+      csv: 'text/csv',
+      vtt: 'text/vtt',
+      json: 'application/json',
+      mp4: 'video/mp4',
+      mov: 'video/quicktime',
+      m4a: 'audio/mp4',
+      mp3: 'audio/mpeg',
+      wav: 'audio/wav',
+      webm: 'video/webm',
+    };
+    return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
+  };
+
+  const mimeTypeFromDownloadHeaders = (headers: Record<string, string> | undefined): string | null => {
+    if (!headers) return null;
+    const raw =
+      headers['Content-Type'] ||
+      headers['content-type'] ||
+      headers['Content-type'] ||
+      '';
+    const base = raw.split(';')[0].trim().toLowerCase();
+    return base || null;
+  };
+
+  /** True when this row is an audio-only meeting recording (not room-composite / video). */
+  const isAudioMeetingRecordingAsset = (asset: MeetingAsset): boolean => {
+    if (asset.type !== 'recording' && asset.type !== 'video') return false;
+    const anyAsset = asset as any;
+    const tt = String(anyAsset.track_type || anyAsset.trackType || '').toLowerCase();
+    if (tt === 'audio' || tt.includes('audio-m4a') || tt === 'audio_only') return true;
+    if (asset.quality === 'audio_only') return true;
+    const paths = [
+      asset.url,
+      asset.downloadUrl,
+      asset.original_filename,
+      asset.local_recording_path,
+    ].filter(Boolean) as string[];
+    for (const p of paths) {
+      const lower = p.toLowerCase();
+      if (/\.(m4a|mp3|aac|wav|opus)(\?|#|$)/i.test(lower)) return true;
+      if (lower.includes('/audio/')) return true;
+    }
+    return false;
+  };
+
+  const readLocalFileHeadBytes = async (uri: string, byteLength: number): Promise<Uint8Array | null> => {
+    try {
+      const b64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+        length: byteLength,
+        position: 0,
+      });
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Prefer magic bytes over Content-Type (proxies often mislabel MP3/MP4 as video/webm).
+   */
+  const inferShareMimeFromMagic = (bytes: Uint8Array | null, isAudioAsset: boolean): string | null => {
+    if (!bytes || bytes.length < 12) return null;
+    if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return 'audio/mpeg';
+    if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return 'audio/mpeg';
+    if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
+      return isAudioAsset ? 'audio/mp4' : 'video/mp4';
+    }
+    if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+      return isAudioAsset ? 'audio/webm' : 'video/webm';
+    }
+    return null;
+  };
+
+  const extractCallRecordingDbId = (asset: MeetingAsset): number | null => {
+    const anyAsset = asset as any;
+    if (anyAsset.recording_db_id != null && !Number.isNaN(Number(anyAsset.recording_db_id))) {
+      return Number(anyAsset.recording_db_id);
+    }
+    if (typeof asset.id === 'string') {
+      const m = asset.id.match(/call_recording[_-](\d+)/i);
+      if (m) return parseInt(m[1], 10);
+    }
+    for (const u of [asset.url, asset.downloadUrl]) {
+      if (!u) continue;
+      const m = u.match(/\/recording\/(\d+)\/(?:stream|download)/i);
+      if (m) return parseInt(m[1], 10);
+    }
+    return null;
+  };
+
+  const extractCallTranscriptDbId = (asset: MeetingAsset): number | null => {
+    if (typeof asset.id !== 'string') return null;
+    const m = asset.id.match(/call_transcript[_-](\d+)/i);
+    return m ? parseInt(m[1], 10) : null;
+  };
+
+  const recordingShareFilename = (asset: MeetingAsset): string => {
+    const anyAsset = asset as any;
+    const base = (asset.original_filename || asset.title || 'recording').replace(/[^a-zA-Z0-9.-]/g, '_');
+    if (/\.\w{2,8}$/i.test(base)) return base;
+    const hint = `${asset.url || ''} ${asset.downloadUrl || ''} ${asset.original_filename || ''}`.toLowerCase();
+    if (/\.mp3(\?|#|$)/i.test(hint)) return `${base}.mp3`;
+    const tt = String(anyAsset.track_type || anyAsset.trackType || '').toLowerCase();
+    const isAudio =
+      tt === 'audio' ||
+      tt.includes('audio-m4a') ||
+      asset.quality === 'audio_only' ||
+      /\.(m4a|mp3|aac|wav)(\?|#|$)/i.test(hint);
+    return isAudio ? (hint.includes('.mp3') ? `${base}.mp3` : `${base}.m4a`) : `${base}.mp4`;
+  };
+
+  const appendTokenQuery = (url: string, token: string | null): string => {
+    if (!token || url.includes('token=')) return url;
+    if (!url.startsWith(API_BASE_URL)) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}token=${encodeURIComponent(token)}`;
+  };
+
+  /**
+   * Video/composite: ask for MP4 so iOS gets H.264. Audio tracks: never add format=mp4 — avoids wrong
+   * transcode hints and bogus video/webm Content-Types for m4a/mp3.
+   */
+  const appendRecordingShareQueryParams = (url: string, token: string | null, asset: MeetingAsset): string => {
+    let u = appendTokenQuery(url, token);
+    if (!u.includes('/api/v1/video/recording/') || !u.includes('/download')) return u;
+    if (/[?&]format=/i.test(u)) return u;
+    if (isAudioMeetingRecordingAsset(asset)) return u;
+    u += u.includes('?') ? '&' : '?';
+    u += 'format=mp4';
+    return u;
+  };
+
+  /** expo-file-system download cannot use axios interceptors — send the same Bearer token as the API client. */
+  const authHeadersForDownloadUrl = (url: string, token: string | null): Record<string, string> => {
+    if (!token || !url.startsWith(API_BASE_URL)) return {};
+    return { Authorization: `Bearer ${token}` };
+  };
+
+  /** Resolves a downloadable URL without using the unimplemented mobile /meetings/{id}/download/{type} route. */
+  const resolveMeetingAssetShareSource = async (
+    asset: MeetingAsset,
+    token: string | null
+  ): Promise<{ url: string; filename: string }> => {
+    const fid = asset.file_id;
+    const hasNumericFileId =
+      fid !== undefined && fid !== null && fid !== '' && !Number.isNaN(Number(fid));
+
+    if (hasNumericFileId) {
+      return apiClient.downloadFile(Number(fid));
+    }
+
+    if (typeof asset.id === 'string' && /^report_file_\d+$/i.test(asset.id)) {
+      const reportFileId = parseInt(asset.id.replace(/^report_file_/i, ''), 10);
+      if (!Number.isNaN(reportFileId)) {
+        return apiClient.downloadFile(reportFileId);
+      }
+    }
+
+    const recId = extractCallRecordingDbId(asset);
+    if (recId != null) {
+      const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${recId}/download`;
+      return {
+        url: appendRecordingShareQueryParams(downloadUrl, token, asset),
+        filename: recordingShareFilename(asset),
+      };
+    }
+
+    const transcriptId = extractCallTranscriptDbId(asset);
+    if (
+      transcriptId != null &&
+      (asset.type === 'transcript' ||
+        asset.type === 'call_transcript' ||
+        asset.type === 'chat_log' ||
+        asset.type === 'chat' ||
+        asset.type === 'meeting_chat')
+    ) {
+      const downloadUrl = `${API_BASE_URL}/api/v1/video/transcript/${transcriptId}/download`;
+      const name = (asset.original_filename || asset.title || 'transcript').replace(/[^a-zA-Z0-9.-]/g, '_');
+      const withExt = /\.(txt|vtt|csv)$/i.test(name) ? name : `${name}.txt`;
+      return { url: appendTokenQuery(downloadUrl, token), filename: withExt };
+    }
+
+    if (
+      (asset.type === 'meeting_summary' || asset.type === 'summary') &&
+      typeof asset.id === 'string' &&
+      asset.id.startsWith('meeting_summary_')
+    ) {
+      const downloadUrl = `${API_BASE_URL}/api/v1/video/summary/${encodeURIComponent(asset.id)}/download`;
+      const name = (asset.original_filename || asset.title || 'summary').replace(/[^a-zA-Z0-9.-]/g, '_');
+      const withExt = /\.txt$/i.test(name) ? name : `${name}.txt`;
+      return { url: appendTokenQuery(downloadUrl, token), filename: withExt };
+    }
+
+    const direct = asset.url || asset.downloadUrl;
+    if (direct && (direct.startsWith('http://') || direct.startsWith('https://'))) {
+      const streamMatch = direct.match(/\/api\/v1\/video\/recording\/(\d+)\/stream/i);
+      if (streamMatch) {
+        const id = streamMatch[1];
+        const downloadUrl = `${API_BASE_URL}/api/v1/video/recording/${id}/download`;
+        return {
+          url: appendRecordingShareQueryParams(downloadUrl, token, asset),
+          filename: recordingShareFilename(asset),
+        };
+      }
+      return {
+        url: direct,
+        filename:
+          (asset.original_filename || asset.title || 'meeting_asset').replace(/[^a-zA-Z0-9.-]/g, '_') ||
+          'meeting_asset',
+      };
+    }
+
+    throw new Error(
+      'No shareable download link for this asset. If it is still processing, try again when it is ready.'
+    );
+  };
+
+  /** Web parity: POST share → public /public/asset/{token} URL for browser playback. */
+  const copyRecordingGrabdocsPlayLink = async (asset: MeetingAsset) => {
+    const recId = extractCallRecordingDbId(asset);
+    if (recId == null) {
+      Alert.alert('Copy link', 'A GrabDocs play link is not available for this recording.');
+      return;
+    }
+    try {
+      let shareUrl = recordingShareUrlCacheRef.current[recId];
+      if (!shareUrl) {
+        shareUrl = await apiClient.createOrGetRecordingShareUrl(recId);
+        recordingShareUrlCacheRef.current[recId] = shareUrl;
+      }
+      const lines: string[] = [];
+      lines.push(meetingTitle || asset.meeting_title || 'Meeting');
+      if (asset.date) {
+        try {
+          const d = new Date(asset.date);
+          lines.push(Number.isNaN(d.getTime()) ? String(asset.date) : d.toLocaleString());
+        } catch {
+          lines.push(String(asset.date));
+        }
+      }
+      if (typeof asset.duration === 'number' && asset.duration > 0) {
+        const dm = Math.round(asset.duration);
+        lines.push(
+          dm < 60
+            ? `${dm} minute${dm !== 1 ? 's' : ''}`
+            : `${Math.floor(dm / 60)} hr ${dm % 60} min`
+        );
+      }
+      lines.push('', shareUrl);
+      await Clipboard.setStringAsync(lines.join('\n'));
+      Alert.alert(
+        'Copied',
+        'GrabDocs play link copied. Open it in a browser to play without signing in.'
+      );
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error || error?.message || 'Could not create share link.';
+      Alert.alert('Error', msg);
+    }
+  };
+
   const shareAsset = async (asset: MeetingAsset) => {
     try {
-      Alert.alert('Share', `Sharing ${asset.title}...`);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to share asset');
+      let token: string | null = null;
+      try {
+        token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      } catch {
+        token = null;
+      }
+
+      const fileInfo = await resolveMeetingAssetShareSource(asset, token);
+
+      if (!fileInfo?.url) {
+        throw new Error('No download URL available');
+      }
+
+      const filename =
+        fileInfo.filename || asset.title || asset.original_filename || 'meeting_asset';
+      const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!cacheDir) {
+        throw new Error('Unable to access file system directories');
+      }
+      const uniquePrefix = `share_${Date.now()}_${simpleHash(asset.id)}_`;
+      const fileUri = `${cacheDir}${uniquePrefix}${sanitizedFilename}`;
+
+      const authHeaders = authHeadersForDownloadUrl(fileInfo.url, token);
+
+      const downloadResult = await FileSystem.downloadAsync(fileInfo.url, fileUri, {
+        headers: authHeaders,
+      });
+
+      if (downloadResult.status < 200 || downloadResult.status >= 300) {
+        throw new Error(`Download failed (HTTP ${downloadResult.status}). Try again later.`);
+      }
+
+      const localInfo = await FileSystem.getInfoAsync(downloadResult.uri);
+      if (!localInfo.exists || !localInfo.size || localInfo.size < 1) {
+        throw new Error('Downloaded file is empty. The recording may still be processing.');
+      }
+
+      const headerMime = mimeTypeFromDownloadHeaders(downloadResult.headers as Record<string, string>);
+      const isAudioAsset = isAudioMeetingRecordingAsset(asset);
+      let ext = sanitizedFilename.includes('.')
+        ? sanitizedFilename.split('.').pop() || 'bin'
+        : 'bin';
+      let shareMime = headerMime || getShareMimeType(ext);
+
+      const magicBytes = await readLocalFileHeadBytes(downloadResult.uri, 32);
+      const magicMime = inferShareMimeFromMagic(magicBytes, isAudioAsset);
+      if (magicMime) {
+        shareMime = magicMime;
+        if (magicMime === 'audio/mpeg') ext = 'mp3';
+        else if (magicMime === 'audio/mp4') ext = 'm4a';
+        else if (magicMime === 'video/mp4') ext = 'mp4';
+        else if (magicMime.endsWith('/webm')) ext = 'webm';
+      } else if (headerMime?.includes('webm')) {
+        if (headerMime.startsWith('audio/') || isAudioAsset) {
+          shareMime = headerMime.startsWith('audio/') ? headerMime : 'audio/webm';
+          ext = ext === 'bin' || !ext ? 'webm' : ext;
+        } else {
+          ext = 'webm';
+          shareMime = 'video/webm';
+        }
+      } else if (headerMime?.includes('mp4') || headerMime === 'video/mp4') {
+        ext = 'mp4';
+        shareMime = isAudioAsset ? 'audio/mp4' : 'video/mp4';
+      } else if (
+        fileInfo.url.includes('format=mp4') &&
+        extractCallRecordingDbId(asset) != null &&
+        !isAudioAsset &&
+        (!headerMime || headerMime === 'application/octet-stream')
+      ) {
+        ext = 'mp4';
+        shareMime = 'video/mp4';
+      }
+
+      const isAvailable = await Sharing.isAvailableAsync();
+      const displayName = asset.title || filename;
+
+      const shareLocalFile = async () => {
+        const localUri = downloadResult.uri;
+        if (isAvailable) {
+          try {
+            await Sharing.shareAsync(localUri, {
+              mimeType: shareMime,
+              dialogTitle: `Share ${displayName}`,
+            });
+            return;
+          } catch (shareErr: any) {
+            console.warn('expo-sharing failed, retrying without mimeType:', shareErr);
+            try {
+              await Sharing.shareAsync(localUri, {
+                dialogTitle: `Share ${displayName}`,
+              });
+              return;
+            } catch (shareErr2: any) {
+              console.warn('expo-sharing retry failed:', shareErr2);
+            }
+          }
+        }
+        if (Platform.OS === 'ios') {
+          const fileUrl =
+            localUri.startsWith('file://') ? localUri : `file://${localUri.replace(/^\/+/, '')}`;
+          await Share.share({
+            title: displayName,
+            message: displayName,
+            url: fileUrl,
+          });
+          return;
+        }
+        if (Platform.OS === 'android') {
+          await Share.share({
+            title: displayName,
+            message: `${displayName}\n\n${fileInfo.url}`,
+            url: fileInfo.url,
+          });
+          return;
+        }
+        await Clipboard.setStringAsync(fileInfo.url);
+        Alert.alert('Share', 'Download link copied to clipboard.');
+      };
+
+      const scheduleShareFileCleanup = () => {
+        setTimeout(async () => {
+          try {
+            const info = await FileSystem.getInfoAsync(downloadResult.uri);
+            if (info.exists) {
+              await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
+            }
+          } catch {
+            // ignore cleanup errors
+          }
+        }, 60000);
+      };
+
+      // Only warn for video WebM — not audio/webm, and magic/headers often lie for composite vs track
+      if (Platform.OS === 'ios' && shareMime === 'video/webm') {
+        Alert.alert(
+          'Share recording',
+          'This recording is in WebM video format, which iOS often cannot pass to other apps. Copy a GrabDocs play link (same as web) or a direct download URL, or try the share sheet.',
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+              onPress: () => scheduleShareFileCleanup(),
+            },
+            {
+              text: 'Copy play link',
+              onPress: async () => {
+                await copyRecordingGrabdocsPlayLink(asset);
+                scheduleShareFileCleanup();
+              },
+            },
+            {
+              text: 'Copy download link',
+              onPress: async () => {
+                await Clipboard.setStringAsync(fileInfo.url);
+                Alert.alert('Copied', 'Signed download URL copied to clipboard.');
+                scheduleShareFileCleanup();
+              },
+            },
+            {
+              text: 'Try share anyway',
+              onPress: () => {
+                shareLocalFile()
+                  .then(() => scheduleShareFileCleanup())
+                  .catch((e: any) => {
+                    scheduleShareFileCleanup();
+                    Alert.alert('Error', e?.message || 'Could not share this file.');
+                  });
+              },
+            },
+          ]
+        );
+        return;
+      }
+
+      await shareLocalFile();
+      scheduleShareFileCleanup();
+    } catch (error: any) {
+      console.error('Share asset error:', error);
+      Alert.alert('Error', error.message || 'Failed to share asset');
     }
   };
 
@@ -1589,33 +2081,55 @@ export default function MeetingDetailsScreen() {
 
   const showAssetMenu = (asset: MeetingAsset) => {
     setMenuAsset(asset);
-    
-    Alert.alert(
-      asset.title,
-      'Choose an action',
-      [
-        {
-          text: 'View',
-          onPress: () => {
-            viewAsset(asset);
-            setMenuAsset(null);
-          }
+    const canCopyPlayLink =
+      (asset.type === 'recording' || asset.type === 'video') && extractCallRecordingDbId(asset) != null;
+
+    const actions: {
+      text: string;
+      style?: 'destructive' | 'cancel';
+      onPress: () => void;
+    }[] = [
+      {
+        text: 'View',
+        onPress: () => {
+          viewAsset(asset);
+          setMenuAsset(null);
         },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteAsset(asset);
-            setMenuAsset(null);
-          }
+      },
+    ];
+    if (canCopyPlayLink) {
+      actions.push({
+        text: 'Copy play link',
+        onPress: () => {
+          copyRecordingGrabdocsPlayLink(asset);
+          setMenuAsset(null);
         },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-          onPress: () => setMenuAsset(null)
-        }
-      ]
+      });
+    }
+    actions.push(
+      {
+        text: 'Share',
+        onPress: () => {
+          shareAsset(asset);
+          setMenuAsset(null);
+        },
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          deleteAsset(asset);
+          setMenuAsset(null);
+        },
+      },
+      {
+        text: 'Cancel',
+        style: 'cancel',
+        onPress: () => setMenuAsset(null),
+      }
     );
+
+    Alert.alert(asset.title, 'Choose an action', actions);
   };
 
   const getAssetIcon = (type: string) => {
@@ -1924,6 +2438,9 @@ export default function MeetingDetailsScreen() {
       flexDirection: 'row',
       alignItems: 'center',
     },
+    headerCompact: {
+      paddingVertical: 8,
+    },
     deleteAllButton: {
       padding: 4,
       marginRight: 8,
@@ -2214,7 +2731,7 @@ export default function MeetingDetailsScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       {/* Header */}
-      <View style={dynamicStyles.header}>
+      <View style={[dynamicStyles.header, fromAssetsShortcut && dynamicStyles.headerCompact]}>
         <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={themeColors.tint || '#007AFF'} />
         </TouchableOpacity>
@@ -2222,7 +2739,9 @@ export default function MeetingDetailsScreen() {
           <Text style={dynamicStyles.headerTitle} numberOfLines={1}>
             {meetingTitle || 'Meeting Details'}
           </Text>
-          <Text style={dynamicStyles.headerSubtitle}>Room: {roomCode}</Text>
+          {!fromAssetsShortcut ? (
+            <Text style={dynamicStyles.headerSubtitle}>Room: {roomCode}</Text>
+          ) : null}
         </View>
         <View style={dynamicStyles.headerActions}>
           {assets.length > 0 && (

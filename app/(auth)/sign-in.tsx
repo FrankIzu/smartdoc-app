@@ -389,6 +389,8 @@ export default function SignInScreen() {
                 value={username}
                 onChangeText={setUsername}
                 autoCapitalize="none"
+                textContentType="username"
+                autoComplete="username"
                 placeholderTextColor="#999"
               />
               {username.length > 0 && (
