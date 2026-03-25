@@ -81,6 +81,25 @@ jobs:
           git status > /dev/null 2>&1 || echo "Warning: git status check failed, but continuing..."
         continue-on-error: true
 
+      # Android SDK + Gradle + EAS local often exceed free space on ubuntu-latest (~14GB).
+      # Full disk causes signReleaseBundle / bundletool errors like "Location not within channel boundaries".
+      - name: Free disk space
+        run: |
+          echo "=== Disk before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/share/swift /usr/local/share/powershell || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          if [ -d /usr/local/lib/android/sdk/ndk ]; then
+            echo "Removing preinstalled Android NDK (this job uses GRADLE_USER_HOME / ANDROID_SDK_CACHE_PATH or sdkmanager)"
+            sudo rm -rf /usr/local/lib/android/sdk/ndk
+          fi
+          if command -v docker >/dev/null 2>&1; then
+            sudo docker system prune -af --volumes 2>/dev/null || true
+          fi
+          sudo apt-get clean || true
+          echo "=== Disk after cleanup ==="
+          df -h
+
       # Only touches android.versionCode — never overwrites version or ios.buildNumber.
       - name: Apply Android versionCode (workflow input)
         run: |
