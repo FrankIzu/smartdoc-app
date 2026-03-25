@@ -5,6 +5,7 @@ import { AppState, AppStateStatus, Platform } from 'react-native';
 import { fetch as streamingFetch } from 'react-native-fetch-api';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
+import { createSmoothProgressEmitter } from './uploadProgressSmooth';
 
 // API response structure matching backend
 interface ApiResponse<T = any> {
@@ -663,7 +664,7 @@ class ApiService {
     const isReactNative = Platform.OS === 'ios' || Platform.OS === 'android';
 
     if (isReactNative) {
-      return this.uploadFileWithFetch(file, onProgress);
+      return this.uploadFileWithXHR(file, onProgress);
     }
 
     try {
@@ -689,67 +690,83 @@ class ApiService {
   }
 
   /**
-   * Upload using native fetch() - works reliably with FormData on React Native / Expo Go
-   * Axios XMLHttpRequest adapter often throws "Network Error" with FormData on Android
+   * Upload using XMLHttpRequest on React Native — supports real upload progress events
+   * via xhr.upload.onprogress, unlike fetch which has no upload progress on mobile.
+   * Falls back to fetch if XHR fails unexpectedly.
    */
-  private async uploadFileWithFetch(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
-    try {
-      console.log('🔄 Attempting file upload (fetch)...');
-      const baseURL = this.client.defaults.baseURL || API_BASE_URL;
-      const uploadUrl = baseURL + MOBILE_ENDPOINTS.UPLOAD;
+  private async uploadFileWithXHR(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
+    console.log('🔄 Attempting file upload (XHR with progress)...');
+    const baseURL = this.client.defaults.baseURL || API_BASE_URL;
+    const uploadUrl = baseURL + MOBILE_ENDPOINTS.UPLOAD;
 
-      const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-      const deviceToken = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TOKEN);
+    const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+    const deviceToken = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TOKEN);
 
-      const headers: Record<string, string> = {
-        'X-Platform': 'mobile',
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      if (deviceToken) {
-        headers['X-Device-Token'] = deviceToken;
-      }
-      if (baseURL.startsWith('https://')) {
-        headers['X-Forwarded-Proto'] = 'https';
-        headers['X-Forwarded-Scheme'] = 'https';
-      }
-      // Do NOT set Content-Type - fetch will set multipart/form-data with boundary automatically
+    return new Promise<ApiResponse>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let lastReported = 0;
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000);
-
-      const response = await fetch(uploadUrl, {
-        method: 'POST',
-        headers,
-        body: file,
-        signal: controller.signal,
-        credentials: 'include',
+      xhr.upload.addEventListener('loadstart', () => {
+        if (onProgress) onProgress(Math.max(lastReported, 1));
       });
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const text = await response.text();
-        let errData: any = {};
-        try {
-          errData = text ? JSON.parse(text) : {};
-        } catch {
-          errData = { message: text || response.statusText };
+      xhr.upload.addEventListener('progress', (event) => {
+        if (!onProgress) return;
+        if (event.lengthComputable && event.total > 0) {
+          const progress = Math.round((event.loaded / event.total) * 100);
+          lastReported = Math.max(lastReported, progress);
+          onProgress(lastReported);
+        } else if (event.loaded > 0) {
+          // RN often omits total — map loaded bytes to a soft 5–92% range
+          const soft = Math.min(92, 5 + Math.log10(event.loaded + 1) * 18);
+          lastReported = Math.max(lastReported, soft);
+          onProgress(lastReported);
         }
-        const err = new Error(errData.message || `Upload failed with status ${response.status}`);
-        (err as any).responseData = errData;
-        throw err;
+      });
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            console.log('✅ Upload successful (XHR)');
+            resolve(data);
+          } catch {
+            reject(new Error('Invalid JSON response from server'));
+          }
+        } else {
+          let errData: any = {};
+          try {
+            errData = JSON.parse(xhr.responseText);
+          } catch {
+            errData = { message: xhr.statusText };
+          }
+          reject(new Error(errData.message || `Upload failed with status ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        console.error('❌ Upload failed (XHR network error)');
+        reject(new Error('Upload failed (network error)'));
+      };
+      xhr.ontimeout = () => {
+        console.error('❌ Upload timed out (XHR)');
+        reject(new Error('Upload timed out'));
+      };
+
+      xhr.open('POST', uploadUrl);
+      xhr.timeout = 120000;
+
+      // Do NOT set Content-Type — XHR will set multipart/form-data with boundary automatically
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      if (deviceToken) xhr.setRequestHeader('X-Device-Token', deviceToken);
+      xhr.setRequestHeader('X-Platform', 'mobile');
+      if (baseURL.startsWith('https://')) {
+        xhr.setRequestHeader('X-Forwarded-Proto', 'https');
+        xhr.setRequestHeader('X-Forwarded-Scheme', 'https');
       }
 
-      const data = await response.json();
-      console.log('✅ Upload successful (fetch)');
-      return data;
-    } catch (error: any) {
-      console.error('❌ Upload failed (fetch):', error);
-      const message = error.name === 'AbortError' ? 'Upload timed out' : (error.message || 'Upload failed');
-      throw new Error(message);
-    }
+      xhr.send(file as any);
+    });
   }
 
   async getUploadProgress(taskId: string): Promise<ApiResponse> {
@@ -776,109 +793,105 @@ class ApiService {
     file: FormData, 
     onProgress?: (progress: number, message?: string, phase?: string) => void
   ): Promise<ApiResponse> {
-    try {
-      console.log('🔄 Starting upload with progress polling...');
-      
-      // Step 1: Upload the file (network progress)
-      const uploadResponse = await this.uploadFile(file, (networkProgress) => {
-        // Show network upload progress (0-20%)
-        const adjustedProgress = Math.round(networkProgress * 0.2);
-        onProgress?.(adjustedProgress, 'Uploading file...', 'upload');
+    const smoother = createSmoothProgressEmitter(
+      (p, m, ph) => onProgress?.(p, m, ph),
+      { uploadPhaseMax: 40, tickMs: 100 }
+    );
+    smoother.start();
+    smoother.setTarget(0.5, 'Preparing upload...', 'upload');
+
+    const settleAndStop = (msg: string, phase: string) =>
+      new Promise<void>((r) => {
+        smoother.setTarget(100, msg, phase);
+        setTimeout(() => {
+          onProgress?.(100, msg, phase);
+          smoother.stop();
+          r();
+        }, 420);
       });
 
-      // Step 2: Get task_id from response
+    try {
+      console.log('🔄 Starting upload with progress polling (smoothed)...');
+
+      // 0–40%: network upload (XHR may report rarely on RN — smoother crawls the gap)
+      const uploadResponse = await this.uploadFile(file, (networkProgress) => {
+        smoother.setTarget(networkProgress * 0.4, 'Uploading file...', 'upload');
+      });
+      // HTTP finished — anchor at end of upload phase while we wait for task / polling
+      smoother.setTarget(40, 'Processing on server...', 'processing');
+
       const taskId = (uploadResponse as any).task_id;
       if (!taskId) {
         console.warn('⚠️ No task_id in upload response, cannot poll progress');
-        onProgress?.(100, 'Upload completed', 'completed');
+        await settleAndStop('Upload completed', 'completed');
         return uploadResponse;
       }
 
       console.log(`📋 Got task_id: ${taskId}, starting progress polling...`);
-      console.log(`📋 Upload response:`, uploadResponse);
-      console.log(`📋 About to start progress polling with onProgress:`, onProgress);
 
-      // Step 3: Poll for processing progress and wait for completion
-      return new Promise((resolve, reject) => {
-        const pollInterval = 200; // Poll every 200ms for very responsive updates
-        const maxPollTime = 300000; // Max 5 minutes for processing
+      // 40–100%: server-side processing (map backend 0–100 → 40–100)
+      return await new Promise<ApiResponse>((resolve) => {
+        const pollInterval = 200;
+        const maxPollTime = 300000;
         const startTime = Date.now();
 
         const pollProgress = async (): Promise<void> => {
           try {
-            console.log(`🔄 Polling progress for task: ${taskId} (attempt ${Math.floor((Date.now() - startTime) / pollInterval) + 1})`);
             const progressResponse = await this.getUploadProgress(taskId);
-            console.log(`📊 Raw progress response:`, progressResponse);
-            
+
             if (progressResponse.success && progressResponse.data) {
               const { progress, status, message, phase } = progressResponse.data;
-              
-              // Use actual progress from backend (0-100%)
-              const adjustedProgress = Math.min(100, Math.max(0, progress));
-              
-              console.log(`📊 Progress update: ${adjustedProgress}% - ${message} (${phase})`);
-              console.log(`📊 Calling onProgress callback with: ${adjustedProgress}%, "${message}", "${phase}"`);
-              
-              onProgress?.(adjustedProgress, message, phase);
-              
-              // Check if processing is complete
-              if (status === 'completed' || status === 'error' || adjustedProgress >= 100) {
-                console.log(`✅ Processing complete: ${status}`);
-                onProgress?.(100, 'Processing complete', 'completed');
+              const serverProgress = Math.min(100, Math.max(0, progress));
+              const mapped =
+                status === 'completed' || serverProgress >= 100
+                  ? 100
+                  : 40 + serverProgress * 0.6;
+
+              smoother.setTarget(
+                mapped,
+                message || 'Processing...',
+                typeof phase === 'string' ? phase : 'processing'
+              );
+
+              if (status === 'completed' || status === 'error' || mapped >= 100) {
+                const doneMsg =
+                  status === 'error' ? message || 'Processing finished with errors' : 'Processing complete';
+                await settleAndStop(doneMsg, 'completed');
                 resolve(uploadResponse);
                 return;
               }
-              
-              // Continue polling if not complete and within time limit
+
               if (Date.now() - startTime < maxPollTime) {
                 setTimeout(pollProgress, pollInterval);
               } else {
                 console.warn('⚠️ Progress polling timeout reached');
-                onProgress?.(100, 'Processing timeout', 'timeout');
-                resolve(uploadResponse); // Still resolve with the upload response
+                await settleAndStop('Processing timeout', 'timeout');
+                resolve(uploadResponse);
               }
             } else {
-              console.warn('⚠️ Invalid progress response:', progressResponse);
-              console.warn('⚠️ Response success:', progressResponse.success);
-              console.warn('⚠️ Response data:', progressResponse.data);
-              
-              // If progress not found, show a default progress
               if (!progressResponse.success && progressResponse.message?.includes('not found')) {
-                onProgress?.(25, 'Processing started...', 'processing');
+                smoother.setTarget(42, 'Processing started...', 'processing');
               }
-              
-              // Continue polling on invalid response
               if (Date.now() - startTime < maxPollTime) {
                 setTimeout(pollProgress, pollInterval);
               } else {
-                console.warn('⚠️ Progress polling timeout on invalid response');
+                await settleAndStop('Processing complete', 'completed');
                 resolve(uploadResponse);
               }
             }
-          } catch (error) {
-            // console.error('❌ Progress polling error:', error);
-            // console.error('❌ Error type:', typeof error);
-            // console.error('❌ Error message:', (error as any).message);
-            // Continue polling on error
+          } catch {
             if (Date.now() - startTime < maxPollTime) {
               setTimeout(pollProgress, pollInterval);
             } else {
-              console.warn('⚠️ Progress polling timeout on error');
-              resolve(uploadResponse);
+              void settleAndStop('Processing complete', 'completed').then(() => resolve(uploadResponse));
             }
           }
         };
 
-        // Start polling with a small delay to give backend time to initialize
-        console.log(`🔄 Starting progress polling for task: ${taskId}`);
-        console.log(`🔄 Polling will start in 200ms, then every ${pollInterval}ms for max ${maxPollTime}ms`);
-        setTimeout(() => {
-          console.log(`🔄 Starting first progress poll now...`);
-          pollProgress();
-        }, 200);
+        setTimeout(pollProgress, 50);
       });
     } catch (error: any) {
-      // console.error('❌ Upload with progress polling failed:', error);
+      smoother.stop();
       throw error;
     }
   }
@@ -1518,10 +1531,23 @@ class ApiService {
       const infoResponse = await this.client.get(MOBILE_ENDPOINTS.FILE_BY_ID(id));
       const fileInfo = infoResponse.data?.file;
       const filename = fileInfo?.name || `document_${id}`;
-      
-      // Get the download URL - backend handles decryption automatically
-      const downloadUrl = `${API_BASE_URL}${MOBILE_ENDPOINTS.FILE_DOWNLOAD(id)}`;
-      
+
+      const signedDl = fileInfo?.signed_download_url as string | undefined;
+      const rawDl = fileInfo?.download_url as string | undefined;
+
+      let downloadUrl: string;
+      if (typeof signedDl === 'string' && signedDl.trim().length > 0) {
+        downloadUrl = signedDl.startsWith('http') ? signedDl : `${API_BASE_URL}${signedDl.startsWith('/') ? '' : '/'}${signedDl}`;
+      } else if (typeof rawDl === 'string' && rawDl.trim().length > 0) {
+        if (rawDl.startsWith('http')) {
+          downloadUrl = rawDl;
+        } else {
+          downloadUrl = `${API_BASE_URL}${rawDl.startsWith('/') ? '' : '/'}${rawDl}`;
+        }
+      } else {
+        downloadUrl = `${API_BASE_URL}${MOBILE_ENDPOINTS.FILE_DOWNLOAD(id)}`;
+      }
+
       console.log('📁 File download URL:', downloadUrl);
       console.log('📁 File name:', filename);
       console.log('🔐 Backend will decrypt file before serving');
@@ -3808,9 +3834,14 @@ class ApiService {
     }
   }
 
-  async getBookmarkFiles(bookmarkId: number): Promise<ApiResponse> {
+  async getBookmarkFiles(
+    bookmarkId: number,
+    params?: { limit?: number; offset?: number }
+  ): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files`);
+      const response = await this.client.get(`${MOBILE_ENDPOINTS.BOOKMARKS}/${bookmarkId}/files`, {
+        params: params ?? undefined,
+      });
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to fetch bookmark files');
@@ -4061,23 +4092,66 @@ class ApiService {
   }
 
   /**
-   * Get files shared within a workspace (same as web).
-   * Uses GET /api/v1/web/workspaces/:id/files so only files visible in that workspace are returned.
+   * Workspace-scoped file list for mobile.
+   * Prefers GET /api/v1/mobile/files?workspace_id=… (paginated, optimized) — avoids the web
+   * workspace files route which often times out on large workspaces.
    */
-  async getWorkspaceFiles(workspaceId: number): Promise<ApiResponse> {
+  async getWorkspaceFiles(
+    workspaceId: number,
+    options?: { page?: number; perPage?: number; timeoutMs?: number }
+  ): Promise<ApiResponse> {
+    const page = options?.page ?? 1;
+    const perPage = Math.min(options?.perPage ?? 100, 100);
+    const timeoutMs = options?.timeoutMs ?? 28000;
+
     try {
-      const response = await this.client.get(`/api/v1/web/workspaces/${workspaceId}/files`);
+      const params = new URLSearchParams();
+      params.append('page', String(page));
+      params.append('perPage', String(perPage));
+      params.append('workspace_id', String(workspaceId));
+      const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
+      const response = await this.client.get(url, { timeout: timeoutMs });
       const data = response.data;
+      const files = data?.files ?? data?.data ?? [];
+      const pag = data?.pagination;
       return {
         success: data?.success !== false,
-        files: data?.files ?? [],
-        data: data?.files ?? [],
-        total_count: data?.total_count ?? (data?.files?.length ?? 0),
+        files,
+        data: files,
+        total_count: pag?.total ?? data?.total_count ?? files.length,
+        pagination: pag,
         workspace: data?.workspace,
       };
     } catch (error: any) {
+      const isTimeout =
+        error.code === 'ECONNABORTED' ||
+        error.message?.includes('timeout') ||
+        error.message?.includes('exceeded');
+      if (!isTimeout) {
+        try {
+          const response = await this.client.get(`/api/v1/web/workspaces/${workspaceId}/files`, {
+            timeout: 35000,
+          });
+          const data = response.data;
+          const files = data?.files ?? [];
+          return {
+            success: data?.success !== false,
+            files,
+            data: files,
+            total_count: data?.total_count ?? files.length,
+            workspace: data?.workspace,
+          };
+        } catch (webErr: any) {
+          console.error('Get workspace files (web fallback) error:', webErr);
+        }
+      }
       console.error('Get workspace files error:', error);
-      throw new Error(error.response?.data?.message || error.response?.data?.error || 'Failed to fetch workspace files');
+      throw new Error(
+        error.response?.data?.message ||
+          error.response?.data?.error ||
+          (isTimeout ? 'Request timed out while loading workspace files' : error.message) ||
+          'Failed to fetch workspace files'
+      );
     }
   }
 

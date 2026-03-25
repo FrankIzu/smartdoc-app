@@ -53,6 +53,8 @@ export interface FileUpload {
   name: string;
   type: string;
   size?: number;
+  /** When set, file list already shows this optimistic row (e.g. gallery pick) */
+  optimisticId?: string;
 }
 
 export interface UploadProgress {

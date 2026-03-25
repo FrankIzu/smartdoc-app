@@ -31,6 +31,45 @@ interface OtpVerificationParams {
   rememberDevice?: string; // 'true' or 'false' as string (router params are strings)
 }
 
+/** Map /login `user` or auth-check `data` into stored user shape. */
+function buildUserDataFromMobileLoginUser(
+  user: Record<string, unknown> | null | undefined,
+  fallbackEmail: string,
+  fallbackUsername: string
+): { id: string; name: string; email: string } | null {
+  if (!user) return null;
+  const id =
+    user.id != null ? String(user.id) : user.user_id != null ? String(user.user_id) : '';
+  if (!id) return null;
+  const first = typeof user.first_name === 'string' ? user.first_name : '';
+  const last = typeof user.last_name === 'string' ? user.last_name : '';
+  const fn = typeof user.firstName === 'string' ? user.firstName : '';
+  const ln = typeof user.lastName === 'string' ? user.lastName : '';
+  const combined = [first, last].filter(Boolean).join(' ').trim();
+  const combinedCamel = [fn, ln].filter(Boolean).join(' ').trim();
+  const name =
+    (typeof user.name === 'string' && user.name) ||
+    combined ||
+    combinedCamel ||
+    (typeof user.username === 'string' && user.username) ||
+    fallbackUsername;
+  const email = (typeof user.email === 'string' && user.email) || fallbackEmail || '';
+  return { id, name, email };
+}
+
+function buildUserDataFromAuthCheckData(
+  data: Record<string, unknown> | null | undefined,
+  fallbackEmail: string
+): { id: string; name: string; email: string } | null {
+  if (!data || data.id == null) return null;
+  const name =
+    (typeof data.name === 'string' && data.name) ||
+    (typeof data.username === 'string' && data.username) ||
+    '';
+  const email = (typeof data.email === 'string' && data.email) || fallbackEmail || '';
+  return { id: String(data.id), name, email };
+}
+
 export default function OtpVerificationScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<OtpVerificationParams>();
@@ -47,6 +86,8 @@ export default function OtpVerificationScreen() {
   
   const inputRefs = useRef<TextInput[]>([]);
   const autofillInputRef = useRef<TextInput>(null);
+  /** Remount hidden autofill field after a full code so it stays uncontrolled (no stale value=""). */
+  const [autofillFieldKey, setAutofillFieldKey] = useState(0);
 
   // Countdown timer
   useEffect(() => {
@@ -58,6 +99,16 @@ export default function OtpVerificationScreen() {
     
     return () => clearInterval(timer);
   }, [timeLeft]);
+
+  // Focus the SMS autofill field after layout. iOS/Android need an in-layout, oneTimeCode field —
+  // not off-screen — and it must not use value="" (controlled empty) or autofill can be cleared on re-render.
+  useEffect(() => {
+    if (params.method !== 'sms') return;
+    const id = requestAnimationFrame(() => {
+      setTimeout(() => autofillInputRef.current?.focus(), 250);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [params.method]);
 
   // Monitor clipboard for OTP codes (for email codes)
   // Note: This is a fallback for email codes. SMS codes are handled by autofill input.
@@ -139,6 +190,7 @@ export default function OtpVerificationScreen() {
       // Distribute code to individual inputs
       const codeArray = digits.split('');
       setOtpCode(codeArray);
+      setAutofillFieldKey((k) => k + 1);
       
       // Focus the last input to show completion
       inputRefs.current[5]?.focus();
@@ -243,255 +295,146 @@ export default function OtpVerificationScreen() {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // OTP verified successfully
-        // Check if backend returned token and user data directly
+        // Optional: if verify-otp ever returns JWT + user (not current API), persist immediately
         if (data.token && data.user) {
-          // Backend returned everything we need
-          const userData = {
-            id: data.user.id?.toString() || data.user.user_id?.toString() || '',
-            name: data.user.name || data.user.first_name || data.user.username || '',
-            email: data.user.email || params.userEmail || '',
-          };
-          
-          // Store token and user data
-          const { secureStorage } = await import('../../utils/storage');
-          await secureStorage.setItem('auth_token', data.token);
-          await secureStorage.setItem('user', JSON.stringify(userData));
-          
-          // Store device token if device is trusted
-          if (data.deviceToken) {
-            await secureStorage.setItem('device_token', data.deviceToken);
-            console.log('💾 Stored device token for trusted device');
-            
-            // Show success message with device trust info
-            const deviceName = data.deviceName || 'this device';
-            Alert.alert(
-              'Success', 
-              `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
-              [
-                {
-                  text: 'Continue',
-                  onPress: () => router.replace('/(tabs)'),
-                },
-              ]
-            );
-          } else {
-            Alert.alert('Success', 'Authentication successful!', [
-              {
-                text: 'Continue',
-                onPress: () => router.replace('/(tabs)'),
-              },
-            ]);
+          const userData = buildUserDataFromMobileLoginUser(
+            data.user as Record<string, unknown>,
+            params.userEmail || '',
+            params.username || ''
+          );
+          if (userData?.id) {
+            const { secureStorage } = await import('../../utils/storage');
+            await secureStorage.setItem('auth_token', data.token);
+            await secureStorage.setItem('user', JSON.stringify(userData));
+            if (data.deviceToken) {
+              await secureStorage.setItem('device_token', data.deviceToken);
+              const deviceName = data.deviceName || 'this device';
+              Alert.alert(
+                'Success',
+                `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
+                [{ text: 'Continue', onPress: () => router.replace('/(tabs)') }]
+              );
+            } else {
+              Alert.alert('Success', 'Authentication successful!', [
+                { text: 'Continue', onPress: () => router.replace('/(tabs)') },
+              ]);
+            }
+            await refreshSession();
+            return;
           }
-          
-          // Refresh auth session to pick up the new user data
-          await refreshSession();
-          return;
         }
-        
-        // If no token/user in response, the backend might have set a session cookie
-        // Try to fetch user data from auth-check (session-based auth)
-        try {
-          const authCheckResponse = await fetch(`${API_BASE_URL}/api/v1/mobile/auth-check`, {
-            method: 'GET',
+
+        // Current API: verify-otp only returns verification flags — JWT is issued by POST /login with otpVerified: true
+        const completeLoginWithOtpVerified = async (): Promise<boolean> => {
+          if (!params.username || !params.tempPassword) {
+            return false;
+          }
+
+          const loginResponse = await fetch(`${API_BASE_URL}/api/v1/mobile/login`, {
+            method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
-            credentials: 'include', // Important: include cookies for session-based auth
+            credentials: 'include',
+            body: JSON.stringify({
+              username: params.username,
+              password: params.tempPassword,
+              otpVerified: true,
+              rememberDevice: trustDevice,
+            }),
           });
 
-          if (authCheckResponse.ok) {
-            const authData = await authCheckResponse.json();
-            if (authData.success && (authData.user || authData.data)) {
-              const user = authData.user || authData.data;
-              const userData = {
-                id: user.id?.toString() || user.user_id?.toString() || '',
-                name: user.name || user.first_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || '',
-                email: user.email || params.userEmail || '',
-              };
-              
-              if (userData.id) {
-                // Store user data
-                const { secureStorage } = await import('../../utils/storage');
-                await secureStorage.setItem('user', JSON.stringify(userData));
-                await secureStorage.setItem('auth_token', 'session_token'); // Session-based auth
-                
-                // Refresh auth session to pick up the new user data
-                await refreshSession();
-                
-                Alert.alert('Success', 'Authentication successful!', [
-                  {
-                    text: 'Continue',
-                    onPress: () => router.replace('/(tabs)'),
-                  },
-                ]);
-                return;
-              }
-            }
+          const loginData = await loginResponse.json();
+          console.log('📊 Login completion response:', loginData);
+
+          if (!loginResponse.ok || !loginData.success) {
+            console.error('❌ Login completion failed:', loginData);
+            return false;
           }
-        } catch (authError) {
-          console.error('Error fetching user data after OTP verification:', authError);
-        }
-        
-        // If auth-check failed, we need to complete the login
-        // The backend verify-otp verifies the OTP but doesn't log the user in
-        // We need to call login again, but the backend should recognize that OTP was already verified
-        console.log('⚠️ Session not established after OTP verification, attempting to complete login...');
-        
-        // Try to complete login with username/password (OTP already verified)
-        // The backend should recognize the verified OTP and complete login
-        if (params.username && params.tempPassword) {
-          try {
-            const loginResponse = await fetch(`${API_BASE_URL}/api/v1/mobile/login`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              credentials: 'include',
-              body: JSON.stringify({
-                username: params.username,
-                password: params.tempPassword,
-                otpVerified: true, // Tell backend OTP was already verified
-                rememberDevice: trustDevice, // Include trust device preference
-              }),
-            });
 
-            const loginData = await loginResponse.json();
-            console.log('📊 Login completion response:', loginData);
+          if (loginData.requires2FA) {
+            console.error('❌ Login still requires 2FA after OTP verification');
+            return false;
+          }
 
-            if (loginResponse.ok && loginData.success && !loginData.requires2FA) {
-              // Login completed successfully
-              let userData = null;
-              
-              // Check for user data in response (multiple possible formats)
-              if (loginData.user) {
-                // Direct user object
-                userData = {
-                  id: loginData.user.id?.toString() || loginData.user.user_id?.toString() || '',
-                  name: loginData.user.name || loginData.user.first_name || `${loginData.user.first_name || ''} ${loginData.user.last_name || ''}`.trim() || loginData.user.username || '',
-                  email: loginData.user.email || params.userEmail || '',
-                };
-              } else if (loginData.session_info && loginData.session_info.user_id) {
-                // Session info format
-                userData = {
-                  id: loginData.session_info.user_id.toString(),
-                  name: params.username,
-                  email: params.userEmail || '',
-                };
-              } else if (loginData.data && loginData.data.user) {
-                // Nested data.user format
-                const user = loginData.data.user;
-                userData = {
-                  id: user.id?.toString() || user.user_id?.toString() || '',
-                  name: user.name || user.first_name || user.username || '',
-                  email: user.email || params.userEmail || '',
-                };
-              }
-              
-              if (userData && userData.id) {
-                // Store token and user data
-                const { secureStorage } = await import('../../utils/storage');
-                if (loginData.token) {
-                  await secureStorage.setItem('auth_token', loginData.token);
-                  console.log('💾 Stored auth token');
-                } else {
-                  await secureStorage.setItem('auth_token', 'session_token');
-                  console.log('💾 Stored session token');
-                }
-                await secureStorage.setItem('user', JSON.stringify(userData));
-                console.log('💾 Stored user data:', userData);
-                
-                // Store device token if device is trusted
-                if (loginData.deviceToken) {
-                  await secureStorage.setItem('device_token', loginData.deviceToken);
-                  console.log('💾 Stored device token for trusted device');
-                  
-                  // Show success message with device trust info
-                  const deviceName = loginData.deviceName || 'this device';
-                  Alert.alert(
-                    'Success', 
-                    `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
-                    [
-                      {
-                        text: 'Continue',
-                        onPress: () => router.replace('/(tabs)'),
-                      },
-                    ]
-                  );
-                } else {
-                  Alert.alert('Success', 'Authentication successful!', [
-                    {
-                      text: 'Continue',
-                      onPress: () => router.replace('/(tabs)'),
-                    },
-                  ]);
-                }
-                
-                // Refresh auth session to pick up the new user data
-                await refreshSession();
-                return;
-              } else {
-                console.error('❌ Login successful but no valid user data found in response');
-                console.log('Response structure:', JSON.stringify(loginData, null, 2));
-                
-                // Try auth-check again since session should be established now
-                console.log('🔄 Trying auth-check again after login...');
-                try {
-                  const authCheckResponse = await fetch(`${API_BASE_URL}/api/v1/mobile/auth-check`, {
-                    method: 'GET',
-                    headers: {
-                      'Content-Type': 'application/json',
-                    },
-                    credentials: 'include',
-                  });
+          if (!loginData.token || typeof loginData.token !== 'string') {
+            console.error('❌ Login succeeded but no JWT returned');
+            return false;
+          }
 
-                  if (authCheckResponse.ok) {
-                    const authData = await authCheckResponse.json();
-                    if (authData.success && (authData.user || authData.data)) {
-                      const user = authData.user || authData.data;
-                      const finalUserData = {
-                        id: user.id?.toString() || user.user_id?.toString() || '',
-                        name: user.name || user.first_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || '',
-                        email: user.email || params.userEmail || '',
-                      };
-                      
-                      if (finalUserData.id) {
-                        const { secureStorage } = await import('../../utils/storage');
-                        await secureStorage.setItem('user', JSON.stringify(finalUserData));
-                        await secureStorage.setItem('auth_token', 'session_token');
-                        
-                        // Refresh auth session to pick up the new user data
-                        await refreshSession();
-                        
-                        Alert.alert('Success', 'Authentication successful!', [
-                          {
-                            text: 'Continue',
-                            onPress: () => router.replace('/(tabs)'),
-                          },
-                        ]);
-                        return;
-                      }
-                    }
-                  }
-                } catch (authCheckError) {
-                  console.error('Error in auth-check after login:', authCheckError);
-                }
-              }
-            } else {
-              console.error('❌ Login completion failed:', {
-                ok: loginResponse.ok,
-                success: loginData.success,
-                requires2FA: loginData.requires2FA,
-                message: loginData.message,
+          let userData = buildUserDataFromMobileLoginUser(
+            loginData.user as Record<string, unknown> | undefined,
+            params.userEmail || '',
+            params.username || ''
+          );
+
+          if (!userData?.id) {
+            try {
+              const authCheckResponse = await fetch(`${API_BASE_URL}/api/v1/mobile/auth-check`, {
+                method: 'GET',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${loginData.token}`,
+                },
               });
+              if (authCheckResponse.ok) {
+                const authData = await authCheckResponse.json();
+                const payload = authData.data || authData.user;
+                userData = buildUserDataFromAuthCheckData(
+                  payload as Record<string, unknown>,
+                  params.userEmail || ''
+                );
+              }
+            } catch (authErr) {
+              console.error('auth-check fallback after login:', authErr);
             }
-          } catch (loginError) {
-            console.error('Error completing login after OTP:', loginError);
           }
+
+          if (!userData?.id) {
+            console.error('❌ No user profile after login');
+            return false;
+          }
+
+          const { secureStorage } = await import('../../utils/storage');
+          await secureStorage.setItem('auth_token', loginData.token);
+          await secureStorage.setItem('user', JSON.stringify(userData));
+          if (loginData.deviceToken) {
+            await secureStorage.setItem('device_token', loginData.deviceToken);
+          }
+
+          if (loginData.deviceToken) {
+            const deviceName = loginData.deviceName || 'this device';
+            Alert.alert(
+              'Success',
+              `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
+              [{ text: 'Continue', onPress: () => router.replace('/(tabs)') }]
+            );
+          } else {
+            Alert.alert('Success', 'Authentication successful!', [
+              { text: 'Continue', onPress: () => router.replace('/(tabs)') },
+            ]);
+          }
+
+          await refreshSession();
+          return true;
+        };
+
+        try {
+          const loginOk = await completeLoginWithOtpVerified();
+          if (loginOk) {
+            return;
+          }
+        } catch (loginError) {
+          console.error('Error completing login after OTP:', loginError);
         }
-        
-        // If we couldn't complete login, show error
-        setError('Verification successful but could not complete login. Please sign in again.');
+
+        if (!params.username || !params.tempPassword) {
+          setError(
+            'Verification succeeded. Sign in again with your password to finish logging in.'
+          );
+        } else {
+          setError('Verification successful but could not complete login. Please sign in again.');
+        }
         setTimeout(() => {
           router.replace('/(auth)/sign-in');
         }, 2000);
@@ -588,44 +531,44 @@ export default function OtpVerificationScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        {/* Hidden autofill input for SMS/email code detection */}
-        {/* This input captures the full OTP code from SMS autofill or keyboard suggestions */}
-        <TextInput
-          ref={autofillInputRef}
-          style={styles.hiddenAutofillInput}
-          value=""
-          onChangeText={handleAutofillChange}
-          keyboardType="number-pad"
-          textContentType={Platform.OS === 'ios' ? 'oneTimeCode' : undefined}
-          autoComplete={Platform.OS === 'android' ? 'sms-otp' : undefined}
-          autoFocus={false}
-          editable={!isLoading}
-          maxLength={6}
-          placeholder=""
-        />
-
-        <View style={styles.otpContainer}>
-          {otpCode.map((digit, index) => (
-            <TextInput
-              key={index}
-              ref={ref => inputRefs.current[index] = ref!}
-              style={[
-                styles.otpInput,
-                digit && styles.otpInputFilled,
-                error && styles.otpInputError,
-              ]}
-              value={digit}
-              onChangeText={(value) => handleOtpChange(value, index)}
-              onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, index)}
-              keyboardType="number-pad"
-              maxLength={1}
-              selectTextOnFocus
-              editable={!isLoading}
-              // Also add autofill props to individual inputs as fallback
-              textContentType={Platform.OS === 'ios' && index === 0 ? 'oneTimeCode' : undefined}
-              autoComplete={Platform.OS === 'android' && index === 0 ? 'sms-otp' : undefined}
-            />
-          ))}
+        {/* Full-width overlay: iOS needs oneTimeCode on a field that can accept 6 digits at once.
+            Do not set oneTimeCode on maxLength={1} cells — that blocks SMS tap-to-fill.
+            Controlled value="" on the autofill field was clearing the native value on each render. */}
+        <View style={styles.otpWrapper}>
+          <View style={styles.otpContainer}>
+            {otpCode.map((digit, index) => (
+              <TextInput
+                key={index}
+                ref={ref => inputRefs.current[index] = ref!}
+                style={[
+                  styles.otpInput,
+                  digit && styles.otpInputFilled,
+                  error && styles.otpInputError,
+                ]}
+                value={digit}
+                onChangeText={(value) => handleOtpChange(value, index)}
+                onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, index)}
+                keyboardType="number-pad"
+                maxLength={1}
+                selectTextOnFocus
+                editable={!isLoading}
+              />
+            ))}
+          </View>
+          <TextInput
+            key={autofillFieldKey}
+            ref={autofillInputRef}
+            style={styles.otpAutofillOverlay}
+            onChangeText={handleAutofillChange}
+            keyboardType="number-pad"
+            textContentType={Platform.OS === 'ios' ? 'oneTimeCode' : undefined}
+            autoComplete={Platform.OS === 'android' ? 'sms-otp' : undefined}
+            importantForAutofill="yes"
+            caretHidden
+            editable={!isLoading}
+            maxLength={6}
+            pointerEvents="none"
+          />
         </View>
 
         {timeLeft > 0 ? (
@@ -750,22 +693,20 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     fontSize: 14,
   },
-  hiddenAutofillInput: {
-    position: 'absolute',
+  otpWrapper: {
+    position: 'relative',
+    marginBottom: 20,
+    paddingHorizontal: 20,
+    minHeight: 55,
+  },
+  otpAutofillOverlay: {
+    ...StyleSheet.absoluteFillObject,
     opacity: 0,
-    width: 1,
-    height: 1,
-    left: -10000,
-    top: -10000,
-    // Make it accessible to autofill but invisible
-    fontSize: 1,
-    color: 'transparent',
+    zIndex: 10,
   },
   otpContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
-    paddingHorizontal: 20,
   },
   otpInput: {
     width: 45,

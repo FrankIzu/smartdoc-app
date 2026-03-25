@@ -21,6 +21,38 @@ interface GlobalProgressBarProps {
 
 const { width: screenWidth } = Dimensions.get('window');
 
+function SmoothProgressFill({
+  progress,
+  backgroundColor,
+}: {
+  progress: number;
+  backgroundColor: string;
+}) {
+  const anim = React.useRef(new Animated.Value(progress)).current;
+  React.useEffect(() => {
+    Animated.timing(anim, {
+      toValue: progress,
+      duration: 260,
+      useNativeDriver: false,
+    }).start();
+  }, [progress, anim]);
+  const widthPct = anim.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+  });
+  return (
+    <Animated.View
+      style={[
+        styles.progressFill,
+        {
+          width: widthPct,
+          backgroundColor,
+        },
+      ]}
+    />
+  );
+}
+
 export default function GlobalProgressBar({
   visible,
   minimized,
@@ -174,14 +206,9 @@ export default function GlobalProgressBar({
             >
               <View style={styles.progressBarContainer}>
                 <View style={styles.progressBar}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        width: `${item.progress}%`,
-                        backgroundColor: getStatusColor(item.status),
-                      },
-                    ]}
+                  <SmoothProgressFill
+                    progress={Math.min(100, Math.max(0, item.progress))}
+                    backgroundColor={getStatusColor(item.status)}
                   />
                 </View>
                 <Text style={[styles.progressPercent, { color: getStatusColor(item.status) }]}>

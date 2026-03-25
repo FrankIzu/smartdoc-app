@@ -11,11 +11,19 @@ import { convertHeicToPng, isHeicFile } from '../utils/imageConversion';
 // Check if running in Expo Go (which doesn't support custom native modules/plugins)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
 
+export interface PendingUpload {
+  id: string;
+  name: string;
+  type: string;
+  size?: number;
+}
+
 interface FileStore extends FileState {
   // Global state
   isDocumentPickerOpen: boolean;
   isImagePickerOpen: boolean;
   lastUploadTime: number; // Track when upload happened for immediate refresh
+  pendingUploads: PendingUpload[]; // Optimistic placeholder rows shown in the file list immediately
   
   // Actions
   fetchFiles: (page?: number, search?: string, category?: string) => Promise<void>;
@@ -30,6 +38,8 @@ interface FileStore extends FileState {
   clearError: () => void;
   updateUploadProgress: (fileId: string, progress: Partial<UploadProgress>) => void;
   removeUploadProgress: (fileId: string) => void;
+  addPendingUpload: (upload: PendingUpload) => void;
+  removePendingUpload: (id: string) => void;
   setDocumentPickerOpen: (isOpen: boolean) => void;
   resetDocumentPicker: () => void;
   forceResetDocumentPicker: () => Promise<void>;
@@ -46,7 +56,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
   uploadProgress: {},
   isDocumentPickerOpen: false,
   isImagePickerOpen: false,
-  lastUploadTime: 0, // Track when upload happened for immediate refresh
+  lastUploadTime: 0,
+  pendingUploads: [],
 
   // Actions
   fetchFiles: async (page = 1, search?, category?) => {
@@ -93,20 +104,23 @@ export const useFileStore = create<FileStore>((set, get) => ({
     
     for (const file of files) {
       const fileId = `upload_${Date.now()}_${Math.random()}`;
-      
-        // Initialize global progress bar
-        const progressId = progressStore.addProgress({
-          title: `Uploading ${file.name}`,
-          progress: 0,
-          status: 'pending',
-          message: 'Preparing upload...',
-        });
-        
-        console.log('📊 Created progress item with ID:', progressId);
-        
-        // Ensure progress bar is visible
-        progressStore.showProgress();
-      
+      const pendingUploadId = file.optimisticId ?? `pending_${fileId}`;
+
+      // Optimistic row (gallery may have registered it already with optimisticId)
+      if (!file.optimisticId) {
+        get().addPendingUpload({ id: pendingUploadId, name: file.name, type: file.type, size: file.size });
+      }
+
+      // Initialize global progress bar immediately at 0%
+      const progressId = progressStore.addProgress({
+        title: `Uploading ${file.name}`,
+        progress: 0,
+        status: 'in-progress',
+        message: 'Preparing upload...',
+      });
+
+      console.log('📊 Created progress item with ID:', progressId);
+
       // Also keep the old progress system for backward compatibility
       get().updateUploadProgress(fileId, {
         fileId,
@@ -288,6 +302,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
           fullErrorMessage,
           [{ text: 'OK' }]
         );
+      } finally {
+        // Always remove the optimistic placeholder once the upload resolves or fails
+        get().removePendingUpload(pendingUploadId);
       }
     }
     
@@ -412,56 +429,29 @@ export const useFileStore = create<FileStore>((set, get) => ({
           return false;
         }
         
-        // Convert assets to FileUpload format and convert HEIC files
-        const { useProgressStore } = require('../services/progressService');
-        const progressStore = useProgressStore.getState();
-        
         const files: FileUpload[] = [];
-        
+
         for (let i = 0; i < result.assets.length; i++) {
           const asset = result.assets[i];
+          const optimisticId = `pending_pick_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 11)}`;
           const originalFile: FileUpload = {
             uri: asset.uri,
             name: asset.fileName || `image_${Date.now()}_${i}.jpg`,
-            // Use mimeType instead of type - mimeType is the actual MIME type (e.g., "image/jpeg")
-            // type is just "image" which doesn't work for FormData
             type: asset.mimeType || asset.type || 'image/jpeg',
             size: asset.fileSize || 0,
+            optimisticId,
           };
 
-          // Show conversion progress if needed
-          const conversionProgressId = progressStore.addProgress({
-            title: `Preparing ${originalFile.name}`,
-            progress: 0,
-            status: 'pending',
-            message: 'Checking format...',
+          // Show rows in the file list immediately (HEIC conversion runs inside uploadFiles)
+          get().addPendingUpload({
+            id: optimisticId,
+            name: originalFile.name,
+            type: originalFile.type,
+            size: originalFile.size,
           });
-          progressStore.showProgress();
-
-          try {
-            // Convert HEIC to PNG if needed
-            const convertedFile = await convertHeicToPng(
-              originalFile,
-              (progress, message) => {
-                progressStore.updateProgress(conversionProgressId, {
-                  progress,
-                  status: 'in-progress',
-                  message,
-                });
-              }
-            );
-
-            // Remove conversion progress and add to files list
-            progressStore.removeProgress(conversionProgressId);
-            files.push(convertedFile);
-          } catch (error: any) {
-            console.error(`Failed to process ${originalFile.name}:`, error);
-            progressStore.removeProgress(conversionProgressId);
-            // Continue with original file if conversion fails
-            files.push(originalFile);
-          }
+          files.push(originalFile);
         }
-        
+
         console.log('🖼️ Files prepared for upload:', files);
         return await get().uploadFiles(files);
       }
@@ -640,6 +630,14 @@ export const useFileStore = create<FileStore>((set, get) => ({
     set({
       uploadProgress: remainingProgress,
     });
+  },
+
+  addPendingUpload: (upload: PendingUpload) => {
+    set((state) => ({ pendingUploads: [...state.pendingUploads, upload] }));
+  },
+
+  removePendingUpload: (id: string) => {
+    set((state) => ({ pendingUploads: state.pendingUploads.filter((u) => u.id !== id) }));
   },
 
   setDocumentPickerOpen: (isOpen: boolean) => {

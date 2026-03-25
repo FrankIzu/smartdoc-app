@@ -3,7 +3,8 @@ import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Image as ExpoImage } from 'expo-image';
 import * as Linking from 'expo-linking';
-import React, { useEffect, useState } from 'react';
+import * as WebBrowser from 'expo-web-browser';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -60,6 +61,11 @@ interface DocumentViewerProps {
 }
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+/** Signed mobile URLs authenticate via query params (sig, exp, uid); no Bearer token required. */
+function isMobileSignedFileUrl(url: string | null | undefined): boolean {
+  return typeof url === 'string' && url.includes('sig=') && url.includes('exp=');
+}
 
 // PDF.js viewer HTML for Expo Go (Android WebView doesn't render <embed> PDF; draw to canvas instead).
 const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105';
@@ -261,7 +267,16 @@ function buildExpoGoPdfViewerHtml(dataUri: string): string {
 // On native: fetch with auth is done via FileSystem.downloadAsync (with headers), then we display
 // the local file. This avoids relying on native Image components to send Authorization headers
 // (expo-image may not forward them on all platforms).
-const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...props }: any) => {
+const AuthenticatedImage = ({
+  source,
+  style,
+  resizeMode,
+  onError,
+  onLoad,
+  /** Parent assigns each render; call on failed signed-URL download to refetch get-file + new sig */
+  signedUrlRefreshRef,
+  ...props
+}: any) => {
   const [imageData, setImageData] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -281,18 +296,25 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
 
   // Web only: fetch image and convert to data URL (FileReader works in browser)
   useEffect(() => {
-    if (Platform.OS !== 'web' || !source?.uri || !authToken) {
-      if (Platform.OS === 'web' && source?.uri && !authToken) setLoading(false);
+    if (Platform.OS !== 'web' || !source?.uri) {
+      return;
+    }
+    const isSignedUrl =
+      source.uri.includes('sig=') && source.uri.includes('exp=') && source.uri.includes('uid=');
+    if (!isSignedUrl && !authToken) {
+      if (source?.uri && !authToken) setLoading(false);
       return;
     }
     let cancelled = false;
     const loadViaFetch = async () => {
       try {
         const response = await fetch(source.uri, {
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'X-Platform': 'web'
-          }
+          headers: isSignedUrl
+            ? { 'X-Platform': 'web' }
+            : {
+                'Authorization': `Bearer ${authToken}`,
+                'X-Platform': 'web'
+              }
         });
         if (cancelled) return;
         if (!response.ok) {
@@ -325,7 +347,12 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
   const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit for base64 conversion
   const LARGE_FILE_THRESHOLD = 20 * 1024 * 1024; // 20MB - use signed URL only
   useEffect(() => {
-    if (Platform.OS === 'web' || !source?.uri || !authToken) return;
+    if (Platform.OS === 'web' || !source?.uri) return;
+
+    const isSignedUrl =
+      source.uri.includes('sig=') && source.uri.includes('exp=') && source.uri.includes('uid=');
+    // Signed URLs authenticate via query params — do not wait for Bearer token (async delay caused expiry races)
+    if (!isSignedUrl && !authToken) return;
 
     const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
     if (!cacheDir) {
@@ -349,6 +376,21 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
           console.log('🔐 [SIGNED-URL] Using signed URL for image download');
           const result = await FileSystem.downloadAsync(source.uri, localUri);
           if (cancelled) return;
+          const httpStatus = (result as { status?: number }).status;
+          if (httpStatus != null && (httpStatus < 200 || httpStatus >= 300)) {
+            console.warn(
+              '🔐 [SIGNED-URL] Image downloadAsync failed status:',
+              httpStatus,
+              '— refreshing signed URL'
+            );
+            try {
+              signedUrlRefreshRef?.current?.();
+            } catch (e) {
+              console.warn('signedUrlRefreshRef failed:', e);
+            }
+            setLoading(false);
+            return;
+          }
           setNativeLocalUri(result.uri);
           setLoading(false);
         } else {
@@ -429,21 +471,20 @@ const AuthenticatedImage = ({ source, style, resizeMode, onError, onLoad, ...pro
       cancelled = true;
       FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
     };
-  }, [source?.uri, authToken, onError]);
+  // onError and signedUrlRefreshRef are intentionally excluded: they are callbacks whose
+  // identity changes on every parent render. Re-downloading a large image file just because
+  // a callback reference changed would create an infinite download loop.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source?.uri, authToken]);
 
   // Native: render from local file (no headers needed)
   if (Platform.OS !== 'web') {
     if (!source?.uri) {
       return null;
     }
-    if (loading && !authToken) {
-      return (
-        <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
-          <ActivityIndicator size="small" color="#007AFF" />
-        </View>
-      );
-    }
-    if (!authToken) {
+    const uriIsSigned =
+      source.uri.includes('sig=') && source.uri.includes('exp=') && source.uri.includes('uid=');
+    if (!uriIsSigned && !authToken) {
       return (
         <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
           <Text style={{ color: '#666', textAlign: 'center' }}>Authentication required</Text>
@@ -517,7 +558,21 @@ const getDocumentTypeName = (fileName: string) => {
 
 
 // Authenticated WebView Component
-const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFileUri, fileId }: { fileUrl: string; authToken: string; fileName: string; fileType: string; localFileUri?: string | null; fileId?: string | number }) => {
+const AuthenticatedWebView = ({
+  fileUrl,
+  authToken,
+  fileName,
+  fileType,
+  localFileUri,
+  fileId,
+}: {
+  fileUrl: string;
+  authToken: string | null;
+  fileName: string;
+  fileType: string;
+  localFileUri?: string | null;
+  fileId?: string | number;
+}) => {
   const colors = useThemeColors();
   const [htmlContent, setHtmlContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -546,11 +601,14 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
           return;
         } else {
           // For text documents, try to fetch content
+          const signed = isMobileSignedFileUrl(fileUrl);
           const response = await fetch(fileUrl, {
-            headers: {
-              'Authorization': `Bearer ${authToken}`,
-              'X-Platform': 'android'
-            }
+            headers: signed
+              ? { 'X-Platform': Platform.OS }
+              : {
+                  'Authorization': `Bearer ${authToken!}`,
+                  'X-Platform': Platform.OS,
+                },
           });
 
           if (response.ok) {
@@ -640,7 +698,7 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
     // On native platforms, use local file when provided so we don't rely on WebView sending headers.
     // iOS WebView doesn't reliably send Authorization headers, so local file is preferred.
     // For signed URLs (sig=, exp=, uid=), do NOT send Authorization - the URL is self-authenticating.
-    const isSignedUrl = typeof finalUrl === 'string' && finalUrl.includes('sig=') && finalUrl.includes('exp=') && finalUrl.includes('uid=');
+    const isSignedUrl = isMobileSignedFileUrl(finalUrl);
     const source = localFileUri
       ? { uri: localFileUri }
       : isSignedUrl
@@ -648,7 +706,7 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
         : {
             uri: finalUrl,
             headers: {
-              'Authorization': `Bearer ${authToken}`,
+              'Authorization': `Bearer ${authToken!}`,
               'X-Platform': Platform.OS,
             },
           };
@@ -840,7 +898,15 @@ const AuthenticatedWebView = ({ fileUrl, authToken, fileName, fileType, localFil
 };
 
 // Text Document Viewer Component
-const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string; authToken: string; fileName: string }) => {
+const TextDocumentViewer = ({
+  fileUrl,
+  authToken,
+  fileName,
+}: {
+  fileUrl: string;
+  authToken: string | null;
+  fileName: string;
+}) => {
   const colors = useThemeColors();
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -855,8 +921,9 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
         setLoading(false);
         return;
       }
-      if (!authToken) {
-        console.warn('TextDocumentViewer: No authToken provided');
+      const signed = isMobileSignedFileUrl(fileUrl);
+      if (!authToken && !signed) {
+        console.warn('TextDocumentViewer: No authToken and URL is not signed');
         setError('Authentication required');
         setLoading(false);
         return;
@@ -871,10 +938,12 @@ const TextDocumentViewer = ({ fileUrl, authToken, fileName }: { fileUrl: string;
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
         
         const response = await fetch(fileUrl, {
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'X-Platform': Platform.OS
-          },
+          headers: signed
+            ? { 'X-Platform': Platform.OS }
+            : {
+                'Authorization': `Bearer ${authToken!}`,
+                'X-Platform': Platform.OS
+              },
           signal: controller.signal
         });
         
@@ -978,6 +1047,11 @@ export default function DocumentViewer({
   const [actualFileType, setActualFileType] = useState<string | null>(null); // Store file_type from API
   const insets = useSafeAreaInsets();
   
+  // Tracks how many times we've auto-refreshed a signed URL to avoid infinite retry loops.
+  const signedUrlRefreshCountRef = useRef(0);
+  /** Assigned after `loadFileUrl` — used by AuthenticatedImage + PDF download on expired signed URLs */
+  const signedUrlRefreshRef = useRef<() => void>(() => {});
+
   // Pinch-to-zoom state (moved to component level for hooks)
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -1081,6 +1155,7 @@ export default function DocumentViewer({
   });
 
   useEffect(() => {
+    signedUrlRefreshCountRef.current = 0;
     loadFileUrl();
   }, [fileId]);
 
@@ -1095,9 +1170,12 @@ export default function DocumentViewer({
   // Download PDF to local cache for native viewer (only if native module is available)
   // Tiered strategy: Signed URLs for >= 5MB, Bearer token + base64 for smaller files
   useEffect(() => {
+    let cancelled = false;
     const downloadPdfForNativeViewer = async () => {
       // Only download if native PDF viewer is available (not in Expo Go)
-      if (!Pdf || isExpoGo || !fileUrl || !authToken || !isPdfFile(fileType)) {
+      const fileUrlIsSigned =
+        typeof fileUrl === 'string' && fileUrl.includes('sig=') && fileUrl.includes('exp=');
+      if (!Pdf || isExpoGo || !fileUrl || !isPdfFile(fileType)) {
         console.log('📄 [PDF-DOWNLOAD] Skipping download:', {
           hasPdf: !!Pdf,
           isExpoGo,
@@ -1109,14 +1187,16 @@ export default function DocumentViewer({
         });
         return;
       }
+      if (!fileUrlIsSigned && !authToken) {
+        console.log('📄 [PDF-DOWNLOAD] Waiting for auth token (Bearer URL)');
+        return;
+      }
       
       console.log('📄 [PDF-DOWNLOAD] Starting PDF download:', {
         fileUrl,
         fileType,
         fileName
       });
-
-      let cancelled = false;
 
       try {
         setLoading(true);
@@ -1147,6 +1227,13 @@ export default function DocumentViewer({
           console.log('🔐 [SIGNED-URL] Using signed URL for PDF download');
           const result = await FileSystem.downloadAsync(fileUrl, localUri);
           if (cancelled) return;
+          const httpStatus = (result as { status?: number }).status;
+          if (httpStatus != null && (httpStatus < 200 || httpStatus >= 300)) {
+            console.warn('🔐 [SIGNED-URL] PDF downloadAsync failed status:', httpStatus, '— refreshing');
+            signedUrlRefreshRef.current();
+            setLoading(false);
+            return;
+          }
           console.log('✅ PDF downloaded successfully for native viewer:', result.uri);
           setPdfLocalUri(result.uri);
           setLoading(false);
@@ -1218,28 +1305,43 @@ export default function DocumentViewer({
             fileType,
             fileName
           });
-          setError('Failed to load PDF. Please try again.');
+
+          // If the URL was a signed URL it may have expired between getFileById and download.
+          // Refresh once by calling loadFileUrl() — it will update fileUrl state which
+          // re-triggers this effect with a fresh signed URL.
+          const isSigned =
+            typeof fileUrl === 'string' &&
+            fileUrl.includes('sig=') &&
+            fileUrl.includes('exp=');
+          if (isSigned) {
+            signedUrlRefreshRef.current();
+          } else {
+            setError('Failed to load PDF. Please try again.');
+          }
           setLoading(false);
         }
       }
     };
 
     downloadPdfForNativeViewer();
-    
+
     return () => {
-      // Cleanup on unmount
+      cancelled = true;
     };
   }, [fileUrl, authToken, fileType, fileName]);
 
   // Expo Go only: fetch PDF with auth and set base64 data URI so WebView can display it (no native PDF in Expo Go).
   const EXPO_GO_PDF_MAX_BYTES = 8 * 1024 * 1024; // 8MB
   useEffect(() => {
-    if (!isExpoGo || !isPdfFile(fileType) || !fileUrl || !authToken) {
+    const signed = isMobileSignedFileUrl(fileUrl);
+    const needsBearer = fileUrl && !signed;
+    if (!isExpoGo || !isPdfFile(fileType) || !fileUrl || (needsBearer && !authToken)) {
       console.log('📄 [EXPO-GO-PDF] Skipping Expo Go PDF load:', {
         isExpoGo,
         isPdf: isPdfFile(fileType),
         hasFileUrl: !!fileUrl,
         hasAuthToken: !!authToken,
+        signedUrl: signed,
         fileType
       });
       return;
@@ -1250,7 +1352,9 @@ export default function DocumentViewer({
     (async () => {
       try {
         const res = await fetch(fileUrl, {
-          headers: { 'Authorization': `Bearer ${authToken}`, 'X-Platform': Platform.OS },
+          headers: signed
+            ? { 'X-Platform': Platform.OS }
+            : { 'Authorization': `Bearer ${authToken}`, 'X-Platform': Platform.OS },
         });
         if (cancelled) {
           console.log('📄 [EXPO-GO-PDF] Cancelled before response');
@@ -1307,12 +1411,13 @@ export default function DocumentViewer({
     // Use actualFileType from API if available, otherwise fall back to fileType prop
     const effectiveFileType = actualFileType || fileType;
     const isSvg = isSvgFile(fileName, effectiveFileType);
+    const signed = isMobileSignedFileUrl(fileUrl);
     const needOfficeFallback =
       (Platform.OS !== 'web') &&
       (isOfficeDocument(fileType) || isSvg) &&
       !isPdfFile(fileType) &&
       !!fileUrl &&
-      !!authToken;
+      (signed || !!authToken);
     if (!needOfficeFallback) return;
 
     const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
@@ -1604,9 +1709,19 @@ export default function DocumentViewer({
         // Skip dimensions for SVG files (vector graphics, no fixed dimensions)
         const detectedFileKind = fileInfo.file.file_kind || fileCategory;
         const detectedFileType = fileInfo.file.file_type || fileType;
+        const previewIsSigned =
+          typeof previewUrl === 'string' &&
+          previewUrl.includes('sig=') &&
+          previewUrl.includes('exp=');
         if (isImageFile(fileType, detectedFileKind, fileCategory) && !isSvgFile(fileName, detectedFileType)) {
-          console.log('🖼️ [IMAGE-DETECT] Image file detected, getting dimensions:', { fileType, file_kind: detectedFileKind, fileCategory });
-          await getImageDimensionsWithAuth(previewUrl);
+          console.log('🖼️ [IMAGE-DETECT] Image file detected:', { fileType, file_kind: detectedFileKind, fileCategory });
+          // Do not prefetch dimensions for signed URLs — it duplicates full GET /view traffic and races TTL;
+          // AuthenticatedImage downloads once; layout uses full screen until optional onLoad sizing.
+          if (!previewIsSigned) {
+            await getImageDimensionsWithAuth(previewUrl);
+          } else {
+            console.log('🖼️ [IMAGE] Skipping dimension prefetch for signed URL (avoids duplicate fetch / expiry)');
+          }
         } else if (isSvgFile(fileName, detectedFileType)) {
           console.log('🖼️ [SVG] SVG file detected, skipping dimension check (vector graphics)');
         }
@@ -1829,6 +1944,16 @@ export default function DocumentViewer({
     }
   };
 
+  signedUrlRefreshRef.current = () => {
+    if (signedUrlRefreshCountRef.current >= 3) {
+      console.warn('🔄 [SIGNED-URL] Refresh limit reached (3)');
+      return;
+    }
+    signedUrlRefreshCountRef.current += 1;
+    console.log('🔄 [SIGNED-URL] Refreshing file URLs (attempt', signedUrlRefreshCountRef.current, ')');
+    void loadFileUrl();
+  };
+
   const getImageDimensionsWithAuth = async (imageUrl: string) => {
     try {
       // Signed URLs (sig=, exp=, uid=) are self-authenticating - do not send Authorization
@@ -2017,7 +2142,13 @@ export default function DocumentViewer({
     // Use actualFileType from API if available, otherwise fall back to fileType prop
     const effectiveFileType = actualFileType || fileType;
     if (isSvgFile(fileName, effectiveFileType)) {
-      if (Platform.OS !== 'web' && !webViewLocalUri && fileUrl && authToken) {
+      // Local download runs only with Bearer auth or a signed URL; show spinner while that fetch runs.
+      if (
+        Platform.OS !== 'web' &&
+        !webViewLocalUri &&
+        fileUrl &&
+        (authToken || isMobileSignedFileUrl(fileUrl))
+      ) {
         console.log('🖼️ [SVG] Waiting for SVG file download...');
         return (
           <View style={styles.loadingContainer}>
@@ -2247,6 +2378,7 @@ export default function DocumentViewer({
             <Animated.View style={animatedImageStyle}>
               <AuthenticatedImage
                 source={{ uri: fileUrl }}
+                signedUrlRefreshRef={signedUrlRefreshRef}
                 style={[
                   styles.image,
                   {
@@ -2275,7 +2407,7 @@ export default function DocumentViewer({
   const renderDocumentPreview = () => {
     if (!fileUrl) return null;
 
-    if (!authToken) {
+    if (!authToken && !isMobileSignedFileUrl(fileUrl)) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
@@ -2414,7 +2546,12 @@ export default function DocumentViewer({
             />
           );
         }
-        if (isExpoGo && fileUrl && authToken && !webViewPdfDataUri) {
+        if (
+          isExpoGo &&
+          fileUrl &&
+          (authToken || isMobileSignedFileUrl(fileUrl)) &&
+          !webViewPdfDataUri
+        ) {
           return (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#007AFF" />
@@ -2441,9 +2578,16 @@ export default function DocumentViewer({
               }}
               onPress={async () => {
                 try {
-                  if (fileUrl) await Linking.openURL(fileUrl);
+                  if (!fileUrl) return;
+                  try {
+                    await WebBrowser.openBrowserAsync(fileUrl);
+                  } catch {
+                    const can = await Linking.canOpenURL(fileUrl).catch(() => true);
+                    if (can) await Linking.openURL(fileUrl);
+                    else throw new Error('Cannot open URL');
+                  }
                 } catch (err: any) {
-                  Alert.alert('Error', 'Failed to open PDF. Please try again.');
+                  Alert.alert('Error', err?.message || 'Failed to open PDF. Please try again.');
                 }
               }}
             >
@@ -2484,7 +2628,9 @@ export default function DocumentViewer({
                 setPdfLocalUri(null);
                 // Retry download
                 const downloadPdf = async () => {
-                  if (!fileUrl || !authToken) return;
+                  if (!fileUrl) return;
+                  const signed = isMobileSignedFileUrl(fileUrl);
+                  if (!signed && !authToken) return;
                   try {
                     setLoading(true);
                     const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
@@ -2492,10 +2638,12 @@ export default function DocumentViewer({
                     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
                     const localUri = `${cacheDir}${sanitizedFileName}`;
                     const downloadResult = await FileSystem.downloadAsync(fileUrl, localUri, {
-                      headers: {
-                        'Authorization': `Bearer ${authToken}`,
-                        'X-Platform': Platform.OS
-                      }
+                      headers: signed
+                        ? { 'X-Platform': Platform.OS }
+                        : {
+                            'Authorization': `Bearer ${authToken}`,
+                            'X-Platform': Platform.OS,
+                          },
                     });
                     setPdfLocalUri(downloadResult.uri);
                     setLoading(false);
@@ -2638,7 +2786,12 @@ export default function DocumentViewer({
     // Use the AuthenticatedWebView for Office documents (fallback if PDF viewer not available)
     // On native platforms (Android/iOS), wait for webViewLocalUri so the WebView doesn't load the URL without auth
     // iOS WebView doesn't reliably send headers, so we need to download locally first
-    if (Platform.OS !== 'web' && !webViewLocalUri && fileUrl && authToken) {
+    if (
+      Platform.OS !== 'web' &&
+      !webViewLocalUri &&
+      fileUrl &&
+      (authToken || isMobileSignedFileUrl(fileUrl))
+    ) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
@@ -2661,7 +2814,7 @@ export default function DocumentViewer({
   const renderTextDocument = () => {
     if (!fileUrl) return null;
 
-    if (!authToken) {
+    if (!authToken && !isMobileSignedFileUrl(fileUrl)) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />

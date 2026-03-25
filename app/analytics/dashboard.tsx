@@ -23,7 +23,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import DocumentViewer from '../../components/DocumentViewer';
-import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
+import { useAuth } from '../context/auth';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 
@@ -140,9 +140,77 @@ function getAmount(item: any): number {
   return 0;
 }
 
+function strTrim(v: unknown): string {
+  if (v == null) return '';
+  const s = String(v).trim();
+  return s;
+}
+
+/** Store / merchant from structured fields only (matches web + mobile file shapes; excludes filename). */
+function getReceiptPrimaryStoreName(receipt: any): string {
+  const j = receipt?.json_data;
+  const rd =
+    j?.receipt_data != null && typeof j.receipt_data === 'object'
+      ? (j.receipt_data as Record<string, unknown>)
+      : null;
+  const candidates = [
+    receipt?.store_name,
+    receipt?.business_name,
+    receipt?.merchant_name,
+    receipt?.vendor_name,
+    j?.store_name,
+    j?.business_name,
+    j?.merchant_name,
+    j?.vendor_name,
+    rd?.store_name,
+    rd?.business_name,
+    rd?.merchant_name,
+    rd?.vendor_name,
+  ];
+  for (const c of candidates) {
+    const s = strTrim(c);
+    if (s) return s;
+  }
+  return '';
+}
+
+/** Title for receipt rows: primary store name, else file name, else placeholder. */
+function getReceiptListTitle(receipt: any, index: number): string {
+  const primary = getReceiptPrimaryStoreName(receipt);
+  if (primary) return primary;
+  for (const c of [receipt?.original_filename, receipt?.filename, receipt?.name]) {
+    const s = strTrim(c);
+    if (s) return s;
+  }
+  return `Receipt ${index + 1}`;
+}
+
+/** Payment + location snippet for subtitle (optional second line). */
+function getReceiptSecondaryMetaLine(receipt: any): string | null {
+  const j = receipt?.json_data;
+  const rd =
+    j?.receipt_data != null && typeof j.receipt_data === 'object'
+      ? (j.receipt_data as Record<string, unknown>)
+      : null;
+  const payment =
+    strTrim(j?.payment_method) ||
+    strTrim(j?.payment_type) ||
+    strTrim(receipt?.payment_method) ||
+    (rd ? strTrim(rd.payment_method) || strTrim(rd.payment_type) : '');
+  const addr =
+    strTrim(j?.store_address) ||
+    strTrim(j?.address) ||
+    strTrim(j?.city) ||
+    (rd ? strTrim(rd.store_address) || strTrim(rd.address) || strTrim(rd.city) : '');
+  const addrDisplay = addr.length > 40 ? `${addr.slice(0, 37)}…` : addr;
+  const bits = [payment, addrDisplay].filter(Boolean);
+  if (bits.length === 0) return null;
+  return bits.join(' · ');
+}
+
 export default function AnalyticsDashboard() {
   const router = useRouter();
-  const { isAuthenticated, user, isLoading: authLoading } = useEnhanced2FAAuth();
+  const { user, loading: authLoading } = useAuth();
   const colors = useThemeColors();
   const [analytics, setAnalytics] = useState<ComprehensiveAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -326,7 +394,11 @@ export default function AnalyticsDashboard() {
     if (!storeVendorName || !storeVendorName.trim()) return true;
     const search = storeVendorName.trim().toLowerCase();
     const name = isReceipt
-      ? (item?.json_data?.store_name || item?.json_data?.receipt_data?.merchant_name || item?.business_name || item?.original_filename || item?.filename || item?.name || '')
+      ? (getReceiptPrimaryStoreName(item) ||
+          strTrim(item?.original_filename) ||
+          strTrim(item?.filename) ||
+          strTrim(item?.name) ||
+          '')
       : (item?.vendor_name || item?.business_name || item?.vendor || item?.json_data?.vendor_name || item?.json_data?.invoice_data?.vendor_name || item?.json_data?.merchant_name || '');
     const nameStr = (typeof name === 'string' ? name : '').toLowerCase();
     return nameStr.includes(search);
@@ -492,7 +564,7 @@ export default function AnalyticsDashboard() {
     setShowDocumentViewer(true);
   };
 
-  console.log('📊 AnalyticsDashboard component loaded', { isAuthenticated, user: user?.username, authLoading });
+  console.log('📊 AnalyticsDashboard component loaded', { hasUser: !!user, user: user?.username, authLoading });
 
   // Track previous authLoading state to detect transition from true to false
   const prevAuthLoadingRef = useRef(authLoading);
@@ -502,7 +574,7 @@ export default function AnalyticsDashboard() {
       setLoading(true);
       console.log('🔍 Loading analytics for', days, 'days');
       console.log('📊 Current state:', { 
-        isAuthenticated, 
+        hasUser: !!user, 
         authLoading, 
         loading: true, 
         hasAnalytics: !!analytics,
@@ -516,9 +588,9 @@ export default function AnalyticsDashboard() {
         return;
       }
       
-      // Check authentication after auth has finished loading
-      if (!isAuthenticated) {
-        console.warn('📊 User not authenticated, cannot load analytics');
+      // Match other tabs: gate on useAuth() user (same session as Home/Documents)
+      if (!user) {
+        console.warn('📊 No user session, cannot load analytics');
         const periodLabel = getPeriodLabel(days, customDateFrom, customDateTo, !!(useCustomFilters && customDateFrom && customDateTo));
         const noAuthData = {
           summary: {
@@ -1062,7 +1134,7 @@ export default function AnalyticsDashboard() {
     storeVendorName,
     amountMin,
     amountMax,
-    isAuthenticated,
+    user,
     authLoading,
   ]);
 
@@ -1121,7 +1193,7 @@ export default function AnalyticsDashboard() {
     const amountStr = numericAmount > 0 ? String(numericAmount) : (typeof amount === 'string' ? amount : '');
     const storeName = type === 'invoice'
       ? (item?.vendor_name ?? item?.json_data?.vendor_name ?? item?.json_data?.business_name ?? item?.json_data?.store_name ?? '')
-      : (item?.json_data?.store_name ?? item?.json_data?.business_name ?? item?.json_data?.merchant_name ?? item?.json_data?.receipt_data?.store_name ?? '');
+      : getReceiptPrimaryStoreName(item);
     const category = item?.category ?? item?.json_data?.category ?? item?.receipt_category ?? item?.invoice_category ?? 'Uncategorized';
     setEditItem(item);
     setEditType(type);
@@ -1629,7 +1701,7 @@ export default function AnalyticsDashboard() {
   // This is critical for Android where useEffect may not re-run when navigating to the screen
   useFocusEffect(
     useCallback(() => {
-      console.log('📊 AnalyticsDashboard useFocusEffect triggered', { isAuthenticated, authLoading, user: user?.username, platform: Platform.OS });
+      console.log('📊 AnalyticsDashboard useFocusEffect triggered', { hasUser: !!user, authLoading, user: user?.username, platform: Platform.OS });
       // Wait for authentication to finish loading before attempting to load analytics
       if (authLoading) {
         console.log('📊 Auth still loading, waiting...');
@@ -1637,7 +1709,7 @@ export default function AnalyticsDashboard() {
       }
       // Once auth has finished loading, load analytics (whether authenticated or not)
       loadAnalytics();
-    }, [isAuthenticated, authLoading, user?.id, user?.username, loadAnalytics])
+    }, [user, authLoading, loadAnalytics])
   );
 
   const formatCurrency = (amount: number) => {
@@ -2301,25 +2373,18 @@ export default function AnalyticsDashboard() {
                         const numericAmount = typeof amount === 'number' ? amount : 
                                              (typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]/g, '')) || 0 : 0);
                         
-                        // Extract business name from multiple possible locations
-                        const businessName = receipt.json_data?.store_name || 
-                                           receipt.json_data?.business_name || 
-                                           receipt.json_data?.merchant_name ||
-                                           receipt.json_data?.receipt_data?.store_name ||
-                                           receipt.json_data?.receipt_data?.business_name ||
-                                           receipt.json_data?.receipt_data?.merchant_name ||
-                                           receipt.original_filename || 
-                                           receipt.filename || 
-                                           receipt.name || 
-                                           `Receipt ${index + 1}`;
-                        
+                        const businessName = getReceiptListTitle(receipt, index);
+                        const secondaryMeta = getReceiptSecondaryMetaLine(receipt);
+
                         // Extract category
-                        const category = receipt.category || receipt.json_data?.category || 'Uncategorized';
+                        const category = receipt.category || receipt.json_data?.category || receipt.receipt_category || 'Uncategorized';
                         
                         // Debug logging for "techwave" receipts
                         if (businessName.toLowerCase().includes('techwave')) {
+                          const jsonSerialized = JSON.stringify(receipt.json_data ?? null);
                           console.log('🔍 Techwave receipt found:', {
                             businessName,
+                            secondaryMeta,
                             extractedAmount: amount,
                             numericAmount,
                             jsonDataKeys: receipt.json_data ? Object.keys(receipt.json_data) : [],
@@ -2327,7 +2392,7 @@ export default function AnalyticsDashboard() {
                             jsonDataAmount: receipt.json_data?.amount,
                             jsonDataTotalAmount: receipt.json_data?.total_amount,
                             receiptAmount: receipt.amount,
-                            fullJsonData: JSON.stringify(receipt.json_data).substring(0, 500)
+                            fullJsonData: (typeof jsonSerialized === 'string' ? jsonSerialized : '').substring(0, 500)
                           });
                         }
                         
@@ -2359,6 +2424,11 @@ export default function AnalyticsDashboard() {
                               <Text style={styles.compactListSubtext}>
                                   {date} • {category}
                               </Text>
+                              {secondaryMeta ? (
+                                <Text style={styles.compactListMeta} numberOfLines={2}>
+                                  {secondaryMeta}
+                                </Text>
+                              ) : null}
                             </View>
                               <View style={styles.receiptActions}>
                             <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
@@ -3935,6 +4005,12 @@ const styles = StyleSheet.create({
   compactListSubtext: {
     fontSize: 12,
     color: '#666',
+  },
+  compactListMeta: {
+    fontSize: 11,
+    color: '#888',
+    marginTop: 2,
+    lineHeight: 15,
   },
   compactListAmount: {
     fontSize: 15,

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -469,7 +469,7 @@ export default function BookmarkDetailScreen() {
   };
 
   const handleRenameDocument = () => {
-    if (!selectedDocumentForMenu) return;
+    if (!selectedDocumentForMenu || bookmark?.is_locked) return;
     const name = selectedDocumentForMenu.name || '';
     setRenameInputValue(name.replace(/\.[^/.]+$/, ''));
     setShowKebabMenu(false);
@@ -477,7 +477,7 @@ export default function BookmarkDetailScreen() {
   };
 
   const handleConfirmRename = async () => {
-    if (!selectedDocumentForMenu || !renameInputValue.trim()) return;
+    if (!selectedDocumentForMenu || !renameInputValue.trim() || bookmark?.is_locked) return;
     const ext = (selectedDocumentForMenu.name || '').split('.').pop() || '';
     const newName = ext ? `${renameInputValue.trim()}.${ext}` : renameInputValue.trim();
     setRenaming(true);
@@ -1247,7 +1247,7 @@ export default function BookmarkDetailScreen() {
                 <Text style={dynamicStyles.kebabMenuText}>Remove from Bookmark</Text>
               </TouchableOpacity>
             )}
-            {selectedDocumentForMenu && !isReceiptOrInvoice(selectedDocumentForMenu) && (
+            {selectedDocumentForMenu && !bookmark.is_locked && !isReceiptOrInvoice(selectedDocumentForMenu) && (
               <TouchableOpacity style={dynamicStyles.kebabMenuItem} onPress={handleRenameDocument}>
                 <Ionicons name="pencil-outline" size={20} color="#6B7280" />
                 <Text style={dynamicStyles.kebabMenuText}>Rename</Text>

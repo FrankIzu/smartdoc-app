@@ -6,7 +6,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     ActivityIndicator,
     Alert,
-    Animated,
     FlatList,
     Keyboard,
     Modal,
@@ -19,6 +18,7 @@ import {
     TextInput,
     TouchableOpacity,
     View,
+    type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
@@ -103,12 +103,47 @@ function isEditableTextFormat(file: Document | { original_filename?: string; fil
   return false;
 }
 
+/** True when API marks a bookmark as locked (handles 0/1 and string flags). */
+function isBookmarkLocked(b: any): boolean {
+  const v = b?.is_locked;
+  if (v === true || v === false) return v;
+  if (v === 1 || v === 0) return v === 1;
+  if (typeof v === 'string') return ['true', '1', 'yes', 't'].includes(v.toLowerCase());
+  return false;
+}
+
+/** Module-level so list items keep a stable component identity (avoids remount/janky spinners). */
+const DocumentListIcon = React.memo(function DocumentListIcon({
+  pending,
+  iconName,
+  iconColor,
+  containerStyle,
+}: {
+  pending: boolean;
+  iconName: React.ComponentProps<typeof Ionicons>['name'];
+  iconColor: string;
+  containerStyle: ViewStyle;
+}) {
+  if (pending) {
+    return (
+      <View style={containerStyle}>
+        <ActivityIndicator size="small" color={iconColor} />
+      </View>
+    );
+  }
+  return (
+    <View style={containerStyle}>
+      <Ionicons name={iconName} size={24} color={iconColor} />
+    </View>
+  );
+});
+
 export default function QuickFilesScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
-  const { uploadFromGallery, lastUploadTime } = useFileStore();
+  const { uploadFromGallery, lastUploadTime, pendingUploads } = useFileStore();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadTime, setLastLoadTime] = useState<number>(0);
@@ -200,20 +235,37 @@ export default function QuickFilesScreen() {
   // Status indicator state for recently completed files
   const [recentlyCompletedFiles, setRecentlyCompletedFiles] = useState<Set<string>>(new Set());
 
-  // Cache for API responses to reduce loading time
-  const [apiCache, setApiCache] = useState<{
+  const CACHE_DURATION = 30000; // 30 seconds cache
+  const AUTO_REFRESH_INTERVAL = 60000; // Auto-refresh every 60 seconds
+  /** First page size for mobile file list — smaller = faster (less JSON per row with json_data). Only one page is loaded until “load more” exists; raise to 50 if you need more rows visible. */
+  const MOBILE_FILES_PAGE_SIZE = 25;
+
+  // Use a ref for the API cache so loadDocuments always reads the latest value
+  // without needing to be in its own dependency array (avoids stale-closure cache misses).
+  const apiCacheRef = React.useRef<{
     data: Document[];
     timestamp: number;
-    searchQuery: string;
-    filterBy: FilterOption;
+    isFormsMode: boolean;
     workspaceId?: number;
   } | null>(null);
 
-  const CACHE_DURATION = 30000; // 30 seconds cache
-  const AUTO_REFRESH_INTERVAL = 60000; // Auto-refresh every 60 seconds
-  
+  // Locked-bookmark file ID cache — keyed so we don't re-fetch on every loadDocuments call.
+  // Refreshed when bookmark mutations happen or after LOCKED_BOOKMARK_CACHE_MS elapses.
+  const lockedBookmarkCacheRef = React.useRef<{
+    fileIds: Set<string>;
+    bookmarks: any[];
+    timestamp: number;
+  } | null>(null);
+  const LOCKED_BOOKMARK_CACHE_MS = 5 * 60 * 1000; // 5 minutes
+
+  // Ref so loadDocuments can read the latest filterBy without being a dep
+  const filterByRef = React.useRef(filterBy);
+  filterByRef.current = filterBy;
+
   // Polling for pending files (classification polling)
   const classificationPollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  // Safety counter: stop classification polling after 60 polls (3 minutes) to prevent infinite loops
+  const classificationPollCountRef = React.useRef(0);
   // In-flight guard: prevents concurrent loadDocuments calls from producing duplicate requests
   const isLoadingDocumentsRef = React.useRef(false);
   // Persists locked-bookmark file IDs across renders so the filter can be applied
@@ -234,7 +286,7 @@ export default function QuickFilesScreen() {
         
         // Bypass debounce and cache - force immediate refresh
         lastLoadTimeRef.current = 0; // Reset debounce timer
-        setApiCache(null); // Clear cache to force fresh load
+        apiCacheRef.current = null; // Clear cache to force fresh load
         
         // Refresh immediately, then retry after short delay in case backend needs time
         loadDocuments(true);
@@ -511,10 +563,8 @@ export default function QuickFilesScreen() {
   const filteredAndSortedDocuments = useMemo(() => {
     let filtered = documents;
 
-    // Hide files that are in a locked bookmark
-    if (fileIdsInLockedBookmarks.size > 0) {
-      filtered = filtered.filter(doc => !fileIdsInLockedBookmarks.has(doc.id));
-    }
+    // Hide files that are in a locked bookmark (empty Set = no-op)
+    filtered = filtered.filter(doc => !fileIdsInLockedBookmarks.has(doc.id));
 
     // Apply search filter
     if (searchQuery.trim()) {
@@ -595,33 +645,75 @@ export default function QuickFilesScreen() {
 
   /**
    * Fetches IDs of all files that belong to at least one locked bookmark.
-   * Returns an empty Set on any error so it never blocks the files list.
+   * Results are cached for LOCKED_BOOKMARK_CACHE_MS to avoid N+1 queries on every load.
+   * Per-locked-bookmark file fetches are parallelised for speed.
    */
-  const fetchLockedBookmarkFileIds = useCallback(async (): Promise<Set<string>> => {
-    try {
-      const response = await apiClient.getBookmarks();
-      if (!response.success || !response.data) return new Set();
-      const allBookmarks: any[] = Array.isArray(response.data)
-        ? response.data
-        : (response.data.bookmarks || []);
+  const fetchLockedBookmarkFileIds = useCallback(async (forceRefresh = false): Promise<Set<string>> => {
+    const now = Date.now();
 
-      // Also keep the bookmark list in state for the "Add to bookmark" modal
+    // Return cached result if still fresh (avoids N+1 on every loadDocuments call)
+    if (
+      !forceRefresh &&
+      lockedBookmarkCacheRef.current &&
+      now - lockedBookmarkCacheRef.current.timestamp < LOCKED_BOOKMARK_CACHE_MS
+    ) {
+      setBookmarks(lockedBookmarkCacheRef.current.bookmarks);
+      return lockedBookmarkCacheRef.current.fileIds;
+    }
+
+    try {
+      const allBookmarks: any[] = [];
+      let bmOffset = 0;
+      const bmPage = 100;
+      for (;;) {
+        const response = await apiClient.getBookmarks(bmPage, bmOffset);
+        if (!response.success || !response.data) break;
+        const batch = Array.isArray(response.data)
+          ? response.data
+          : (response.data as any).bookmarks || [];
+        allBookmarks.push(...batch);
+        const pag = (response as any).pagination;
+        const hasMore = pag?.has_more === true || (pag?.has_more !== false && batch.length >= bmPage);
+        if (!hasMore || batch.length === 0) break;
+        bmOffset += bmPage;
+      }
+
       setBookmarks(allBookmarks);
 
-      const locked = allBookmarks.filter((b: any) => b.is_locked);
-      const lockedFileIds = new Set<string>();
-      await Promise.all(locked.map(async (b: any) => {
-        try {
-          const fr = await apiClient.getBookmarkFiles(b.id);
-          const files = (fr as any).data ?? (fr as any).files ?? [];
-          (Array.isArray(files) ? files : []).forEach((f: any) => {
-            const id = f.id ?? f.file_id;
-            if (id != null) lockedFileIds.add(String(id));
-          });
-        } catch {
-          // ignore per-bookmark errors
-        }
-      }));
+      const locked = allBookmarks.filter(isBookmarkLocked);
+
+      // Fetch all locked bookmarks' file lists in parallel (fixes N+1)
+      const fileIdArrays = await Promise.all(
+        locked.map(async (b) => {
+          const ids: string[] = [];
+          let fOffset = 0;
+          const fLimit = 100;
+          for (;;) {
+            try {
+              const fr = await apiClient.getBookmarkFiles(b.id, { limit: fLimit, offset: fOffset });
+              const files = (fr as any).data ?? (fr as any).files ?? [];
+              const arr = Array.isArray(files) ? files : [];
+              arr.forEach((f: any) => {
+                const id = f.id ?? f.file_id ?? f.document_id ?? f.fileId;
+                if (id != null && id !== '') ids.push(String(id));
+              });
+              const fpag = (fr as any).pagination;
+              const more =
+                fpag?.has_more === true ||
+                (fpag?.has_more !== false && arr.length >= fLimit);
+              if (!more || arr.length === 0) break;
+              fOffset += fLimit;
+            } catch {
+              break;
+            }
+          }
+          return ids;
+        })
+      );
+
+      const lockedFileIds = new Set<string>(fileIdArrays.flat());
+
+      lockedBookmarkCacheRef.current = { fileIds: lockedFileIds, bookmarks: allBookmarks, timestamp: now };
       return lockedFileIds;
     } catch {
       return new Set();
@@ -634,17 +726,22 @@ export default function QuickFilesScreen() {
     if (isLoadingDocumentsRef.current) return;
 
     const now = Date.now();
-    
-    // Check cache first (unless force refresh)
-    // Cache key includes workspaceId to avoid showing wrong workspace files
-    if (!forceRefresh && apiCache && 
-        (now - apiCache.timestamp) < CACHE_DURATION &&
-        apiCache.searchQuery === searchQuery &&
-        apiCache.filterBy === filterBy &&
-        apiCache.workspaceId === workspaceId) {
+    // Read filterBy from the ref so this callback never needs to be recreated when
+    // the user changes filter/search (those are applied client-side, not API-side).
+    const currentFilterBy = filterByRef.current;
+    const isFormsMode = currentFilterBy === 'forms';
+
+    // Check ref-based cache (avoids stale-closure issues of state-based cache)
+    const cache = apiCacheRef.current;
+    if (
+      !forceRefresh &&
+      cache &&
+      now - cache.timestamp < CACHE_DURATION &&
+      cache.isFormsMode === isFormsMode &&
+      cache.workspaceId === workspaceId
+    ) {
       console.log('📁 Using cached documents for workspaceId:', workspaceId);
-      // Filter out any files that have since been added to locked bookmarks
-      const filtered = apiCache.data.filter(doc => !lockedFileIdsRef.current.has(doc.id));
+      const filtered = cache.data.filter(doc => !lockedFileIdsRef.current.has(doc.id));
       setDocuments(filtered);
       setLoading(false);
       return;
@@ -654,15 +751,11 @@ export default function QuickFilesScreen() {
     setError(null);
     setLoading(true);
 
-    // Test backend connectivity (non-blocking)
-    apiClient.testConnectivity().catch((error) => {
-      console.warn('Connectivity test failed (non-blocking):', error);
-    });
-
     // Fetch locked bookmark file IDs and documents in parallel so we never show
     // locked files — avoids the flash of locked files appearing then disappearing.
+    // The locked-bookmark fetch is internally cached (LOCKED_BOOKMARK_CACHE_MS).
     const fetchDocumentsResponse = async () => {
-      if (filterBy === 'forms') {
+      if (isFormsMode) {
         return apiClient.getForms();
       }
       if (workspaceId != null) {
@@ -670,28 +763,33 @@ export default function QuickFilesScreen() {
       }
       try {
         console.log('📁 Loading documents (no workspace)');
-        const res = await apiClient.getDocuments(1, 50, undefined, undefined);
+        const res = await apiClient.getDocuments(1, MOBILE_FILES_PAGE_SIZE, undefined, undefined);
         console.log('📁 Documents response received:', res?.success, 'Files count:', (res as any)?.data?.length || (res as any)?.files?.length || 0);
         return res;
       } catch (err) {
         console.warn('Documents endpoint failed, trying files endpoint:', err);
-        return apiClient.getFiles(1, 50, undefined, undefined);
+        return apiClient.getFiles(1, MOBILE_FILES_PAGE_SIZE, undefined, undefined);
       }
     };
 
     let response: any;
-    let lockedFileIds: Set<string>;
+    let lockedFileIds = new Set<string>();
     try {
-      [lockedFileIds, response] = await Promise.all([
-        fetchLockedBookmarkFileIds(),
-        fetchDocumentsResponse(),
-      ]);
-      lockedFileIdsRef.current = lockedFileIds;
-      setFileIdsInLockedBookmarks(lockedFileIds);
+      // Forms list does not filter by locked bookmarks — skip that slow multi-request sweep here.
+      if (isFormsMode) {
+        response = await fetchDocumentsResponse();
+      } else {
+        [lockedFileIds, response] = await Promise.all([
+          fetchLockedBookmarkFileIds(forceRefresh),
+          fetchDocumentsResponse(),
+        ]);
+        lockedFileIdsRef.current = lockedFileIds;
+        setFileIdsInLockedBookmarks(lockedFileIds);
+      }
     } catch (err) {
       isLoadingDocumentsRef.current = false;
       setLoading(false);
-      if (filterBy === 'forms') {
+      if (isFormsMode) {
         console.error('Forms endpoint failed:', err);
         throw err;
       }
@@ -706,7 +804,7 @@ export default function QuickFilesScreen() {
     try {
       
       // Handle forms data differently from documents
-      if (filterBy === 'forms') {
+      if (isFormsMode) {
         const formsArray = (response as any).forms || (response as any).data || [];
         if (Array.isArray(formsArray)) {
           const mappedForms = formsArray.map((form: any) => {
@@ -719,7 +817,7 @@ export default function QuickFilesScreen() {
               status: 'processed' as const,
               tags: [],
               category: 'forms' as const,
-              formData: form, // Store original form data for form-specific actions
+              formData: form,
               responseCount: form.response_count || 0,
             };
           });
@@ -727,14 +825,7 @@ export default function QuickFilesScreen() {
           setDocuments(mappedForms);
           setLastLoadTime(now);
           
-          // Update cache
-          setApiCache({
-            data: mappedForms,
-            timestamp: now,
-            searchQuery,
-            filterBy,
-            workspaceId,
-          });
+          apiCacheRef.current = { data: mappedForms, timestamp: now, isFormsMode: true, workspaceId };
         } else {
           setDocuments([]);
           setError('No forms found or API returned unexpected format.');
@@ -787,27 +878,20 @@ export default function QuickFilesScreen() {
                 uploadDate: new Date(doc.created_at),
                 status: status,
                 tags: [],
-                category: doc.receipt_category || undefined, // Use receipt_category for the actual category (Supplies, Rent, etc.)
-                file_kind: doc.file_kind, // Store raw file_kind to check for receipts
+                category: doc.receipt_category || undefined,
+                file_kind: doc.file_kind,
                 totalAmount,
                 is_global: doc.is_global,
-                json_data: doc.json_data, // Store json_data to check if store name is populated
+                json_data: doc.json_data,
                 original_filename: doc.original_filename || doc.filename,
-                user_id: doc.user_id ?? (doc as any).owner?.id, // Store owner's user ID (workspace files use owner.id)
+                user_id: doc.user_id ?? (doc as any).owner?.id,
               };
             });
           
           setDocuments(mappedDocs);
           setLastLoadTime(now);
           
-          // Update cache
-          setApiCache({
-            data: mappedDocs,
-            timestamp: now,
-            searchQuery,
-            filterBy,
-            workspaceId,
-          });
+          apiCacheRef.current = { data: mappedDocs, timestamp: now, isFormsMode: false, workspaceId };
         } else {
           setDocuments([]);
           setError('No documents found or API returned unexpected format.');
@@ -825,7 +909,7 @@ export default function QuickFilesScreen() {
       isLoadingDocumentsRef.current = false;
       setLoading(false);
     }
-  }, [searchQuery, filterBy, workspaceId, fetchLockedBookmarkFileIds]); // Add dependencies including workspaceId
+  }, [workspaceId, fetchLockedBookmarkFileIds]);
 
   // When connection error is shown, retry so it clears as soon as connection is back
   const CONNECTION_ERROR_MSG = 'Connection Error: Connecting you back ...';
@@ -862,7 +946,7 @@ export default function QuickFilesScreen() {
         const timeSinceLastLoad = now - lastLoadTimeRef.current;
         if (timeSinceUpload < 5000 || timeSinceLastLoad > RELOAD_DEBOUNCE_MS) {
           lastLoadTimeRef.current = now;
-          setApiCache(null);
+          apiCacheRef.current = null;
           loadDocuments(true);
         }
       }
@@ -905,6 +989,27 @@ export default function QuickFilesScreen() {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
+
+  // Merge optimistic placeholder rows (from in-flight uploads) at the top of the list
+  // (must be after getFileTypeFromExtension / formatFileSize — defined above)
+  const documentsWithPending = useMemo<Document[]>(() => {
+    const placeholders: Document[] = pendingUploads.map((u) => ({
+      id: u.id,
+      name: u.name,
+      type: getFileTypeFromExtension(u.name),
+      size: u.size ? formatFileSize(u.size) : 'Uploading...',
+      uploadDate: new Date(),
+      status: 'pending' as const,
+      tags: [],
+    }));
+    // Avoid two rows (optimistic + server pending) with the same display name briefly showing duplicate spinners
+    const pendingNameKeys = new Set(pendingUploads.map((u) => u.name.trim().toLowerCase()));
+    const withoutDupServerPending = filteredAndSortedDocuments.filter((doc) => {
+      if (doc.status !== 'pending' && doc.status !== 'processing') return true;
+      return !pendingNameKeys.has(doc.name.trim().toLowerCase());
+    });
+    return [...placeholders, ...withoutDupServerPending];
+  }, [pendingUploads, filteredAndSortedDocuments]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -952,12 +1057,13 @@ export default function QuickFilesScreen() {
     // Check if there are any pending files OR receipts/invoices without json_data
     const hasPendingFiles = documents.some(doc => {
       const isPending = doc.status === 'pending';
-      // Also check if receipt/invoice doesn't have json_data yet (needs store name for display)
+      // Poll for receipt/invoice only while json_data is completely absent (null/undefined).
+      // Once the backend has written any json_data object the classification round-trip is
+      // complete; specific name fields may or may not be present depending on the receipt.
+      // Checking for individual name fields caused infinite polling for receipts that have
+      // json_data but no recognised store-name field.
       const isReceiptOrInvoice = doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
-      const needsJsonData = isReceiptOrInvoice && (!doc.json_data || 
-        (typeof doc.json_data === 'object' && 
-         !doc.json_data.store_name && !doc.json_data.vendor_name && 
-         !doc.json_data.business_name && !doc.json_data.merchant_name));
+      const needsJsonData = isReceiptOrInvoice && !doc.json_data;
       return isPending || needsJsonData;
     });
     
@@ -965,7 +1071,16 @@ export default function QuickFilesScreen() {
       // Start polling for file updates
       if (!classificationPollingIntervalRef.current) {
         console.log('🔄 Starting classification polling for pending files and receipts/invoices without json_data...');
+        classificationPollCountRef.current = 0;
         classificationPollingIntervalRef.current = setInterval(async () => {
+          classificationPollCountRef.current += 1;
+          // Safety cap: stop after 60 polls (~3 minutes) to prevent runaway polling
+          if (classificationPollCountRef.current > 60) {
+            console.warn('⏰ Classification polling reached max poll limit (60), stopping to prevent infinite loop');
+            clearInterval(classificationPollingIntervalRef.current!);
+            classificationPollingIntervalRef.current = null;
+            return;
+          }
           try {
             // Reload files to check for updated file_kind and json_data
             await loadDocuments(true); // Force refresh
@@ -974,12 +1089,8 @@ export default function QuickFilesScreen() {
             setDocuments(currentDocs => {
               const stillPending = currentDocs.some(doc => {
                 const isPending = doc.status === 'pending';
-                // Check if receipt/invoice still needs json_data
                 const isReceiptOrInvoice = doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
-                const needsJsonData = isReceiptOrInvoice && (!doc.json_data || 
-                  (typeof doc.json_data === 'object' && 
-                   !doc.json_data.store_name && !doc.json_data.vendor_name && 
-                   !doc.json_data.business_name && !doc.json_data.merchant_name));
+                const needsJsonData = isReceiptOrInvoice && !doc.json_data;
                 return isPending || needsJsonData;
               });
               
@@ -1133,9 +1244,17 @@ export default function QuickFilesScreen() {
         console.warn('📤 Could not get auth token for download:', error);
       }
       
-      // Download the file
+      const urlIsSigned =
+        typeof fileInfo.url === 'string' &&
+        fileInfo.url.includes('sig=') &&
+        fileInfo.url.includes('exp=');
+      const downloadHeaders = urlIsSigned
+        ? { 'X-Platform': Platform.OS }
+        : { ...authHeaders, 'X-Platform': Platform.OS };
+
+      // Download the file (signed URLs authenticate via query string; do not send Bearer)
       const downloadResult = await FileSystem.downloadAsync(fileInfo.url, fileUri, {
-        headers: authHeaders
+        headers: downloadHeaders,
       });
       
       console.log('📤 File downloaded to:', downloadResult.uri);
@@ -1381,6 +1500,8 @@ export default function QuickFilesScreen() {
     try {
       const response = await apiClient.addFileToBookmark(bookmark.id, parseInt(selectedDocumentForMenu.id));
       if (response.success) {
+        // Invalidate locked-bookmark cache so next load re-fetches membership
+        lockedBookmarkCacheRef.current = null;
         Alert.alert('Success', `"${selectedDocumentForMenu.name}" added to "${bookmark.name}"`);
         setShowBookmarkModal(false);
         setShowKebabMenu(false);
@@ -1422,6 +1543,8 @@ export default function QuickFilesScreen() {
       }
       const addResponse = await apiClient.addFileToBookmark(newId, parseInt(selectedDocumentForMenu.id));
       if (addResponse.success) {
+        // Invalidate locked-bookmark cache so next load re-fetches membership
+        lockedBookmarkCacheRef.current = null;
         Alert.alert('Success', `"${selectedDocumentForMenu.name}" added to new bookmark "${name}"`);
         setShowBookmarkModal(false);
         setShowKebabMenu(false);
@@ -1591,7 +1714,7 @@ export default function QuickFilesScreen() {
         
         // Bypass debounce and cache - force immediate refresh
         lastLoadTimeRef.current = 0; // Reset debounce timer
-        setApiCache(null); // Clear cache to force fresh load
+        apiCacheRef.current = null; // Clear cache to force fresh load
         
         // Refresh immediately, then retry after short delay in case backend needs time
         loadDocuments(true);
@@ -1615,43 +1738,6 @@ export default function QuickFilesScreen() {
   };
 
 
-  // Component for document icon with spinning animation for pending files
-  const DocumentIcon = React.memo(({ item }: { item: Document }) => {
-    const spinAnim = useRef(new Animated.Value(0)).current;
-    const isPending = item.status === 'pending' || item.status === 'processing';
-    
-    useEffect(() => {
-      if (isPending) {
-        // Start spinning animation
-        Animated.loop(
-          Animated.timing(spinAnim, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          })
-        ).start();
-      } else {
-        // Stop animation
-        spinAnim.setValue(0);
-      }
-    }, [isPending, spinAnim]);
-    
-    const spin = spinAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0deg', '360deg'],
-    });
-    
-    return (
-      <Animated.View style={[dynamicStyles.documentIcon, isPending && { transform: [{ rotate: spin }] }]}>
-        <Ionicons 
-          name={getFileIcon(item.type, item.status, item.file_kind) as any} 
-          size={24} 
-          color={getTypeColor(item.type, item.file_kind)} 
-        />
-      </Animated.View>
-    );
-  });
-
   const renderDocument = ({ item }: { item: Document }) => (
     <TouchableOpacity
       style={dynamicStyles.documentItem}
@@ -1660,7 +1746,12 @@ export default function QuickFilesScreen() {
       accessibilityRole="listitem"
       accessibilityLabel={`${item.name}${item.file_kind ? `, ${item.file_kind.replace(/_/g, ' ')}` : ''}`}
     >
-      <DocumentIcon item={item} />
+      <DocumentListIcon
+        pending={item.status === 'pending' || item.status === 'processing'}
+        iconName={getFileIcon(item.type, item.status, item.file_kind) as React.ComponentProps<typeof Ionicons>['name']}
+        iconColor={getTypeColor(item.type, item.file_kind)}
+        containerStyle={dynamicStyles.documentIcon}
+      />
       
       <View style={dynamicStyles.documentInfo}>
         <Text style={dynamicStyles.documentName} numberOfLines={1} ellipsizeMode="tail">
@@ -2388,7 +2479,7 @@ export default function QuickFilesScreen() {
 
       {/* Files List */}
       <FlatList
-        data={filteredAndSortedDocuments}
+        data={documentsWithPending}
         renderItem={renderDocument}
         keyExtractor={(item) => (item as Document).id}
         style={dynamicStyles.documentsList}

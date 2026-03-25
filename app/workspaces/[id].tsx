@@ -77,6 +77,8 @@ export default function WorkspaceDetailsScreen() {
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
 
   const WORKSPACE_DETAIL_CACHE_MS = 30_000;
+  const WORKSPACES_LIST_CACHE_KEY = 'workspaces_list';
+  const WORKSPACES_LIST_CACHE_MS = 30_000;
   const workspaceDetailCacheKey = `workspace_detail_${id}`;
 
   interface WorkspaceDetailCache {
@@ -106,87 +108,97 @@ export default function WorkspaceDetailsScreen() {
     }
     
     try {
-      // Get all workspaces and find the one with matching ID
-      const workspacesResponse = await apiService.getMobileWorkspaces();
-      
-      if (workspacesResponse.success && workspacesResponse.data) {
-        const workspacesData = Array.isArray(workspacesResponse.data) 
-          ? workspacesResponse.data 
-          : (workspacesResponse.data.workspaces || []);
-        
-        // Find the workspace with matching ID
-        const targetWorkspace = workspacesData.find((ws: any) => ws.id === Number(id));
-        
-        if (targetWorkspace) {
+      const wid = Number(id);
+      let targetWorkspace: any = null;
+      let workspacesListFailed = false;
+
+      const listCached = screenCache.get<any[]>(WORKSPACES_LIST_CACHE_KEY, WORKSPACES_LIST_CACHE_MS);
+      if (listCached?.length) {
+        targetWorkspace = listCached.find((ws: any) => ws.id === wid) ?? null;
+      }
+
+      if (!targetWorkspace) {
+        const workspacesResponse = await apiService.getMobileWorkspaces();
+        if (workspacesResponse.success && workspacesResponse.data) {
+          const workspacesData = Array.isArray(workspacesResponse.data)
+            ? workspacesResponse.data
+            : (workspacesResponse.data.workspaces || []);
+          targetWorkspace = workspacesData.find((ws: any) => ws.id === wid) ?? null;
+        } else {
+          workspacesListFailed = true;
+        }
+      }
+
+      if (workspacesListFailed) {
+        console.log('❌ Failed to load workspaces list');
+        Alert.alert('Error', 'Failed to load workspace details');
+      } else if (targetWorkspace) {
           console.log('✅ Found workspace:', targetWorkspace.name);
           setWorkspace(targetWorkspace);
-          
-          // Load workspace members
-          try {
-            const membersResponse = await apiService.getWorkspaceMembers(Number(id));
-            if (membersResponse.success && membersResponse.data) {
-              const responseData = membersResponse.data;
-              
-              // Extract members - data.members contains the members array
-              const membersData = responseData.members || [];
-              console.log('✅ Loaded workspace members:', membersData.length);
-              setMembers(membersData);
-              
-              // Extract invitations - data.invitations contains the invitations array
-              const invitationsData = responseData.invitations || [];
-              console.log('✅ Loaded workspace invitations:', invitationsData.length);
-              setInvitations(invitationsData);
-            } else {
-              console.log('⚠️ No members data in response');
-              setMembers([]);
-              setInvitations([]);
-            }
-          } catch (error: any) {
-            // Handle 404 gracefully - endpoint might not be implemented yet
+
+          const membersPromise = apiService.getWorkspaceMembers(wid).catch((error: any) => {
             if (error.response?.status === 404) {
               console.log('⚠️ Workspace members endpoint not found (404), endpoint may not be implemented yet');
-              setMembers([]);
-              setInvitations([]);
             } else {
               console.error('❌ Failed to load workspace members:', error);
-              // Don't show alert for 404, just log it
               if (error.response?.status !== 404) {
                 Alert.alert('Error', error.message || 'Failed to load workspace members');
               }
-              setMembers([]);
-              setInvitations([]);
             }
+            return null;
+          });
+
+          const filesPromise = apiService
+            .getWorkspaceFiles(wid, { perPage: 100, timeoutMs: 25000 })
+            .catch((error: any) => {
+              console.warn('⚠️ Failed to load workspace files for recent activity:', error);
+              return null;
+            });
+
+          const [membersOutcome, filesOutcome] = await Promise.all([membersPromise, filesPromise]);
+
+          let membersData: WorkspaceMember[] = [];
+          let invitationsData: any[] = [];
+          if (membersOutcome?.success && membersOutcome.data) {
+            const responseData = membersOutcome.data;
+            membersData = responseData.members || [];
+            invitationsData = responseData.invitations || [];
+            console.log('✅ Loaded workspace members:', membersData.length);
+            console.log('✅ Loaded workspace invitations:', invitationsData.length);
+          } else if (!membersOutcome) {
+            membersData = [];
+            invitationsData = [];
+          } else {
+            console.log('⚠️ No members data in response');
           }
+          setMembers(membersData);
+          setInvitations(invitationsData);
 
-          // Load workspace files (shared within this workspace only) for recent activity
-          try {
-            console.log('📁 Loading workspace files (shared in workspace), workspaceId:', id);
-            const filesResponse = await apiService.getWorkspaceFiles(Number(id));
+          let activities: any[] = [];
+          if (filesOutcome?.success) {
             let files: any[] = [];
-            if (filesResponse?.success && filesResponse.files && Array.isArray(filesResponse.files)) {
-              files = filesResponse.files;
-            } else if (Array.isArray(filesResponse?.data)) {
-              files = filesResponse.data;
+            if (filesOutcome.files && Array.isArray(filesOutcome.files)) {
+              files = filesOutcome.files;
+            } else if (Array.isArray(filesOutcome.data)) {
+              files = filesOutcome.data;
             }
-
-            // Format as recent activities; show only last 5 files shared in this workspace
-            const activities = files
+            activities = files
               .sort((a: any, b: any) => {
                 const dateA = a.updated_at || a.created_at ? new Date(a.updated_at || a.created_at).getTime() : 0;
                 const dateB = b.updated_at || b.created_at ? new Date(b.updated_at || b.created_at).getTime() : 0;
-                return dateB - dateA; // Most recent first
+                return dateB - dateA;
               })
-              .slice(0, 5) // Last 5 files in workspace
+              .slice(0, 5)
               .map((file: any) => {
                 const fileName = file.original_filename || file.filename || file.name || 'Unknown file';
-                const timestamp = file.updated_at || file.created_at 
-                  ? new Date(file.updated_at || file.created_at) 
+                const timestamp = file.updated_at || file.created_at
+                  ? new Date(file.updated_at || file.created_at)
                   : new Date();
                 const owner = file.owner;
-                const sharedBy = owner?.username 
-                  ? `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || owner.username 
+                const sharedBy = owner?.username
+                  ? `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || owner.username
                   : null;
-                const subtitle = sharedBy 
+                const subtitle = sharedBy
                   ? `${fileName} (shared by ${sharedBy})`
                   : fileName;
 
@@ -200,31 +212,17 @@ export default function WorkspaceDetailsScreen() {
                   file
                 };
               });
-
-            setRecentActivities(activities);
             console.log('✅ Loaded workspace recent activities:', activities.length);
-
-            // Persist everything to cache so the next focus is instant
-            setWorkspace(ws => {
-              setMembers(ms => {
-                setInvitations(inv => {
-                  screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
-                    workspace: ws!,
-                    members: ms,
-                    invitations: inv,
-                    recentActivities: activities,
-                  });
-                  return inv;
-                });
-                return ms;
-              });
-              return ws;
-            });
-          } catch (error: any) {
-            console.warn('⚠️ Failed to load workspace files for recent activity:', error);
-            setRecentActivities([]);
           }
-        } else {
+          setRecentActivities(activities);
+
+          screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
+            workspace: targetWorkspace,
+            members: membersData,
+            invitations: invitationsData,
+            recentActivities: activities,
+          });
+      } else {
           console.log('❌ Workspace not found with ID:', id);
           Alert.alert(
             'Workspace Not Found',
@@ -233,10 +231,6 @@ export default function WorkspaceDetailsScreen() {
               { text: 'OK', onPress: () => router.back() }
             ]
           );
-        }
-      } else {
-        console.log('❌ Failed to load workspaces list');
-        Alert.alert('Error', 'Failed to load workspace details');
       }
     } catch (error: any) {
       console.error('❌ Failed to load workspace:', error);

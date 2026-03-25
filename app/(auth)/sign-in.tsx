@@ -166,7 +166,7 @@ export default function SignInScreen() {
         
         if (shouldUseOtp) {
           // Request OTP - this will navigate to OTP screen on success
-          await requestOtpForUser(username);
+          await requestOtpForUser(username, password, rememberDevice);
         } else {
           // If no OTP needed, show the login error and STAY on login screen (do not redirect)
           const errorMessage = loginError.message || 'Invalid username or password';
@@ -207,8 +207,12 @@ export default function SignInScreen() {
     }
   };
 
-  // Request OTP for the user
-  const requestOtpForUser = async (username: string) => {
+  // Request OTP for the user (password needed so after verify-otp we can POST /login with otpVerified: true)
+  const requestOtpForUser = async (
+    username: string,
+    password: string,
+    rememberDevice: boolean
+  ) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/mobile/auth/request-otp`, {
         method: 'POST',
@@ -224,14 +228,40 @@ export default function SignInScreen() {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // Navigate to OTP verification screen
+        const email =
+          (typeof data.email === 'string' && data.email) ||
+          (typeof data.userEmail === 'string' && data.userEmail) ||
+          '';
+        const phoneNumber =
+          (typeof data.phoneNumber === 'string' && data.phoneNumber) ||
+          (typeof data.userPhone === 'string' && data.userPhone) ||
+          '';
+        const method =
+          data.method === 'sms' || data.method === 'email' ? data.method : 'email';
+        const preferred =
+          data.preferredAuthMethod === 'phone' || data.preferredAuthMethod === 'email'
+            ? data.preferredAuthMethod
+            : method === 'sms'
+              ? 'phone'
+              : 'email';
+        const expires =
+          data.expiresIn != null ? Number(data.expiresIn) : 600;
+
         router.push({
           pathname: '/(auth)/otp-verification',
           params: {
-            username: username,
-            method: data.method,
-            identifier: data.identifier,
-            expiresIn: data.expiresIn.toString(),
+            username,
+            method,
+            identifier:
+              data.identifier ||
+              (preferred === 'phone' ? phoneNumber : email) ||
+              username,
+            expiresIn: String(Number.isFinite(expires) ? expires : 600),
+            userEmail: email,
+            userPhone: phoneNumber,
+            preferredAuthMethod: preferred,
+            tempPassword: password,
+            rememberDevice: rememberDevice ? 'true' : 'false',
           }
         });
       } else {
