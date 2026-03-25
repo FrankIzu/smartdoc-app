@@ -89,10 +89,8 @@ jobs:
           df -h
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/share/swift /usr/local/share/powershell || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          if [ -d /usr/local/lib/android/sdk/ndk ]; then
-            echo "Removing preinstalled Android NDK (this job uses GRADLE_USER_HOME / ANDROID_SDK_CACHE_PATH or sdkmanager)"
-            sudo rm -rf /usr/local/lib/android/sdk/ndk
-          fi
+          # Do NOT remove /usr/local/lib/android/sdk/ndk — eas-cli-local-build-plugin checks
+          # /usr/local/lib/android/sdk/ndk/27.3.13750724 (Expo SDK 54) before Gradle runs.
           if command -v docker >/dev/null 2>&1; then
             sudo docker system prune -af --volumes 2>/dev/null || true
           fi
@@ -139,7 +137,7 @@ jobs:
         continue-on-error: true
         with:
           path: ${{ env.ANDROID_SDK_CACHE_PATH }}
-          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-25.1.8937393
+          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-27.3.13750724
           restore-keys: |
             android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-
 
@@ -163,7 +161,7 @@ jobs:
               echo "Using runner preinstalled Android SDK at $ANDROID_HOME"
               export PATH="$RUNNER_SDK/cmdline-tools/latest/bin:$RUNNER_SDK/cmdline-tools/12.0/bin:$RUNNER_SDK/platform-tools:$PATH"
               yes | "$SDKMANAGER" --licenses || true
-              "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;25.1.8937393"
+              "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
             fi
           fi
           if [ -z "$SDKMANAGER" ]; then
@@ -176,7 +174,7 @@ jobs:
             mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
             yes | "$SDKMANAGER" --licenses || true
-            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;25.1.8937393"
+            "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
           fi
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
@@ -192,7 +190,7 @@ jobs:
         continue-on-error: true
         with:
           path: ${{ env.ANDROID_SDK_CACHE_PATH }}
-          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-25.1.8937393
+          key: android-sdk-${{ runner.os }}-${{ env.CACHE_VERSION }}-11076708-36-27.3.13750724
 
       - name: Restore Gradle cache
         uses: actions/cache/restore@v4
@@ -272,6 +270,33 @@ jobs:
           find . -maxdepth 3 -name "*.apk" -type f -delete 2>/dev/null || true
           echo "Old artifacts cleaned"
 
+      # eas-cli-local-build-plugin (checkRuntime.js) requires this exact path for Expo SDK 54 — independent of ANDROID_HOME in runner.temp.
+      - name: Ensure GitHub runner NDK for EAS local plugin
+        run: |
+          set -e
+          RUNNER_SDK="/usr/local/lib/android/sdk"
+          NDK_DIR="$RUNNER_SDK/ndk/27.3.13750724"
+          if [ -d "$NDK_DIR" ]; then
+            echo "NDK present: $NDK_DIR"
+            exit 0
+          fi
+          SM=""
+          for d in "$RUNNER_SDK/cmdline-tools/latest/bin/sdkmanager" "$RUNNER_SDK/cmdline-tools/12.0/bin/sdkmanager"; do
+            if [ -x "$d" ]; then SM="$d"; break; fi
+          done
+          if [ -z "$SM" ]; then
+            echo "::error::sdkmanager not found under $RUNNER_SDK (cannot install ndk;27.3.13750724)"
+            exit 1
+          fi
+          echo "Installing ndk;27.3.13750724 into $RUNNER_SDK..."
+          yes | "$SM" --sdk_root="$RUNNER_SDK" "ndk;27.3.13750724"
+          if [ ! -d "$NDK_DIR" ]; then
+            echo "::error::Expected NDK at $NDK_DIR after sdkmanager"
+            ls -la "$RUNNER_SDK/ndk" 2>/dev/null || true
+            exit 1
+          fi
+          echo "OK: $NDK_DIR"
+
       # Use version and versionCode from app.versions.json (set by deploy.ps1 before triggering this workflow).
       - name: EAS Build (local)
         run: |
@@ -287,6 +312,7 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           GRADLE_USER_HOME: ${{ env.GRADLE_USER_HOME }}
           GRADLE_OPTS: -Xmx6g -XX:MaxMetaspaceSize=2g -Dkotlin.daemon.jvm.options=-Xmx3g
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.3.13750724
 
       - name: Save Gradle cache
         uses: actions/cache/save@v4
