@@ -287,7 +287,7 @@ jobs:
         id: eas_build
         continue-on-error: true
         run: |
-          # production-ci extends production-base only — no ios-production.yml (that workflow re-ran prebuild and reset MARKETING_VERSION / CFBundleVersion).
+          # production-ci uses ios-production.yml (extension profile + Fastlane gym + Hermes) — same as before.
           PROFILE="${{ github.event.inputs.profile || 'production' }}"
           if [ "$PROFILE" = "production" ]; then
             PROFILE="production-ci"

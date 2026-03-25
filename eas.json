@@ -47,7 +47,7 @@
         "resourceClass": "medium"
       }
     },
-    "production-base": {
+    "production": {
       "node": "20.18.1",
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",
@@ -59,14 +59,6 @@
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS": "388172995920-thao2b2ssslc63hhmbcpmcjailnfcbba.apps.googleusercontent.com",
         "EXPO_PUBLIC_DROPBOX_APP_KEY": "hmlhlh1h44gtth0"
       },
-      "android": {
-        "buildType": "app-bundle",
-        "distribution": "store",
-        "resourceClass": "large"
-      }
-    },
-    "production": {
-      "extends": "production-base",
       "ios": {
         "config": "ios-production.yml",
         "resourceClass": "m-medium",
@@ -74,11 +66,17 @@
         "buildConfiguration": "Release",
         "scheme": "GrabDocs",
         "buildArtifactPaths": ["ios/build/*"]
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "distribution": "store",
+        "resourceClass": "large"
       }
     },
     "production-ci": {
-      "extends": "production-base",
+      "extends": "production",
       "ios": {
+        "config": "ios-production.yml",
         "resourceClass": "m-medium",
         "distribution": "store",
         "buildConfiguration": "Release",
