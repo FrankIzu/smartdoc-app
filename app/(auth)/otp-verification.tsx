@@ -84,10 +84,7 @@ export default function OtpVerificationScreen() {
     params.rememberDevice === 'true' || params.rememberDevice === true
   );
   
-  const inputRefs = useRef<TextInput[]>([]);
-  const autofillInputRef = useRef<TextInput>(null);
-  /** Remount hidden autofill field after a full code so it stays uncontrolled (no stale value=""). */
-  const [autofillFieldKey, setAutofillFieldKey] = useState(0);
+  const inputRefs = useRef<Array<TextInput | null>>([]);
 
   // Countdown timer
   useEffect(() => {
@@ -100,15 +97,12 @@ export default function OtpVerificationScreen() {
     return () => clearInterval(timer);
   }, [timeLeft]);
 
-  // Focus the SMS autofill field after layout. iOS/Android need an in-layout, oneTimeCode field —
-  // not off-screen — and it must not use value="" (controlled empty) or autofill can be cleared on re-render.
   useEffect(() => {
-    if (params.method !== 'sms') return;
     const id = requestAnimationFrame(() => {
-      setTimeout(() => autofillInputRef.current?.focus(), 250);
+      setTimeout(() => inputRefs.current[0]?.focus(), 250);
     });
     return () => cancelAnimationFrame(id);
-  }, [params.method]);
+  }, []);
 
   // Monitor clipboard for OTP codes (for email codes)
   // Note: This is a fallback for email codes. SMS codes are handled by autofill input.
@@ -146,10 +140,16 @@ export default function OtpVerificationScreen() {
                 if (currentCode.length < 6) {
                   console.log('📋 Detected OTP code from clipboard:', code);
                   // Distribute code to inputs
-                  const codeArray = code.split('').slice(0, 6);
-                  setOtpCode(codeArray);
+                  const newOtp: string[] = ['', '', '', '', '', ''];
+                  code
+                    .split('')
+                    .slice(0, 6)
+                    .forEach((ch, i) => {
+                      newOtp[i] = ch;
+                    });
+                  setOtpCode(newOtp);
                   // Auto-verify if all digits are filled
-                  if (codeArray.length === 6 && codeArray.every(d => d !== '')) {
+                  if (code.length === 6) {
                     setTimeout(() => {
                       // Call handleVerifyOtp directly - it's stable enough for this use case
                       const finalCode = code;
@@ -180,60 +180,34 @@ export default function OtpVerificationScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.method]);
 
-  // Handle autofill input change (for SMS autofill)
-  const handleAutofillChange = (text: string) => {
-    // Extract only digits
-    const digits = text.replace(/\D/g, '').slice(0, 6);
-    
-    if (digits.length === 6) {
-      console.log('📱 Detected OTP code from autofill:', digits);
-      // Distribute code to individual inputs
-      const codeArray = digits.split('');
-      setOtpCode(codeArray);
-      setAutofillFieldKey((k) => k + 1);
-      
-      // Focus the last input to show completion
-      inputRefs.current[5]?.focus();
-      
-      // Auto-verify after a brief delay
-      setTimeout(() => {
-        handleVerifyOtp(digits);
-      }, 300);
-    } else if (digits.length > 0 && digits.length < 6) {
-      // Partial code entered - distribute what we have
-      const codeArray = digits.split('');
+  // Called for each box. Handles single-char typing AND multi-char paste / OS autofill.
+  const handleBoxChange = (text: string, index: number) => {
+    const digits = text.replace(/\D/g, '');
+
+    if (digits.length > 1) {
+      // Paste or tap-to-fill: distribute across boxes starting at current index
       const newOtp = [...otpCode];
-      codeArray.forEach((digit, idx) => {
-        if (idx < 6) {
-          newOtp[idx] = digit;
-        }
-      });
+      let filled = 0;
+      for (let i = index; i < 6 && filled < digits.length; i++, filled++) {
+        newOtp[i] = digits[filled];
+      }
       setOtpCode(newOtp);
-      
-      // Focus the next empty input
-      const nextIndex = Math.min(digits.length, 5);
-      inputRefs.current[nextIndex]?.focus();
+      const lastFilled = Math.min(index + digits.length - 1, 5);
+      inputRefs.current[lastFilled]?.focus();
+      const joined = newOtp.join('');
+      if (joined.length === 6 && newOtp.every(d => d !== '')) {
+        setTimeout(() => handleVerifyOtp(joined), 300);
+      }
+      return;
     }
-  };
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const handleOtpChange = (value: string, index: number) => {
     const newOtp = [...otpCode];
-    newOtp[index] = value;
+    newOtp[index] = digits;
     setOtpCode(newOtp);
-    
-    // Auto-focus next input
-    if (value && index < 5) {
+    if (digits && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
-    
-    // Auto-submit when all fields are filled
-    if (newOtp.every(digit => digit !== '') && !isLoading) {
+    if (newOtp.every(d => d !== '') && !isLoading) {
       handleVerifyOtp(newOtp.join(''));
     }
   };
@@ -242,6 +216,12 @@ export default function OtpVerificationScreen() {
     if (key === 'Backspace' && !otpCode[index] && index > 0) {
       inputRefs.current[index - 1]?.focus();
     }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const handleVerifyOtp = async (code?: string) => {
@@ -440,9 +420,8 @@ export default function OtpVerificationScreen() {
         }, 2000);
       } else {
         setError(data.message || 'Verification failed');
-        // Clear the OTP inputs on error
         setOtpCode(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
+        requestAnimationFrame(() => inputRefs.current[0]?.focus());
       }
     } catch (err) {
       setError('Network error. Please try again.');
@@ -483,9 +462,9 @@ export default function OtpVerificationScreen() {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        setTimeLeft(600); // Reset timer to 10 minutes
+        setTimeLeft(600);
         setOtpCode(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
+        requestAnimationFrame(() => inputRefs.current[0]?.focus());
         Alert.alert('Code Sent', data.message);
       } else {
         setError(data.message || 'Failed to resend code');
@@ -531,44 +510,32 @@ export default function OtpVerificationScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        {/* Full-width overlay: iOS needs oneTimeCode on a field that can accept 6 digits at once.
-            Do not set oneTimeCode on maxLength={1} cells — that blocks SMS tap-to-fill.
-            Controlled value="" on the autofill field was clearing the native value on each render. */}
-        <View style={styles.otpWrapper}>
-          <View style={styles.otpContainer}>
-            {otpCode.map((digit, index) => (
-              <TextInput
-                key={index}
-                ref={ref => inputRefs.current[index] = ref!}
-                style={[
-                  styles.otpInput,
-                  digit && styles.otpInputFilled,
-                  error && styles.otpInputError,
-                ]}
-                value={digit}
-                onChangeText={(value) => handleOtpChange(value, index)}
-                onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, index)}
-                keyboardType="number-pad"
-                maxLength={1}
-                selectTextOnFocus
-                editable={!isLoading}
-              />
-            ))}
-          </View>
-          <TextInput
-            key={autofillFieldKey}
-            ref={autofillInputRef}
-            style={styles.otpAutofillOverlay}
-            onChangeText={handleAutofillChange}
-            keyboardType="number-pad"
-            textContentType={Platform.OS === 'ios' ? 'oneTimeCode' : undefined}
-            autoComplete={Platform.OS === 'android' ? 'sms-otp' : undefined}
-            importantForAutofill="yes"
-            caretHidden
-            editable={!isLoading}
-            maxLength={6}
-            pointerEvents="none"
-          />
+        <View style={styles.otpContainer}>
+          {otpCode.map((digit, index) => (
+            <TextInput
+              key={index}
+              ref={ref => { inputRefs.current[index] = ref; }}
+              style={[
+                styles.otpInput,
+                digit ? styles.otpInputFilled : null,
+                error ? styles.otpInputError : null,
+              ]}
+              value={digit}
+              onChangeText={text => handleBoxChange(text, index)}
+              onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, index)}
+              keyboardType="number-pad"
+              maxLength={index === 0 ? 6 : 1}
+              textContentType={index === 0 && Platform.OS === 'ios' ? 'oneTimeCode' : undefined}
+              autoComplete={
+                index === 0 && Platform.OS === 'android'
+                  ? params.method === 'sms' ? 'sms-otp' : 'one-time-code'
+                  : undefined
+              }
+              importantForAutofill={index === 0 ? 'yes' : 'no'}
+              selectTextOnFocus
+              editable={!isLoading}
+            />
+          ))}
         </View>
 
         {timeLeft > 0 ? (
@@ -693,20 +660,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     fontSize: 14,
   },
-  otpWrapper: {
-    position: 'relative',
-    marginBottom: 20,
-    paddingHorizontal: 20,
-    minHeight: 55,
-  },
-  otpAutofillOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0,
-    zIndex: 10,
-  },
   otpContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: 20,
+    paddingHorizontal: 20,
   },
   otpInput: {
     width: 45,

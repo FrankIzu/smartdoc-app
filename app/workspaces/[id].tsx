@@ -4,19 +4,86 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
+    FlatList,
     Modal,
+    Pressable,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    View
+    View,
 } from 'react-native';
+import Toast from 'react-native-toast-message';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import DocumentViewer from '../../components/DocumentViewer';
+import QuickFormViewer from '../../components/QuickFormViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { getReachParticipantDisplayName } from '../../utils/reachDisplayName';
 import { screenCache } from '../../utils/screenCache';
+import {
+  invalidateWorkspaceScreenCaches,
+  workspaceActivitiesCacheKey,
+  workspaceFilesSheetFirstPageKey,
+  WORKSPACE_ACTIVITIES_CACHE_MS,
+  WORKSPACE_FILES_SHEET_CACHE_MS,
+  WORKSPACE_MEMBERS_CACHE_MS,
+  workspaceMembersCacheKey,
+  type WorkspaceActivitiesCachePayload,
+  type WorkspaceFilesSheetCachePayload,
+  type WorkspaceMembersCachePayload,
+} from '../../utils/workspaceScreenCache';
 import { useAuth } from '../context/auth';
+
+interface WorkspaceSheetBookmark {
+  bookmark_id: number;
+  bookmark_name: string;
+  file_count: number;
+  is_locked: boolean;
+}
+
+type WorkspaceSheetListItem =
+  | { kind: 'bookmark'; bookmark: WorkspaceSheetBookmark }
+  | { kind: 'file'; file: any };
+
+function normalizeWorkspaceSheetBookmarks(raw: any[]): WorkspaceSheetBookmark[] {
+  return (raw ?? []).map((b: any) => ({
+    bookmark_id: Number(b.bookmark_id ?? b.id),
+    bookmark_name: String(b.bookmark_name ?? b.name ?? 'Bookmark'),
+    file_count:
+      Number(b.file_count ?? (Array.isArray(b.files) ? b.files.length : 0)) || 0,
+    is_locked: Boolean(b.is_locked ?? b.isLocked),
+  }));
+}
+
+function workspaceStandaloneFileSubtitle(f: any): string {
+  const sizeLabel = formatBytes(f.file_size);
+  return [f.file_kind, sizeLabel, f.created_at ? new Date(f.created_at).toLocaleDateString() : '']
+    .filter(Boolean)
+    .join(' • ');
+}
+
+function fileTypeFromFilename(name: string): string {
+  const ext = name.toLowerCase().split('.').pop() || '';
+  if (ext === 'pdf') return 'pdf';
+  if (['doc', 'docx'].includes(ext)) return 'docx';
+  if (['xls', 'xlsx'].includes(ext)) return 'xlsx';
+  if (['ppt', 'pptx'].includes(ext)) return 'pptx';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].includes(ext)) return 'image';
+  if (['txt', 'md'].includes(ext)) return 'txt';
+  return 'other';
+}
+
+function formatBytes(bytes: number | undefined | null): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return '';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
 
 interface Workspace {
   id: number;
@@ -75,10 +142,33 @@ export default function WorkspaceDetailsScreen() {
   const [selectedMember, setSelectedMember] = useState<WorkspaceMember | null>(null);
   const [creatingMeeting, setCreatingMeeting] = useState(false);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
+  const [workspaceFilesSheetVisible, setWorkspaceFilesSheetVisible] = useState(false);
+  const [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false);
+  const [workspaceFilesLoadingMore, setWorkspaceFilesLoadingMore] = useState(false);
+  const [workspaceSheetBookmarks, setWorkspaceSheetBookmarks] = useState<WorkspaceSheetBookmark[]>([]);
+  const [workspaceSheetFiles, setWorkspaceSheetFiles] = useState<any[]>([]);
+  const [workspaceFilesHasMore, setWorkspaceFilesHasMore] = useState(false);
+  const [workspaceFilesNextOffset, setWorkspaceFilesNextOffset] = useState<number | null>(null);
+  const [viewerFile, setViewerFile] = useState<{
+    id: string;
+    name: string;
+    type: string;
+    category?: string;
+    workspaceId: number;
+  } | null>(null);
+  const [workspaceQuickForm, setWorkspaceQuickForm] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+
+  const workspaceSheetListItems = useMemo((): WorkspaceSheetListItem[] => {
+    const items: WorkspaceSheetListItem[] = [];
+    workspaceSheetBookmarks.forEach((b) => items.push({ kind: 'bookmark', bookmark: b }));
+    workspaceSheetFiles.forEach((f) => items.push({ kind: 'file', file: f }));
+    return items;
+  }, [workspaceSheetBookmarks, workspaceSheetFiles]);
 
   const WORKSPACE_DETAIL_CACHE_MS = 30_000;
-  const WORKSPACES_LIST_CACHE_KEY = 'workspaces_list';
-  const WORKSPACES_LIST_CACHE_MS = 30_000;
   const workspaceDetailCacheKey = `workspace_detail_${id}`;
 
   interface WorkspaceDetailCache {
@@ -87,6 +177,111 @@ export default function WorkspaceDetailsScreen() {
     invitations: any[];
     recentActivities: any[];
   }
+
+  const loadMembersInBackground = useCallback(
+    async (
+      wid: number,
+      currentWorkspace: any,
+      currentActivities: any[]
+    ) => {
+      const mk = workspaceMembersCacheKey(wid);
+      const cached = screenCache.get<WorkspaceMembersCachePayload>(mk, WORKSPACE_MEMBERS_CACHE_MS);
+      if (cached) {
+        setMembers(cached.members as WorkspaceMember[]);
+        setInvitations(cached.invitations);
+        screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
+          workspace: currentWorkspace,
+          members: cached.members as WorkspaceMember[],
+          invitations: cached.invitations,
+          recentActivities: currentActivities,
+        });
+        return;
+      }
+      try {
+        const res = await apiService.getWorkspaceMembers(wid, 100, 0);
+        if (!res?.success || !res.data) return;
+        const membersData: WorkspaceMember[] = res.data.members || [];
+        const invitationsData: any[] = res.data.invitations || [];
+        setMembers(membersData);
+        setInvitations(invitationsData);
+        screenCache.set<WorkspaceMembersCachePayload>(mk, {
+          members: membersData,
+          invitations: invitationsData,
+        });
+        screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
+          workspace: currentWorkspace,
+          members: membersData,
+          invitations: invitationsData,
+          recentActivities: currentActivities,
+        });
+      } catch (err: any) {
+        console.warn('⚠️ Background members load failed:', err?.message);
+      }
+    },
+    [workspaceDetailCacheKey]
+  );
+
+  const loadActivitiesInBackground = useCallback(
+    async (
+      wid: number,
+      currentWorkspace: any,
+      currentMembers: WorkspaceMember[],
+      currentInvitations: any[]
+    ) => {
+      const ak = workspaceActivitiesCacheKey(wid);
+      const cached = screenCache.get<WorkspaceActivitiesCachePayload>(ak, WORKSPACE_ACTIVITIES_CACHE_MS);
+      if (cached) {
+        setRecentActivities(cached.activities);
+        screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
+          workspace: currentWorkspace,
+          members: currentMembers,
+          invitations: currentInvitations,
+          recentActivities: cached.activities,
+        });
+        return;
+      }
+      try {
+        const res = await apiService.getWorkspaceFiles(wid, { perPage: 40, timeoutMs: 25000 });
+        if (!res?.success) return;
+        const files: any[] = (res.files && Array.isArray(res.files) ? res.files : Array.isArray((res as any).data) ? (res as any).data : []);
+        const activities = files
+          .sort((a: any, b: any) => {
+            const ta = a.updated_at || a.created_at ? new Date(a.updated_at || a.created_at).getTime() : 0;
+            const tb = b.updated_at || b.created_at ? new Date(b.updated_at || b.created_at).getTime() : 0;
+            return tb - ta;
+          })
+          .slice(0, 5)
+          .map((file: any) => {
+            const fileName = file.original_filename || file.filename || file.name || 'Unknown file';
+            const timestamp = file.updated_at || file.created_at ? new Date(file.updated_at || file.created_at) : new Date();
+            const owner = file.owner;
+            const sharedBy = owner?.username
+              ? `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || owner.username
+              : null;
+            return {
+              id: file.id?.toString() || `file-${Date.now()}`,
+              type: 'share',
+              title: 'File shared to workspace',
+              subtitle: sharedBy ? `${fileName} (shared by ${sharedBy})` : fileName,
+              timestamp,
+              icon: 'share-outline',
+              file,
+            };
+          });
+        setRecentActivities(activities);
+        screenCache.set<WorkspaceActivitiesCachePayload>(ak, { activities });
+        screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
+          workspace: currentWorkspace,
+          members: currentMembers,
+          invitations: currentInvitations,
+          recentActivities: activities,
+        });
+      } catch (err: any) {
+        console.warn('⚠️ Background activities load failed:', err?.message);
+      }
+    },
+    [workspaceDetailCacheKey]
+  );
 
   const loadWorkspaceDetails = async (forceRefresh = false) => {
     if (!user) return;
@@ -106,132 +301,87 @@ export default function WorkspaceDetailsScreen() {
         return;
       }
     }
-    
-    try {
-      const wid = Number(id);
-      let targetWorkspace: any = null;
-      let workspacesListFailed = false;
 
-      const listCached = screenCache.get<any[]>(WORKSPACES_LIST_CACHE_KEY, WORKSPACES_LIST_CACHE_MS);
-      if (listCached?.length) {
-        targetWorkspace = listCached.find((ws: any) => ws.id === wid) ?? null;
+    const wid = Number(id);
+    try {
+      // Single-workspace fetch: fast, doesn't load the full list.
+      const wsRes = await apiService.getWorkspace(wid);
+      const wsPayload = wsRes as typeof wsRes & { workspace?: unknown };
+      const rawWs: any =
+        wsPayload.workspace ?? (wsPayload.data as any)?.workspace ?? wsPayload.data ?? null;
+      if (!rawWs?.id) {
+        Alert.alert(
+          'Workspace Not Found',
+          'This workspace could not be found or you may not have access to it.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+        return;
       }
 
-      if (!targetWorkspace) {
-        const workspacesResponse = await apiService.getMobileWorkspaces();
-        if (workspacesResponse.success && workspacesResponse.data) {
-          const workspacesData = Array.isArray(workspacesResponse.data)
-            ? workspacesResponse.data
-            : (workspacesResponse.data.workspaces || []);
-          targetWorkspace = workspacesData.find((ws: any) => ws.id === wid) ?? null;
-        } else {
-          workspacesListFailed = true;
+      // Normalise shape to match what the list endpoint returns so the rest of the screen works.
+      const targetWorkspace: Workspace = {
+        id: rawWs.id,
+        name: rawWs.name,
+        description: rawWs.description,
+        slug: rawWs.slug ?? '',
+        owner_id: rawWs.owner_id,
+        is_personal: rawWs.is_personal ?? false,
+        is_active: rawWs.is_active ?? true,
+        created_at: rawWs.created_at ?? '',
+        updated_at: rawWs.updated_at ?? '',
+        member_count: rawWs.member_count ?? 0,
+        user_role: rawWs.user_role ?? 'member',
+        can_manage: rawWs.can_manage ?? false,
+        can_invite: rawWs.can_invite ?? false,
+        can_edit: rawWs.can_edit ?? false,
+      };
+      setWorkspace(targetWorkspace);
+
+      // Show the screen immediately — members and activities load in the background.
+      setLoading(false);
+      setRefreshing(false);
+
+      const priorCache = screenCache.get<WorkspaceDetailCache>(
+        workspaceDetailCacheKey,
+        WORKSPACE_DETAIL_CACHE_MS
+      );
+      let priorMembers =
+        priorCache?.workspace?.id === wid ? (priorCache.members ?? []) : [];
+      let priorInvitations =
+        priorCache?.workspace?.id === wid ? (priorCache.invitations ?? []) : [];
+      if (priorMembers.length === 0) {
+        const mc = screenCache.get<WorkspaceMembersCachePayload>(
+          workspaceMembersCacheKey(wid),
+          WORKSPACE_MEMBERS_CACHE_MS
+        );
+        if (mc) {
+          priorMembers = mc.members as WorkspaceMember[];
+          priorInvitations = mc.invitations;
         }
       }
-
-      if (workspacesListFailed) {
-        console.log('❌ Failed to load workspaces list');
-        Alert.alert('Error', 'Failed to load workspace details');
-      } else if (targetWorkspace) {
-          console.log('✅ Found workspace:', targetWorkspace.name);
-          setWorkspace(targetWorkspace);
-
-          const membersPromise = apiService.getWorkspaceMembers(wid).catch((error: any) => {
-            if (error.response?.status === 404) {
-              console.log('⚠️ Workspace members endpoint not found (404), endpoint may not be implemented yet');
-            } else {
-              console.error('❌ Failed to load workspace members:', error);
-              if (error.response?.status !== 404) {
-                Alert.alert('Error', error.message || 'Failed to load workspace members');
-              }
-            }
-            return null;
-          });
-
-          const filesPromise = apiService
-            .getWorkspaceFiles(wid, { perPage: 100, timeoutMs: 25000 })
-            .catch((error: any) => {
-              console.warn('⚠️ Failed to load workspace files for recent activity:', error);
-              return null;
-            });
-
-          const [membersOutcome, filesOutcome] = await Promise.all([membersPromise, filesPromise]);
-
-          let membersData: WorkspaceMember[] = [];
-          let invitationsData: any[] = [];
-          if (membersOutcome?.success && membersOutcome.data) {
-            const responseData = membersOutcome.data;
-            membersData = responseData.members || [];
-            invitationsData = responseData.invitations || [];
-            console.log('✅ Loaded workspace members:', membersData.length);
-            console.log('✅ Loaded workspace invitations:', invitationsData.length);
-          } else if (!membersOutcome) {
-            membersData = [];
-            invitationsData = [];
-          } else {
-            console.log('⚠️ No members data in response');
-          }
-          setMembers(membersData);
-          setInvitations(invitationsData);
-
-          let activities: any[] = [];
-          if (filesOutcome?.success) {
-            let files: any[] = [];
-            if (filesOutcome.files && Array.isArray(filesOutcome.files)) {
-              files = filesOutcome.files;
-            } else if (Array.isArray(filesOutcome.data)) {
-              files = filesOutcome.data;
-            }
-            activities = files
-              .sort((a: any, b: any) => {
-                const dateA = a.updated_at || a.created_at ? new Date(a.updated_at || a.created_at).getTime() : 0;
-                const dateB = b.updated_at || b.created_at ? new Date(b.updated_at || b.created_at).getTime() : 0;
-                return dateB - dateA;
-              })
-              .slice(0, 5)
-              .map((file: any) => {
-                const fileName = file.original_filename || file.filename || file.name || 'Unknown file';
-                const timestamp = file.updated_at || file.created_at
-                  ? new Date(file.updated_at || file.created_at)
-                  : new Date();
-                const owner = file.owner;
-                const sharedBy = owner?.username
-                  ? `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || owner.username
-                  : null;
-                const subtitle = sharedBy
-                  ? `${fileName} (shared by ${sharedBy})`
-                  : fileName;
-
-                return {
-                  id: file.id?.toString() || `file-${Date.now()}`,
-                  type: 'share',
-                  title: 'File shared to workspace',
-                  subtitle,
-                  timestamp,
-                  icon: 'share-outline',
-                  file
-                };
-              });
-            console.log('✅ Loaded workspace recent activities:', activities.length);
-          }
-          setRecentActivities(activities);
-
-          screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
-            workspace: targetWorkspace,
-            members: membersData,
-            invitations: invitationsData,
-            recentActivities: activities,
-          });
-      } else {
-          console.log('❌ Workspace not found with ID:', id);
-          Alert.alert(
-            'Workspace Not Found',
-            'This workspace could not be found or you may not have access to it.',
-            [
-              { text: 'OK', onPress: () => router.back() }
-            ]
-          );
+      let priorActivities =
+        priorCache?.workspace?.id === wid ? (priorCache.recentActivities ?? []) : [];
+      if (priorActivities.length === 0) {
+        const ac = screenCache.get<WorkspaceActivitiesCachePayload>(
+          workspaceActivitiesCacheKey(wid),
+          WORKSPACE_ACTIVITIES_CACHE_MS
+        );
+        if (ac?.activities?.length) priorActivities = ac.activities;
       }
+      setMembers(priorMembers);
+      setInvitations(priorInvitations);
+      setRecentActivities(priorActivities);
+
+      screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
+        workspace: targetWorkspace,
+        members: priorMembers,
+        invitations: priorInvitations,
+        recentActivities: priorActivities,
+      });
+
+      // Background: members then activities (fire-and-forget, each independently).
+      void loadMembersInBackground(wid, targetWorkspace, priorActivities);
+      void loadActivitiesInBackground(wid, targetWorkspace, priorMembers, priorInvitations);
     } catch (error: any) {
       console.error('❌ Failed to load workspace:', error);
       Alert.alert('Error', error.message || 'Failed to load workspace details');
@@ -250,7 +400,7 @@ export default function WorkspaceDetailsScreen() {
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
-    screenCache.invalidate(workspaceDetailCacheKey);
+    invalidateWorkspaceScreenCaches(String(id), Number(id));
     loadWorkspaceDetails(true);
   };
 
@@ -269,7 +419,7 @@ export default function WorkspaceDetailsScreen() {
         setInviteModalVisible(false);
         setInviteEmail('');
         setInviteRole('member');
-        screenCache.invalidate(workspaceDetailCacheKey);
+        invalidateWorkspaceScreenCaches(String(id), Number(id));
         loadWorkspaceDetails(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to send invitation');
@@ -327,7 +477,7 @@ export default function WorkspaceDetailsScreen() {
       const response = await apiService.resendWorkspaceInvitation(Number(id), selectedInvitation.id);
       if (response.success) {
         Alert.alert('Success', 'Invitation resent successfully');
-        screenCache.invalidate(workspaceDetailCacheKey);
+        invalidateWorkspaceScreenCaches(String(id), Number(id));
         loadWorkspaceDetails(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to resend invitation');
@@ -355,7 +505,7 @@ export default function WorkspaceDetailsScreen() {
               const response = await apiService.cancelWorkspaceInvitation(Number(id), selectedInvitation.id);
               if (response.success) {
                 Alert.alert('Success', 'Invitation cancelled');
-                screenCache.invalidate(workspaceDetailCacheKey);
+                invalidateWorkspaceScreenCaches(String(id), Number(id));
                 loadWorkspaceDetails(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to cancel invitation');
@@ -376,7 +526,7 @@ export default function WorkspaceDetailsScreen() {
       const response = await apiService.updateWorkspaceMemberRole(Number(id), selectedMember.id, newRole);
       if (response.success) {
         Alert.alert('Success', `Member role updated to ${newRole}`);
-        screenCache.invalidate(workspaceDetailCacheKey);
+        invalidateWorkspaceScreenCaches(String(id), Number(id));
         loadWorkspaceDetails(true);
         setSelectedMember(null);
       } else {
@@ -422,6 +572,142 @@ export default function WorkspaceDetailsScreen() {
     );
   };
 
+  const loadWorkspaceFilesSheet = useCallback(
+    async (append = false) => {
+      const wid = Number(id);
+      if (!user || !Number.isFinite(wid)) return;
+      const offset = append ? workspaceFilesNextOffset ?? 0 : 0;
+      const sheetKey = workspaceFilesSheetFirstPageKey(wid);
+      if (!append) {
+        const fc = screenCache.get<WorkspaceFilesSheetCachePayload>(
+          sheetKey,
+          WORKSPACE_FILES_SHEET_CACHE_MS
+        );
+        if (fc) {
+          setWorkspaceSheetBookmarks(normalizeWorkspaceSheetBookmarks(fc.bookmarks));
+          setWorkspaceSheetFiles(fc.files);
+          setWorkspaceFilesHasMore(fc.hasMore);
+          setWorkspaceFilesNextOffset(fc.nextOffset);
+          setWorkspaceFilesLoading(false);
+          return;
+        }
+      }
+      if (append) {
+        setWorkspaceFilesLoadingMore(true);
+      } else {
+        setWorkspaceFilesLoading(true);
+      }
+      try {
+        const res = await apiService.getWorkspaceFiles(wid, {
+          perPage: 50,
+          timeoutMs: 30000,
+          offset,
+        });
+        if (res.success === false) {
+          throw new Error((res as any).message || 'Failed to load workspace files');
+        }
+        const rawFiles: any[] = (res as any).files ?? (res as any).data ?? [];
+        const rawBookmarks: any[] = (res as any).bookmarks ?? [];
+        const normBm = normalizeWorkspaceSheetBookmarks(rawBookmarks);
+        const hasMore = !!(res as any).has_more;
+        const nextOff =
+          (res as any).next_offset != null ? Number((res as any).next_offset) : null;
+        const nextOffNum = Number.isFinite(nextOff as number) ? nextOff : null;
+
+        if (append) {
+          setWorkspaceSheetBookmarks((prev) => [...prev, ...normBm]);
+          setWorkspaceSheetFiles((prev) => [...prev, ...rawFiles]);
+          screenCache.invalidate(sheetKey);
+        } else {
+          setWorkspaceSheetBookmarks(normBm);
+          setWorkspaceSheetFiles(rawFiles);
+          screenCache.set<WorkspaceFilesSheetCachePayload>(sheetKey, {
+            bookmarks: normBm,
+            files: rawFiles,
+            hasMore,
+            nextOffset: nextOffNum,
+          });
+        }
+        setWorkspaceFilesHasMore(hasMore);
+        setWorkspaceFilesNextOffset(nextOffNum);
+      } catch (e: any) {
+        if (!append) {
+          Alert.alert('Error', e?.message || 'Failed to load workspace files');
+          setWorkspaceSheetBookmarks([]);
+          setWorkspaceSheetFiles([]);
+          setWorkspaceFilesHasMore(false);
+          setWorkspaceFilesNextOffset(null);
+          screenCache.invalidate(sheetKey);
+        } else {
+          Alert.alert('Error', e?.message || 'Failed to load more');
+        }
+      } finally {
+        if (append) setWorkspaceFilesLoadingMore(false);
+        else setWorkspaceFilesLoading(false);
+      }
+    },
+    [user, id, workspaceFilesNextOffset]
+  );
+
+  const loadMoreWorkspaceFiles = useCallback(async () => {
+    if (!workspaceFilesHasMore || workspaceFilesLoadingMore) return;
+    await loadWorkspaceFilesSheet(true);
+  }, [workspaceFilesHasMore, workspaceFilesLoadingMore, loadWorkspaceFilesSheet]);
+
+  const openWorkspaceFilesSheet = () => {
+    setWorkspaceFilesSheetVisible(true);
+    void loadWorkspaceFilesSheet(false);
+  };
+
+  const openFileFromWorkspaceSheet = useCallback(
+    (file: any) => {
+      const fid = file?.id;
+      if (fid == null) return;
+      const originalName = file.original_filename || file.filename || 'File';
+      const fk = (file.file_kind || '').toString().toLowerCase();
+      const ps = (file.processing_status || '').toString().toLowerCase();
+      if (fk === 'pending' || ps === 'pending' || ps === 'processing') {
+        Alert.alert(
+          'Document Processing',
+          `"${originalName}" is still being processed. Please wait a few moments and try again.`
+        );
+        return;
+      }
+
+      // Close sheet first so DocumentViewer’s Modal stacks above (same UX as leaving the list on Files).
+      setWorkspaceFilesSheetVisible(false);
+
+      if (fk === 'draft') {
+        router.push(`/drafts/edit/${fid}` as any);
+        return;
+      }
+
+      const cat = fk || (file.receipt_category || '').toString().toLowerCase();
+      if (cat === 'form' || cat === 'forms') {
+        setWorkspaceQuickForm({ id: String(fid), name: originalName });
+        return;
+      }
+
+      setViewerFile({
+        id: String(fid),
+        name: originalName,
+        type: fileTypeFromFilename(originalName),
+        category: file.file_kind,
+        workspaceId: Number(id),
+      });
+    },
+    [id, router]
+  );
+
+  const onWorkspaceSheetBookmarkPress = useCallback(() => {
+    Toast.show({
+      type: 'info',
+      text1: 'View in web',
+      text2: 'Open GrabDocs in your browser to open this shared bookmark and its files.',
+      visibilityTime: 4500,
+    });
+  }, []);
+
   const handleRemoveMember = async () => {
     if (!selectedMember) return;
     
@@ -439,10 +725,10 @@ export default function WorkspaceDetailsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const response = await apiService.removeWorkspaceMember(Number(id), selectedMember.user_id);
+              const response = await apiService.removeWorkspaceMember(Number(id), selectedMember.id);
               if (response.success) {
                 Alert.alert('Success', 'Member removed from workspace');
-                screenCache.invalidate(workspaceDetailCacheKey);
+                invalidateWorkspaceScreenCaches(String(id), Number(id));
                 loadWorkspaceDetails(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to remove member');
@@ -534,6 +820,59 @@ export default function WorkspaceDetailsScreen() {
     roleOptionSelected: { borderColor: '#007AFF', backgroundColor: '#E3F2FD' },
     roleOptionText: { fontSize: 14, color: colors.textSecondary },
     roleOptionTextSelected: { color: '#007AFF', fontWeight: '600' },
+    filesSheetBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'flex-end',
+    },
+    filesSheetPanel: {
+      backgroundColor: colors.card,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      maxHeight: '88%',
+      width: '100%',
+      paddingTop: 8,
+    },
+    filesSheetHandle: {
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.border,
+      alignSelf: 'center',
+      marginBottom: 10,
+    },
+    filesSheetHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    filesSheetTitle: { fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 },
+    filesSheetRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 13,
+      paddingHorizontal: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      gap: 8,
+    },
+    filesSheetRowText: { flex: 1 },
+    filesSheetRowTitle: { fontSize: 16, fontWeight: '600', color: colors.text },
+    filesSheetRowSub: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
+    filesSheetEmpty: { padding: 32, alignItems: 'center' },
+    filesSheetEmptyText: { fontSize: 16, color: colors.textSecondary, textAlign: 'center' },
+    filesSheetBookmarkCard: { borderBottomWidth: 1, borderBottomColor: colors.border },
+    filesSheetBookmarkHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 13,
+      paddingHorizontal: 16,
+      gap: 8,
+    },
   }), [colors]);
 
   const renderMemberItem = ({ item: member }: { item: WorkspaceMember }) => (
@@ -595,6 +934,8 @@ export default function WorkspaceDetailsScreen() {
     );
   }
 
+  const isViewer = workspace.user_role === 'viewer';
+
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
@@ -636,7 +977,8 @@ export default function WorkspaceDetailsScreen() {
           </View>
         </View>
 
-        {/* Action Buttons */}
+        {/* Action Buttons — hidden for viewers */}
+        {!isViewer && (
         <View style={dynamicStyles.actionsSection}>
           <Text style={dynamicStyles.sectionTitle}>Quick Actions</Text>
           <View style={dynamicStyles.actionsGrid}>
@@ -723,7 +1065,7 @@ export default function WorkspaceDetailsScreen() {
                             const q = new URLSearchParams({
                               meetingId: String(activeMeeting?.meetingId || activeMeeting?.id || ''),
                               title: String(activeMeeting?.name || 'Active Meeting'),
-                              userName: String(user?.name || user?.email?.split('@')[0] || 'Mobile User')
+                              userName: getReachParticipantDisplayName(user)
                             });
                             router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
                           }
@@ -784,10 +1126,7 @@ export default function WorkspaceDetailsScreen() {
 
             <TouchableOpacity 
               style={dynamicStyles.actionButton} 
-              onPress={() => router.push({
-                pathname: '/(tabs)/documents',
-                params: { workspaceId: id.toString() }
-              })}
+              onPress={openWorkspaceFilesSheet}
             >
               <View style={[dynamicStyles.actionIcon, { backgroundColor: '#AF52DE' }]}>
                 <Ionicons name="folder-open" size={24} color="#fff" />
@@ -796,8 +1135,10 @@ export default function WorkspaceDetailsScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        )}
 
-        {/* Members and Invitations Tabs */}
+        {/* Team / members — hidden for viewers */}
+        {!isViewer && (
         <View style={dynamicStyles.section}>
           <View style={dynamicStyles.sectionHeader}>
             <Text style={dynamicStyles.sectionTitle}>Team</Text>
@@ -922,6 +1263,7 @@ export default function WorkspaceDetailsScreen() {
             )
           )}
         </View>
+        )}
 
         {/* Recent Activity Section */}
         <View style={dynamicStyles.section}>
@@ -949,7 +1291,7 @@ export default function WorkspaceDetailsScreen() {
                       flexDirection: 'row',
                       alignItems: 'center',
                       padding: 12,
-                      backgroundColor: colors.backgroundSecondary,
+                      backgroundColor: colors.surface,
                       borderRadius: 8,
                       gap: 12
                     }}
@@ -1093,6 +1435,191 @@ export default function WorkspaceDetailsScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Workspace shared files — bottom sheet (only content shared in this workspace) */}
+      <Modal
+        visible={workspaceFilesSheetVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setWorkspaceFilesSheetVisible(false)}
+      >
+        <View style={dynamicStyles.filesSheetBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setWorkspaceFilesSheetVisible(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          />
+          <View
+            style={[dynamicStyles.filesSheetPanel, { paddingBottom: insets.bottom + 16 }]}
+          >
+            <View style={dynamicStyles.filesSheetHandle} />
+            <View style={dynamicStyles.filesSheetHeader}>
+              <Text style={dynamicStyles.filesSheetTitle} numberOfLines={1}>
+                Files in {workspace.name}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setWorkspaceFilesSheetVisible(false)}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="Close files list"
+              >
+                <Ionicons name="close" size={26} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {workspaceFilesLoading &&
+            workspaceSheetBookmarks.length === 0 &&
+            workspaceSheetFiles.length === 0 ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#007AFF" />
+                <Text style={[dynamicStyles.filesSheetEmptyText, { marginTop: 12 }]}>
+                  Loading…
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={workspaceSheetListItems}
+                keyExtractor={(item) =>
+                  item.kind === 'bookmark'
+                    ? `b-${item.bookmark.bookmark_id}`
+                    : `f-${item.file.id}`
+                }
+                refreshControl={
+                  <RefreshControl
+                    refreshing={workspaceFilesLoading && !workspaceFilesLoadingMore}
+                    onRefresh={() => {
+                      screenCache.invalidate(workspaceFilesSheetFirstPageKey(Number(id)));
+                      void loadWorkspaceFilesSheet(false);
+                    }}
+                    tintColor="#007AFF"
+                  />
+                }
+                renderItem={({ item }) => {
+                  if (item.kind === 'bookmark') {
+                    const { bookmark } = item;
+                    const countLabel =
+                      bookmark.file_count === 1
+                        ? 'Shared bookmark · 1 file'
+                        : `Shared bookmark · ${bookmark.file_count} files`;
+                    const subLabel = bookmark.is_locked ? `${countLabel} · Locked` : countLabel;
+                    return (
+                      <View style={dynamicStyles.filesSheetBookmarkCard}>
+                        <TouchableOpacity
+                          style={dynamicStyles.filesSheetBookmarkHeader}
+                          onPress={onWorkspaceSheetBookmarkPress}
+                          activeOpacity={0.7}
+                          accessibilityRole="button"
+                          accessibilityLabel={
+                            bookmark.is_locked
+                              ? `${bookmark.bookmark_name}, locked shared bookmark`
+                              : bookmark.bookmark_name
+                          }
+                          accessibilityHint="Opens a message to use the web app for bookmark contents"
+                        >
+                          <View style={dynamicStyles.filesSheetRowText}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              {bookmark.is_locked ? (
+                                <Ionicons
+                                  name="lock-closed"
+                                  size={18}
+                                  color={colors.textSecondary}
+                                  accessibilityElementsHidden
+                                  importantForAccessibility="no"
+                                />
+                              ) : null}
+                              <Text
+                                style={[dynamicStyles.filesSheetRowTitle, { flex: 1 }]}
+                                numberOfLines={2}
+                              >
+                                {bookmark.bookmark_name}
+                              </Text>
+                            </View>
+                            <Text style={dynamicStyles.filesSheetRowSub} numberOfLines={1}>
+                              {subLabel}
+                            </Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  }
+                  const f = item.file;
+                  const originalName = f.original_filename || f.filename || 'File';
+                  return (
+                    <TouchableOpacity
+                      style={dynamicStyles.filesSheetRow}
+                      onPress={() => openFileFromWorkspaceSheet(f)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={dynamicStyles.filesSheetRowText}>
+                        <Text style={dynamicStyles.filesSheetRowTitle} numberOfLines={2}>
+                          {originalName}
+                        </Text>
+                        <Text style={dynamicStyles.filesSheetRowSub} numberOfLines={1}>
+                          {workspaceStandaloneFileSubtitle(f)}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color={colors.textLight} />
+                    </TouchableOpacity>
+                  );
+                }}
+                ListEmptyComponent={
+                  <View style={dynamicStyles.filesSheetEmpty}>
+                    <Ionicons name="folder-open-outline" size={48} color={colors.textLight} />
+                    <Text style={[dynamicStyles.filesSheetEmptyText, { marginTop: 12 }]}>
+                      No files shared in this workspace yet
+                    </Text>
+                  </View>
+                }
+                ListFooterComponent={
+                  workspaceFilesHasMore ? (
+                    <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+                      <TouchableOpacity
+                        onPress={() => void loadMoreWorkspaceFiles()}
+                        disabled={workspaceFilesLoadingMore}
+                        hitSlop={8}
+                      >
+                        {workspaceFilesLoadingMore ? (
+                          <ActivityIndicator size="small" color="#007AFF" />
+                        ) : (
+                          <Text style={{ color: '#007AFF', fontWeight: '600', fontSize: 16 }}>
+                            Load more
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ) : null
+                }
+                style={{
+                  maxHeight: Math.round(Dimensions.get('window').height * 0.58),
+                }}
+                contentContainerStyle={
+                  workspaceSheetListItems.length === 0 ? { flexGrow: 1 } : { paddingBottom: 8 }
+                }
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {viewerFile && (
+        <DocumentViewer
+          fileId={viewerFile.id}
+          fileName={viewerFile.name}
+          fileType={viewerFile.type}
+          fileCategory={viewerFile.category}
+          workspaceId={viewerFile.workspaceId}
+          onClose={() => setViewerFile(null)}
+        />
+      )}
+
+      {workspaceQuickForm && (
+        <QuickFormViewer
+          formId={workspaceQuickForm.id}
+          formName={workspaceQuickForm.name}
+          onClose={() => setWorkspaceQuickForm(null)}
+        />
+      )}
 
       {/* Invite Member Modal */}
       <Modal

@@ -1,8 +1,10 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
+    Animated,
     Image,
     Modal,
     Platform,
@@ -14,6 +16,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
@@ -43,6 +46,40 @@ interface RecentActivity {
   icon: string;
 }
 
+function ReachLiveMeetingDot() {
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.35, duration: 900, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [opacity]);
+  return (
+    <Animated.View
+      style={[reachLiveDotStyles.dot, { opacity }]}
+      accessibilityLabel="In a meeting"
+    />
+  );
+}
+
+const reachLiveDotStyles = StyleSheet.create({
+  dot: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#34C759',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+});
+
 function DashboardScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
@@ -67,6 +104,7 @@ function DashboardScreen() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
+  const [reachInMeeting, setReachInMeeting] = useState(false);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
   const DASHBOARD_CACHE_MS = 60000; // 60 s TTL for dashboard data
@@ -109,6 +147,25 @@ function DashboardScreen() {
         router.replace('/(auth)/sign-in');
       }
     }, [user, router])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          const id = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+          if (!cancelled) {
+            setReachInMeeting(typeof id === 'string' && id.trim().length > 0);
+          }
+        } catch {
+          if (!cancelled) setReachInMeeting(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [])
   );
 
   // Helper function to safely set upload state with timeout
@@ -568,22 +625,26 @@ function DashboardScreen() {
     </TouchableOpacity>
   );
 
-  const QuickActionCard = ({ title, subtitle, icon, color, onPress, isNew }: {
+  const QuickActionCard = ({ title, subtitle, icon, color, onPress, isNew, showLiveMeetingIndicator }: {
     title: string;
     subtitle: string;
     icon: string;
     color: string;
     onPress: () => void;
     isNew?: boolean;
+    showLiveMeetingIndicator?: boolean;
   }) => (
     <TouchableOpacity
       style={dynamicStyles.quickActionCard}
       onPress={onPress}
-      accessibilityLabel={`${title}: ${subtitle}`}
+      accessibilityLabel={
+        showLiveMeetingIndicator ? `${title}: ${subtitle}. In a meeting.` : `${title}: ${subtitle}`
+      }
       accessibilityRole="button"
     >
       <View style={[dynamicStyles.quickActionIcon, { backgroundColor: color }]}>
         <Ionicons name={icon as any} size={22} color="#fff" />
+        {showLiveMeetingIndicator ? <ReachLiveMeetingDot /> : null}
         {isNew ? <View style={dynamicStyles.newBadge}><Text style={dynamicStyles.newBadgeText}>NEW</Text></View> : null}
       </View>
       <View style={dynamicStyles.quickActionContent}>
@@ -922,6 +983,7 @@ function DashboardScreen() {
     elevation: 2,
   },
   quickActionIcon: {
+    position: 'relative',
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -1351,6 +1413,7 @@ function DashboardScreen() {
               color="#007AFF"
               onPress={() => handleQuickAction('meeting-call')}
               isNew={true}
+              showLiveMeetingIndicator={reachInMeeting}
             />
             <QuickActionCard
               key="action-upload-links"

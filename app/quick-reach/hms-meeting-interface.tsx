@@ -23,13 +23,14 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL, HMS_IOS_SCREENSHARE } from '../../constants/Config';
+import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
 import { apiClient } from '../../services/api';
+import { resolveReachDisplayName } from '../../utils/reachDisplayName';
 import { errorLogger } from '../../services/errorLogger';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
 
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
-export const REACH_CURRENT_MEETING_KEY = 'reach_current_meeting_id';
 
 // HMS package - enabled for local testing
 // All HMS functionality is handled via backend API calls
@@ -118,9 +119,17 @@ export default function HMSMeetingInterfaceScreen() {
   const insets = useSafeAreaInsets();
   const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
 
-  const goToAppHome = useCallback(() => {
+  const goToAppHome = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
+    } catch (_) {}
+    try {
+      if (meetingId) {
+        await apiClient.client.post(`/api/v1/mobile/meetings/${String(meetingId).trim()}/leave`);
+      }
+    } catch (_) {}
     router.replace('/(tabs)' as any);
-  }, [router]);
+  }, [router, meetingId]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -649,7 +658,7 @@ export default function HMSMeetingInterfaceScreen() {
       }
 
       // Same as web: get token via join-by-id (one join path for both web and mobile)
-      const displayUserName = (userName as string) || user?.name || 'Mobile User';
+      const displayUserName = resolveReachDisplayName(userName, user);
       try {
         const joinRes = await apiClient.client.post('/api/v1/video/room/join-by-id', {
           meeting_id: (meetingId as string).trim(),
@@ -828,7 +837,7 @@ export default function HMSMeetingInterfaceScreen() {
   if (HMSPrebuilt && authToken && meetingId) {
     const roomCode = meetingId as string;
     const token = authToken;
-    const displayUserName = (userName as string) || user?.name || 'Mobile User';
+    const displayUserName = resolveReachDisplayName(userName, user);
     
     if (!roomCode || !token) {
       return (
@@ -1229,7 +1238,7 @@ export default function HMSMeetingInterfaceScreen() {
           <Text style={styles.meetingInfoValue}>{title || 'Meeting'}</Text>
           
           <Text style={styles.meetingInfoLabel}>User:</Text>
-          <Text style={styles.meetingInfoValue}>{userName || 'Mobile User'}</Text>
+          <Text style={styles.meetingInfoValue}>{resolveReachDisplayName(userName, user)}</Text>
         </View>
 
         <View style={styles.developmentMessage}>

@@ -53,6 +53,12 @@ interface Document {
   json_data?: Record<string, unknown> | null; // Store json_data to check if store name is populated
   original_filename?: string;
   user_id?: number; // File owner's user ID
+  /** Workspace list: row opens bookmark detail instead of a file */
+  listKind?: 'file' | 'bookmark';
+  bookmarkId?: number;
+  bookmarkColor?: string;
+  /** For listKind bookmark: used when sorting by size */
+  bookmarkFileCount?: number;
 }
 
 interface ApiDocument {
@@ -214,6 +220,8 @@ export default function QuickFilesScreen() {
 
   // Bookmark state
   const [bookmarks, setBookmarks] = useState<any[]>([]);
+  /** Bookmarks visible in the current workspace (shared there or owned with that workspace id) */
+  const [workspaceBookmarks, setWorkspaceBookmarks] = useState<any[]>([]);
   /** File IDs that are in at least one locked bookmark; hidden from the files list */
   const [fileIdsInLockedBookmarks, setFileIdsInLockedBookmarks] = useState<Set<string>>(new Set());
   const [showBookmarkModal, setShowBookmarkModal] = useState(false);
@@ -247,6 +255,7 @@ export default function QuickFilesScreen() {
     timestamp: number;
     isFormsMode: boolean;
     workspaceId?: number;
+    workspaceBookmarks?: any[];
   } | null>(null);
 
   // Locked-bookmark file ID cache — keyed so we don't re-fetch on every loadDocuments call.
@@ -255,6 +264,7 @@ export default function QuickFilesScreen() {
     fileIds: Set<string>;
     bookmarks: any[];
     timestamp: number;
+    scopeWorkspaceId?: number;
   } | null>(null);
   const LOCKED_BOOKMARK_CACHE_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -325,6 +335,7 @@ export default function QuickFilesScreen() {
     
     // Handle form type specifically
     if (type === 'form') return 'clipboard-outline';
+    if (type === 'bookmark') return 'bookmark';
     
     // Use file_kind to determine icon (file_kind is the file type: receipt, invoice, document, spreadsheet, picture, etc.)
     if (fileKind) {
@@ -579,6 +590,7 @@ export default function QuickFilesScreen() {
     // Apply category filter
     if (filterBy !== 'all') {
       filtered = filtered.filter(doc => {
+        if (doc.listKind === 'bookmark') return false;
         // Use file_kind to determine file type (receipt, invoice, document, etc.)
         // doc.category is for receipt categorization (Supplies, Rent, etc.), not file type
         const fileTypeCategory = normalizeCategory(doc.file_kind).toLowerCase();
@@ -614,10 +626,43 @@ export default function QuickFilesScreen() {
         }
       });
     }
-        
+
+    // Workspace "View Files": include bookmarks shared in this workspace (only when showing All)
+    let combined = filtered;
+    if (
+      workspaceId != null &&
+      Number.isFinite(workspaceId) &&
+      filterBy === 'all' &&
+      workspaceBookmarks.length > 0
+    ) {
+      const q = searchQuery.trim().toLowerCase();
+      const bmRows: Document[] = workspaceBookmarks
+        .filter((b: any) => !isBookmarkLocked(b))
+        .filter(
+          (b: any) => !q || (String(b.name || '').toLowerCase().includes(q))
+        )
+        .map((b: any) => ({
+          id: `bm-${b.id}`,
+          name: b.name || 'Bookmark',
+          type: 'bookmark',
+          size:
+            (b.file_count ?? 0) === 1
+              ? '1 file'
+              : `${b.file_count ?? 0} files`,
+          uploadDate: new Date(b.updated_at || b.created_at || Date.now()),
+          status: 'processed' as const,
+          tags: [] as string[],
+          listKind: 'bookmark' as const,
+          bookmarkId: b.id,
+          bookmarkColor: b.color || '#007AFF',
+          bookmarkFileCount: b.file_count ?? 0,
+        }));
+      combined = [...filtered, ...bmRows];
+    }
+
     // Apply sorting
     // Optimistic files (pending status) should always appear first, then sort by selected criteria
-    filtered.sort((a, b) => {
+    combined.sort((a, b) => {
         // Always put pending files first
         const aIsPending = a.status === 'pending' || a.file_kind === 'pending';
         const bIsPending = b.status === 'pending' || b.file_kind === 'pending';
@@ -631,8 +676,17 @@ export default function QuickFilesScreen() {
             return (a.name || '').localeCompare(b.name || '');
           case 'date':
             return b.uploadDate.getTime() - a.uploadDate.getTime();
-          case 'size':
-          return parseInt(b.size) - parseInt(a.size);
+          case 'size': {
+            const sa =
+              a.listKind === 'bookmark'
+                ? a.bookmarkFileCount ?? 0
+                : parseInt(a.size, 10) || 0;
+            const sb =
+              b.listKind === 'bookmark'
+                ? b.bookmarkFileCount ?? 0
+                : parseInt(b.size, 10) || 0;
+            return sb - sa;
+          }
           case 'type':
             return (a.type || '').localeCompare(b.type || '');
           default:
@@ -640,8 +694,8 @@ export default function QuickFilesScreen() {
         }
       });
 
-    return filtered;
-  }, [documents, searchQuery, filterBy, sortBy, fileIdsInLockedBookmarks]);
+    return combined;
+  }, [documents, searchQuery, filterBy, sortBy, fileIdsInLockedBookmarks, workspaceBookmarks, workspaceId]);
 
   /**
    * Fetches IDs of all files that belong to at least one locked bookmark.
@@ -655,7 +709,8 @@ export default function QuickFilesScreen() {
     if (
       !forceRefresh &&
       lockedBookmarkCacheRef.current &&
-      now - lockedBookmarkCacheRef.current.timestamp < LOCKED_BOOKMARK_CACHE_MS
+      now - lockedBookmarkCacheRef.current.timestamp < LOCKED_BOOKMARK_CACHE_MS &&
+      lockedBookmarkCacheRef.current.scopeWorkspaceId === workspaceId
     ) {
       setBookmarks(lockedBookmarkCacheRef.current.bookmarks);
       return lockedBookmarkCacheRef.current.fileIds;
@@ -666,7 +721,11 @@ export default function QuickFilesScreen() {
       let bmOffset = 0;
       const bmPage = 100;
       for (;;) {
-        const response = await apiClient.getBookmarks(bmPage, bmOffset);
+        const response = await apiClient.getBookmarks(
+          bmPage,
+          bmOffset,
+          workspaceId != null && Number.isFinite(workspaceId) ? workspaceId : undefined
+        );
         if (!response.success || !response.data) break;
         const batch = Array.isArray(response.data)
           ? response.data
@@ -713,12 +772,17 @@ export default function QuickFilesScreen() {
 
       const lockedFileIds = new Set<string>(fileIdArrays.flat());
 
-      lockedBookmarkCacheRef.current = { fileIds: lockedFileIds, bookmarks: allBookmarks, timestamp: now };
+      lockedBookmarkCacheRef.current = {
+        fileIds: lockedFileIds,
+        bookmarks: allBookmarks,
+        timestamp: now,
+        scopeWorkspaceId: workspaceId,
+      };
       return lockedFileIds;
     } catch {
       return new Set();
     }
-  }, []);
+  }, [workspaceId]);
 
   // Optimized loadDocuments function with caching
   const loadDocuments = useCallback(async (forceRefresh = false) => {
@@ -743,6 +807,7 @@ export default function QuickFilesScreen() {
       console.log('📁 Using cached documents for workspaceId:', workspaceId);
       const filtered = cache.data.filter(doc => !lockedFileIdsRef.current.has(doc.id));
       setDocuments(filtered);
+      setWorkspaceBookmarks(cache.workspaceBookmarks ?? []);
       setLoading(false);
       return;
     }
@@ -774,17 +839,39 @@ export default function QuickFilesScreen() {
 
     let response: any;
     let lockedFileIds = new Set<string>();
+    let workspaceBookmarksPayload: any[] = [];
     try {
       // Forms list does not filter by locked bookmarks — skip that slow multi-request sweep here.
       if (isFormsMode) {
         response = await fetchDocumentsResponse();
+        setWorkspaceBookmarks([]);
       } else {
-        [lockedFileIds, response] = await Promise.all([
+        const wsId =
+          workspaceId != null && Number.isFinite(workspaceId) ? workspaceId : undefined;
+        const bookmarksPromise =
+          wsId != null
+            ? apiClient.getBookmarks(100, 0, wsId)
+            : Promise.resolve({ success: false } as const);
+        const [lockedIds, docsRes, bmRes] = await Promise.all([
           fetchLockedBookmarkFileIds(forceRefresh),
           fetchDocumentsResponse(),
+          bookmarksPromise,
         ]);
+        lockedFileIds = lockedIds;
+        response = docsRes;
+        if (wsId == null) {
+          workspaceBookmarksPayload = [];
+        } else if (bmRes && (bmRes as any).success && (bmRes as any).data) {
+          const raw = (bmRes as any).data;
+          workspaceBookmarksPayload = Array.isArray(raw)
+            ? raw
+            : ((raw as any).bookmarks || []);
+        } else {
+          workspaceBookmarksPayload = [];
+        }
         lockedFileIdsRef.current = lockedFileIds;
         setFileIdsInLockedBookmarks(lockedFileIds);
+        setWorkspaceBookmarks(workspaceBookmarksPayload);
       }
     } catch (err) {
       isLoadingDocumentsRef.current = false;
@@ -825,7 +912,13 @@ export default function QuickFilesScreen() {
           setDocuments(mappedForms);
           setLastLoadTime(now);
           
-          apiCacheRef.current = { data: mappedForms, timestamp: now, isFormsMode: true, workspaceId };
+          apiCacheRef.current = {
+            data: mappedForms,
+            timestamp: now,
+            isFormsMode: true,
+            workspaceId,
+            workspaceBookmarks: [],
+          };
         } else {
           setDocuments([]);
           setError('No forms found or API returned unexpected format.');
@@ -891,7 +984,16 @@ export default function QuickFilesScreen() {
           setDocuments(mappedDocs);
           setLastLoadTime(now);
           
-          apiCacheRef.current = { data: mappedDocs, timestamp: now, isFormsMode: false, workspaceId };
+          apiCacheRef.current = {
+            data: mappedDocs,
+            timestamp: now,
+            isFormsMode: false,
+            workspaceId,
+            workspaceBookmarks:
+              workspaceId != null && Number.isFinite(workspaceId)
+                ? workspaceBookmarksPayload
+                : [],
+          };
         } else {
           setDocuments([]);
           setError('No documents found or API returned unexpected format.');
@@ -900,6 +1002,7 @@ export default function QuickFilesScreen() {
     } catch (err: any) {
       console.error('Unexpected error in loadDocuments:', err);
       setDocuments([]);
+      setWorkspaceBookmarks([]);
       if (err.message?.includes('CORS') || err.message?.includes('Network error') || err.message?.toLowerCase().includes('backend') || err.message?.toLowerCase().includes('connection')) {
         setError('Connection Error: Connecting you back ...');
       } else {
@@ -1128,6 +1231,14 @@ export default function QuickFilesScreen() {
   }, [documents, loadDocuments]);
 
   const handleDocumentPress = async (document: Document) => {
+    if (document.listKind === 'bookmark' && document.bookmarkId != null) {
+      router.push({
+        pathname: '/bookmarks/detail',
+        params: { id: String(document.bookmarkId) },
+      } as any);
+      return;
+    }
+
     if (document.status === 'processing' || document.status === 'pending') {
       Alert.alert('Document Processing', `"${document.name}" is still being processed. Please wait a few moments and try again.`);
       return;
@@ -1742,14 +1853,22 @@ export default function QuickFilesScreen() {
     <TouchableOpacity
       style={dynamicStyles.documentItem}
       onPress={() => handleDocumentPress(item)}
-      onLongPress={(event) => handleKebabMenuPress(item, event)}
-      accessibilityRole="listitem"
+      onLongPress={
+        item.listKind === 'bookmark'
+          ? undefined
+          : (event) => handleKebabMenuPress(item, event)
+      }
+      accessibilityRole="button"
       accessibilityLabel={`${item.name}${item.file_kind ? `, ${item.file_kind.replace(/_/g, ' ')}` : ''}`}
     >
       <DocumentListIcon
         pending={item.status === 'pending' || item.status === 'processing'}
         iconName={getFileIcon(item.type, item.status, item.file_kind) as React.ComponentProps<typeof Ionicons>['name']}
-        iconColor={getTypeColor(item.type, item.file_kind)}
+        iconColor={
+          item.listKind === 'bookmark'
+            ? item.bookmarkColor || '#AF52DE'
+            : getTypeColor(item.type, item.file_kind)
+        }
         containerStyle={dynamicStyles.documentIcon}
       />
       
@@ -1760,25 +1879,28 @@ export default function QuickFilesScreen() {
         <View style={dynamicStyles.documentMetaRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', flex: 1 }}>
             <Text style={dynamicStyles.documentMeta}>
-              {item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}
-              {item.size} • {item.uploadDate.toLocaleDateString()}
+              {item.listKind === 'bookmark'
+                ? `Bookmark • ${item.size} • ${item.uploadDate.toLocaleDateString()}`
+                : `${item.file_kind ? `${item.file_kind.replace(/_/g, ' ')} • ` : ''}${item.size} • ${item.uploadDate.toLocaleDateString()}`}
             </Text>
-            {item.is_global && (
+            {item.listKind !== 'bookmark' && item.is_global && (
               <Ionicons name="globe-outline" size={12} color={colors.tint} style={{ marginLeft: 4 }} />
             )}
-            {item.category && (
+            {item.listKind !== 'bookmark' && item.category && (
               <Text style={dynamicStyles.documentMeta}> • {item.category}</Text>
             )}
           </View>
-          {item.totalAmount != null && !Number.isNaN(item.totalAmount) && (
+          {item.listKind !== 'bookmark' &&
+            item.totalAmount != null &&
+            !Number.isNaN(item.totalAmount) && (
             <Text style={dynamicStyles.documentMetaAmount}>
               {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(item.totalAmount)}
             </Text>
           )}
         </View>
       </View>
-      
-      {/* Kebab Menu Button */}
+
+      {item.listKind !== 'bookmark' && (
       <TouchableOpacity
         style={dynamicStyles.kebabButton}
         onPress={(event) => {
@@ -1788,6 +1910,7 @@ export default function QuickFilesScreen() {
       >
         <Ionicons name="ellipsis-vertical" size={20} color="#666" />
       </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 
@@ -2519,6 +2642,9 @@ export default function QuickFilesScreen() {
           fileName={selectedDocument.name}
           fileType={selectedDocument.type}
           fileCategory={selectedDocument.category}
+          workspaceId={
+            workspaceId != null && Number.isFinite(workspaceId) ? workspaceId : undefined
+          }
           onClose={() => {
             setShowDocumentViewer(false);
             setSelectedDocument(null);

@@ -57,6 +57,8 @@ interface DocumentViewerProps {
   fileName: string;
   fileType: string;
   fileCategory?: string;
+  /** When the file was opened from a workspace list, pass it so get-file authorizes correctly */
+  workspaceId?: number;
   onClose: () => void;
 }
 
@@ -1027,6 +1029,7 @@ export default function DocumentViewer({
   fileName,
   fileType,
   fileCategory,
+  workspaceId: workspaceIdProp,
   onClose
 }: DocumentViewerProps) {
   const colors = useThemeColors();
@@ -1651,7 +1654,10 @@ export default function DocumentViewer({
       // For image files containing documents, we need to get the file info first
       // then construct a preview URL that serves the image content directly
       console.log('📥 Fetching file info for fileId:', fileId);
-      const fileInfo = await apiClient.getFileById(parseInt(fileId));
+      const fileInfo = await apiClient.getFileById(
+        parseInt(fileId, 10),
+        Number.isFinite(workspaceIdProp as number) ? workspaceIdProp : undefined
+      );
       
       console.log('📦 File info response:', {
         success: fileInfo.success,

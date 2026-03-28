@@ -21,9 +21,10 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Toast from 'react-native-toast-message';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { getReachParticipantDisplayName } from '../../utils/reachDisplayName';
 import { formatMeetingTimeToLocal } from '../../utils/timeFormatting';
 import { useAuth } from '../context/auth';
-import { REACH_CURRENT_MEETING_KEY } from './hms-meeting-interface';
+import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
 
 interface Meeting {
   id: string;
@@ -465,7 +466,7 @@ export default function MeetingCallScreen() {
     const q = new URLSearchParams({
       meetingId: params.meetingId,
       title: params.title,
-      userName: params.userName || 'Mobile User'
+      userName: params.userName || getReachParticipantDisplayName(user)
     });
     if (params.passcode) q.set('passcode', params.passcode);
     router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
@@ -1356,7 +1357,7 @@ export default function MeetingCallScreen() {
           const q = new URLSearchParams({
             meetingId: String(item.meetingId ?? ''),
             title: String(item.title ?? ''),
-            userName: String(user?.name || user?.email || 'Mobile User')
+            userName: getReachParticipantDisplayName(user)
           });
           if (item.passcode) q.set('passcode', String(item.passcode));
           router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);

@@ -1,259 +1,234 @@
-import { MaterialIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useRef, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+} from 'react-native';
+import { captureRef } from 'react-native-view-shot';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLimitError } from '../../contexts/LimitErrorContext';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
+type EnhancementMode = 'auto' | 'high_contrast' | 'black_white';
+
+interface FilterOption {
+  key: EnhancementMode;
+  label: string;
+  icon: string;
+  filter: Array<Record<string, number>>;
+  description: string;
+}
+
+const FILTER_OPTIONS: FilterOption[] = [
+  {
+    key: 'auto',
+    label: 'Auto',
+    icon: 'auto-fix-high',
+    filter: [{ brightness: 1.06 }, { contrast: 1.15 }, { saturate: 0.9 }],
+    description: 'Optimised for readability',
+  },
+  {
+    key: 'high_contrast',
+    label: 'Contrast',
+    icon: 'contrast',
+    filter: [{ contrast: 2.0 }, { brightness: 1.1 }, { saturate: 0.6 }],
+    description: 'Sharp black & white text',
+  },
+  {
+    key: 'black_white',
+    label: 'B&W',
+    icon: 'filter-b-and-w',
+    filter: [{ grayscale: 1 }, { contrast: 1.6 }, { brightness: 1.05 }],
+    description: 'Grayscale document',
+  },
+];
+
 export default function ProcessScanScreen() {
   const router = useRouter();
   const { showLimitError } = useLimitError();
-  const { imageUri } = useLocalSearchParams();
-  const [processing, setProcessing] = useState(false);
-  const [currentImage, setCurrentImage] = useState(imageUri);
-  const [enhancementLevel, setEnhancementLevel] = useState('auto');
+  const { imageUri } = useLocalSearchParams<{ imageUri: string }>();
+  const [uploading, setUploading] = useState(false);
+  const [enhancement, setEnhancement] = useState<EnhancementMode>('auto');
+  const imageViewRef = useRef<View>(null);
 
-  // Check if imageUri is valid
-  React.useEffect(() => {
-    if (!imageUri) {
-      Alert.alert(
-        'No Image',
-        'No image was provided. Please scan or select an image first.',
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
-    }
-  }, [imageUri]);
+  const activeFilter = FILTER_OPTIONS.find(f => f.key === enhancement)!;
 
   const handleClose = () => {
-    if (processing) {
-      Alert.alert('Processing', 'Image is being processed. Are you sure you want to cancel?', [
-        { text: 'Continue', style: 'cancel' },
-        { text: 'Cancel', style: 'destructive', onPress: () => router.back() }
+    if (uploading) {
+      Alert.alert('Upload in progress', 'Please wait for the upload to finish.', [
+        { text: 'OK', style: 'cancel' },
       ]);
     } else {
       router.back();
     }
   };
 
-  const applyEnhancement = async (level: string) => {
-    if (processing || level === enhancementLevel) return;
-
-    setProcessing(true);
-    setEnhancementLevel(level);
-
-    try {
-      // For now, just simulate processing without actual image manipulation
-      // expo-image-manipulator doesn't support contrast/brightness filters
-      // You would need to use a different library like react-native-image-filter-kit
-      // or implement server-side image processing
-      
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing
-      
-      // For demo purposes, we'll just use the original image
-      setCurrentImage(imageUri as string);
-    } catch (error) {
-      console.error('Error processing image:', error);
-      Alert.alert('Error', 'Failed to process image. Please try again.');
-    } finally {
-      setProcessing(false);
-    }
-  };
-
   const saveDocument = async () => {
-    if (processing) return;
-    
-    setProcessing(true);
-    
-    // Import fileStore immediately
-    const { useFileStore } = await import('../../stores/fileStore');
-    const fileStore = useFileStore.getState();
-    
-    // Prepare file info for optimistic pending
-    let fileToUpload = {
-      uri: currentImage as string,
-      name: `scanned_document_${Date.now()}.jpg`,
-      type: 'image/jpeg',
-    };
+    if (uploading || !imageUri) return;
+    setUploading(true);
 
-    // Convert HEIC to PNG before upload if needed (do this first)
     try {
-      const { convertHeicToPng } = await import('../../utils/imageConversion');
-      fileToUpload = await convertHeicToPng(fileToUpload);
-    } catch (conversionError) {
-      console.warn('HEIC conversion failed, continuing with original:', conversionError);
-    }
-    
-    // Navigate to Files tab (user will see file when it appears from API)
-    router.replace('/(tabs)/documents');
-    
-    // Upload in background (non-blocking)
-    (async () => {
+      // Capture the rendered view with CSS filters applied
+      let processedUri = imageUri;
       try {
-        console.log('📤 Starting background upload for:', fileToUpload.name);
-        
-        // Create FormData for file upload
-        const formData = new FormData();
-        formData.append('file', {
-          uri: fileToUpload.uri,
-          type: fileToUpload.type,
-          name: fileToUpload.name,
-        } as any);
-
-        // Import API client and upload the file
-        const { apiClient } = await import('../../services/api');
-        
-        console.log('📤 Uploading scanned document in background...');
-        const uploadResult = await apiClient.uploadFile(formData, (progress) => {
-          console.log('📤 Upload progress:', progress);
+        processedUri = await captureRef(imageViewRef, {
+          format: 'jpg',
+          quality: 0.92,
+          result: 'tmpfile',
         });
-
-        console.log('✅ Scanned document upload successful:', uploadResult);
-        
-        // Mark upload time so Files screen knows to refresh
-        fileStore.setLastUploadTime(Date.now());
-        
-        // Trigger refresh of files list to show the real file
-        setTimeout(() => {
-          fileStore.fetchFiles(1);
-        }, 500);
-        
-      } catch (error: any) {
-        const limitData = extractLimitErrorData(getErrorResponseData(error));
-        if (limitData) {
-          showLimitError(limitData);
-          return;
-        }
-        console.error('❌ Error uploading document:', error);
-        Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
+      } catch (captureErr) {
+        console.warn('View capture failed, using original image:', captureErr);
+        processedUri = imageUri;
       }
-    })();
-    
-    // Reset processing state (upload is now in background)
-    setProcessing(false);
+
+      // Convert HEIC if needed
+      let fileToUpload = {
+        uri: processedUri,
+        name: `scanned_document_${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      };
+      try {
+        const { convertHeicToPng } = await import('../../utils/imageConversion');
+        fileToUpload = await convertHeicToPng(fileToUpload);
+      } catch {
+        // continue with original
+      }
+
+      // Navigate immediately — upload runs in background
+      router.replace('/(tabs)/documents');
+
+      (async () => {
+        try {
+          const formData = new FormData();
+          formData.append('file', {
+            uri: fileToUpload.uri,
+            type: fileToUpload.type,
+            name: fileToUpload.name,
+          } as any);
+
+          const { apiClient } = await import('../../services/api');
+          await apiClient.uploadFile(formData, (progress) => {
+            console.log('Upload progress:', progress);
+          });
+
+          const { useFileStore } = await import('../../stores/fileStore');
+          const fileStore = useFileStore.getState();
+          fileStore.setLastUploadTime(Date.now());
+          setTimeout(() => fileStore.fetchFiles(1), 500);
+        } catch (error: any) {
+          const limitData = extractLimitErrorData(getErrorResponseData(error));
+          if (limitData) {
+            showLimitError(limitData);
+            return;
+          }
+          Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
+        }
+      })();
+    } catch (error) {
+      console.error('Save error:', error);
+      Alert.alert('Error', 'Failed to prepare document. Please try again.');
+    } finally {
+      setUploading(false);
+    }
   };
+
+  if (!imageUri) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>No image provided.</Text>
+          <Pressable style={styles.retakeButton} onPress={() => router.back()}>
+            <Text style={styles.retakeButtonText}>Go Back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      {/* Header */}
       <View style={styles.header}>
-        <Pressable 
-          onPress={handleClose} 
-          style={[styles.headerButton, processing && styles.disabledButton]}
-          disabled={processing}
+        <Pressable
+          style={styles.headerButton}
+          onPress={handleClose}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <MaterialIcons name="close" size={24} color={processing ? "#ccc" : "#007AFF"} />
+          <Ionicons name="close" size={24} color="#fff" />
         </Pressable>
-        <Text style={styles.title}>Process Document</Text>
-        <Pressable 
-          onPress={saveDocument} 
-          style={[styles.headerButton, processing && styles.disabledButton]}
-          disabled={processing}
+        <Text style={styles.headerTitle}>Review Scan</Text>
+        <Pressable
+          style={[styles.saveBtn, uploading && styles.saveBtnDisabled]}
+          onPress={saveDocument}
+          disabled={uploading}
         >
-          <MaterialIcons name="check" size={24} color={processing ? "#ccc" : "#007AFF"} />
+          {uploading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="cloud-upload-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
+              <Text style={styles.saveBtnText}>Save</Text>
+            </>
+          )}
         </Pressable>
       </View>
 
-      <View style={styles.imageContainer}>
-        {processing ? (
-          <View style={styles.processingOverlay}>
-            <ActivityIndicator size="large" color="#fff" />
-            <Text style={styles.processingText}>Processing...</Text>
-          </View>
-        ) : null}
+      {/* Image preview with filter applied */}
+      <View
+        ref={imageViewRef}
+        style={[styles.imageContainer, { filter: activeFilter.filter } as any]}
+        collapsable={false}
+      >
         <ExpoImage
-          source={{ uri: currentImage as string }}
+          source={{ uri: imageUri }}
           style={styles.image}
           contentFit="contain"
-          onError={(error) => {
-            console.error('Image load error:', error);
-            Alert.alert(
-              'Error', 
-              'Failed to load image. Please try scanning again.',
-              [{ text: 'OK', onPress: () => router.back() }]
-            );
+          onError={() => {
+            Alert.alert('Error', 'Failed to load image. Please try scanning again.', [
+              { text: 'OK', onPress: () => router.back() },
+            ]);
           }}
         />
       </View>
 
-      <View style={styles.controls}>
-        <Text style={styles.controlsTitle}>Enhancement</Text>
-        <View style={styles.enhancementOptions}>
-          <Pressable
-            style={[
-              styles.enhancementButton,
-              enhancementLevel === 'auto' && styles.enhancementButtonActive,
-              processing && styles.enhancementButtonDisabled,
-            ]}
-            onPress={() => applyEnhancement('auto')}
-            disabled={processing}
-          >
-            <MaterialIcons
-              name="auto-fix-high"
-              size={24}
-              color={processing ? '#ccc' : (enhancementLevel === 'auto' ? '#fff' : '#333')}
-            />
-            <Text
-              style={[
-                styles.enhancementText,
-                enhancementLevel === 'auto' && styles.enhancementTextActive,
-                processing && styles.enhancementTextDisabled,
-              ]}
-            >
-              Auto
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.enhancementButton,
-              enhancementLevel === 'high_contrast' && styles.enhancementButtonActive,
-              processing && styles.enhancementButtonDisabled,
-            ]}
-            onPress={() => applyEnhancement('high_contrast')}
-            disabled={processing}
-          >
-            <MaterialIcons
-              name="contrast"
-              size={24}
-              color={processing ? '#ccc' : (enhancementLevel === 'high_contrast' ? '#fff' : '#333')}
-            />
-            <Text
-              style={[
-                styles.enhancementText,
-                enhancementLevel === 'high_contrast' && styles.enhancementTextActive,
-                processing && styles.enhancementTextDisabled,
-              ]}
-            >
-              High Contrast
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.enhancementButton,
-              enhancementLevel === 'black_white' && styles.enhancementButtonActive,
-              processing && styles.enhancementButtonDisabled,
-            ]}
-            onPress={() => applyEnhancement('black_white')}
-            disabled={processing}
-          >
-            <MaterialIcons
-              name="filter-b-and-w"
-              size={24}
-              color={processing ? '#ccc' : (enhancementLevel === 'black_white' ? '#fff' : '#333')}
-            />
-            <Text
-              style={[
-                styles.enhancementText,
-                enhancementLevel === 'black_white' && styles.enhancementTextActive,
-                processing && styles.enhancementTextDisabled,
-              ]}
-            >
-              B&W
-            </Text>
-          </Pressable>
+      {/* Enhancement panel */}
+      <View style={styles.panel}>
+        <Text style={styles.panelLabel}>Enhancement</Text>
+        <View style={styles.filterRow}>
+          {FILTER_OPTIONS.map(option => {
+            const isActive = enhancement === option.key;
+            return (
+              <Pressable
+                key={option.key}
+                style={[styles.filterChip, isActive && styles.filterChipActive]}
+                onPress={() => setEnhancement(option.key)}
+              >
+                <MaterialIcons
+                  name={option.icon as any}
+                  size={20}
+                  color={isActive ? '#fff' : '#aaa'}
+                />
+                <Text style={[styles.filterChipLabel, isActive && styles.filterChipLabelActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
+        <Text style={styles.filterDescription}>{activeFilter.description}</Text>
+
+        {/* Retake button */}
+        <Pressable style={styles.retakeRow} onPress={() => router.back()}>
+          <Ionicons name="camera-outline" size={16} color="#888" style={{ marginRight: 6 }} />
+          <Text style={styles.retakeText}>Retake photo</Text>
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -262,85 +237,133 @@ export default function ProcessScanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0f0f0f',
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  errorText: {
+    color: '#aaa',
+    fontSize: 16,
+    marginBottom: 16,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: '#fff',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: '#0f0f0f',
   },
   headerButton: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
     alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#fff',
+    letterSpacing: 0.2,
+  },
+  saveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    minWidth: 80,
     justifyContent: 'center',
   },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+  saveBtnDisabled: {
+    backgroundColor: '#555',
+  },
+  saveBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
   imageContainer: {
     flex: 1,
-    position: 'relative',
+    backgroundColor: '#000',
   },
   image: {
     flex: 1,
-    backgroundColor: '#000',
   },
-  processingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1,
+  panel: {
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: Platform.OS === 'ios' ? 8 : 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#333',
   },
-  processingText: {
-    color: '#fff',
-    marginTop: 16,
-    fontSize: 16,
-  },
-  controls: {
-    padding: 16,
-    backgroundColor: '#fff',
-  },
-  controlsTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
+  panelLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#666',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
     marginBottom: 12,
   },
-  enhancementOptions: {
+  filterRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    gap: 10,
   },
-  enhancementButton: {
+  filterChip: {
+    flex: 1,
+    flexDirection: 'column',
     alignItems: 'center',
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#f0f0f0',
-    minWidth: 100,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#2a2a2a',
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
   },
-  enhancementButtonActive: {
-    backgroundColor: '#007AFF',
+  filterChipActive: {
+    backgroundColor: '#1c3d6e',
+    borderColor: '#007AFF',
   },
-  enhancementButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  enhancementText: {
-    marginTop: 4,
+  filterChipLabel: {
     fontSize: 12,
-    color: '#333',
+    fontWeight: '600',
+    color: '#888',
   },
-  enhancementTextActive: {
+  filterChipLabelActive: {
     color: '#fff',
   },
-  enhancementTextDisabled: {
-    color: '#ccc',
+  filterDescription: {
+    fontSize: 12,
+    color: '#555',
+    marginTop: 10,
+    textAlign: 'center',
   },
-  disabledButton: {
-    backgroundColor: '#ccc',
+  retakeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+    paddingVertical: 4,
   },
-}); 
+  retakeText: {
+    fontSize: 13,
+    color: '#666',
+  },
+  retakeButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  retakeButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+});

@@ -43,6 +43,11 @@ import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { screenCache } from '../../utils/screenCache';
+import {
+  WORKSPACE_MEMBERS_CACHE_MS,
+  workspaceMembersCacheKey,
+  type WorkspaceMembersCachePayload,
+} from '../../utils/workspaceScreenCache';
 import { secureStorage } from '../../utils/storage';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { ChatMessageFooter } from '../components/ChatMessageFooter';
@@ -2881,14 +2886,29 @@ export default function ChatsScreen() {
             // Fetch members from each workspace in parallel
             const memberPromises = workspacesData.map(async (workspace: any) => {
               try {
+                const ck = workspaceMembersCacheKey(workspace.id);
+                const cached = screenCache.get<WorkspaceMembersCachePayload>(
+                  ck,
+                  WORKSPACE_MEMBERS_CACHE_MS
+                );
+                if (cached) {
+                  return cached.members;
+                }
                 const membersResponse = await Promise.race([
                   (api as any).getWorkspaceMembers(workspace.id),
                   new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
                 ]);
                 
                 if (membersResponse && (membersResponse as any).success && (membersResponse as any).data) {
-                  const membersData = (membersResponse as any).data.members || (membersResponse as any).data || [];
-                  return Array.isArray(membersData) ? membersData : [];
+                  const payload = (membersResponse as any).data;
+                  const membersData = payload.members || (membersResponse as any).data || [];
+                  const arr = Array.isArray(membersData) ? membersData : [];
+                  const invitations = Array.isArray(payload.invitations) ? payload.invitations : [];
+                  screenCache.set<WorkspaceMembersCachePayload>(ck, {
+                    members: arr,
+                    invitations,
+                  });
+                  return arr;
                 }
                 return [];
               } catch (error: any) {

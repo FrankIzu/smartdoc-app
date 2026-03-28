@@ -148,7 +148,11 @@ const MOBILE_ENDPOINTS = {
   
   // Workspaces
   WORKSPACES: '/api/v1/mobile/workspaces',
+  /** Single-workspace GET/PATCH/DELETE — same as web (WorkspaceManager); mobile list/create stay on /mobile/workspaces */
+  WORKSPACE_WEB_BY_ID: (id: number) => `/api/v1/web/workspaces/${id}`,
   WORKSPACE_BY_ID: (id: number) => `/api/v1/mobile/workspaces/${id}`,
+  /** Same payload as web GET /workspaces/:id/files (UNION visibility + bookmarks); uses mobile JWT */
+  WORKSPACE_FILES: (id: number) => `/api/v1/mobile/workspaces/${id}/files`,
   WORKSPACE_MEMBERS: (id: number) => `/api/v1/mobile/workspaces/${id}/members`,
   WORKSPACE_MEMBER_BY_ID: (workspaceId: number, memberId: number) => `/api/v1/mobile/workspaces/${workspaceId}/members/${memberId}`,
   WORKSPACE_MEMBER_ROLE: (workspaceId: number, memberId: number) => `/api/v1/mobile/workspaces/${workspaceId}/members/${memberId}/role`,
@@ -3948,13 +3952,21 @@ class ApiService {
     }
   }
 
-  async getWorkspace(id: number): Promise<ApiResponse> {
+  async getWorkspace(id: number): Promise<ApiResponse & { workspace?: any }> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_BY_ID(id));
+      // Mobile endpoint supports Bearer JWT (same token as all other mobile calls).
+      const response = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_BY_ID(id), { timeout: 12000 });
       return response.data;
     } catch (error: any) {
-      console.error('Get workspace error:', error);
+      const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+      if (!isTimeout) {
+        try {
+          const fallback = await this.client.get(MOBILE_ENDPOINTS.WORKSPACE_WEB_BY_ID(id), { timeout: 12000 });
+          return fallback.data;
+        } catch (_fb: any) {
+          // fall through to throw
+        }
+      }
       throw new Error(error.response?.data?.message || 'Failed to fetch workspace');
     }
   }
@@ -3965,8 +3977,8 @@ class ApiService {
     is_active?: boolean;
   }): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.put(MOBILE_ENDPOINTS.WORKSPACE_BY_ID(id), data);
+      // Same as web WorkspaceManager: PATCH /api/v1/web/workspaces/:id
+      const response = await this.client.patch(MOBILE_ENDPOINTS.WORKSPACE_WEB_BY_ID(id), data);
       return response.data;
     } catch (error: any) {
       console.error('Update workspace error:', error);
@@ -3976,8 +3988,7 @@ class ApiService {
 
   async deleteWorkspace(id: number): Promise<ApiResponse> {
     try {
-      // Use proper mobile endpoint
-      const response = await this.client.delete(MOBILE_ENDPOINTS.WORKSPACE_BY_ID(id));
+      const response = await this.client.delete(MOBILE_ENDPOINTS.WORKSPACE_WEB_BY_ID(id));
       return response.data;
     } catch (error: any) {
       console.error('Delete workspace error:', error);
@@ -4098,52 +4109,110 @@ class ApiService {
    */
   async getWorkspaceFiles(
     workspaceId: number,
-    options?: { page?: number; perPage?: number; timeoutMs?: number }
-  ): Promise<ApiResponse> {
+    options?: {
+      page?: number;
+      perPage?: number;
+      offset?: number;
+      timeoutMs?: number;
+      /** When false, API returns bookmark metadata + file_count only (no nested files). Default false for mobile. */
+      includeBookmarkFiles?: boolean;
+    }
+  ): Promise<
+    ApiResponse & {
+      bookmarks?: any[];
+      total_count?: number;
+      has_more?: boolean;
+      next_offset?: number | null;
+    }
+  > {
     const page = options?.page ?? 1;
     const perPage = Math.min(options?.perPage ?? 100, 100);
     const timeoutMs = options?.timeoutMs ?? 28000;
+    const offset =
+      options?.offset != null ? Math.max(0, options.offset) : (page - 1) * perPage;
+    const includeBookmarkFiles = options?.includeBookmarkFiles === true;
 
-    try {
-      const params = new URLSearchParams();
-      params.append('page', String(page));
-      params.append('perPage', String(perPage));
-      params.append('workspace_id', String(workspaceId));
-      const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
-      const response = await this.client.get(url, { timeout: timeoutMs });
-      const data = response.data;
+    const normalizeWebShape = (data: any) => {
       const files = data?.files ?? data?.data ?? [];
-      const pag = data?.pagination;
+      const bookmarks = data?.bookmarks ?? [];
       return {
         success: data?.success !== false,
         files,
         data: files,
-        total_count: pag?.total ?? data?.total_count ?? files.length,
-        pagination: pag,
+        bookmarks,
+        total_count: data?.total_count ?? files.length,
+        has_more: data?.has_more,
+        next_offset: data?.next_offset,
         workspace: data?.workspace,
       };
+    };
+
+    try {
+      // Dedicated mobile route — delegates to same logic as web get_workspace_files + JWT user id
+      const params = new URLSearchParams();
+      params.append('limit', String(perPage));
+      params.append('offset', String(offset));
+      params.append('include_bookmark_files', includeBookmarkFiles ? 'true' : 'false');
+      const url = `${MOBILE_ENDPOINTS.WORKSPACE_FILES(workspaceId)}?${params}`;
+      const response = await this.client.get(url, { timeout: timeoutMs });
+      return normalizeWebShape(response.data);
     } catch (error: any) {
       const isTimeout =
         error.code === 'ECONNABORTED' ||
         error.message?.includes('timeout') ||
         error.message?.includes('exceeded');
-      if (!isTimeout) {
+      if (!isTimeout && error.response?.status !== 404) {
         try {
-          const response = await this.client.get(`/api/v1/web/workspaces/${workspaceId}/files`, {
-            timeout: 35000,
-          });
-          const data = response.data;
-          const files = data?.files ?? [];
-          return {
-            success: data?.success !== false,
-            files,
-            data: files,
-            total_count: data?.total_count ?? files.length,
-            workspace: data?.workspace,
-          };
+          const params = new URLSearchParams();
+          params.append('limit', String(perPage));
+          params.append('offset', String(offset));
+          params.append('include_bookmark_files', includeBookmarkFiles ? 'true' : 'false');
+          const response = await this.client.get(
+            `/api/v1/web/workspaces/${workspaceId}/files?${params}`,
+            { timeout: 35000 }
+          );
+          return normalizeWebShape(response.data);
         } catch (webErr: any) {
           console.error('Get workspace files (web fallback) error:', webErr);
         }
+      }
+      if (isTimeout) {
+        try {
+          const params = new URLSearchParams();
+          params.append('limit', String(perPage));
+          params.append('offset', String(offset));
+          params.append('include_bookmark_files', includeBookmarkFiles ? 'true' : 'false');
+          const response = await this.client.get(
+            `/api/v1/web/workspaces/${workspaceId}/files?${params}`,
+            { timeout: 35000 }
+          );
+          return normalizeWebShape(response.data);
+        } catch (webErr: any) {
+          console.error('Get workspace files (web timeout fallback) error:', webErr);
+        }
+      }
+      // Legacy generic mobile list (may differ from web UNION — last resort)
+      try {
+        const params = new URLSearchParams();
+        params.append('page', String(page));
+        params.append('perPage', String(perPage));
+        params.append('workspace_id', String(workspaceId));
+        const url = `${MOBILE_ENDPOINTS.FILES}?${params}`;
+        const response = await this.client.get(url, { timeout: timeoutMs });
+        const data = response.data;
+        const files = data?.files ?? data?.data ?? [];
+        const pag = data?.pagination;
+        return {
+          success: data?.success !== false,
+          files,
+          data: files,
+          bookmarks: [],
+          total_count: pag?.total ?? data?.total_count ?? files.length,
+          pagination: pag,
+          workspace: data?.workspace,
+        };
+      } catch (legacyErr: any) {
+        console.error('Get workspace files (legacy fallback) error:', legacyErr);
       }
       console.error('Get workspace files error:', error);
       throw new Error(

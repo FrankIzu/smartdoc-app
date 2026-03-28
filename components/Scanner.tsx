@@ -15,38 +15,33 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const { width: screenWidth } = Dimensions.get('window');
 
 export default function ScannerScreen() {
   const router = useRouter();
   const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const [isCapturing, setIsCapturing] = useState(false);
+  const [torchEnabled, setTorchEnabled] = useState(false);
   const cameraRef = useRef<CameraView>(null);
 
-  // Automatically request permission when component mounts if not granted
   useEffect(() => {
     if (permission && !permission.granted && permission.canAskAgain) {
-      // No custom screen - directly request permission
       requestPermission();
     }
   }, [permission]);
 
-  // Reset capturing state when screen comes back into focus (e.g., user cancelled from process-scan)
   useFocusEffect(
     useCallback(() => {
-      // Reset capturing state when screen is focused
       setIsCapturing(false);
     }, [])
   );
 
   if (!permission) {
-    // Camera permissions are still loading.
     return <View />;
   }
 
   if (!permission.granted) {
-    // If user previously denied permission, show settings screen
     if (!permission.canAskAgain) {
       return (
         <SafeAreaView style={styles.container}>
@@ -56,14 +51,14 @@ export default function ScannerScreen() {
             <Text style={styles.permissionMessage}>
               Camera access is disabled. Enable it in Settings to scan documents.
             </Text>
-            <TouchableOpacity 
-              style={styles.permissionButton} 
+            <TouchableOpacity
+              style={styles.permissionButton}
               onPress={() => Linking.openSettings()}
             >
               <Text style={styles.permissionButtonText}>Open Settings</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.backButton} 
+            <TouchableOpacity
+              style={styles.backButton}
               onPress={() => router.back()}
             >
               <Text style={styles.backButtonText}>Cancel</Text>
@@ -73,7 +68,6 @@ export default function ScannerScreen() {
       );
     }
 
-    // Permission is being requested - show loading
     return <View style={styles.container} />;
   }
 
@@ -81,23 +75,24 @@ export default function ScannerScreen() {
     setFacing(current => (current === 'back' ? 'front' : 'back'));
   };
 
+  const toggleTorch = () => {
+    setTorchEnabled(prev => !prev);
+  };
+
   const takePicture = async () => {
     if (!cameraRef.current || isCapturing) return;
 
     try {
       setIsCapturing(true);
-      // Reduced quality from 0.8 to 0.6 for faster capture/encoding
-      // This makes the camera exit faster while still maintaining good image quality
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.6,
+        quality: 0.8,
         base64: false,
       });
 
       if (photo) {
-        // Navigate immediately after capture completes (no delay)
         router.push({
           pathname: '/documents/process-scan',
-          params: { imageUri: photo.uri }
+          params: { imageUri: photo.uri },
         });
       }
     } catch (error) {
@@ -105,14 +100,12 @@ export default function ScannerScreen() {
       Alert.alert('Error', 'Failed to capture image. Please try again.');
       setIsCapturing(false);
     }
-    // Note: Don't reset isCapturing here if navigation succeeded - let it stay true during navigation
-    // This prevents double-taps. It will reset when component unmounts or user returns.
   };
 
   const pickFromGallery = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
+
       if (!permissionResult.granted) {
         Alert.alert('Permission Required', 'Please grant access to your photo library');
         return;
@@ -120,16 +113,14 @@ export default function ScannerScreen() {
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
+        allowsEditing: false,
+        quality: 1,
       });
 
       if (!result.canceled && result.assets[0]) {
-        // Navigate to document processing screen with the selected image
         router.push({
           pathname: '/documents/process-scan',
-          params: { imageUri: result.assets[0].uri }
+          params: { imageUri: result.assets[0].uri },
         });
       }
     } catch (error) {
@@ -139,51 +130,57 @@ export default function ScannerScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.headerButton} 
+        <TouchableOpacity
+          style={styles.headerIconButton}
           onPress={() => router.back()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="close" size={28} color="#fff" />
+          <Ionicons name="close" size={26} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Document Scanner</Text>
-        <TouchableOpacity 
-          style={styles.headerButton} 
+        <TouchableOpacity
+          style={styles.headerIconButton}
           onPress={toggleCameraFacing}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="camera-reverse" size={28} color="#fff" />
+          <Ionicons name="camera-reverse-outline" size={26} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {/* Camera View */}
+      {/* Camera */}
       <View style={styles.cameraContainer}>
         <CameraView
           ref={cameraRef}
           style={styles.camera}
           facing={facing}
+          enableTorch={torchEnabled}
         >
-          {/* Scan Frame Overlay */}
-          <View style={styles.scanFrame}>
-            <View style={styles.cornerTopLeft} />
-            <View style={styles.cornerTopRight} />
-            <View style={styles.cornerBottomLeft} />
-            <View style={styles.cornerBottomRight} />
+          {/* Document frame overlay */}
+          <View style={styles.overlay}>
+            <View style={styles.overlayTop} />
+            <View style={styles.overlayMiddle}>
+              <View style={styles.overlaySide} />
+              <View style={styles.scanFrame}>
+                <View style={[styles.corner, styles.cornerTL]} />
+                <View style={[styles.corner, styles.cornerTR]} />
+                <View style={[styles.corner, styles.cornerBL]} />
+                <View style={[styles.corner, styles.cornerBR]} />
+              </View>
+              <View style={styles.overlaySide} />
+            </View>
+            <View style={styles.overlayBottom}>
+              <Text style={styles.hintText}>
+                {isCapturing ? 'Processing…' : 'Align document within the frame'}
+              </Text>
+            </View>
           </View>
 
-          {/* Instructions */}
-          <View style={styles.instructionsContainer}>
-            <Text style={styles.instructionsText}>
-              {isCapturing ? 'Saving photo...' : 'Position document within the frame'}
-            </Text>
-          </View>
-          
-          {/* Loading overlay during capture */}
           {isCapturing && (
             <View style={styles.capturingOverlay}>
               <ActivityIndicator size="large" color="#fff" />
-              <Text style={styles.capturingText}>Capturing...</Text>
             </View>
           )}
         </CameraView>
@@ -191,69 +188,79 @@ export default function ScannerScreen() {
 
       {/* Controls */}
       <View style={styles.controls}>
-        <TouchableOpacity 
-          style={styles.galleryButton} 
-          onPress={pickFromGallery}
-        >
-          <Ionicons name="images" size={24} color="#fff" />
-          <Text style={styles.controlButtonText}>Gallery</Text>
+        {/* Gallery */}
+        <TouchableOpacity style={styles.sideButton} onPress={pickFromGallery}>
+          <View style={styles.sideButtonIcon}>
+            <Ionicons name="images-outline" size={22} color="#fff" />
+          </View>
+          <Text style={styles.sideButtonLabel}>Gallery</Text>
         </TouchableOpacity>
 
+        {/* Shutter */}
         <TouchableOpacity
-          style={[styles.captureButton, isCapturing && styles.captureButtonDisabled]}
+          style={[styles.shutterRing, isCapturing && styles.shutterRingDisabled]}
           onPress={takePicture}
           disabled={isCapturing}
+          activeOpacity={0.8}
         >
-          <View style={styles.captureButtonInner} />
+          <View style={[styles.shutterDisk, isCapturing && styles.shutterDiskDisabled]} />
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.flashButton} 
-          onPress={() => {
-            // Flash toggle functionality can be added here
-            Alert.alert('Flash', 'Flash toggle coming soon!');
-          }}
-        >
-          <Ionicons name="flash" size={24} color="#fff" />
-          <Text style={styles.controlButtonText}>Flash</Text>
+        {/* Flash */}
+        <TouchableOpacity style={styles.sideButton} onPress={toggleTorch}>
+          <View style={[styles.sideButtonIcon, torchEnabled && styles.sideButtonIconActive]}>
+            <Ionicons
+              name={torchEnabled ? 'flash' : 'flash-outline'}
+              size={22}
+              color={torchEnabled ? '#1a1a1a' : '#fff'}
+            />
+          </View>
+          <Text style={[styles.sideButtonLabel, torchEnabled && styles.sideButtonLabelActive]}>
+            {torchEnabled ? 'Flash On' : 'Flash'}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
 
+const FRAME_WIDTH = screenWidth * 0.82;
+const FRAME_HEIGHT = FRAME_WIDTH * 1.414; // A4 ratio
+const CORNER_SIZE = 24;
+const CORNER_THICKNESS = 3;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#0a0a0a',
   },
   permissionContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 32,
     backgroundColor: '#fff',
   },
   permissionTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 8,
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginTop: 20,
+    marginBottom: 10,
     textAlign: 'center',
   },
   permissionMessage: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#666',
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 28,
     lineHeight: 22,
   },
   permissionButton: {
     backgroundColor: '#007AFF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 12,
     marginBottom: 12,
   },
   permissionButtonText: {
@@ -274,20 +281,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    paddingVertical: 14,
+    backgroundColor: '#0a0a0a',
   },
-  headerButton: {
-    width: 44,
-    height: 44,
+  headerIconButton: {
+    width: 40,
+    height: 40,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
+    letterSpacing: 0.3,
   },
   cameraContainer: {
     flex: 1,
@@ -296,122 +303,131 @@ const styles = StyleSheet.create({
   camera: {
     flex: 1,
   },
-  scanFrame: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    width: screenWidth * 0.8,
-    height: screenWidth * 0.8 * 1.4, // A4 ratio
-    marginLeft: -(screenWidth * 0.8) / 2,
-    marginTop: -(screenWidth * 0.8 * 1.4) / 2,
+  overlay: {
+    flex: 1,
   },
-  cornerTopLeft: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 20,
-    height: 20,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: '#fff',
+  overlayTop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  cornerTopRight: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 20,
-    height: 20,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderColor: '#fff',
-  },
-  cornerBottomLeft: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: 20,
-    height: 20,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: '#fff',
-  },
-  cornerBottomRight: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 20,
-    height: 20,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderColor: '#fff',
-  },
-  instructionsContainer: {
-    position: 'absolute',
-    bottom: 150,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  instructionsText: {
-    color: '#fff',
-    fontSize: 16,
-    textAlign: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  controls: {
+  overlayMiddle: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingVertical: 30,
-    paddingHorizontal: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    height: FRAME_HEIGHT,
   },
-  galleryButton: {
-    alignItems: 'center',
-    padding: 10,
+  overlaySide: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  flashButton: {
-    alignItems: 'center',
-    padding: 10,
+  scanFrame: {
+    width: FRAME_WIDTH,
+    height: FRAME_HEIGHT,
   },
-  controlButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    marginTop: 4,
+  corner: {
+    position: 'absolute',
+    width: CORNER_SIZE,
+    height: CORNER_SIZE,
   },
-  captureButton: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 4,
+  cornerTL: {
+    top: 0,
+    left: 0,
+    borderTopWidth: CORNER_THICKNESS,
+    borderLeftWidth: CORNER_THICKNESS,
     borderColor: '#fff',
+    borderTopLeftRadius: 3,
   },
-  captureButtonDisabled: {
-    opacity: 0.6,
+  cornerTR: {
+    top: 0,
+    right: 0,
+    borderTopWidth: CORNER_THICKNESS,
+    borderRightWidth: CORNER_THICKNESS,
+    borderColor: '#fff',
+    borderTopRightRadius: 3,
   },
-  captureButtonInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#fff',
+  cornerBL: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: CORNER_THICKNESS,
+    borderLeftWidth: CORNER_THICKNESS,
+    borderColor: '#fff',
+    borderBottomLeftRadius: 3,
+  },
+  cornerBR: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: CORNER_THICKNESS,
+    borderRightWidth: CORNER_THICKNESS,
+    borderColor: '#fff',
+    borderBottomRightRadius: 3,
+  },
+  overlayBottom: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    paddingTop: 16,
+  },
+  hintText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 14,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   capturingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
   },
-  capturingText: {
-    color: '#fff',
-    fontSize: 16,
-    marginTop: 16,
-    fontWeight: '600',
+  controls: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 36,
+    paddingVertical: 28,
+    backgroundColor: '#0a0a0a',
   },
-}); 
+  sideButton: {
+    alignItems: 'center',
+    width: 68,
+  },
+  sideButtonIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  sideButtonIconActive: {
+    backgroundColor: '#FFD60A',
+  },
+  sideButtonLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  sideButtonLabelActive: {
+    color: '#FFD60A',
+  },
+  shutterRing: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    borderWidth: 3,
+    borderColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  shutterRingDisabled: {
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  shutterDisk: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: '#fff',
+  },
+  shutterDiskDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.4)',
+  },
+});
