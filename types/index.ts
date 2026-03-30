@@ -91,7 +91,16 @@ export interface ChatHistory {
   updated_at: string;
   messages: ChatMessage[];
   /** References keyed by message_id (string). Merged into assistant messages for display. */
-  references?: Record<string, { citations?: ChatCitation[]; metadata?: any; timestamp?: string }>;
+  references?: Record<
+    string,
+    {
+      citations?: ChatCitation[];
+      metadata?: any;
+      timestamp?: string;
+      chart_file_id?: number | string;
+      chart_title?: string;
+    }
+  >;
   persistent_context?: {
     context_file_ids?: number[];
     context_bookmark_ids?: number[];

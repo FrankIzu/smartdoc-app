@@ -21,6 +21,10 @@ interface ApiResponse<T = any> {
   done?: boolean;  // Whether chat polling is complete
   preview_started?: boolean;  // Whether preview phase has started
   is_preview_phase?: boolean;  // Whether currently in preview phase
+  /** Preview buffer was reset at first LLM token; client must not slice using old cursor over placeholder */
+  preview_cursor_reset?: boolean;
+  /** Refinement replaced preview (or final text landed); client must resync cursor — same as preview reset */
+  refinement_cursor_reset?: boolean;
   chat_history_id?: number;  // Chat history ID from chat responses
   metadata?: any;  // Metadata object from chat responses
   error?: string;  // Error message from chat polling responses
@@ -2581,7 +2585,17 @@ class ApiService {
             throw new Error(chunkResponse.message || 'Failed to poll chunk');
           }
 
-          const { content, cursor: newCursor, done, status, preview_started, is_preview_phase } = chunkResponse;
+          const {
+            content,
+            cursor: newCursor,
+            done,
+            status,
+            preview_started,
+            is_preview_phase,
+            preview_cursor_reset,
+            refinement_cursor_reset
+          } = chunkResponse;
+          const accumulatedSnapshotBeforeChunk = accumulatedContent;
 
           // Handle status changes
           if (status === 'cancelled') {
@@ -2613,7 +2627,13 @@ class ApiService {
             // CRITICAL: Always accumulate content for the complete event
             // When done=true, backend returns buffer[cursor:] which is ALL remaining content from cursor
             // We still need to accumulate it (or replace if cursor was reset to 0 in refinement phase)
-            if (done && is_preview_phase === false && cursor === 0) {
+            if (preview_cursor_reset) {
+              // Preview buffer replaced at first LLM token while client cursor still pointed past "Searching…"
+              accumulatedContent = content;
+            } else if (refinement_cursor_reset) {
+              // Refinement replaced preview (or completed) while client cursor still tracked preview length
+              accumulatedContent = content;
+            } else if (done && is_preview_phase === false && cursor === 0) {
               // Special case: done=true, refinement phase, cursor=0
               // This means backend buffer was replaced with complete refinement, content is the full refinement
               console.log('📦 [POLLING] Done=true in refinement phase with cursor=0 - complete refinement received:', content.length, 'chars');
@@ -2656,8 +2676,11 @@ class ApiService {
                 phase: is_preview_phase ? 'preview' : 'refinement',
                 preview_started: preview_started || false,
                 is_preview_phase: is_preview_phase !== undefined ? is_preview_phase : true,
+                preview_cursor_reset: !!preview_cursor_reset,
+                refinement_cursor_reset: !!refinement_cursor_reset,
                 // Add flag to indicate this is the first refinement chunk (for frontend reset)
-                is_first_refinement: phaseChanged && eventType === 'refinement_chunk'
+                is_first_refinement:
+                  (phaseChanged && eventType === 'refinement_chunk') || !!refinement_cursor_reset
               });
               
               // Log preview chunks being sent
@@ -2675,20 +2698,19 @@ class ApiService {
               // Handle phase transition AFTER sending current chunk
               if (phaseChanged) {
                 console.log('🔄 [POLLING] Phase transition detected: preview -> refinement');
-                previewContentLength = accumulatedContent.length; // Capture preview length BEFORE reset
+                previewContentLength = accumulatedSnapshotBeforeChunk.length;
                 console.log('🔄 [POLLING] Preview content length:', previewContentLength);
                 
-                // CRITICAL: When backend replaces preview buffer with refinement, cursor should reset
-                // The backend buffer is replaced, so we need to reset our cursor tracking
-                // BUT: Don't reset accumulatedContent yet if we're still in the same poll response
-                // We'll reset it after processing this chunk, but keep it for now in case this is the last preview chunk
-                // Reset accumulatedContent to start fresh with refinement (but only after we've sent all preview chunks)
-                const previewContentToSave = accumulatedContent; // Save preview content length
-                accumulatedContent = ''; // Clear accumulated content - refinement is separate
-                cursor = 0; // Reset cursor since backend buffer was replaced
-                refinementContentReceived = false; // Reset flag - haven't received refinement yet
-                
-                console.log('🔄 [POLLING] Reset cursor and accumulated content for refinement phase');
+                // If this poll returned a full-buffer refinement resync, keep accumulatedContent and
+                // cursor from the server — otherwise we drop the beginning of refinement.
+                if (!refinement_cursor_reset) {
+                  accumulatedContent = '';
+                  cursor = 0;
+                  refinementContentReceived = false;
+                  console.log('🔄 [POLLING] Reset cursor and accumulated content for refinement phase');
+                } else {
+                  console.log('🔄 [POLLING] Keeping refinement resync buffer and cursor (refinement_cursor_reset)');
+                }
                 
                 // Send preview_complete signal to frontend
                 if (onChunk) {
@@ -2807,6 +2829,11 @@ class ApiService {
             
             console.log('✅ [POLLING] Sending complete event with content length:', finalContent.length);
             
+            const chunkMeta = (chunkResponse as any).metadata;
+            const resolvedMessageId =
+              (chunkResponse as any).message_id ??
+              (chunkMeta && typeof chunkMeta === 'object' ? (chunkMeta as any).message_id : undefined);
+
             // Send completion event with all metadata
             if (onChunk) {
               onChunk('complete', {
@@ -2815,7 +2842,7 @@ class ApiService {
                 content: finalContent, // Some handlers expect 'content'
                 citations: chunkResponse.citations || [],
                 chat_history_id: chunkResponse.chat_history_id,
-                message_id: chunkResponse.message_id, // Backend message_id for retry_replace_message_id
+                message_id: resolvedMessageId, // Persisted assistant row id for retry / more sources
                 metadata: chunkResponse.metadata || {},
                 is_preview_phase: is_preview_phase !== undefined ? is_preview_phase : false // Include phase in complete event
               });

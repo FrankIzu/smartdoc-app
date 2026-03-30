@@ -6,28 +6,28 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AccessibilityInfo,
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Dimensions,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    LayoutAnimation,
-    Linking,
-    Modal,
-    Platform,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    Share,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    UIManager,
-    View
+  AccessibilityInfo,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  LayoutAnimation,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  UIManager,
+  View
 } from 'react-native';
 import { GestureHandlerRootView, RectButton, Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,25 +37,26 @@ import AssistantMessageBody from '../../components/AssistantMessageBody';
 import ChartImageModal from '../../components/ChartImageModal';
 import SermonViewerModal from '../../components/SermonViewerModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
+import { useLimitError } from '../../contexts/LimitErrorContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import { removeFileExtension } from '../../utils/fileUtils';
+import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 import { screenCache } from '../../utils/screenCache';
+import { secureStorage } from '../../utils/storage';
+import type { ChatHistory } from '../../types';
 import {
   WORKSPACE_MEMBERS_CACHE_MS,
   workspaceMembersCacheKey,
   type WorkspaceMembersCachePayload,
 } from '../../utils/workspaceScreenCache';
-import { secureStorage } from '../../utils/storage';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
-import { useLimitError } from '../../contexts/LimitErrorContext';
-import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
 interface ChatParticipant {
   id: number;
@@ -359,6 +360,15 @@ export default function ChatsScreen() {
   useEffect(() => {
     selectedChatRef.current = selectedChat;
   }, [selectedChat]);
+
+  /** Positive chat_history_id for UI + retry/more-sources; ref can update before selectedChat leaves temp id -2. */
+  const getPersistedChatHistoryId = (): number => {
+    const fromState = selectedChat?.id != null ? Number(selectedChat.id) : NaN;
+    if (Number.isFinite(fromState) && fromState > 0) return fromState;
+    const fromRef = currentChatIdRef.current != null ? Number(currentChatIdRef.current) : NaN;
+    if (Number.isFinite(fromRef) && fromRef > 0) return fromRef;
+    return 0;
+  };
   
   // Keyboard top (screenY) tracking for input positioning
   /** Keyboard top (screenY) when visible - used to position input just above keyboard */
@@ -603,7 +613,11 @@ export default function ChatsScreen() {
 
   // When coming from home screen (ChatGD stat or insight cards): open Start New conversation directly; back goes to chat list
   useEffect(() => {
-    const openStartNew = params.openStartNew === '1' || params.openStartNew === true;
+    const v = params.openStartNew;
+    const openStartNew =
+      v === '1' ||
+      v === 'true' ||
+      (Array.isArray(v) && (v[0] === '1' || v[0] === 'true'));
     if (!openStartNew) return;
     const defaultChat = chats.find(c => c.id === -1) ?? DEFAULT_CHAT_ASSISTANT;
     setSelectedChat(defaultChat);
@@ -3077,7 +3091,9 @@ export default function ChatsScreen() {
     }
 
     setMessagesLoading(true);
-    
+    // Declared outside try — `catch` is a sibling block and cannot see bindings from inside `try`.
+    let chatIdForApi = chatId;
+
     try {
       // Start New (id: -1): show empty chat
       if (chatId === -1) {
@@ -3156,7 +3172,7 @@ export default function ChatsScreen() {
       }
       
       // Use resolved id for API calls (still use chatId for loadedChatIdRef when we started with -2)
-      const chatIdForApi = resolvedChatId;
+      chatIdForApi = resolvedChatId;
       
       // Check if this chat exists in the chat store (AI assistant chats)
       // CRITICAL: All chats from /api/v1/mobile/chat/history are AI assistant chats
@@ -3434,7 +3450,7 @@ export default function ChatsScreen() {
       
       if (storeHistory && storeHistory.messages.length > 0 && historyMatches) {
         // Convert chat store messages to the expected format; merge references into assistant messages
-        const refs = storeHistory.references;
+        const refs = storeHistory.references as ChatHistory['references'];
         const convertedMessages: ChatMessage[] = storeHistory.messages.map((msg, index) => {
           // Use actual message timestamp from backend - the backend provides 'created_at' field
           // Use type assertion to access backend response fields
@@ -3456,18 +3472,19 @@ export default function ChatsScreen() {
           const backendMessageId = backendMsg.message_id || backendMsg.id;
           const messageId = backendMessageId ? backendMessageId : generateUniqueMessageId();
           const key = backendMessageId != null ? String(backendMessageId) : null;
+          const refEntry = key && refs ? refs[key] : undefined;
           const citations =
-            backendMsg.role === 'assistant' && key && refs && refs[key]
-              ? (refs[key].citations ?? undefined)
+            backendMsg.role === 'assistant' && refEntry
+              ? (refEntry.citations ?? undefined)
               : undefined;
           const chartFileId =
             backendMsg.role === 'assistant' && backendMsg.chart_file_id != null
               ? Number(backendMsg.chart_file_id)
-              : backendMsg.role === 'assistant' && key && refs?.[key]?.chart_file_id != null
-                ? Number(refs[key].chart_file_id)
+              : backendMsg.role === 'assistant' && refEntry?.chart_file_id != null
+                ? Number(refEntry.chart_file_id)
                 : undefined;
           const chartTitle =
-            backendMsg.chart_title || (key && refs?.[key]?.chart_title) || undefined;
+            backendMsg.chart_title || refEntry?.chart_title || undefined;
 
           return {
             id: typeof messageId === 'number' ? messageId : generateUniqueMessageId(),
@@ -3699,8 +3716,6 @@ export default function ChatsScreen() {
       // MATCH WEB: Extract display text using substring (upload.tsx line 4408)
       const displayText = contentBufferRef.current.substring(0, displayedCharsRef.current);
       
-      console.log(`📝 Streaming ${isPreviewPhaseRef.current ? 'PREVIEW' : 'REFINEMENT'}: ${displayedCharsRef.current}/${contentBufferRef.current.length} chars`);
-      
       // Update UI — always target assistant row by id so preview/refinement never overwrite the user bubble
       setMessages(prev => {
         const newMessages = [...prev];
@@ -3720,7 +3735,6 @@ export default function ChatsScreen() {
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
           };
           streamingMessageIndexRef.current = i;
-          console.log(`🔄 Stream update row ${i} (id ${rowId}) content: "${displayText.substring(0, 50)}..."`);
         } else {
           const assistantMessage: ChatMessage = {
             id: rowId ?? generateUniqueMessageId(),
@@ -3840,7 +3854,7 @@ export default function ChatsScreen() {
   /** Same backend as web: retry + retry_replace_message_id on /api/v1/mobile/chat/smart/start → smart_chat */
   const handleRetryAssistant = async (assistantIndex: number, replaceMessageId: number) => {
     if (sendingMessage || !selectedChat) return;
-    const chatId = Number(selectedChat.id);
+    const chatId = getPersistedChatHistoryId();
     if (!Number.isFinite(chatId) || chatId <= 0) {
       Toast.show({ type: 'error', text1: 'Open a saved chat to retry a reply.' });
       return;
@@ -3960,7 +3974,7 @@ export default function ChatsScreen() {
    */
   const handleMoreSourcesAssistant = async (assistantIndex: number, sourceAssistantMessageId: number) => {
     if (sendingMessage || !selectedChat) return;
-    const chatId = Number(selectedChat.id);
+    const chatId = getPersistedChatHistoryId();
     if (!Number.isFinite(chatId) || chatId <= 0) {
       Toast.show({ type: 'error', text1: 'Open a saved chat to get more sources.' });
       return;
@@ -4162,6 +4176,16 @@ export default function ChatsScreen() {
             break;
           }
           console.log('📦 Processing preview chunk - content length:', previewChunkContent.length, 'buffer will be:', contentBufferRef.current.length + previewChunkContent.length);
+          if (data.preview_cursor_reset) {
+            console.log('📦 Preview cursor resync from server — replacing buffer with full preview slice');
+            contentBufferRef.current = previewChunkContent;
+            displayedCharsRef.current = 0;
+            isPreviewPhaseRef.current = isPreviewPhase;
+            lastStreamedMessageIndexRef.current = assistantMessageIndex;
+            lastStreamCompleteTimeRef.current = Date.now();
+            startOrContinueStreaming(assistantMessageIndex);
+            break;
+          }
           if (data.chunk_index === 0 || contentBufferRef.current.length === 0 || contentBufferRef.current.includes('Searching for')) {
             console.log('📦 First preview chunk - replacing instant preview');
             contentBufferRef.current = previewChunkContent;
@@ -4199,7 +4223,12 @@ export default function ChatsScreen() {
             isPreviewPhaseFromData === false ||
             contentBufferRef.current.length === 0
           );
-          const isFirstRefinement = data.is_first_refinement || phaseTransitionDetected || previewWasSkipped || (data.chunk_index === 0 && (isPreviewPhaseRef.current || isFakeStreamingRef.current));
+          const isFirstRefinement =
+            data.is_first_refinement ||
+            data.refinement_cursor_reset ||
+            phaseTransitionDetected ||
+            previewWasSkipped ||
+            (data.chunk_index === 0 && (isPreviewPhaseRef.current || isFakeStreamingRef.current));
           console.log('🔄 Refinement chunk received', {
             chunk_index: data.chunk_index,
             contentLength: refinementChunkContent.length,
@@ -4698,506 +4727,7 @@ export default function ChatsScreen() {
         // Re-assign here to ensure pollingAssistantIndexRef is set before the handler runs.
         smartChatPollingChunkRef.current = smartChatOnChunk;
         smartChatPollingChunkReadyRef.current = true;
-        // Handler body removed — smartChatOnChunk is now defined at component scope.
-        if (false) { switch ('' as any) { case 'status':
-
-              case 'instant_preview': {
-                // Web flow: do NOT set message.content here. Buffer chunk, start display timer.
-                // Fake streaming stops when the interval first writes 2–3 chars to message.content.
-                const instantContent = data.content || data.response || '';
-                if (!instantContent || instantContent.length === 0) {
-                  console.warn('⚠️ instant_preview received but content is empty');
-                  break;
-                }
-                contentBufferRef.current = instantContent;
-                displayedCharsRef.current = 0;
-                isPreviewPhaseRef.current = true;
-                startOrContinueStreaming(assistantMessageIndex);
-                break;
-              }
-
-              case 'fallback_response':
-                // Handle non-streaming response - replace fake streaming with real content
-                console.log('📝 Received fallback response:', data.content);
-                // CRITICAL: DON'T stop fake streaming here - let it continue until content actually starts displaying
-                // Fake streaming will be stopped automatically in the streaming interval when displayedCharsRef.current > 0
-                contentBufferRef.current = data.content || '';
-                displayedCharsRef.current = 0;
-                
-                // Display content with streaming animation
-                startOrContinueStreaming(assistantMessageIndex);
-                
-                // Stop streaming after content is fully displayed
-                setTimeout(() => {
-                  stopStreaming(assistantMessageIndex, true);
-                }, (data.content?.length || 0) * 50 + 1000);
-                break;
-
-              case 'error':
-                // Handle streaming errors gracefully with user-friendly messages
-                console.error('❌ Streaming error:', data.error);
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  if (newMessages[assistantMessageIndex]) {
-                    newMessages[assistantMessageIndex] = {
-                      ...newMessages[assistantMessageIndex],
-                      content: data.content || 'Sorry, there was an error processing your request. Please try again.',
-                      is_own_message: false, // Explicitly set to false for assistant messages
-                      sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }
-                    };
-                  }
-                  return newMessages;
-                });
-                setSendingMessage(false);
-                stopBounceAnimation();
-                break;
-
-              case 'chunk':
-              case 'preview_chunk': {
-                // TEMPLATE PREVIEW: Show after search completes (replaces instant preview)
-                // Matches web: upload.tsx lines 4671-4706
-                const previewChunkContent = data.content || data.response || '';
-                const previewStarted = data.preview_started || false;
-                const isPreviewPhase = data.is_preview_phase !== undefined ? data.is_preview_phase : true;
-                
-                // CRITICAL: Check if phase transition detected (is_preview_phase changed from true to false)
-                // This handles the case where a chunk arrives with is_preview_phase: false
-                const phaseTransitionDetected = isPreviewPhaseRef.current === true && isPreviewPhase === false;
-                
-                if (phaseTransitionDetected) {
-                  console.log('🔄 [FRONTEND] Phase transition detected in preview_chunk handler: preview -> refinement');
-                  console.log('🔄 [FRONTEND] This chunk is actually refinement - will be handled by refinement_chunk case');
-                  // Don't process as preview - this should be handled as refinement
-                  // The polling code should send this as refinement_chunk, but handle it here as fallback
-                  break; // Skip preview processing, wait for refinement_chunk event
-                }
-                
-                console.log('📦 Template preview chunk received:', {
-                  chunk_index: data.chunk_index,
-                  contentLength: previewChunkContent.length,
-                  preview: previewChunkContent.substring(0, 50),
-                  preview_started: previewStarted,
-                  is_preview_phase: isPreviewPhase
-                });
-                
-                // CRITICAL: Process preview chunk if we have content, regardless of preview_started flag
-                // The preview_started flag might not be reliable, but actual content is
-                if (!previewChunkContent || previewChunkContent.length === 0) {
-                  console.log('⏳ Preview chunk has no content - keeping fake streaming active');
-                  // Don't process empty chunks - wait for content
-                  break;
-                }
-                
-                // CRITICAL: Don't stop fake streaming here - let it continue until preview actually starts displaying
-                // Fake streaming will be stopped in startOrContinueStreaming when content actually starts showing
-                
-                console.log('📦 Processing preview chunk - content length:', previewChunkContent.length, 'buffer will be:', contentBufferRef.current.length + previewChunkContent.length);
-                
-                // Preview has started - process the chunk
-                if (data.chunk_index === 0 || contentBufferRef.current.length === 0 || contentBufferRef.current.includes('Searching for')) {
-                  // First chunk - REPLACE instant preview (like web)
-                  console.log('📦 First preview chunk - replacing instant preview');
-                  
-                  // CRITICAL: Don't stop streaming interval - seamlessly transition to preview
-                  // Keep the interval running, just update the buffer and let it continue displaying
-                  // This ensures no idle gap between fake streaming and preview
-                  
-                  // Reset buffer and display (like web: contentBuffer = previewChunkContent; displayedContent = '')
-                  contentBufferRef.current = previewChunkContent;
-                  displayedCharsRef.current = 0; // Start from 0 - let interval handle all display from the start
-                  isPreviewPhaseRef.current = isPreviewPhase;
-                  
-                  // CRITICAL: DON'T stop fake streaming here - let it continue until preview actually starts displaying
-                  // Fake streaming will be stopped automatically in the streaming interval AFTER we've incremented displayedCharsRef
-                  // This ensures no idle gap - fake streaming continues until content is actively streaming
-                  
-                  // Mark as recently streamed to protect from loadMessages
-                  lastStreamedMessageIndexRef.current = assistantMessageIndex;
-                  lastStreamCompleteTimeRef.current = Date.now();
-                  
-                  // Start streaming interval immediately - it will display content from 0 and stop fake streaming once content is visible
-                  console.log('📦 Starting preview streaming - buffer length:', contentBufferRef.current.length);
-                  startOrContinueStreaming(assistantMessageIndex);
-                } else {
-                  // Subsequent chunks - append (like web: contentBuffer += previewChunkContent)
-                  contentBufferRef.current += previewChunkContent;
-                  console.log('📦 Appended preview chunk', data.chunk_index, '- buffer now:', contentBufferRef.current.length);
-                  
-                  // Mark as recently streamed to protect from loadMessages
-                  lastStreamedMessageIndexRef.current = assistantMessageIndex;
-                  lastStreamCompleteTimeRef.current = Date.now();
-                  
-                  // Display with smooth typing effect (like web: displayContentImmediately)
-                  console.log('📦 Starting preview streaming - buffer length:', contentBufferRef.current.length);
-                  startOrContinueStreaming(assistantMessageIndex);
-                }
-                break;
-              }
-
-              case 'preview_complete':
-                console.log('✅ Preview complete - phase transition detected');
-                console.log('📊 Preview content length:', data.preview_length || contentBufferRef.current.length);
-                // Mark preview as complete - refinement will start next
-                // Don't reset anything here - wait for first refinement_chunk to reset
-                // This signal just indicates that the next chunk will be refinement
-                break;
-
-              case 'refinement_chunk': {
-                // REFINEMENT (main response): Replace preview immediately
-                // Matches web: upload.tsx lines 4714-4739
-                const refinementChunkContent = data.content || data.response || '';
-                
-                // CRITICAL: Skip empty refinement chunks
-                if (!refinementChunkContent || refinementChunkContent.length === 0) {
-                  console.log('⏳ Refinement chunk has no content - skipping');
-                  break;
-                }
-                
-                const isPreviewPhaseFromData = data.is_preview_phase !== undefined ? data.is_preview_phase : false;
-                
-                // CRITICAL: Check is_preview_phase flag from polling response
-                // If flag changed from true to false, this is the phase transition
-                const phaseTransitionDetected = isPreviewPhaseRef.current === true && isPreviewPhaseFromData === false;
-                
-                // CRITICAL: Detect first refinement chunk
-                // This can happen in two scenarios:
-                // 1. Preview was shown, then refinement arrives (phase transition)
-                // 2. Preview was skipped, refinement arrives directly (fake streaming still active)
-                // Preview was skipped if: fake streaming is active AND we're receiving refinement (is_preview_phase: false)
-                // OR if fake streaming is active AND contentBuffer is empty (no preview content was ever set)
-                const previewWasSkipped = isFakeStreamingRef.current && (
-                  isPreviewPhaseFromData === false || 
-                  contentBufferRef.current.length === 0
-                );
-                const isFirstRefinement = data.is_first_refinement || phaseTransitionDetected || previewWasSkipped || (data.chunk_index === 0 && (isPreviewPhaseRef.current || isFakeStreamingRef.current));
-                
-                console.log('🔄 Refinement chunk received', { 
-                  chunk_index: data.chunk_index, 
-                  contentLength: refinementChunkContent.length, 
-                  preview: refinementChunkContent.substring(0, 40),
-                  is_first_refinement: isFirstRefinement,
-                  is_preview_phase_flag: isPreviewPhaseFromData,
-                  current_phase: isPreviewPhaseRef.current ? 'preview' : 'refinement',
-                  phase_transition_detected: phaseTransitionDetected,
-                  preview_was_skipped: previewWasSkipped,
-                  fake_streaming_active: isFakeStreamingRef.current
-                });
-                
-                // CRITICAL: Handle first refinement chunk - covers all cases:
-                // 1. Preview was shown, then refinement arrives (phaseTransitionDetected)
-                // 2. Preview was skipped, refinement arrives directly (previewWasSkipped)
-                // 3. First chunk of refinement (chunk_index === 0)
-                if (isFirstRefinement) {
-                  // First refinement chunk - IMMEDIATE transition
-                  if (previewWasSkipped) {
-                    console.log('🔄 First refinement chunk - backend skipped preview, transitioning directly from fake streaming');
-                    console.log('🔄 Fake streaming active:', isFakeStreamingRef.current, 'Content buffer empty:', contentBufferRef.current.length === 0);
-                  } else {
-                    console.log('🔄 First refinement chunk - IMMEDIATE cutover from preview');
-                    console.log('🔄 Replacing preview content with refinement content');
-                  }
-                  
-                  // CRITICAL: Don't stop streaming interval - seamlessly transition from preview to refinement
-                  // Keep the interval running, just update the buffer and let it continue displaying
-                  // This ensures no idle gap between preview and refinement
-                  
-                  // CRITICAL: DON'T stop fake streaming here - let it continue until refinement characters actually start displaying
-                  // If preview was skipped, we're transitioning from fake streaming to refinement
-                  // Fake streaming will be stopped automatically in the streaming interval when displayedCharsRef.current > 0
-                  // This prevents the idle gap between fake streaming stopping and refinement characters appearing
-                  // The check at line 2847-2849 will handle stopping fake streaming when content actually displays
-                  
-                  // CRITICAL: Always reset for refinement phase - replace preview completely
-                  // The backend provides refinement content separately from preview
-                  // We need to replace the preview buffer with refinement content
-                  contentBufferRef.current = refinementChunkContent;
-                  displayedCharsRef.current = 0; // Reset counter, but display immediately below
-                  isPreviewPhaseRef.current = false;
-                  
-                  // CRITICAL: Display first characters IMMEDIATELY to prevent gap
-                  // Don't wait for interval - show content right away for seamless transition
-                  const initialCharsToShow = Math.min(30, refinementChunkContent.length);
-                  displayedCharsRef.current = initialCharsToShow;
-                  const initialDisplayText = refinementChunkContent.substring(0, initialCharsToShow);
-                  
-                  // If streaming interval is not running, start it (seamless transition)
-                  // If it's already running, it will automatically pick up the new buffer content
-                  
-                  console.log('🔄 Reset complete - refinement buffer:', refinementChunkContent.length, 'chars, showing', initialCharsToShow, 'immediately');
-                  
-                  // Ensure message exists and update with initial content IMMEDIATELY
-                  setMessages(prev => {
-                    const newMessages = [...prev];
-                    if (!newMessages[assistantMessageIndex]) {
-                      const assistantMessage: ChatMessage = {
-                        id: generateUniqueMessageId(),
-                        content: initialDisplayText,
-                        sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
-                        is_own_message: false,
-                        created_at: new Date().toISOString()
-                      };
-                      newMessages.push(assistantMessage);
-                      console.log(`🔄 Created message ${assistantMessageIndex} for refinement with initial content`);
-                    } else {
-                      // Update existing message with initial content immediately
-                      newMessages[assistantMessageIndex] = {
-                        ...newMessages[assistantMessageIndex],
-                        content: initialDisplayText
-                      };
-                      console.log(`🔄 Updated message ${assistantMessageIndex} with initial refinement content`);
-                    }
-                    return newMessages;
-                  });
-                  
-                  // Mark as recently streamed to protect from loadMessages
-                  lastStreamedMessageIndexRef.current = assistantMessageIndex;
-                  lastStreamCompleteTimeRef.current = Date.now();
-                  
-                  // Ensure streaming continues seamlessly (like web: displayContentImmediately)
-                  // Smooth transition: fake streaming → refinement (when preview skipped)
-                  // Or: preview → refinement (when preview was shown)
-                  // CRITICAL: Use transition flag to keep interval running seamlessly
-                  // If interval is already running, it will pick up the new buffer automatically
-                  // If not running, start it
-                  console.log('🔄 Ensuring refinement streaming continues - smooth transition from', previewWasSkipped ? 'fake streaming' : 'preview');
-                  startOrContinueStreaming(assistantMessageIndex, true); // true = transition from preview/fake streaming
-                } else {
-                  // Subsequent chunks - append (like web: contentBuffer += refinementChunkContent)
-                  // CRITICAL: DON'T stop fake streaming here either - let the streaming interval handle it
-                  // Fake streaming will be stopped automatically when characters actually start displaying
-                  // This ensures seamless transition even if first chunk was missed
-                  
-                  contentBufferRef.current += refinementChunkContent;
-                  console.log('🔄 Appended refinement chunk', data.chunk_index, '- buffer now:', contentBufferRef.current.length);
-                  
-                  // Ensure streaming continues (like web: displayContentImmediately)
-                  // Not a transition - just appending, so keep existing interval if running
-                  startOrContinueStreaming(assistantMessageIndex, true); // true = keep interval running if exists
-                }
-                break;
-              }
-
-              case 'complete':
-                console.log('✅ Stream complete');
-                console.log('✅ Final content buffer:', contentBufferRef.current);
-                console.log('✅ Complete event data:', { 
-                  hasResponse: !!data.response, 
-                  chat_history_id: data.chat_history_id,
-                  currentSelectedChatId: selectedChatRef.current?.id,
-                  isPreviewPhase: isPreviewPhaseRef.current,
-                  displayedChars: displayedCharsRef.current,
-                  bufferLength: contentBufferRef.current.length
-                });
-                
-                // CRITICAL: Handle chat_history_id from backend response
-                // If backend returns a new chat_history_id, update selectedChat to use it
-                // This prevents creating duplicate chats when user sends multiple messages
-                const returnedChatId = data.chat_history_id ? Number(data.chat_history_id) : null;
-                const currentChatId = selectedChatRef.current ? Number(selectedChatRef.current.id) : null;
-                
-                if (returnedChatId && returnedChatId !== -1) {
-                  // Update ref to track current chat ID
-                  currentChatIdRef.current = returnedChatId;
-                  
-                  if (returnedChatId !== currentChatId) {
-                    console.log('🔄 Backend returned new chat_history_id:', returnedChatId, 'updating selectedChat from', currentChatId);
-                    
-                    // CRITICAL: Update loadedChatIdRef FIRST to prevent loadMessages from reloading
-                    // This must happen before setSelectedChat to prevent message clearing
-                    loadedChatIdRef.current = returnedChatId;
-                    console.log('✅ Updated loadedChatIdRef to prevent message reload:', returnedChatId);
-                    
-                    // Update selectedChat to use the new chat_history_id
-                    setSelectedChat(prev => {
-                      if (prev) {
-                        const updatedChat = {
-                          ...prev,
-                          id: returnedChatId
-                        };
-                        
-                        console.log('🔄 Preserving chat context during ID update:', {
-                          oldId: currentChatId,
-                          newId: returnedChatId,
-                          type: updatedChat.type,
-                          title: updatedChat.title,
-                          hasDocContext: !!updatedChat.document_context,
-                          hasBookmarkContext: !!updatedChat.bookmark_context,
-                          hasWorkspace: !!updatedChat.workspace
-                        });
-                        
-                        // CRITICAL: Update the chat in the chats list, removing old ID and adding new ID
-                        // This transfers context from temporary ID (-2) to real ID
-                        setChats(prevChats => {
-                          // Remove old chat with temp ID (-2) and add new chat with real ID
-                          const chatsWithoutOld = prevChats.filter(chat => chat.id !== currentChatId);
-                          
-                          // Ensure ChatGD Assistant stays first, then add updated chat
-                          const chatAssistant = chatsWithoutOld.find(chat => chat.id === -1);
-                          const otherChats = chatsWithoutOld.filter(chat => chat.id !== -1);
-                          
-                          let updatedChats: Chat[];
-                          if (chatAssistant) {
-                            updatedChats = [chatAssistant, updatedChat, ...otherChats];
-                          } else {
-                            updatedChats = [updatedChat, ...otherChats];
-                          }
-                          
-                          console.log('🔄 [ID UPDATE] Updated chats list with new ID:', {
-                            removedId: currentChatId,
-                            addedId: returnedChatId,
-                            totalChats: updatedChats.length,
-                            hasBookmarkContext: !!updatedChat.bookmark_context,
-                            bookmarkName: updatedChat.bookmark_context?.name,
-                            hasDocumentContext: !!updatedChat.document_context,
-                            type: updatedChat.type
-                          });
-                          
-                          // CRITICAL: Persist the updated chat context with NEW ID
-                          // This transfers context from old ID (-2) to new ID (real ID)
-                          // Also need to remove old ID from AsyncStorage
-                          savePersistedChatContexts(updatedChats).then(async () => {
-                            // CRITICAL: Remove old ID (-2) from AsyncStorage if it exists
-                            if (currentChatId === -2) {
-                              try {
-                                const stored = await AsyncStorage.getItem(CHAT_CONTEXTS_KEY);
-                                if (stored) {
-                                  const parsed = JSON.parse(stored);
-                                  if (parsed['-2']) {
-                                    delete parsed['-2'];
-                                    await AsyncStorage.setItem(CHAT_CONTEXTS_KEY, JSON.stringify(parsed));
-                                    console.log('🗑️ Removed old temporary chat ID -2 from AsyncStorage, context transferred to', returnedChatId);
-                                  }
-                                }
-                              } catch (error) {
-                                console.error('❌ Failed to remove old chat ID from AsyncStorage:', error);
-                              }
-                            }
-                          });
-                          
-                          return updatedChats;
-                        });
-                        
-                        return updatedChat;
-                      }
-                      return prev;
-                    });
-                    
-                    // CRITICAL: Don't reload chat list immediately after updating ID - it clears messages
-                    // The chat list is already updated locally, so we don't need to reload everything
-                    // This prevents messages from being cleared when the chat ID is updated
-                  } else {
-                    console.log('✅ Chat history ID matches current chat:', returnedChatId);
-                  }
-                } else {
-                  console.log('⚠️ No chat_history_id in response or it is -1');
-                  // Keep current chat ID in ref
-                  if (currentChatId) {
-                    currentChatIdRef.current = currentChatId;
-                  }
-                }
-                
-                // Complete event - finalize (like web)
-                // Mark stream as complete so interval knows to stop when all content is displayed
-                isStreamCompleteRef.current = true;
-                citationsFromStreamRef.current = (data.citations && data.citations.length > 0) ? data.citations : null;
-                const midComplete = (data as any).message_id ?? (data as any).metadata?.message_id;
-                if (midComplete != null && !isNaN(Number(midComplete))) {
-                  assistantMessageIdFromStreamRef.current = Number(midComplete);
-                }
-                const cf = (data as any).chart_file_id;
-                if (cf != null && !isNaN(Number(cf))) {
-                  chartFromStreamRef.current = {
-                    chartFileId: Number(cf),
-                    chartTitle: (data as any).chart_title || undefined,
-                  };
-                } else {
-                  chartFromStreamRef.current = null;
-                }
-                
-                // Buffer already has full content from chunks, just ensure phase is correct
-                if (data.response != null && String(data.response).length > 0) {
-                  // Backend included full response in complete event - use it
-                  const resp = String(data.response);
-                  console.log('✅ Complete with final response', { length: resp.length });
-                  
-                  // CRITICAL: Only reset displayedChars if:
-                  // 1. We're transitioning from preview to refinement (content is different)
-                  // 2. OR refinement phase already started (isPreviewPhaseRef.current === false)
-                  // 3. OR content is actually different from what's in the buffer
-                  const isContentDifferent = resp !== contentBufferRef.current;
-                  const isRefinementPhase = !isPreviewPhaseRef.current;
-                  
-                  if (isContentDifferent && isRefinementPhase) {
-                    // Refinement content is different - replace and restart streaming
-                    console.log('🔄 Complete: Refinement content differs, replacing preview');
-                    contentBufferRef.current = resp;
-                    displayedCharsRef.current = 0;
-                    isPreviewPhaseRef.current = false;
-                    startOrContinueStreaming(assistantMessageIndex);
-                  } else if (isContentDifferent && !isRefinementPhase) {
-                    // Content is different but we're still in preview - this shouldn't happen
-                    // But if it does, update buffer without resetting displayedChars
-                    console.log('⚠️ Complete: Content differs but still in preview phase - updating buffer only');
-                    contentBufferRef.current = resp;
-                    // Don't reset displayedChars - continue from where we are
-                    isPreviewPhaseRef.current = false;
-                    // Continue streaming if not already complete
-                    if (displayedCharsRef.current < contentBufferRef.current.length) {
-                      startOrContinueStreaming(assistantMessageIndex);
-                    }
-                  } else {
-                    // Content is the same - just finalize, don't restart streaming
-                    console.log('✅ Complete: Content matches buffer - finalizing without restart');
-                    contentBufferRef.current = resp;
-                    isPreviewPhaseRef.current = false;
-                    // Don't reset displayedChars - content is already being displayed
-                    // Just ensure we display the full content if not already complete
-                    if (displayedCharsRef.current < contentBufferRef.current.length) {
-                      startOrContinueStreaming(assistantMessageIndex);
-                    } else {
-                      // All content already displayed - finalize immediately
-                      stopStreaming(assistantMessageIndex, true);
-                    }
-                  }
-                } else {
-                  // No response in complete - buffer already has content from chunks
-                  console.log('✅ Complete without response - buffer has', contentBufferRef.current.length, 'chars');
-                  isPreviewPhaseRef.current = false;
-                  // Don't stop streaming if buffer is empty (complete arrived before any chunks - keep fake streaming)
-                  if (contentBufferRef.current.length === 0) {
-                    console.log('⏳ Complete with empty buffer - keeping fake streaming until chunks arrive');
-                  } else if (displayedCharsRef.current >= contentBufferRef.current.length) {
-                    console.log('✅ All content already displayed - stopping streaming immediately');
-                    stopStreaming(assistantMessageIndex, true);
-                  }
-                }
-                
-                // Let streaming finish naturally (like web)
-                // The streaming interval will stop automatically when displayedChars >= buffer.length AND isStreamCompleteRef is true
-                // CRITICAL: Clear sending state only when stream actually completes (not in finally – polling returns immediately)
-                setSendingMessage(false);
-                stopBounceAnimation();
-                break;
-
-              default:
-                console.log('⚠️ [CHATS] Unknown/unhandled SSE event type:', type, {
-                  dataKeys: Object.keys(data || {}),
-                  hasContent: !!(data?.content || data?.response),
-                  preview: (data?.content || data?.response || '').substring(0, 100)
-                });
-                // Try to handle unknown events that might have content
-                if (data?.content || data?.response) {
-                  const unknownContent = data.content || data.response || '';
-                  if (unknownContent.length > 0 && !isFakeStreamingRef.current) {
-                    console.log('📝 [CHATS] Unknown event has content, treating as preview chunk');
-                    contentBufferRef.current = unknownContent;
-                    displayedCharsRef.current = 0;
-                    isPreviewPhaseRef.current = true;
-                    startOrContinueStreaming(assistantMessageIndex);
-                  }
-                }
-            }
-          };
+;
         smartChatPollingChunkRef.current = smartChatOnChunk;
         smartChatPollingChunkReadyRef.current = true;
         await (api as any).sendChatMessagePolling(
@@ -7340,7 +6870,7 @@ export default function ChatsScreen() {
             dynamicStyles.messageContainer,
             dynamicStyles.ownMessage
           ]}
-          accessibilityRole="listitem"
+          role="listitem"
           accessibilityLabel={msgLabel}
         >
           <View style={[
@@ -7379,13 +6909,14 @@ export default function ChatsScreen() {
         const messagePairIndex = Math.floor(globalIndex / 2);
         const queryText = globalIndex > 0 ? messages[globalIndex - 1]?.content : undefined;
         const showFooter = hasContent && !isStreamingActive && !item.is_preview;
+        const persistedHistoryId = getPersistedChatHistoryId();
         return (
           <View
             style={[
               dynamicStyles.messageContainerNoBubble,
               dynamicStyles.otherMessageNoBubble
             ]}
-            accessibilityRole="listitem"
+            role="listitem"
             accessibilityLabel={msgLabel}
           >
             <View style={{ flexDirection: 'column', width: '100%' }}>
@@ -7448,7 +6979,7 @@ export default function ChatsScreen() {
                 ) : null}
               {showFooter && (
                 <ChatMessageFooter
-                  chatHistoryId={selectedChat?.id}
+                  chatHistoryId={persistedHistoryId || undefined}
                   messagePairIndex={messagePairIndex}
                   queryText={queryText}
                   responseText={item.content}
@@ -7456,7 +6987,7 @@ export default function ChatsScreen() {
                   citations={item.citations}
                   showActions={true}
                   showMoreSources={
-                    (selectedChat?.id ?? 0) > 0 &&
+                    persistedHistoryId > 0 &&
                     !item.is_own_message &&
                     !item.is_preview &&
                     typeof item.id === 'number' &&
@@ -7470,7 +7001,7 @@ export default function ChatsScreen() {
                   onMoreSources={() => handleMoreSourcesAssistant(globalIndex, item.id as number)}
                   moreSourcesDisabled={sendingMessage}
                   showRetry={
-                    (selectedChat?.id ?? 0) > 0 &&
+                    persistedHistoryId > 0 &&
                     !item.is_own_message &&
                     typeof item.id === 'number' &&
                     item.id > 0 &&
@@ -7498,7 +7029,7 @@ export default function ChatsScreen() {
               dynamicStyles.messageContainer,
               dynamicStyles.otherMessage
             ]}
-            accessibilityRole="listitem"
+            role="listitem"
             accessibilityLabel={msgLabel}
           >
             <View style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
@@ -8177,7 +7708,15 @@ export default function ChatsScreen() {
               if (newMessage.trim() && !sendingMessage) sendMessage();
             }}
             onKeyPress={({ nativeEvent }) => {
-              if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && newMessage.trim() && !sendingMessage) {
+              const shiftHeld =
+                'shiftKey' in nativeEvent &&
+                Boolean((nativeEvent as { shiftKey?: boolean }).shiftKey);
+              if (
+                nativeEvent.key === 'Enter' &&
+                !shiftHeld &&
+                newMessage.trim() &&
+                !sendingMessage
+              ) {
                 sendMessage();
               }
             }}

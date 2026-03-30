@@ -6,22 +6,27 @@ import {
     Alert,
     Animated,
     Image,
+    KeyboardAvoidingView,
     Modal,
     Platform,
+    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
+    useWindowDimensions,
     View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
 import { screenCache } from '../../utils/screenCache';
+import { NotificationsInboxContent } from '../components/NotificationsInboxContent';
 import { useAuth } from '../context/auth';
 import { pushNotificationService } from '../services/pushNotifications';
 
@@ -82,6 +87,8 @@ const reachLiveDotStyles = StyleSheet.create({
 
 function DashboardScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { user, signOut } = useAuth();
   const { uploadFromGallery, uploadFromDocuments } = useFileStore();
   const colors = useThemeColors();
@@ -105,6 +112,8 @@ function DashboardScreen() {
   const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
   const [reachInMeeting, setReachInMeeting] = useState(false);
+  const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
+  const closeNotificationsModal = useCallback(() => setNotificationsModalOpen(false), []);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
   const DASHBOARD_CACHE_MS = 60000; // 60 s TTL for dashboard data
@@ -506,6 +515,11 @@ function DashboardScreen() {
     }
   }, [user, isAuthenticated]); // Include auth state in dependencies to reload when auth changes
 
+  const onNotificationsListMutated = useCallback(() => {
+    screenCache.invalidate(DASHBOARD_CACHE_KEY);
+    void loadDashboardData(true);
+  }, [loadDashboardData]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     screenCache.invalidate(DASHBOARD_CACHE_KEY);
@@ -827,11 +841,10 @@ function DashboardScreen() {
     }
   };
 
-  const handleNotificationPress = () => {
-    if (stats.unreadNotifications > 0) {
-      router.push('/notifications');
-    }
-  };
+  const handleNotificationBellPress = useCallback(() => {
+    // Defer opening so the same pointer event cannot hit the modal backdrop (web + some native).
+    setTimeout(() => setNotificationsModalOpen(true), 0);
+  }, []);
 
   const handleTestProgress = () => {
     const progressStore = useProgressStore.getState();
@@ -1306,7 +1319,10 @@ function DashboardScreen() {
               <>
                 <TouchableOpacity
                   style={dynamicStyles.headerButton}
-                  onPress={handleNotificationPress}
+                  onPress={handleNotificationBellPress}
+                  hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                  accessibilityLabel="Notifications"
+                  accessibilityRole="button"
                 >
                   <View style={{ position: 'relative' }}>
                     <Ionicons name="notifications-outline" size={26} color="#007AFF" />
@@ -1662,6 +1678,77 @@ function DashboardScreen() {
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={notificationsModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={closeNotificationsModal}
+      >
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <KeyboardAvoidingView
+            style={{ flex: 1, justifyContent: 'flex-end' }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
+            <View
+              style={{
+                flex: 1,
+                justifyContent: 'flex-end',
+                backgroundColor: 'rgba(0,0,0,0.4)',
+              }}
+            >
+              <TouchableOpacity
+                style={{ flex: 1 }}
+                activeOpacity={1}
+                onPress={closeNotificationsModal}
+                accessibilityLabel="Dismiss notifications"
+              />
+              <View
+                style={{
+                  width: '100%',
+                  backgroundColor: colors.card,
+                  borderTopLeftRadius: 20,
+                  borderTopRightRadius: 20,
+                  maxHeight: '80%',
+                  minHeight: 280,
+                  paddingBottom: insets.bottom,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: -3 },
+                  shadowOpacity: 0.15,
+                  shadowRadius: 8,
+                  elevation: 12,
+                }}
+              >
+                <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
+                  <View
+                    style={{
+                      width: 36,
+                      height: 4,
+                      borderRadius: 2,
+                      backgroundColor: colors.border,
+                    }}
+                  />
+                </View>
+                <View
+                  style={{
+                    height: Math.min(
+                      Math.max(240, Math.round(windowHeight * 0.62)),
+                      Math.round(windowHeight * 0.8) - 48
+                    ),
+                  }}
+                >
+                  <NotificationsInboxContent
+                    variant="modal"
+                    onDismiss={closeNotificationsModal}
+                    onListMutated={onNotificationsListMutated}
+                  />
+                </View>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </GestureHandlerRootView>
       </Modal>
     </SafeAreaView>
   );
