@@ -59,15 +59,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
           await secureStorage.setItem('user', JSON.stringify(userData));
           
-          // CRITICAL FIX: Store the actual JWT token returned from backend, not 'session_token'
-          // The backend now returns a JWT token for mobile requests in the 'token' field
-          const authToken = (result as any).token || 'session_token';
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken);
-          
-          if (authToken && authToken !== 'session_token') {
+          // Store JWT only when provided; otherwise rely on cookie-based session.
+          const authToken = (result as any).token;
+          if (authToken) {
+            await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken);
             console.log('✅ Google OAuth deep link: JWT token stored');
           } else {
-            console.warn('⚠️ Google OAuth deep link: No JWT token received, using session_token fallback');
+            await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+            console.log('ℹ️ Google OAuth deep link: no JWT returned, relying on cookie session');
           }
           
           setUser(userData);
@@ -98,10 +97,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Verify session with backend before setting user
         try {
           const response = await apiService.checkAuth();
-          if (response.success && response.data) {
-            // Backend confirms authentication, use stored user data
+          if (response.success) {
+            // Some auth-check responses return success without a data envelope.
+            // Prefer backend user payload when present, otherwise keep stored user.
             const parsedUser = JSON.parse(userData);
-            setUser(parsedUser);
+            const backendUser = (response as any).user || (response as any).data?.user || null;
+            if (backendUser?.id) {
+              const fullName = `${backendUser.first_name || backendUser.firstName || ''} ${backendUser.last_name || backendUser.lastName || ''}`.trim();
+              const displayName = fullName || backendUser.name || backendUser.username || backendUser.email || parsedUser?.name || '';
+              const normalizedUser = {
+                id: String(backendUser.id),
+                email: backendUser.email || backendUser.username || parsedUser?.email || '',
+                name: displayName,
+                first_name: backendUser.first_name ?? backendUser.firstName ?? parsedUser?.first_name,
+                last_name: backendUser.last_name ?? backendUser.lastName ?? parsedUser?.last_name,
+                username: backendUser.username ?? parsedUser?.username,
+              };
+              await secureStorage.setItem('user', JSON.stringify(normalizedUser));
+              setUser(normalizedUser);
+            } else {
+              setUser(parsedUser);
+            }
           } else {
             await forceReset();
           }
@@ -230,7 +246,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           console.log('💾 Storing user data:', localUser);
           await secureStorage.setItem('user', JSON.stringify(localUser));
-          await secureStorage.setItem('auth_token', response.token || 'session_token');
+          if (response.token) {
+            await secureStorage.setItem('auth_token', response.token);
+          } else {
+            await secureStorage.removeItem('auth_token');
+          }
           setUser(localUser);
           console.log('✅ Sign in successful for:', localUser.name);
           return;
@@ -249,7 +269,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           console.log('💾 Storing user data:', localUser);
           await secureStorage.setItem('user', JSON.stringify(localUser));
-          await secureStorage.setItem('auth_token', 'session_token');
+          await secureStorage.removeItem('auth_token');
           setUser(localUser);
           console.log('✅ Sign in successful with session info for:', localUser.name);
           return;

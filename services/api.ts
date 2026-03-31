@@ -297,8 +297,12 @@ class ApiService {
         
         try {
           const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-          if (token) {
+          // Never send placeholder/non-JWT tokens as Bearer auth.
+          // When no JWT exists, rely on cookie-based session (withCredentials=true).
+          if (token && token !== 'session_token') {
             config.headers.Authorization = `Bearer ${token}`;
+          } else if (config.headers && 'Authorization' in config.headers) {
+            delete (config.headers as any).Authorization;
           }
           const deviceToken = await secureStorage.getItem(STORAGE_KEYS.DEVICE_TOKEN);
           if (deviceToken) {
@@ -411,14 +415,13 @@ class ApiService {
           console.log('💾 Stored mobile user data');
         }
         
-        // Store the authentication token
+        // Store JWT when provided. If backend uses cookie session, keep auth token empty.
         if (result.token) {
           await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
           console.log('💾 Stored authentication token:', result.token.substring(0, 20) + '...');
         } else {
-          // Fallback to session_token for development
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
-          console.log('💾 Stored fallback session_token');
+          await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+          console.log('ℹ️ No JWT token returned; using cookie-based session');
         }
         
         // Store device token if device is trusted
