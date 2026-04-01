@@ -65,7 +65,8 @@ function RootLayoutNav() {
   const isMeetingScreen = segments.some((s) => String(s).includes('hms-meeting-interface'));
 
   const APP_LOCK_REMINDER_KEY = '@grabdocs_app_lock_reminder_last_shown';
-  const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const APP_LOCK_REMINDER_OPTOUT_KEY = '@grabdocs_app_lock_reminder_opt_out';
+  const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
   // Register for push and send token to backend when user is logged in
   useEffect(() => {
@@ -87,6 +88,9 @@ function RootLayoutNav() {
 
     const maybeShowReminder = async () => {
       try {
+        const optedOut = await AsyncStorage.getItem(APP_LOCK_REMINDER_OPTOUT_KEY);
+        if (optedOut === 'true') return;
+
         if (openedViaLinkRef.current === null) {
           const initialUrl = await Linking.getInitialURL();
           openedViaLinkRef.current = !!(initialUrl && initialUrl.trim().length > 0);
@@ -102,6 +106,13 @@ function RootLayoutNav() {
           'For better security, lock the app 10 minutes after you leave it. You can unlock with Face ID, Touch ID, or your device passcode.\n\nGo to Settings → Security & 2FA to turn it on.',
           [
             { text: 'Later' },
+            {
+              text: "Don't remind me again",
+              style: 'destructive',
+              onPress: async () => {
+                await AsyncStorage.setItem(APP_LOCK_REMINDER_OPTOUT_KEY, 'true');
+              },
+            },
             {
               text: 'Open Settings',
               onPress: () => router.push('/(tabs)/settings'),

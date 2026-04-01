@@ -3,7 +3,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -26,6 +26,13 @@ import DocumentViewer from '../../components/DocumentViewer';
 import { useAuth } from '../context/auth';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+
+/** Rows shown initially in Recent Receipts / Recent Invoices; full lists stay in state for charts & summaries. */
+const FINANCIALS_LIST_PAGE_SIZE = 10;
+/** When analytics has no receipt/invoice rows, mobile files fallback still pulls a single page (not unbounded). */
+const FINANCIALS_FALLBACK_FETCH_SIZE = 50;
+/** Auto-expand list when user scrolls near bottom (pixels). */
+const FINANCIALS_AUTO_LOAD_THRESHOLD_PX = 120;
 
 interface ComprehensiveAnalytics {
   receipts: {
@@ -212,6 +219,143 @@ export default function AnalyticsDashboard() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const colors = useThemeColors();
+
+  const themeStyles = useMemo(
+    () =>
+      StyleSheet.create({
+        content: { backgroundColor: colors.background },
+        section: { backgroundColor: colors.card },
+        timePeriodContainer: { backgroundColor: colors.card },
+        timePeriodButton: { backgroundColor: colors.surface },
+        timePeriodButtonActive: { backgroundColor: colors.primary },
+        timePeriodButtonText: { color: colors.textSecondary },
+        timePeriodButtonLabelActive: { color: '#fff' },
+        categoryFilterContainer: { backgroundColor: colors.surface },
+        categoryDropdown: {
+          backgroundColor: colors.inputBackground,
+          borderColor: colors.border,
+        },
+        categoryDropdownText: { color: colors.text },
+        categoryFilterLabel: { color: colors.text },
+        categoryFilterNote: { color: colors.textSecondary },
+        statCard: { backgroundColor: colors.surface },
+        statCardTitle: { color: colors.textSecondary },
+        statCardValue: { color: colors.text },
+        statCardSubtitle: { color: colors.textSecondary },
+        sectionTitle: { color: colors.text },
+        subsectionTitle: { color: colors.text },
+        categoryBarTitle: { color: colors.text },
+        categoryBarContainer: { backgroundColor: colors.borderLight },
+        categoryBarPercentage: { color: colors.textSecondary },
+        donutLegendText: { color: colors.text },
+        categoryBreakdownList: { borderTopColor: colors.border },
+        categoryBreakdownTitle: { color: colors.text },
+        categoryBreakdownItem: { borderBottomColor: colors.borderLight },
+        categoryBreakdownName: { color: colors.text },
+        categoryBreakdownPercent: { color: colors.textSecondary },
+        categoryBreakdownCount: { color: colors.textLight },
+        categoryProgressBar: { backgroundColor: colors.border },
+        compactListItem: { backgroundColor: colors.surface },
+        compactListName: { color: colors.text },
+        compactListSubtext: { color: colors.textSecondary },
+        compactListMeta: { color: colors.textLight },
+        compactListAmount: { color: colors.text },
+        compactChartLabel: { color: colors.text },
+        compactChartBar: { backgroundColor: colors.borderLight },
+        compactChartAmount: { color: colors.text },
+        compactChartCount: { color: colors.textSecondary },
+        trendBarLabel: { color: colors.textSecondary },
+        trendValueAmount: { color: colors.text },
+        trendValueCount: { color: colors.textSecondary },
+        sizeDistributionLabel: { color: colors.text },
+        sizeDistributionBar: { backgroundColor: colors.borderLight },
+        sizeDistributionCount: { color: colors.textSecondary },
+        emptyText: { color: colors.textSecondary },
+        emptySubtext: { color: colors.textLight },
+        tabText: { color: colors.textSecondary },
+        tabTextActive: { color: colors.primary },
+        tabActive: { borderBottomColor: colors.primary },
+        modalContent: { backgroundColor: colors.card },
+        modalHeader: { borderBottomColor: colors.borderLight },
+        modalTitle: { color: colors.text },
+        categoryModalItem: { borderBottomColor: colors.borderLight },
+        categoryItemText: { color: colors.text },
+        modalLoading: {
+          backgroundColor: colors.isDark ? 'rgba(0,0,0,0.75)' : 'rgba(255, 255, 255, 0.9)',
+        },
+        editFormActions: { borderTopColor: colors.borderLight },
+        editFormButtonCancel: { backgroundColor: colors.surface },
+        editFormLabel: { color: colors.text },
+        editFormInput: {
+          borderColor: colors.border,
+          color: colors.text,
+          backgroundColor: colors.inputBackground,
+        },
+        editFormDateText: { color: colors.text },
+        editFormDatePlaceholder: { color: colors.textLight },
+        editCategoryChip: { backgroundColor: colors.surface },
+        editCategoryChipText: { color: colors.text },
+        editFormButtonTextCancel: { color: colors.text },
+        filterModalContentBox: { backgroundColor: colors.card },
+        filterSectionTitle: { color: colors.text },
+        filterOptionButton: { backgroundColor: colors.surface },
+        filterOptionText: { color: colors.text },
+        filterLabel: { color: colors.textSecondary },
+        filterInputLabel: { color: colors.textSecondary },
+        filterDatePickerContainer: {
+          backgroundColor: colors.inputBackground,
+          borderColor: colors.border,
+        },
+        filterDatePickerLabel: { color: colors.text },
+        filterDatePickerPlaceholder: { color: colors.textSecondary },
+        dateInput: {
+          backgroundColor: colors.inputBackground,
+          borderColor: colors.border,
+        },
+        dateInputText: { color: colors.text },
+        dateInputPlaceholder: { color: colors.textLight },
+        datePickerModalContent: { backgroundColor: colors.card },
+        pickerModalContainer: { backgroundColor: colors.card },
+        pickerModalHeader: {
+          backgroundColor: colors.card,
+          borderBottomColor: colors.border,
+        },
+        pickerModalContent: { backgroundColor: colors.card },
+        pickerModalTitle: { color: colors.text },
+        pickerModalCancelButton: { color: colors.textSecondary },
+        doneButton: { color: colors.primary },
+        amountInput: {
+          backgroundColor: colors.inputBackground,
+          borderColor: colors.border,
+          color: colors.text,
+        },
+        textInput: {
+          backgroundColor: colors.inputBackground,
+          borderColor: colors.border,
+          color: colors.text,
+        },
+        filterButtonSecondary: {
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+        },
+        filterButtonTextSecondary: { color: colors.textSecondary },
+        loadingText: { color: colors.textSecondary },
+        errorText: { color: colors.textSecondary },
+        errorSubtext: { color: colors.textLight },
+        businessItem: { borderBottomColor: colors.borderLight },
+        businessName: { color: colors.text },
+        businessStats: { color: colors.textSecondary },
+        fileTypeName: { color: colors.text },
+        fileTypeCount: { color: colors.textSecondary },
+        workspaceItem: { borderBottomColor: colors.borderLight },
+        workspaceName: { color: colors.text },
+        workspaceStats: { color: colors.textSecondary },
+        activityText: { color: colors.text },
+        activeFiltersText: { color: colors.primary },
+      }),
+    [colors]
+  );
+
   const [analytics, setAnalytics] = useState<ComprehensiveAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -221,6 +365,9 @@ export default function AnalyticsDashboard() {
   const [activeTab, setActiveTab] = useState<'receipts' | 'invoices'>('receipts');
   const [recentReceipts, setRecentReceipts] = useState<any[]>([]);
   const [recentInvoices, setRecentInvoices] = useState<any[]>([]);
+  const [receiptListDisplayLimit, setReceiptListDisplayLimit] = useState(FINANCIALS_LIST_PAGE_SIZE);
+  const [invoiceListDisplayLimit, setInvoiceListDisplayLimit] = useState(FINANCIALS_LIST_PAGE_SIZE);
+  const lastAutoLoadAtRef = useRef(0);
   
   // Advanced filter states
   const [showAdvancedFilterModal, setShowAdvancedFilterModal] = useState(false);
@@ -591,6 +738,8 @@ export default function AnalyticsDashboard() {
       // Match other tabs: gate on useAuth() user (same session as Home/Documents)
       if (!user) {
         console.warn('📊 No user session, cannot load analytics');
+        setReceiptListDisplayLimit(FINANCIALS_LIST_PAGE_SIZE);
+        setInvoiceListDisplayLimit(FINANCIALS_LIST_PAGE_SIZE);
         const periodLabel = getPeriodLabel(days, customDateFrom, customDateTo, !!(useCustomFilters && customDateFrom && customDateTo));
         const noAuthData = {
           summary: {
@@ -636,6 +785,9 @@ export default function AnalyticsDashboard() {
         setLoading(false);
         return;
       }
+
+      setReceiptListDisplayLimit(FINANCIALS_LIST_PAGE_SIZE);
+      setInvoiceListDisplayLimit(FINANCIALS_LIST_PAGE_SIZE);
       
       // Use web endpoints for receipt and invoice analytics
       console.log('📊 Loading analytics from web endpoints...');
@@ -821,7 +973,7 @@ export default function AnalyticsDashboard() {
           try {
             console.log('📊 Fallback: Fetching receipts from mobile files endpoint...');
             // Use reasonable limit (backend caps per_page at 100); paginate if more needed
-            const filesResponse = await apiClient.getDocuments(1, 100, undefined, 'receipts');
+            const filesResponse = await apiClient.getDocuments(1, FINANCIALS_FALLBACK_FETCH_SIZE, undefined, 'receipts');
             if (filesResponse && filesResponse.success) {
               const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
               let receiptFiles = allFiles
@@ -938,7 +1090,7 @@ export default function AnalyticsDashboard() {
           try {
             console.log('📊 Fetching invoices from files endpoint to get invoice IDs...');
             // Use reasonable limit (backend caps per_page at 100)
-            const invoicesResponse = await apiClient.getDocuments(1, 100, undefined, 'invoices');
+            const invoicesResponse = await apiClient.getDocuments(1, FINANCIALS_FALLBACK_FETCH_SIZE, undefined, 'invoices');
             console.log('📊 Invoices response:', {
               success: invoicesResponse?.success,
               count: invoicesResponse?.files?.length || invoicesResponse?.data?.files?.length || 0
@@ -985,7 +1137,7 @@ export default function AnalyticsDashboard() {
                 });
               }
               console.log(`📊 Filtered invoice files: ${invoiceFiles.length}`);
-              setRecentInvoices(invoiceFiles.slice(0, 50)); // Limit to 50 most recent
+              setRecentInvoices(invoiceFiles);
             } else {
               console.warn('⚠️ Failed to fetch invoice files, using analytics data');
               let filteredInvoices = invoiceAnalytics.recent_invoices;
@@ -1143,6 +1295,42 @@ export default function AnalyticsDashboard() {
     await loadAnalytics();
     setRefreshing(false);
   };
+
+  const handleFinancialsScroll = useCallback((event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent || {};
+    if (!layoutMeasurement || !contentOffset || !contentSize) return;
+
+    const distanceFromBottom =
+      contentSize.height - (layoutMeasurement.height + contentOffset.y);
+    if (distanceFromBottom > FINANCIALS_AUTO_LOAD_THRESHOLD_PX) return;
+
+    // Throttle to avoid multiple increments for the same momentum frame.
+    const now = Date.now();
+    if (now - lastAutoLoadAtRef.current < 400) return;
+
+    if (activeTab === 'receipts') {
+      if (recentReceipts.length > receiptListDisplayLimit) {
+        lastAutoLoadAtRef.current = now;
+        setReceiptListDisplayLimit((n) =>
+          Math.min(n + FINANCIALS_LIST_PAGE_SIZE, recentReceipts.length)
+        );
+      }
+      return;
+    }
+
+    if (recentInvoices.length > invoiceListDisplayLimit) {
+      lastAutoLoadAtRef.current = now;
+      setInvoiceListDisplayLimit((n) =>
+        Math.min(n + FINANCIALS_LIST_PAGE_SIZE, recentInvoices.length)
+      );
+    }
+  }, [
+    activeTab,
+    recentReceipts.length,
+    recentInvoices.length,
+    receiptListDisplayLimit,
+    invoiceListDisplayLimit,
+  ]);
   
   // Receipt categories (must match backend validation)
   const receiptCategories = [
@@ -1757,11 +1945,11 @@ export default function AnalyticsDashboard() {
   };
 
   const TimePeriodSelector = () => (
-    <View style={styles.timePeriodContainer}>
+    <View style={[styles.timePeriodContainer, themeStyles.timePeriodContainer]}>
       <View style={styles.timePeriodHeader}>
-        <Text style={styles.sectionTitle}>Time Period</Text>
+        <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Time Period</Text>
         {getActiveFiltersText() && (
-          <Text style={styles.activeFiltersText}>{getActiveFiltersText()}</Text>
+          <Text style={[styles.activeFiltersText, themeStyles.activeFiltersText]}>{getActiveFiltersText()}</Text>
         )}
       </View>
       <View style={styles.timePeriodButtons}>
@@ -1770,7 +1958,9 @@ export default function AnalyticsDashboard() {
             key={days}
             style={[
               styles.timePeriodButton,
+              themeStyles.timePeriodButton,
               timePeriod === days && !useCustomFilters && styles.timePeriodButtonActive,
+              timePeriod === days && !useCustomFilters && themeStyles.timePeriodButtonActive,
             ]}
             onPress={() => {
               setTimePeriod(days);
@@ -1781,7 +1971,9 @@ export default function AnalyticsDashboard() {
             <Text
               style={[
                 styles.timePeriodButtonText,
+                themeStyles.timePeriodButtonText,
                 timePeriod === days && !useCustomFilters && styles.timePeriodButtonTextActive,
+                timePeriod === days && !useCustomFilters && themeStyles.timePeriodButtonLabelActive,
               ]}
             >
               {days === '7' ? '7 Days' : days === '30' ? '30 Days' : '90 Days'}
@@ -1791,15 +1983,19 @@ export default function AnalyticsDashboard() {
         <TouchableOpacity
           style={[
             styles.timePeriodButton,
+            themeStyles.timePeriodButton,
             styles.moreButton,
             useCustomFilters && styles.timePeriodButtonActive,
+            useCustomFilters && themeStyles.timePeriodButtonActive,
           ]}
           onPress={() => setShowAdvancedFilterModal(true)}
         >
           <Text
             style={[
               styles.timePeriodButtonText,
+              themeStyles.timePeriodButtonText,
               useCustomFilters && styles.timePeriodButtonTextActive,
+              useCustomFilters && themeStyles.timePeriodButtonLabelActive,
             ]}
           >
             More
@@ -1812,21 +2008,21 @@ export default function AnalyticsDashboard() {
   const receiptCategoryFilterOptions = ['All', ...receiptCategories];
 
   const CategoryFilter = () => (
-    <View style={styles.categoryFilterContainer}>
-      <Text style={styles.sectionTitle}>Receipt Category Filter</Text>
+    <View style={[styles.categoryFilterContainer, themeStyles.categoryFilterContainer]}>
+      <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Receipt Category Filter</Text>
       <View style={styles.categoryFilterContent}>
-        <Text style={styles.categoryFilterLabel}>Filter by Category:</Text>
+        <Text style={[styles.categoryFilterLabel, themeStyles.categoryFilterLabel]}>Filter by Category:</Text>
         <TouchableOpacity
-          style={styles.categoryDropdown}
+          style={[styles.categoryDropdown, themeStyles.categoryDropdown]}
           onPress={() => setShowReceiptCategoryFilterModal(true)}
           activeOpacity={0.7}
         >
-          <Text style={styles.categoryDropdownText}>{selectedCategory}</Text>
-          <Ionicons name="chevron-down" size={16} color="#666" />
+          <Text style={[styles.categoryDropdownText, themeStyles.categoryDropdownText]}>{selectedCategory}</Text>
+          <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
       {selectedCategory !== 'All' && (
-        <Text style={styles.categoryFilterNote}>
+        <Text style={[styles.categoryFilterNote, themeStyles.categoryFilterNote]}>
           Showing data for: <Text style={styles.categoryFilterNoteBold}>{selectedCategory}</Text>
         </Text>
       )}
@@ -1840,15 +2036,15 @@ export default function AnalyticsDashboard() {
     icon: string;
     color: string;
   }) => (
-    <View style={styles.statCard}>
+    <View style={[styles.statCard, themeStyles.statCard]}>
       <View style={styles.statCardHeader}>
         <View style={[styles.statCardIcon, { backgroundColor: color }]}>
           <Ionicons name={icon as any} size={20} color="#fff" />
         </View>
-        <Text style={styles.statCardTitle}>{title}</Text>
+        <Text style={[styles.statCardTitle, themeStyles.statCardTitle]}>{title}</Text>
       </View>
-      <Text style={styles.statCardValue}>{value}</Text>
-      {subtitle && <Text style={styles.statCardSubtitle}>{subtitle}</Text>}
+      <Text style={[styles.statCardValue, themeStyles.statCardValue]}>{value}</Text>
+      {subtitle && <Text style={[styles.statCardSubtitle, themeStyles.statCardSubtitle]}>{subtitle}</Text>}
     </View>
   );
 
@@ -1860,13 +2056,13 @@ export default function AnalyticsDashboard() {
   }) => (
     <View style={styles.categoryBar}>
       <View style={styles.categoryBarHeader}>
-        <Text style={styles.categoryBarTitle}>{category}</Text>
+        <Text style={[styles.categoryBarTitle, themeStyles.categoryBarTitle]}>{category}</Text>
         <Text style={styles.categoryBarAmount}>{formatCurrency(amount)}</Text>
       </View>
-      <View style={styles.categoryBarContainer}>
+      <View style={[styles.categoryBarContainer, themeStyles.categoryBarContainer]}>
         <View style={[styles.categoryBarFill, { width: `${percentage}%`, backgroundColor: color }]} />
       </View>
-      <Text style={styles.categoryBarPercentage}>{percentage.toFixed(1)}%</Text>
+      <Text style={[styles.categoryBarPercentage, themeStyles.categoryBarPercentage]}>{percentage.toFixed(1)}%</Text>
     </View>
   );
 
@@ -1874,17 +2070,17 @@ export default function AnalyticsDashboard() {
 
   if (authLoading || loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color="#333" />
+            <Ionicons name="arrow-back" size={28} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Financials</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
           <View style={styles.placeholder} />
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>
+          <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
+          <Text style={[styles.loadingText, themeStyles.loadingText]}>
             {authLoading ? 'Checking authentication...' : 'Loading receipt analytics...'}
           </Text>
         </View>
@@ -1894,20 +2090,20 @@ export default function AnalyticsDashboard() {
 
   if (!analytics) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color="#333" />
+            <Ionicons name="arrow-back" size={28} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Financials</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
           <TouchableOpacity style={styles.headerButton} onPress={() => loadAnalytics()}>
-            <Ionicons name="refresh" size={28} color="#007AFF" />
+            <Ionicons name="refresh" size={28} color={colors.primary || '#007AFF'} />
           </TouchableOpacity>
         </View>
         <View style={styles.errorContainer}>
-          <Ionicons name="analytics-outline" size={64} color="#ccc" />
-          <Text style={styles.errorText}>No receipt data available</Text>
-          <Text style={styles.errorSubtext}>
+          <Ionicons name="analytics-outline" size={64} color={colors.textSecondary} />
+          <Text style={[styles.errorText, themeStyles.errorText]}>No receipt data available</Text>
+          <Text style={[styles.errorSubtext, themeStyles.errorSubtext]}>
             This might be because:{'\n'}
             • Your receipt is still being processed{'\n'}
             • No receipts found for the selected time period{'\n'}
@@ -1983,56 +2179,58 @@ export default function AnalyticsDashboard() {
   const categoryColors = ['#007AFF', '#34C759', '#FF9500', '#AF52DE', '#FF3B30', '#5856D6'];
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={28} color="#333" />
+          <Ionicons name="arrow-back" size={28} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Financials</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={handleShareReport} style={styles.shareButton}>
             <Ionicons name="share-outline" size={28} color="#10B981" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerButton} onPress={onRefresh}>
-            <Ionicons name="refresh" size={28} color="#007AFF" />
+            <Ionicons name="refresh" size={28} color={colors.primary || '#007AFF'} />
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Tabs */}
-      <View style={styles.tabsContainer}>
+      <View style={[styles.tabsContainer, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'receipts' && styles.tabActive]}
+          style={[styles.tab, activeTab === 'receipts' && styles.tabActive, activeTab === 'receipts' && themeStyles.tabActive]}
           onPress={() => setActiveTab('receipts')}
         >
           <Ionicons 
             name="receipt" 
             size={20} 
-            color={activeTab === 'receipts' ? '#007AFF' : '#666'} 
+            color={activeTab === 'receipts' ? (colors.primary || '#007AFF') : colors.textSecondary} 
           />
-          <Text style={[styles.tabText, activeTab === 'receipts' && styles.tabTextActive]}>
+          <Text style={[styles.tabText, themeStyles.tabText, activeTab === 'receipts' && styles.tabTextActive, activeTab === 'receipts' && themeStyles.tabTextActive]}>
             Receipts
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'invoices' && styles.tabActive]}
+          style={[styles.tab, activeTab === 'invoices' && styles.tabActive, activeTab === 'invoices' && themeStyles.tabActive]}
           onPress={() => setActiveTab('invoices')}
         >
           <Ionicons 
             name="document-text" 
             size={20} 
-            color={activeTab === 'invoices' ? '#007AFF' : '#666'} 
+            color={activeTab === 'invoices' ? (colors.primary || '#007AFF') : colors.textSecondary} 
           />
-          <Text style={[styles.tabText, activeTab === 'invoices' && styles.tabTextActive]}>
+          <Text style={[styles.tabText, themeStyles.tabText, activeTab === 'invoices' && styles.tabTextActive, activeTab === 'invoices' && themeStyles.tabTextActive]}>
             Invoices
           </Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView
-        style={styles.content}
+        style={[styles.content, themeStyles.content]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
+        onScroll={handleFinancialsScroll}
+        scrollEventThrottle={16}
       >
         <TimePeriodSelector />
 
@@ -2041,8 +2239,8 @@ export default function AnalyticsDashboard() {
             {analytics ? (
               <>
                 {/* Receipt Overview Stats - Always show, even if zero */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Receipt Overview</Text>
+                <View style={[styles.section, themeStyles.section]}>
+                  <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Receipt Overview</Text>
                   <View style={styles.statsRow}>
                     <StatCard
                       title="Total Receipts"
@@ -2068,8 +2266,8 @@ export default function AnalyticsDashboard() {
                 </View>
             
                 {/* Category Distribution - Donut Chart + List */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Category Distribution</Text>
+                <View style={[styles.section, themeStyles.section]}>
+                  <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Category Distribution</Text>
               {(analytics.receipts?.categories || []).length > 0 ? (
                 <View style={styles.categoryChartContainer}>
                   {/* Donut Chart */}
@@ -2230,7 +2428,7 @@ export default function AnalyticsDashboard() {
                         return (
                           <View key={`legend-${index}-${category.category}`} style={styles.donutLegendItem}>
                             <View style={[styles.donutLegendDot, { backgroundColor: color }]} />
-                            <Text style={styles.donutLegendText} numberOfLines={1}>
+                            <Text style={[styles.donutLegendText, themeStyles.donutLegendText]} numberOfLines={1}>
                               {category.category}
                             </Text>
                           </View>
@@ -2240,20 +2438,20 @@ export default function AnalyticsDashboard() {
                   </View>
                   
                   {/* Category Breakdown List - Only categories with content */}
-                  <View style={styles.categoryBreakdownList}>
-                    <Text style={styles.categoryBreakdownTitle}>Category Breakdown</Text>
+                  <View style={[styles.categoryBreakdownList, themeStyles.categoryBreakdownList]}>
+                    <Text style={[styles.categoryBreakdownTitle, themeStyles.categoryBreakdownTitle]}>Category Breakdown</Text>
                     {(analytics.receipts?.categories || []).filter(c => c.total_amount > 0).map((category, index) => {
                       const color = categoryColors[index % categoryColors.length];
                       return (
-                        <View key={`breakdown-${index}-${category.category}`} style={styles.categoryBreakdownItem}>
+                        <View key={`breakdown-${index}-${category.category}`} style={[styles.categoryBreakdownItem, themeStyles.categoryBreakdownItem]}>
                           <View style={styles.categoryBreakdownLeft}>
                             <View style={[styles.categoryBreakdownDot, { backgroundColor: color }]} />
-                            <Text style={styles.categoryBreakdownName}>{category.category}</Text>
+                            <Text style={[styles.categoryBreakdownName, themeStyles.categoryBreakdownName]}>{category.category}</Text>
                           </View>
                           <View style={styles.categoryBreakdownRight}>
                             <Text style={styles.categoryBreakdownAmount}>{formatCurrency(category.total_amount)}</Text>
-                            <Text style={styles.categoryBreakdownPercent}>{category.percentage.toFixed(1)}%</Text>
-                            <Text style={styles.categoryBreakdownCount}>{category.count}</Text>
+                            <Text style={[styles.categoryBreakdownPercent, themeStyles.categoryBreakdownPercent]}>{category.percentage.toFixed(1)}%</Text>
+                            <Text style={[styles.categoryBreakdownCount, themeStyles.categoryBreakdownCount]}>{category.count}</Text>
                           </View>
                         </View>
                       );
@@ -2261,14 +2459,14 @@ export default function AnalyticsDashboard() {
                   </View>
                 </View>
               ) : (
-                <Text style={styles.emptyText}>No receipt categories yet</Text>
+                <Text style={[styles.emptyText, themeStyles.emptyText]}>No receipt categories yet</Text>
               )}
             </View>
 
                 {/* Monthly Spending Trends */}
                 {(analytics.receipts?.timeline || []).length > 0 && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Monthly Spending Trends</Text>
+                  <View style={[styles.section, themeStyles.section]}>
+                    <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Monthly Spending Trends</Text>
                     <View style={styles.trendsContainer}>
                       <View style={styles.trendsBars}>
                         {(analytics.receipts.timeline || []).map((month, index) => {
@@ -2282,7 +2480,7 @@ export default function AnalyticsDashboard() {
                                   { height: `${Math.max(height, 2)}%` }
                                 ]} 
                               />
-                              <Text style={styles.trendBarLabel} numberOfLines={1}>
+                              <Text style={[styles.trendBarLabel, themeStyles.trendBarLabel]} numberOfLines={1}>
                                 {month.month.length > 6 ? month.month.substring(0, 3) : month.month}
                               </Text>
                             </View>
@@ -2292,8 +2490,8 @@ export default function AnalyticsDashboard() {
                       <View style={styles.trendsValues}>
                         {(analytics.receipts.timeline || []).map((month, index) => (
                           <View key={`value-${index}-${month.month}`} style={styles.trendValue}>
-                            <Text style={styles.trendValueAmount}>{formatCurrency(month.total_amount)}</Text>
-                            <Text style={styles.trendValueCount}>{month.count}</Text>
+                            <Text style={[styles.trendValueAmount, themeStyles.trendValueAmount]}>{formatCurrency(month.total_amount)}</Text>
+                            <Text style={[styles.trendValueCount, themeStyles.trendValueCount]}>{month.count}</Text>
                           </View>
                         ))}
                       </View>
@@ -2303,8 +2501,8 @@ export default function AnalyticsDashboard() {
 
                 {/* Receipt Size Distribution */}
                 {recentReceipts.length > 0 && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Receipt Size Distribution</Text>
+                  <View style={[styles.section, themeStyles.section]}>
+                    <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Receipt Size Distribution</Text>
                     {(() => {
                       // Calculate receipt size distribution
                       const sizeRanges = {
@@ -2344,13 +2542,13 @@ export default function AnalyticsDashboard() {
                             return (
                               <View key={`size-${range}`} style={styles.sizeDistributionItem}>
                                 <View style={styles.sizeDistributionHeader}>
-                                  <Text style={styles.sizeDistributionLabel}>${range}</Text>
+                                  <Text style={[styles.sizeDistributionLabel, themeStyles.sizeDistributionLabel]}>${range}</Text>
                                   <Text style={styles.sizeDistributionAmount}>{formatCurrency(data.total)}</Text>
                                 </View>
-                                <View style={styles.sizeDistributionBar}>
+                                <View style={[styles.sizeDistributionBar, themeStyles.sizeDistributionBar]}>
                                   <View style={[styles.sizeDistributionBarFill, { width: `${percentage}%`, backgroundColor: color }]} />
                                 </View>
-                                <Text style={styles.sizeDistributionCount}>{data.count} receipt{data.count !== 1 ? 's' : ''}</Text>
+                                <Text style={[styles.sizeDistributionCount, themeStyles.sizeDistributionCount]}>{data.count} receipt{data.count !== 1 ? 's' : ''}</Text>
                               </View>
                             );
                           })}
@@ -2362,9 +2560,9 @@ export default function AnalyticsDashboard() {
 
                   {/* Recent Receipts */}
                   {recentReceipts.length > 0 ? (
-                    <View style={styles.section}>
-                      <Text style={styles.sectionTitle}>Recent Receipts ({recentReceipts.length})</Text>
-                      {recentReceipts.slice(0, 50).map((receipt, index) => {
+                    <View style={[styles.section, themeStyles.section]}>
+                      <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Recent Receipts ({recentReceipts.length})</Text>
+                      {recentReceipts.slice(0, receiptListDisplayLimit).map((receipt, index) => {
                         const amount = receipt.json_data?.total_amount || 
                                       receipt.json_data?.amount || 
                                       receipt.json_data?.total ||
@@ -2418,20 +2616,20 @@ export default function AnalyticsDashboard() {
                             activeOpacity={0.7}
                             onPress={() => openFileInViewer(receipt)}
                           >
-                            <View style={styles.compactListItem}>
+                            <View style={[styles.compactListItem, themeStyles.compactListItem]}>
                             <View style={styles.compactListInfo}>
-                              <Text style={styles.compactListName}>{businessName}</Text>
-                              <Text style={styles.compactListSubtext}>
+                              <Text style={[styles.compactListName, themeStyles.compactListName]}>{businessName}</Text>
+                              <Text style={[styles.compactListSubtext, themeStyles.compactListSubtext]}>
                                   {date} • {category}
                               </Text>
                               {secondaryMeta ? (
-                                <Text style={styles.compactListMeta} numberOfLines={2}>
+                                <Text style={[styles.compactListMeta, themeStyles.compactListMeta]} numberOfLines={2}>
                                   {secondaryMeta}
                                 </Text>
                               ) : null}
                             </View>
                               <View style={styles.receiptActions}>
-                            <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
+                            <Text style={[styles.compactListAmount, themeStyles.compactListAmount]}>{formatCurrency(numericAmount)}</Text>
                                 <TouchableOpacity
                                   style={styles.editButton}
                                   onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(receipt, 'receipt'); }}
@@ -2443,14 +2641,30 @@ export default function AnalyticsDashboard() {
                           </TouchableOpacity>
                         );
                       })}
+                      {recentReceipts.length > receiptListDisplayLimit ? (
+                        <TouchableOpacity
+                          style={[styles.loadMoreFinancials, { borderTopColor: colors.border }]}
+                          onPress={() =>
+                            setReceiptListDisplayLimit((n) =>
+                              Math.min(n + FINANCIALS_LIST_PAGE_SIZE, recentReceipts.length)
+                            )
+                          }
+                          accessibilityRole="button"
+                          accessibilityLabel="Load more receipts"
+                        >
+                          <Text style={[styles.loadMoreFinancialsText, { color: colors.primary }]}>
+                            Load more ({recentReceipts.length - receiptListDisplayLimit} remaining)
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
                   ) : (
-                    <View style={styles.section}>
-                      <Text style={styles.sectionTitle}>Recent Receipts</Text>
+                    <View style={[styles.section, themeStyles.section]}>
+                      <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Recent Receipts</Text>
                       <View style={styles.emptyContainer}>
                         <Ionicons name="receipt-outline" size={48} color="#ccc" />
-                        <Text style={styles.emptyText}>No Receipts Found</Text>
-                        <Text style={styles.emptySubtext}>
+                        <Text style={[styles.emptyText, themeStyles.emptyText]}>No Receipts Found</Text>
+                        <Text style={[styles.emptySubtext, themeStyles.emptySubtext]}>
                           {analytics?.receipts?.summary?.total_receipts 
                             ? `Analytics shows ${analytics.receipts.summary.total_receipts} receipt(s), but no receipt files were found.`
                             : 'Upload some receipts to see them here.'}
@@ -2467,8 +2681,8 @@ export default function AnalyticsDashboard() {
             ) : (
               <View style={styles.emptyContainer}>
                 <Ionicons name="receipt-outline" size={64} color="#ccc" />
-                <Text style={styles.emptyText}>No Receipt Data Available</Text>
-                <Text style={styles.emptySubtext}>
+                <Text style={[styles.emptyText, themeStyles.emptyText]}>No Receipt Data Available</Text>
+                <Text style={[styles.emptySubtext, themeStyles.emptySubtext]}>
                   Receipt analytics will appear here once you upload some receipts.
                 </Text>
               </View>
@@ -2481,8 +2695,8 @@ export default function AnalyticsDashboard() {
             {analytics.invoices && analytics.invoices.overview ? (
               <>
                 {/* Invoice Overview Stats */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Invoice Overview</Text>
+                <View style={[styles.section, themeStyles.section]}>
+                  <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Invoice Overview</Text>
                   <View style={styles.statsRow}>
                     <StatCard
                       title="Total Invoices"
@@ -2519,8 +2733,8 @@ export default function AnalyticsDashboard() {
 
                 {/* Payment Status Distribution */}
                 {analytics.invoices.payment_distribution && analytics.invoices.payment_distribution.length > 0 && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Payment Status</Text>
+                  <View style={[styles.section, themeStyles.section]}>
+                    <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Payment Status</Text>
                     <View style={styles.compactChartContainer}>
                       {analytics.invoices.payment_distribution.map((item, index) => {
                         const colors: Record<string, string> = { 'Paid': '#10B981', 'Unpaid': '#EF4444', 'Partial': '#F59E0B' };
@@ -2529,15 +2743,15 @@ export default function AnalyticsDashboard() {
                           <View key={`payment-${index}-${item.status}`} style={styles.compactChartItem}>
                             <View style={styles.compactChartHeader}>
                               <View style={[styles.compactChartDot, { backgroundColor: color }]} />
-                              <Text style={styles.compactChartLabel}>{item.status}</Text>
+                              <Text style={[styles.compactChartLabel, themeStyles.compactChartLabel]}>{item.status}</Text>
                             </View>
-                            <View style={styles.compactChartBar}>
+                            <View style={[styles.compactChartBar, themeStyles.compactChartBar]}>
                               <View style={[styles.compactChartFill, { width: `${item.percentage}%`, backgroundColor: color }]} />
                             </View>
                             <View style={styles.compactChartValues}>
-                              <Text style={styles.compactChartAmount}>{formatCurrency(item.total_amount)}</Text>
+                              <Text style={[styles.compactChartAmount, themeStyles.compactChartAmount]}>{formatCurrency(item.total_amount)}</Text>
                               <Text style={styles.compactChartPercentage}>{item.percentage.toFixed(1)}%</Text>
-                              <Text style={styles.compactChartCount}>{item.count}</Text>
+                              <Text style={[styles.compactChartCount, themeStyles.compactChartCount]}>{item.count}</Text>
                             </View>
                           </View>
                         );
@@ -2548,9 +2762,9 @@ export default function AnalyticsDashboard() {
 
                 {/* Recent Invoices */}
                 {recentInvoices.length > 0 && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Recent Invoices</Text>
-                    {recentInvoices.map((invoice, index) => {
+                  <View style={[styles.section, themeStyles.section]}>
+                    <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>Recent Invoices ({recentInvoices.length})</Text>
+                    {recentInvoices.slice(0, invoiceListDisplayLimit).map((invoice, index) => {
                       const amount = invoice.json_data?.total_amount || 
                                     invoice.json_data?.amount || 
                                     invoice.json_data?.invoice_amount ||
@@ -2605,15 +2819,15 @@ export default function AnalyticsDashboard() {
                           activeOpacity={0.7}
                           onPress={() => openFileInViewer(invoice)}
                         >
-                          <View style={styles.compactListItem}>
+                          <View style={[styles.compactListItem, themeStyles.compactListItem]}>
                           <View style={styles.compactListInfo}>
-                              <Text style={styles.compactListName}>{businessName}</Text>
-                            <Text style={styles.compactListSubtext}>
+                              <Text style={[styles.compactListName, themeStyles.compactListName]}>{businessName}</Text>
+                            <Text style={[styles.compactListSubtext, themeStyles.compactListSubtext]}>
                               {date} • <Text style={{ color: statusColor, textTransform: 'capitalize' }}>{status}</Text>
                             </Text>
                           </View>
                             <View style={styles.receiptActions}>
-                          <Text style={styles.compactListAmount}>{formatCurrency(numericAmount)}</Text>
+                          <Text style={[styles.compactListAmount, themeStyles.compactListAmount]}>{formatCurrency(numericAmount)}</Text>
                               <TouchableOpacity
                                 style={styles.editButton}
                                 onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(invoice, 'invoice'); }}
@@ -2631,14 +2845,30 @@ export default function AnalyticsDashboard() {
                         </TouchableOpacity>
                       );
                     })}
+                    {recentInvoices.length > invoiceListDisplayLimit ? (
+                      <TouchableOpacity
+                        style={[styles.loadMoreFinancials, { borderTopColor: colors.border }]}
+                        onPress={() =>
+                          setInvoiceListDisplayLimit((n) =>
+                            Math.min(n + FINANCIALS_LIST_PAGE_SIZE, recentInvoices.length)
+                          )
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="Load more invoices"
+                      >
+                        <Text style={[styles.loadMoreFinancialsText, { color: colors.primary }]}>
+                          Load more ({recentInvoices.length - invoiceListDisplayLimit} remaining)
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                 )}
               </>
             ) : (
               <View style={styles.emptyContainer}>
                 <Ionicons name="document-text-outline" size={64} color="#ccc" />
-                <Text style={styles.emptyText}>No Invoice Data Available</Text>
-                <Text style={styles.emptySubtext}>
+                <Text style={[styles.emptyText, themeStyles.emptyText]}>No Invoice Data Available</Text>
+                <Text style={[styles.emptySubtext, themeStyles.emptySubtext]}>
                   Invoice analytics will appear here once you upload some invoices.
                 </Text>
               </View>
@@ -2671,25 +2901,25 @@ export default function AnalyticsDashboard() {
         onRequestClose={() => setShowReceiptCategoryFilterModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Filter by Category</Text>
+          <View style={[styles.modalContent, themeStyles.modalContent]}>
+            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
+              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Filter by Category</Text>
               <TouchableOpacity onPress={() => setShowReceiptCategoryFilterModal(false)}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.categoryList}>
               {receiptCategoryFilterOptions.map((category) => (
                 <TouchableOpacity
                   key={category}
-                  style={styles.categoryModalItem}
+                  style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
                   onPress={() => {
                     setSelectedCategory(category);
                     setShowReceiptCategoryFilterModal(false);
                   }}
                 >
-                  <Text style={styles.categoryItemText}>{category}</Text>
-                  {selectedCategory === category && <Ionicons name="checkmark" size={20} color="#007AFF" />}
+                  <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
+                  {selectedCategory === category && <Ionicons name="checkmark" size={20} color={colors.primary} />}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -2705,11 +2935,11 @@ export default function AnalyticsDashboard() {
         onRequestClose={() => setShowCategoryModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Category</Text>
+          <View style={[styles.modalContent, themeStyles.modalContent]}>
+            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
+              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Select Category</Text>
               <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             
@@ -2717,19 +2947,19 @@ export default function AnalyticsDashboard() {
               {receiptCategories.map((category) => (
                 <TouchableOpacity
                   key={category}
-                  style={styles.categoryModalItem}
+                  style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
                   onPress={() => handleSelectCategory(category)}
                   disabled={categorizingReceipt}
                 >
-                  <Text style={styles.categoryItemText}>{category}</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                  <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
+                  <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
                 </TouchableOpacity>
               ))}
             </ScrollView>
             
             {categorizingReceipt && (
-              <View style={styles.modalLoading}>
-                <ActivityIndicator size="large" color="#007AFF" />
+              <View style={[styles.modalLoading, themeStyles.modalLoading]}>
+                <ActivityIndicator size="large" color={colors.primary} />
               </View>
             )}
           </View>
@@ -2744,11 +2974,11 @@ export default function AnalyticsDashboard() {
         onRequestClose={handleCloseEdit}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, styles.editModalContent]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{editType === 'invoice' ? 'Edit Invoice' : 'Correct Data'}</Text>
+          <View style={[styles.modalContent, styles.editModalContent, themeStyles.modalContent]}>
+            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
+              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>{editType === 'invoice' ? 'Edit Invoice' : 'Correct Data'}</Text>
               <TouchableOpacity onPress={handleCloseEdit} disabled={savingEdit}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             <ScrollView
@@ -2759,21 +2989,21 @@ export default function AnalyticsDashboard() {
               overScrollMode="always"
             >
               <View style={styles.editFormRow}>
-                <Text style={styles.editFormLabel}>{editType === 'invoice' ? 'Vendor name' : 'Store name'}</Text>
+                <Text style={[styles.editFormLabel, themeStyles.editFormLabel]}>{editType === 'invoice' ? 'Vendor name' : 'Store name'}</Text>
                 <TextInput
-                  style={styles.editFormInput}
+                  style={[styles.editFormInput, themeStyles.editFormInput]}
                   value={editForm.store_name}
                   onChangeText={(t) => setEditForm((f) => ({ ...f, store_name: t }))}
                   placeholder={editType === 'invoice' ? 'Vendor name' : 'Store name'}
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textLight}
                 />
               </View>
               <View style={styles.editFormRowDateAmount}>
                 <View style={[styles.editFormRow, { flex: 1 }]}>
-                  <Text style={styles.editFormLabel}>Date</Text>
+                  <Text style={[styles.editFormLabel, themeStyles.editFormLabel]}>Date</Text>
                   <View style={styles.editFormDateWrapper}>
                     <TouchableOpacity
-                      style={[styles.editFormInput, styles.editFormDateTouchable]}
+                      style={[styles.editFormInput, styles.editFormDateTouchable, themeStyles.editFormInput]}
                       activeOpacity={0.7}
                       onPress={() => {
                         const useToday = isEpochOrEmptyDate(editForm.date);
@@ -2789,40 +3019,42 @@ export default function AnalyticsDashboard() {
                       }}
                     >
                       <View style={styles.editFormDateTextWrap}>
-                        <Text style={[styles.editFormDateText, !editForm.date && styles.editFormDatePlaceholder]} numberOfLines={1}>
+                        <Text style={[styles.editFormDateText, themeStyles.editFormDateText, !editForm.date && styles.editFormDatePlaceholder, !editForm.date && themeStyles.editFormDatePlaceholder]} numberOfLines={1}>
                           {editForm.date || 'Select date'}
                         </Text>
                       </View>
-                      <Ionicons name="calendar-outline" size={20} color="#666" style={styles.editFormDateIcon} />
+                      <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} style={styles.editFormDateIcon} />
                     </TouchableOpacity>
                   </View>
                 </View>
                 <View style={[styles.editFormRow, { flex: 1 }]}>
-                  <Text style={styles.editFormLabel}>Total</Text>
+                  <Text style={[styles.editFormLabel, themeStyles.editFormLabel]}>Total</Text>
                   <TextInput
-                    style={styles.editFormInput}
+                    style={[styles.editFormInput, themeStyles.editFormInput]}
                     value={editForm.total_amount}
                     onChangeText={(t) => setEditForm((f) => ({ ...f, total_amount: t }))}
                     placeholder="0.00"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={colors.textLight}
                     keyboardType="decimal-pad"
                   />
                 </View>
               </View>
               <View style={styles.editFormRow}>
-                <Text style={styles.editFormLabel}>Category</Text>
+                <Text style={[styles.editFormLabel, themeStyles.editFormLabel]}>Category</Text>
                 <View style={styles.editCategoryList}>
                   {receiptCategories.map((cat) => (
                     <TouchableOpacity
                       key={cat}
                       style={[
                         styles.editCategoryChip,
+                        themeStyles.editCategoryChip,
                         editForm.category === cat && styles.editCategoryChipSelected,
                       ]}
                       onPress={() => setEditForm((f) => ({ ...f, category: cat }))}
                     >
                       <Text style={[
                         styles.editCategoryChipText,
+                        themeStyles.editCategoryChipText,
                         editForm.category === cat && styles.editCategoryChipTextSelected,
                       ]}>{cat}</Text>
                       {editForm.category === cat && <Ionicons name="checkmark" size={18} color="#fff" />}
@@ -2831,13 +3063,13 @@ export default function AnalyticsDashboard() {
                 </View>
               </View>
             </ScrollView>
-            <View style={styles.editFormActions}>
+            <View style={[styles.editFormActions, themeStyles.editFormActions]}>
               <TouchableOpacity
-                style={[styles.editFormButton, styles.editFormButtonCancel]}
+                style={[styles.editFormButton, styles.editFormButtonCancel, themeStyles.editFormButtonCancel]}
                 onPress={handleCloseEdit}
                 disabled={savingEdit}
               >
-                <Text style={styles.editFormButtonTextCancel}>Cancel</Text>
+                <Text style={[styles.editFormButtonTextCancel, themeStyles.editFormButtonTextCancel]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.editFormButton, styles.editFormButtonSave]}
@@ -2869,20 +3101,20 @@ export default function AnalyticsDashboard() {
             onPress={handleEditDatePickerDone}
           >
             <TouchableOpacity
-              style={styles.pickerModalContainer}
+              style={[styles.pickerModalContainer, themeStyles.pickerModalContainer]}
               activeOpacity={1}
               onPress={(e) => e.stopPropagation()}
             >
-              <View style={styles.pickerModalHeader}>
+              <View style={[styles.pickerModalHeader, themeStyles.pickerModalHeader]}>
                 <TouchableOpacity onPress={handleEditDatePickerDone}>
-                  <Text style={styles.pickerModalCancelButton}>Cancel</Text>
+                  <Text style={[styles.pickerModalCancelButton, themeStyles.pickerModalCancelButton]}>Cancel</Text>
                 </TouchableOpacity>
-                <Text style={styles.pickerModalTitle}>Select date</Text>
+                <Text style={[styles.pickerModalTitle, themeStyles.pickerModalTitle]}>Select date</Text>
                 <TouchableOpacity onPress={() => { setShowEditDatePicker(false); setTimeout(() => setShowEditModal(true), 0); }}>
-                  <Text style={styles.doneButton}>Done</Text>
+                  <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.pickerModalContent}>
+              <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
                 <DateTimePicker
                   value={getValidDate(editDatePickerValue)}
                   mode="date"
@@ -2891,8 +3123,8 @@ export default function AnalyticsDashboard() {
                   maximumDate={filterDateMax}
                   onChange={handleEditDateChange}
                   style={styles.pickerModalDatePicker}
-                  textColor="#000000"
-                  accentColor="#007AFF"
+                  textColor={colors.text}
+                  accentColor={colors.primary}
                 />
               </View>
             </TouchableOpacity>
@@ -2919,14 +3151,14 @@ export default function AnalyticsDashboard() {
         onRequestClose={() => setShowPaymentStatusModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Update Payment Status</Text>
+          <View style={[styles.modalContent, themeStyles.modalContent]}>
+            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
+              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Update Payment Status</Text>
               <TouchableOpacity 
                 onPress={() => setShowPaymentStatusModal(false)}
                 disabled={updatingPaymentStatus}
               >
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             
@@ -2934,19 +3166,19 @@ export default function AnalyticsDashboard() {
               {paymentStatuses.map((status) => (
                 <TouchableOpacity
                   key={status}
-                  style={styles.categoryModalItem}
+                  style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
                   onPress={() => handleSelectPaymentStatus(status)}
                   disabled={updatingPaymentStatus}
                 >
-                  <Text style={styles.categoryItemText}>{status}</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                  <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{status}</Text>
+                  <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
                 </TouchableOpacity>
               ))}
             </ScrollView>
             
             {updatingPaymentStatus && (
-              <View style={styles.modalLoading}>
-                <ActivityIndicator size="large" color="#007AFF" />
+              <View style={[styles.modalLoading, themeStyles.modalLoading]}>
+                <ActivityIndicator size="large" color={colors.primary} />
               </View>
             )}
           </View>
@@ -2979,15 +3211,15 @@ export default function AnalyticsDashboard() {
             behavior="padding"
             keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
           >
-            <View style={styles.filterModalContentBox}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Advanced Filters</Text>
+            <View style={[styles.filterModalContentBox, themeStyles.filterModalContentBox]}>
+              <View style={[styles.modalHeader, themeStyles.modalHeader]}>
+                <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Advanced Filters</Text>
                 <TouchableOpacity onPress={() => {
                   // Dismiss keyboard before closing
                   Keyboard.dismiss();
                   setTimeout(() => setShowAdvancedFilterModal(false), 100);
                 }}>
-                  <Ionicons name="close" size={24} color="#333" />
+                  <Ionicons name="close" size={24} color={colors.text} />
                 </TouchableOpacity>
               </View>
               
@@ -2999,22 +3231,22 @@ export default function AnalyticsDashboard() {
               >
               {/* Date Range Section - same date picker trigger style as Schedule Meeting */}
               <View style={styles.filterSection}>
-                <Text style={styles.filterSectionTitle}>Date Range</Text>
+                <Text style={[styles.filterSectionTitle, themeStyles.filterSectionTitle]}>Date Range</Text>
                 <TouchableOpacity
-                  style={styles.filterOptionButton}
+                  style={[styles.filterOptionButton, themeStyles.filterOptionButton]}
                   onPress={() => setDraftUseOneYear((prev) => !prev)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.filterOptionText}>1 Year</Text>
+                  <Text style={[styles.filterOptionText, themeStyles.filterOptionText]}>1 Year</Text>
                   <View style={[styles.filterCheckbox, draftUseOneYear && styles.filterCheckboxChecked]}>
                     {draftUseOneYear && <Ionicons name="checkmark" size={16} color="#fff" />}
                   </View>
                 </TouchableOpacity>
 
                 <View style={styles.filterInputGroup}>
-                  <Text style={styles.filterInputLabel}>From Date</Text>
+                  <Text style={[styles.filterInputLabel, themeStyles.filterInputLabel]}>From Date</Text>
                   <TouchableOpacity
-                    style={styles.filterDatePickerContainer}
+                    style={[styles.filterDatePickerContainer, themeStyles.filterDatePickerContainer]}
                     onPress={() => {
                       datePickerEditingDraftRef.current = 'from';
                       if (Platform.OS === 'ios') fromPickerForDraftRef.current = true;
@@ -3032,7 +3264,7 @@ export default function AnalyticsDashboard() {
                       }
                     }}
                   >
-                    <Text style={draftCustomDateFrom ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
+                    <Text style={draftCustomDateFrom ? [styles.filterDatePickerLabel, themeStyles.filterDatePickerLabel] : [styles.filterDatePickerPlaceholder, themeStyles.filterDatePickerPlaceholder]}>
                       {draftCustomDateFrom
                         ? (() => {
                             const d = parseLocalDateString(draftCustomDateFrom);
@@ -3042,13 +3274,13 @@ export default function AnalyticsDashboard() {
                           })()
                         : 'Select date'}
                     </Text>
-                    <Ionicons name="calendar-outline" size={20} color="#007AFF" />
+                    <Ionicons name="calendar-outline" size={20} color={colors.primary} />
                   </TouchableOpacity>
                 </View>
                 <View style={styles.filterInputGroup}>
-                  <Text style={styles.filterInputLabel}>To Date</Text>
+                  <Text style={[styles.filterInputLabel, themeStyles.filterInputLabel]}>To Date</Text>
                   <TouchableOpacity
-                    style={styles.filterDatePickerContainer}
+                    style={[styles.filterDatePickerContainer, themeStyles.filterDatePickerContainer]}
                     onPress={() => {
                       datePickerEditingDraftRef.current = 'to';
                       if (Platform.OS === 'ios') toPickerForDraftRef.current = true;
@@ -3066,7 +3298,7 @@ export default function AnalyticsDashboard() {
                       }
                     }}
                   >
-                        <Text style={draftCustomDateTo ? styles.filterDatePickerLabel : styles.filterDatePickerPlaceholder}>
+                        <Text style={draftCustomDateTo ? [styles.filterDatePickerLabel, themeStyles.filterDatePickerLabel] : [styles.filterDatePickerPlaceholder, themeStyles.filterDatePickerPlaceholder]}>
                           {draftCustomDateTo
                             ? (() => {
                                 const d = parseLocalDateString(draftCustomDateTo);
@@ -3076,35 +3308,35 @@ export default function AnalyticsDashboard() {
                               })()
                             : 'Select date'}
                     </Text>
-                    <Ionicons name="calendar-outline" size={20} color="#007AFF" />
+                    <Ionicons name="calendar-outline" size={20} color={colors.primary} />
                   </TouchableOpacity>
                 </View>
               </View>
               
               {/* Amount Range Section */}
               <View style={styles.filterSection}>
-                <Text style={styles.filterSectionTitle}>Amount Range</Text>
+                <Text style={[styles.filterSectionTitle, themeStyles.filterSectionTitle]}>Amount Range</Text>
                 <View style={styles.amountRangeContainer}>
                   <View style={styles.amountInputContainer}>
-                    <Text style={styles.filterLabel}>Min Amount</Text>
+                    <Text style={[styles.filterLabel, themeStyles.filterLabel]}>Min Amount</Text>
                     <TextInput
-                      style={styles.amountInput}
+                      style={[styles.amountInput, themeStyles.amountInput]}
                       placeholder="0.00"
                       value={draftAmountMin}
                       onChangeText={setDraftAmountMin}
                       keyboardType="decimal-pad"
-                      placeholderTextColor="#999"
+                      placeholderTextColor={colors.textLight}
                     />
                   </View>
                   <View style={styles.amountInputContainer}>
-                    <Text style={styles.filterLabel}>Max Amount</Text>
+                    <Text style={[styles.filterLabel, themeStyles.filterLabel]}>Max Amount</Text>
                     <TextInput
-                      style={styles.amountInput}
+                      style={[styles.amountInput, themeStyles.amountInput]}
                       placeholder="0.00"
                       value={draftAmountMax}
                       onChangeText={setDraftAmountMax}
                       keyboardType="decimal-pad"
-                      placeholderTextColor="#999"
+                      placeholderTextColor={colors.textLight}
                     />
                   </View>
                 </View>
@@ -3112,22 +3344,22 @@ export default function AnalyticsDashboard() {
               
               {/* Store/Vendor Name Section */}
               <View style={styles.filterSection}>
-                <Text style={styles.filterSectionTitle}>
+                <Text style={[styles.filterSectionTitle, themeStyles.filterSectionTitle]}>
                   {activeTab === 'receipts' ? 'Store Name' : 'Vendor Name'}
                 </Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, themeStyles.textInput]}
                   placeholder={`Enter ${activeTab === 'receipts' ? 'store' : 'vendor'} name`}
                   value={draftStoreVendorName}
                   onChangeText={setDraftStoreVendorName}
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textLight}
                 />
               </View>
               
               {/* Action Buttons */}
               <View style={styles.filterActions}>
                 <TouchableOpacity
-                  style={[styles.filterButton, styles.filterButtonSecondary]}
+                  style={[styles.filterButton, styles.filterButtonSecondary, themeStyles.filterButtonSecondary]}
                   onPress={() => {
                     setDraftUseOneYear(false);
                     setDraftCustomDateFrom('');
@@ -3149,7 +3381,7 @@ export default function AnalyticsDashboard() {
                     }, 100);
                   }}
                 >
-                  <Text style={styles.filterButtonTextSecondary}>Clear All</Text>
+                  <Text style={[styles.filterButtonTextSecondary, themeStyles.filterButtonTextSecondary]}>Clear All</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.filterButton, styles.filterButtonPrimary]}
@@ -3221,11 +3453,11 @@ export default function AnalyticsDashboard() {
             }}
           >
             <TouchableOpacity
-              style={styles.pickerModalContainer}
+              style={[styles.pickerModalContainer, themeStyles.pickerModalContainer]}
               activeOpacity={1}
               onPress={(e) => e.stopPropagation()}
             >
-              <View style={styles.pickerModalHeader}>
+              <View style={[styles.pickerModalHeader, themeStyles.pickerModalHeader]}>
                 <TouchableOpacity onPress={() => {
                   fromPickerForDraftRef.current = false;
                   datePickerEditingDraftRef.current = null;
@@ -3235,14 +3467,14 @@ export default function AnalyticsDashboard() {
                     setTimeout(() => setShowAdvancedFilterModal(true), 100);
                   }
                 }}>
-                  <Text style={styles.pickerModalCancelButton}>Cancel</Text>
+                  <Text style={[styles.pickerModalCancelButton, themeStyles.pickerModalCancelButton]}>Cancel</Text>
                 </TouchableOpacity>
-                <Text style={styles.pickerModalTitle}>Select date</Text>
+                <Text style={[styles.pickerModalTitle, themeStyles.pickerModalTitle]}>Select date</Text>
                 <TouchableOpacity onPress={handleDateFromPickerDone}>
-                  <Text style={styles.doneButton}>Done</Text>
+                  <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.pickerModalContent}>
+              <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
                 <DateTimePicker
                   value={getValidDate(dateFromPickerValue)}
                   mode="date"
@@ -3251,8 +3483,8 @@ export default function AnalyticsDashboard() {
                   minimumDate={filterDateMin}
                   maximumDate={filterDateMax}
                   style={styles.pickerModalDatePicker}
-                  textColor="#000000"
-                  accentColor="#007AFF"
+                  textColor={colors.text}
+                  accentColor={colors.primary}
                 />
               </View>
             </TouchableOpacity>
@@ -3301,11 +3533,11 @@ export default function AnalyticsDashboard() {
             }}
           >
             <TouchableOpacity
-              style={styles.pickerModalContainer}
+              style={[styles.pickerModalContainer, themeStyles.pickerModalContainer]}
               activeOpacity={1}
               onPress={(e) => e.stopPropagation()}
             >
-              <View style={styles.pickerModalHeader}>
+              <View style={[styles.pickerModalHeader, themeStyles.pickerModalHeader]}>
                 <TouchableOpacity onPress={() => {
                   toPickerForDraftRef.current = false;
                   datePickerEditingDraftRef.current = null;
@@ -3315,14 +3547,14 @@ export default function AnalyticsDashboard() {
                     setTimeout(() => setShowAdvancedFilterModal(true), 100);
                   }
                 }}>
-                  <Text style={styles.pickerModalCancelButton}>Cancel</Text>
+                  <Text style={[styles.pickerModalCancelButton, themeStyles.pickerModalCancelButton]}>Cancel</Text>
                 </TouchableOpacity>
-                <Text style={styles.pickerModalTitle}>Select date</Text>
+                <Text style={[styles.pickerModalTitle, themeStyles.pickerModalTitle]}>Select date</Text>
                 <TouchableOpacity onPress={handleDateToPickerDone}>
-                  <Text style={styles.doneButton}>Done</Text>
+                  <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.pickerModalContent}>
+              <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
                 <DateTimePicker
                   value={getValidDate(dateToPickerValue)}
                   mode="date"
@@ -3331,8 +3563,8 @@ export default function AnalyticsDashboard() {
                   minimumDate={getValidDate(dateFromPickerValue)}
                   maximumDate={filterDateMax}
                   style={styles.pickerModalDatePicker}
-                  textColor="#000000"
-                  accentColor="#007AFF"
+                  textColor={colors.text}
+                  accentColor={colors.primary}
                 />
               </View>
             </TouchableOpacity>
@@ -3377,14 +3609,13 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
   },
   headerButton: {
-    padding: 10,
+    padding: 8,
     marginTop: 4,
   },
   shareButton: {
-    padding: 10,
+    padding: 8,
     marginTop: 4,
   },
   placeholder: {
@@ -4587,5 +4818,15 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 16,
     fontWeight: '500',
+  },
+  loadMoreFinancials: {
+    marginTop: 4,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  loadMoreFinancialsText: {
+    fontSize: 15,
+    fontWeight: '600',
   },
 }); 

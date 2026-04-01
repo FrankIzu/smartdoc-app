@@ -1,9 +1,9 @@
 import React from 'react';
-import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../constants/Config';
 import { useTheme } from '../../contexts/ThemeContext';
-import { reportUpdateTelemetry, setDismissedStoreUpdateVersion } from '../../services/updateService';
+import { openStoreUpdatePage, reportUpdateTelemetry, setDismissedStoreUpdateVersion } from '../../services/updateService';
 
 interface SoftStoreUpdateBannerProps {
   message: string;
@@ -26,7 +26,7 @@ export default function SoftStoreUpdateBanner({
 
   const handleUpdate = () => {
     reportUpdateTelemetry('soft_update_tapped', { latestVersion }).catch(() => {});
-    Linking.openURL(storeUrl);
+    openStoreUpdatePage(storeUrl).catch(() => {});
     onDismiss();
   };
 

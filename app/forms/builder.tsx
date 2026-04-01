@@ -21,6 +21,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 
 interface FormField {
@@ -54,6 +55,7 @@ const FIELD_TYPES = [
 
 export default function FormBuilderScreen() {
   const router = useRouter();
+  const colors = useThemeColors();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const [formData, setFormData] = useState<FormData>({
@@ -1042,25 +1044,25 @@ export default function FormBuilderScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Form Builder</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Form Builder</Text>
         <TouchableOpacity onPress={shareForm}>
-          <Ionicons name="share" size={24} color="#007AFF" />
+          <Ionicons name="share" size={24} color={colors.primary || '#007AFF'} />
         </TouchableOpacity>
       </View>
 
       {/* Tab Selector */}
-      <View style={styles.tabContainer}>
+      <View style={[styles.tabContainer, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={[styles.tab, currentView === 'builder' && styles.activeTab]}
           onPress={() => setCurrentView('builder')}
         >
-          <Text style={[styles.tabText, currentView === 'builder' && styles.activeTabText]}>
+          <Text style={[styles.tabText, { color: colors.textSecondary }, currentView === 'builder' && styles.activeTabText]}>
             Builder
           </Text>
         </TouchableOpacity>
@@ -1068,7 +1070,7 @@ export default function FormBuilderScreen() {
           style={[styles.tab, currentView === 'preview' && styles.activeTab]}
           onPress={() => setCurrentView('preview')}
         >
-          <Text style={[styles.tabText, currentView === 'preview' && styles.activeTabText]}>
+          <Text style={[styles.tabText, { color: colors.textSecondary }, currentView === 'preview' && styles.activeTabText]}>
             Preview
           </Text>
         </TouchableOpacity>
@@ -1076,7 +1078,7 @@ export default function FormBuilderScreen() {
           style={[styles.tab, currentView === 'responses' && styles.activeTab]}
           onPress={() => setCurrentView('responses')}
         >
-          <Text style={[styles.tabText, currentView === 'responses' && styles.activeTabText]}>
+          <Text style={[styles.tabText, { color: colors.textSecondary }, currentView === 'responses' && styles.activeTabText]}>
             Responses
           </Text>
         </TouchableOpacity>

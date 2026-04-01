@@ -9,7 +9,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import semver from 'semver';
 import { API_BASE_URL, API_ENDPOINTS, STORE_URLS } from '../constants/Config';
 
@@ -54,6 +54,56 @@ function getStoreUrl(data?: AppConfigResponse): string {
     return Platform.OS === 'ios' ? (data.storeUrls.ios ?? STORE_URLS.ios) : (data.storeUrls.android ?? STORE_URLS.android);
   }
   return Platform.OS === 'ios' ? STORE_URLS.ios : STORE_URLS.android;
+}
+
+function extractIosAppId(url: string): string | null {
+  const match = url.match(/\/id(\d+)/i) ?? url.match(/id(\d+)/i);
+  return match?.[1] ?? null;
+}
+
+function extractAndroidPackage(url: string): string | null {
+  const match = url.match(/[?&]id=([a-zA-Z0-9._]+)/);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Open the app's store details page directly (the page with the Update button).
+ * Uses native store schemes first, then falls back to https links.
+ */
+export async function openStoreUpdatePage(storeUrl: string): Promise<void> {
+  if (Platform.OS === 'ios') {
+    const appId = extractIosAppId(storeUrl) ?? extractIosAppId(STORE_URLS.ios);
+    if (appId) {
+      const nativeUrl = `itms-apps://itunes.apple.com/app/id${appId}?mt=8`;
+      const webUrl = `https://apps.apple.com/app/id${appId}`;
+      try {
+        await Linking.openURL(nativeUrl);
+        return;
+      } catch {
+        await Linking.openURL(webUrl);
+        return;
+      }
+    }
+    await Linking.openURL(storeUrl);
+    return;
+  }
+
+  if (Platform.OS === 'android') {
+    const packageName = extractAndroidPackage(storeUrl) ?? extractAndroidPackage(STORE_URLS.android);
+    if (packageName) {
+      const nativeUrl = `market://details?id=${packageName}`;
+      const webUrl = `https://play.google.com/store/apps/details?id=${packageName}`;
+      try {
+        await Linking.openURL(nativeUrl);
+        return;
+      } catch {
+        await Linking.openURL(webUrl);
+        return;
+      }
+    }
+  }
+
+  await Linking.openURL(storeUrl);
 }
 
 /**

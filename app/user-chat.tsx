@@ -60,6 +60,8 @@ interface Chat {
 
 // Storage key for persisting favorite chats
 const FAVORITE_CHATS_KEY = '@grabdocs_user_chat_favorites';
+const USER_CHAT_INPUT_MIN_HEIGHT = 40;
+const USER_CHAT_INPUT_MAX_HEIGHT = 64;
 
 interface ChatMessage {
   id: number;
@@ -106,7 +108,7 @@ export default function UserChatScreen() {
   const [mentionResults, setMentionResults] = useState<any[]>([]);
   const [selectedRecipient, setSelectedRecipient] = useState<{ type: 'user' | 'workspace'; data: any } | null>(null);
   const messageInputRef = useRef<TextInput>(null);
-  const [textInputHeight, setTextInputHeight] = useState(40);
+  const [textInputHeight, setTextInputHeight] = useState(USER_CHAT_INPUT_MIN_HEIGHT);
   
   // Keyboard tracking for Android
   const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
@@ -1327,7 +1329,7 @@ export default function UserChatScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 16,
+      paddingHorizontal: 14,
       paddingVertical: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
@@ -1344,11 +1346,12 @@ export default function UserChatScreen() {
       marginTop: 2,
     },
     backButton: {
-      padding: 6,
-      marginRight: 6,
+      padding: 8,
+      marginTop: 4,
     },
     newChatButton: {
-      padding: 10,
+      padding: 8,
+      marginTop: 4,
     },
     searchContainer: {
       paddingHorizontal: 16,
@@ -1527,26 +1530,41 @@ export default function UserChatScreen() {
       paddingHorizontal: 16,
       paddingVertical: 8,
       paddingBottom: 4,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      backgroundColor: colors.card,
+      borderTopWidth: 0,
+      backgroundColor: 'transparent',
+    },
+    messageInputShell: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      backgroundColor: colors.surface,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingLeft: 12,
+      paddingRight: 2,
+      paddingVertical: 3,
     },
     messageInput: {
       flex: 1,
-      backgroundColor: colors.surface,
-      borderRadius: 20,
-      paddingHorizontal: 16,
-      paddingVertical: 8,
+      backgroundColor: 'transparent',
+      borderRadius: 0,
+      paddingHorizontal: 0,
+      paddingVertical: 5,
+      paddingTop: 5,
+      paddingRight: 6,
       fontSize: 16,
       color: colors.text,
-      marginRight: 8,
-      minHeight: 40,
-      maxHeight: 120,
+      marginRight: 0,
+      minHeight: USER_CHAT_INPUT_MIN_HEIGHT,
+      maxHeight: USER_CHAT_INPUT_MAX_HEIGHT,
+      textAlignVertical: 'top',
+      includeFontPadding: false,
     },
     sendButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
       backgroundColor: '#007AFF',
       justifyContent: 'center',
       alignItems: 'center',
@@ -1897,41 +1915,35 @@ export default function UserChatScreen() {
                 },
               ]}
             >
-              <TextInput
-                ref={messageInputRef}
-                style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
-                placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
-                placeholderTextColor={colors.textSecondary}
-                value={newMessage}
-                onChangeText={handleTyping}
-                multiline
-                blurOnSubmit={true}
-                returnKeyType="send"
-                maxLength={4000}
-                onContentSizeChange={(event) => {
-                  const { height } = event.nativeEvent.contentSize;
-                  setTextInputHeight(height);
-                }}
-                onSubmitEditing={() => {
-                  if ((newMessage.trim() || selectedRecipient) && !sendingMessage) handleSendMessage();
-                }}
-                onKeyPress={({ nativeEvent }) => {
-                  if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && (newMessage.trim() || selectedRecipient) && !sendingMessage) {
-                    handleSendMessage();
-                  }
-                }}
-              />
-              <TouchableOpacity 
-                style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
-                onPress={handleSendMessage} 
-                disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
-              >
-                {sendingMessage ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons name="send" size={20} color="#fff" />
-                )}
-              </TouchableOpacity>
+              <View style={dynamicStyles.messageInputShell}>
+                <TextInput
+                  ref={messageInputRef}
+                  style={[dynamicStyles.messageInput, { height: Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, textInputHeight)) }]}
+                  placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
+                  placeholderTextColor={colors.textSecondary}
+                  value={newMessage}
+                  onChangeText={handleTyping}
+                  multiline
+                  blurOnSubmit={false}
+                  returnKeyType="default"
+                  maxLength={4000}
+                  onContentSizeChange={(event) => {
+                    const { height } = event.nativeEvent.contentSize;
+                    setTextInputHeight(Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, height)));
+                  }}
+                />
+                <TouchableOpacity 
+                  style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
+                  onPress={handleSendMessage} 
+                  disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
+                >
+                  {sendingMessage ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="arrow-up" size={18} color="#fff" />
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </KeyboardAvoidingView>
         ) : (
@@ -2057,41 +2069,35 @@ export default function UserChatScreen() {
                 },
               ]}
             >
-              <TextInput
-                ref={messageInputRef}
-                style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
-                placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
-                placeholderTextColor={colors.textSecondary}
-                value={newMessage}
-                onChangeText={handleTyping}
-                multiline
-                blurOnSubmit={true}
-                returnKeyType="send"
-                maxLength={4000}
-                onContentSizeChange={(event) => {
-                  const { height } = event.nativeEvent.contentSize;
-                  setTextInputHeight(height);
-                }}
-                onSubmitEditing={() => {
-                  if ((newMessage.trim() || selectedRecipient) && !sendingMessage) handleSendMessage();
-                }}
-                onKeyPress={({ nativeEvent }) => {
-                  if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && (newMessage.trim() || selectedRecipient) && !sendingMessage) {
-                    handleSendMessage();
-                  }
-                }}
-              />
-              <TouchableOpacity 
-                style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
-                onPress={handleSendMessage} 
-                disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
-              >
-                {sendingMessage ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons name="send" size={20} color="#fff" />
-                )}
-              </TouchableOpacity>
+              <View style={dynamicStyles.messageInputShell}>
+                <TextInput
+                  ref={messageInputRef}
+                  style={[dynamicStyles.messageInput, { height: Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, textInputHeight)) }]}
+                  placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
+                  placeholderTextColor={colors.textSecondary}
+                  value={newMessage}
+                  onChangeText={handleTyping}
+                  multiline
+                  blurOnSubmit={false}
+                  returnKeyType="default"
+                  maxLength={4000}
+                  onContentSizeChange={(event) => {
+                    const { height } = event.nativeEvent.contentSize;
+                    setTextInputHeight(Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, height)));
+                  }}
+                />
+                <TouchableOpacity 
+                  style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
+                  onPress={handleSendMessage} 
+                  disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
+                >
+                  {sendingMessage ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="arrow-up" size={18} color="#fff" />
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </>
         )}

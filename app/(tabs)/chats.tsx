@@ -6,28 +6,28 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Dimensions,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  LayoutAnimation,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  UIManager,
-  View
+    AccessibilityInfo,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Dimensions,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView,
+    LayoutAnimation,
+    Linking,
+    Modal,
+    Platform,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    Share,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    UIManager,
+    View
 } from 'react-native';
 import { GestureHandlerRootView, RectButton, Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,21 +42,26 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
+import type { ChatHistory } from '../../types';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 import { screenCache } from '../../utils/screenCache';
 import { secureStorage } from '../../utils/storage';
-import type { ChatHistory } from '../../types';
 import {
-  WORKSPACE_MEMBERS_CACHE_MS,
-  workspaceMembersCacheKey,
-  type WorkspaceMembersCachePayload,
+    WORKSPACE_MEMBERS_CACHE_MS,
+    workspaceMembersCacheKey,
+    type WorkspaceMembersCachePayload,
 } from '../../utils/workspaceScreenCache';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
+
+/** One-row default composer height. */
+const CHATGD_MESSAGE_INPUT_MIN_HEIGHT = 40;
+/** Cap composer growth at two rows. */
+const CHATGD_MESSAGE_INPUT_MAX_HEIGHT = 64;
 
 interface ChatParticipant {
   id: number;
@@ -257,7 +262,46 @@ const loadPersistedChatContexts = async (): Promise<Map<string, {
   }
 };
 
-const CHATS_PAGE_SIZE = 20;
+const CHATS_PAGE_SIZE = 10;
+
+/** Preview line for ChatGD / LLM history rows; list API omits full conversation_data. */
+function getAiHistoryListPreview(history: any): string {
+  const messagesRaw = history?.messages ?? history?.conversation_data;
+  let messages: any[] = [];
+  if (Array.isArray(messagesRaw)) {
+    messages = messagesRaw;
+  } else if (typeof messagesRaw === 'string' && messagesRaw.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(messagesRaw);
+      if (Array.isArray(parsed)) messages = parsed;
+    } catch {
+      /* ignore */
+    }
+  }
+  const contentFrom = (m: any) => {
+    if (!m) return '';
+    if (typeof m === 'object') return String(m.content ?? m.message ?? '').trim();
+    return String(m).trim();
+  };
+  if (messages.length > 0) {
+    const lastUserMsg = [...messages].reverse().find(
+      (m: any) => m && (m.role === 'user' || m.is_own_message)
+    );
+    const lastMsg = messages[messages.length - 1];
+    const raw =
+      (lastUserMsg && contentFrom(lastUserMsg)) || contentFrom(lastMsg) || '';
+    if (raw) return raw.length > 60 ? `${raw.substring(0, 60).trim()}…` : raw;
+  }
+  const preview = String(history?.last_message_preview ?? '').trim();
+  if (preview) return preview.length > 60 ? `${preview.substring(0, 60).trim()}…` : preview;
+  const lm = history?.latest_message;
+  const fromLm =
+    typeof lm === 'string' ? lm.trim() : String(lm?.content ?? lm?.message ?? '').trim();
+  if (fromLm) return fromLm.length > 60 ? `${fromLm.substring(0, 60).trim()}…` : fromLm;
+  const mc = Number(history?.message_count ?? 0);
+  if (mc > 0) return 'Open chat to view messages';
+  return 'No messages yet';
+}
 
 export default function ChatsScreen() {
   const router = useRouter();
@@ -483,7 +527,7 @@ export default function ChatsScreen() {
   const [isMentionSearching, setIsMentionSearching] = useState(false);
   
   // Text input height state
-  const [textInputHeight, setTextInputHeight] = useState(40);
+  const [textInputHeight, setTextInputHeight] = useState(CHATGD_MESSAGE_INPUT_MIN_HEIGHT);
   
   // Mention cursor tracking — keeps the raw input value and cursor position in sync
   // across the onChangeText → onSelectionChange event ordering gap in React Native.
@@ -1957,29 +2001,7 @@ export default function ChatsScreen() {
             .filter(history => history && history.id !== -1) // Only filter out the actual default chat (ID -1)
             .map(history => {
               try {
-                // Handle both new format (messages array), existing format (conversation_data), and lightweight list (latest_message)
-                const messages = (history as any).messages || (history as any).conversation_data || [];
-                let lastMessage = 'No messages yet';
-                if (Array.isArray(messages) && messages.length > 0) {
-                  // Prefer last user message (query) for list preview so list shows the question like other chat types
-                  const contentFrom = (m: any) => {
-                    if (!m) return '';
-                    if (typeof m === 'object') return String((m as any).content ?? (m as any).message ?? '').trim();
-                    return String(m).trim();
-                  };
-                  const lastUserMsg = [...messages].reverse().find((m: any) => m && (m.role === 'user' || (m as any).is_own_message));
-                  const lastMsg = messages[messages.length - 1];
-                  const raw = (lastUserMsg && contentFrom(lastUserMsg)) || contentFrom(lastMsg) || 'No messages yet';
-                  lastMessage = raw.length > 60 ? raw.substring(0, 60).trim() + '…' : raw;
-                } else {
-                  // Lightweight list: backend returns only latest_message per chat (no full messages array)
-                  const lm = (history as any).latest_message;
-                  const raw = lm && (typeof lm === 'string' ? lm : (lm.content ?? lm.message ?? ''));
-                  if (raw && String(raw).trim()) {
-                    lastMessage = String(raw).trim();
-                    lastMessage = lastMessage.length > 60 ? lastMessage.substring(0, 60).trim() + '…' : lastMessage;
-                  }
-                }
+                const lastMessage = getAiHistoryListPreview(history);
                 
                 // Determine chat type based on selected context
                 let chatType: 'ai_assistant' | 'document_focused' | 'bookmark_focused' | 'workspace' | 'user_direct' = 'ai_assistant';
@@ -2677,20 +2699,7 @@ export default function ChatsScreen() {
           const newAiChats: Chat[] = newHistories
             .filter(h => h && h.id !== -1)
             .map((history: any) => {
-              const messages = history.messages || history.conversation_data || [];
-              let lastMessage = 'No messages yet';
-              if (Array.isArray(messages) && messages.length > 0) {
-                const lastUserMsg = [...messages].reverse().find((m: any) => m?.role === 'user' || m?.is_own_message);
-                const raw = (lastUserMsg ? (lastUserMsg.content ?? '') : (messages[messages.length - 1]?.content ?? ''));
-                lastMessage = raw.length > 60 ? raw.substring(0, 60).trim() + '…' : raw;
-              } else {
-                const lm = history.latest_message;
-                const raw = lm && (typeof lm === 'string' ? lm : (lm.content ?? lm.message ?? ''));
-                if (raw && String(raw).trim()) {
-                  lastMessage = String(raw).trim();
-                  lastMessage = lastMessage.length > 60 ? lastMessage.substring(0, 60).trim() + '…' : lastMessage;
-                }
-              }
+              const lastMessage = getAiHistoryListPreview(history);
               return {
                 id: Number(history.id),
                 title: String(history.title || 'Untitled Chat'),
@@ -3133,7 +3142,7 @@ export default function ChatsScreen() {
         // If not in current list (e.g. user just sent message, list not refreshed yet), fetch histories and resolve
         if (!realChat) {
           const { fetchChatHistories } = useChatStore.getState();
-          await fetchChatHistories(50, 0);
+          await fetchChatHistories(100, 0);
           const { histories } = useChatStore.getState();
           const rawHistory = histories?.find((h: any) => {
             const pc = h.persistent_context || h.persistentContext;
@@ -7285,7 +7294,7 @@ export default function ChatsScreen() {
             <Ionicons name="arrow-back" size={28} color="#007AFF" />
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flexDirection: 'row' }}>
             <TouchableOpacity
               style={dynamicStyles.newChatButton}
               onPress={onRefresh}
@@ -7682,67 +7691,56 @@ export default function ChatsScreen() {
             setInputContainerHeight(height);
           }}
         >
-          <TextInput
-            style={[dynamicStyles.messageInput, { height: Math.max(40, Math.min(120, textInputHeight)) }]}
-            value={newMessage}
-            onChangeText={handleMentionInput}
-            onSelectionChange={(e) => {
-              const { start } = e.nativeEvent.selection;
-              mentionCursorRef.current = start;
-              // Re-run detection with the precise cursor position.
-              // Use newMessageRef (not the newMessage state) because the state
-              // update from handleMentionInput may not have flushed yet.
-              detectMention(newMessageRef.current, start);
-            }}
-            placeholder="Ask questions from your documents"
-            placeholderTextColor={colors.textSecondary}
-            multiline
-            blurOnSubmit={true}
-            returnKeyType="send"
-            maxLength={1000}
-            onContentSizeChange={(event) => {
-              const { height } = event.nativeEvent.contentSize;
-              setTextInputHeight(height);
-            }}
-            onSubmitEditing={() => {
-              if (newMessage.trim() && !sendingMessage) sendMessage();
-            }}
-            onKeyPress={({ nativeEvent }) => {
-              const shiftHeld =
-                'shiftKey' in nativeEvent &&
-                Boolean((nativeEvent as { shiftKey?: boolean }).shiftKey);
-              if (
-                nativeEvent.key === 'Enter' &&
-                !shiftHeld &&
-                newMessage.trim() &&
-                !sendingMessage
-              ) {
-                sendMessage();
-              }
-            }}
-          />
-          <Animated.View
-            style={[
-              {
-                transform: [{ scale: bounceAnim }],
-              },
-            ]}
-          >
-            <TouchableOpacity
+          <View style={dynamicStyles.messageInputShell}>
+            <TextInput
+              style={[dynamicStyles.messageInput, { height: Math.max(CHATGD_MESSAGE_INPUT_MIN_HEIGHT, Math.min(CHATGD_MESSAGE_INPUT_MAX_HEIGHT, textInputHeight)) }]}
+              value={newMessage}
+              onChangeText={handleMentionInput}
+              onSelectionChange={(e) => {
+                const { start } = e.nativeEvent.selection;
+                mentionCursorRef.current = start;
+                // Re-run detection with the precise cursor position.
+                // Use newMessageRef (not the newMessage state) because the state
+                // update from handleMentionInput may not have flushed yet.
+                detectMention(newMessageRef.current, start);
+              }}
+              placeholder="Ask questions from your documents"
+              placeholderTextColor={colors.textSecondary}
+              multiline
+              blurOnSubmit={false}
+              returnKeyType="default"
+              maxLength={1000}
+              onContentSizeChange={(event) => {
+                const { height } = event.nativeEvent.contentSize;
+                setTextInputHeight(
+                  Math.max(CHATGD_MESSAGE_INPUT_MIN_HEIGHT, Math.min(CHATGD_MESSAGE_INPUT_MAX_HEIGHT, height))
+                );
+              }}
+            />
+            <Animated.View
               style={[
-                dynamicStyles.sendButton,
-                (!newMessage.trim() && !sendingMessage) && { opacity: 0.5 }
+                dynamicStyles.composerSendWrap,
+                {
+                  transform: [{ scale: bounceAnim }],
+                },
               ]}
-              onPress={sendingMessage ? stopProcessing : sendMessage}
-              disabled={!newMessage.trim() && !sendingMessage}
             >
-              {sendingMessage ? (
-                <Ionicons name="close" size={20} color="#fff" />
-              ) : (
-                <Ionicons name="send" size={20} color="#fff" />
-              )}
-            </TouchableOpacity>
-          </Animated.View>
+              <TouchableOpacity
+                style={[
+                  dynamicStyles.sendButton,
+                  (!newMessage.trim() && !sendingMessage) && { opacity: 0.5 }
+                ]}
+                onPress={sendingMessage ? stopProcessing : sendMessage}
+                disabled={!newMessage.trim() && !sendingMessage}
+              >
+                {sendingMessage ? (
+                  <Ionicons name="close" size={18} color="#fff" />
+                ) : (
+                  <Ionicons name="arrow-up" size={18} color="#fff" />
+                )}
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
         </View>
 
       </View>
@@ -8052,7 +8050,7 @@ export default function ChatsScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 12,
+      paddingHorizontal: 14,
       paddingVertical: 8,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
@@ -8063,7 +8061,7 @@ export default function ChatsScreen() {
       color: colors.text,
     },
     newChatButton: {
-      padding: 10,
+      padding: 8,
       marginTop: 4,
     },
     loadingContainer: {
@@ -8176,9 +8174,8 @@ export default function ChatsScreen() {
       minHeight: 64,
     },
     backButton: {
-      padding: 10,
+      padding: 8,
       marginTop: 4,
-      marginRight: 6,
     },
     chatHeaderInfo: {
       flex: 1,
@@ -8191,7 +8188,7 @@ export default function ChatsScreen() {
       marginTop: 2,
     },
     searchTypeButton: {
-      padding: 10,
+      padding: 8,
       marginTop: 4,
     },
     chatContainer: {
@@ -8356,22 +8353,19 @@ export default function ChatsScreen() {
       paddingHorizontal: 16,
       paddingVertical: 8,
       paddingBottom: 4,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      backgroundColor: colors.card,
-      elevation: 10,
+      borderTopWidth: 0,
+      backgroundColor: 'transparent',
+      elevation: 0,
       zIndex: 10,
     },
     // Overrides applied to inputContainer when chat is empty (centered state)
     inputContainerEmpty: {
       borderTopWidth: 0,
-      borderRadius: 16,
-      marginHorizontal: 8,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.08,
-      shadowRadius: 8,
-      elevation: 4,
+      borderRadius: 0,
+      marginHorizontal: 0,
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      elevation: 0,
     },
     // Flex spacer above the input — holds the welcome graphic and fills the upper half
     emptyChatWelcomeArea: {
@@ -8399,25 +8393,42 @@ export default function ChatsScreen() {
     emptyChatBottomSpacer: {
       flex: 1,
     },
+    messageInputShell: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      backgroundColor: colors.surface,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingLeft: 12,
+      paddingRight: 2,
+      paddingVertical: 3,
+    },
     messageInput: {
       flex: 1,
-      backgroundColor: colors.surface,
-      borderRadius: 20,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      paddingTop: 10,
+      backgroundColor: 'transparent',
+      borderRadius: 0,
+      paddingHorizontal: 0,
+      paddingVertical: 5,
+      paddingTop: 5,
+      paddingRight: 6,
       fontSize: 16,
       color: colors.text,
-      marginRight: 8,
-      minHeight: 40,
-      maxHeight: 120,
+      marginRight: 0,
+      minHeight: CHATGD_MESSAGE_INPUT_MIN_HEIGHT,
+      maxHeight: CHATGD_MESSAGE_INPUT_MAX_HEIGHT,
       textAlignVertical: 'top',
       includeFontPadding: false,
     },
+    composerSendWrap: {
+      marginBottom: 4,
+      marginRight: 4,
+    },
     sendButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
       backgroundColor: '#007AFF',
       justifyContent: 'center',
       alignItems: 'center',
@@ -8748,7 +8759,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
@@ -8759,7 +8770,7 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   newChatButton: {
-    padding: 10,
+    padding: 8,
     marginTop: 4,
   },
   loadingContainer: {
@@ -8872,9 +8883,8 @@ const styles = StyleSheet.create({
     minHeight: 64,
   },
   backButton: {
-    padding: 10,
+    padding: 8,
     marginTop: 4,
-    marginRight: 6,
   },
   chatHeaderInfo: {
     flex: 1,
@@ -8892,7 +8902,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   searchTypeButton: {
-    padding: 10,
+    padding: 8,
     marginTop: 4,
   },
   chatContainer: {
@@ -8998,7 +9008,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000',
     marginRight: 8,
-    minHeight: 40,
+    minHeight: CHATGD_MESSAGE_INPUT_MIN_HEIGHT,
     maxHeight: 120,
     textAlignVertical: 'top',
     includeFontPadding: false,

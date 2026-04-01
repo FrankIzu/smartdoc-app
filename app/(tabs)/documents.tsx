@@ -169,6 +169,15 @@ export default function QuickFilesScreen() {
   const [filterBy, setFilterBy] = useState<FilterOption>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  // Refs mirror the pagination state so loadDocuments can read them without
+  // being in its dependency array (prevents the useCallback from being recreated
+  // on every page load, which would re-trigger useEffect and reset to page 1).
+  const hasMoreRef = React.useRef(true);
+  const loadingMoreRef = React.useRef(false);
+  const currentPageRef = React.useRef(1);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [showExternalFilePicker, setShowExternalFilePicker] = useState(false);
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
@@ -245,8 +254,8 @@ export default function QuickFilesScreen() {
 
   const CACHE_DURATION = 30000; // 30 seconds cache
   const AUTO_REFRESH_INTERVAL = 60000; // Auto-refresh every 60 seconds
-  /** First page size for mobile file list — smaller = faster (less JSON per row with json_data). Only one page is loaded until “load more” exists; raise to 50 if you need more rows visible. */
-  const MOBILE_FILES_PAGE_SIZE = 25;
+  /** Files list pagination size. */
+  const MOBILE_FILES_PAGE_SIZE = 10;
 
   // Use a ref for the API cache so loadDocuments always reads the latest value
   // without needing to be in its own dependency array (avoids stale-closure cache misses).
@@ -278,6 +287,8 @@ export default function QuickFilesScreen() {
   const classificationPollCountRef = React.useRef(0);
   // In-flight guard: prevents concurrent loadDocuments calls from producing duplicate requests
   const isLoadingDocumentsRef = React.useRef(false);
+  // FlatList momentum guard to prevent duplicate onEndReached calls per fling
+  const onEndReachedCalledDuringMomentumRef = React.useRef(false);
   // Persists locked-bookmark file IDs across renders so the filter can be applied
   // immediately on subsequent loads without waiting for the background refresh.
   const lockedFileIdsRef = React.useRef<Set<string>>(new Set());
@@ -785,7 +796,8 @@ export default function QuickFilesScreen() {
   }, [workspaceId]);
 
   // Optimized loadDocuments function with caching
-  const loadDocuments = useCallback(async (forceRefresh = false) => {
+  const loadDocuments = useCallback(async (forceRefresh = false, pageToLoad = 1, append = false) => {
+    if (append && (!hasMoreRef.current || loadingMoreRef.current)) return;
     // Skip if a request is already in-flight to prevent duplicate concurrent calls
     if (isLoadingDocumentsRef.current) return;
 
@@ -798,6 +810,7 @@ export default function QuickFilesScreen() {
     // Check ref-based cache (avoids stale-closure issues of state-based cache)
     const cache = apiCacheRef.current;
     if (
+      !append &&
       !forceRefresh &&
       cache &&
       now - cache.timestamp < CACHE_DURATION &&
@@ -814,7 +827,12 @@ export default function QuickFilesScreen() {
 
     isLoadingDocumentsRef.current = true;
     setError(null);
-    setLoading(true);
+    if (append) {
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
 
     // Fetch locked bookmark file IDs and documents in parallel so we never show
     // locked files — avoids the flash of locked files appearing then disappearing.
@@ -824,16 +842,20 @@ export default function QuickFilesScreen() {
         return apiClient.getForms();
       }
       if (workspaceId != null) {
-        return apiClient.getWorkspaceFiles(workspaceId);
+        return apiClient.getWorkspaceFiles(workspaceId, {
+          page: pageToLoad,
+          perPage: MOBILE_FILES_PAGE_SIZE,
+          offset: (pageToLoad - 1) * MOBILE_FILES_PAGE_SIZE,
+        });
       }
       try {
         console.log('📁 Loading documents (no workspace)');
-        const res = await apiClient.getDocuments(1, MOBILE_FILES_PAGE_SIZE, undefined, undefined);
+        const res = await apiClient.getDocuments(pageToLoad, MOBILE_FILES_PAGE_SIZE, undefined, undefined);
         console.log('📁 Documents response received:', res?.success, 'Files count:', (res as any)?.data?.length || (res as any)?.files?.length || 0);
         return res;
       } catch (err) {
         console.warn('Documents endpoint failed, trying files endpoint:', err);
-        return apiClient.getFiles(1, MOBILE_FILES_PAGE_SIZE, undefined, undefined);
+        return apiClient.getFiles(pageToLoad, MOBILE_FILES_PAGE_SIZE, undefined, undefined);
       }
     };
 
@@ -848,30 +870,55 @@ export default function QuickFilesScreen() {
       } else {
         const wsId =
           workspaceId != null && Number.isFinite(workspaceId) ? workspaceId : undefined;
-        const bookmarksPromise =
-          wsId != null
-            ? apiClient.getBookmarks(100, 0, wsId)
-            : Promise.resolve({ success: false } as const);
-        const [lockedIds, docsRes, bmRes] = await Promise.all([
-          fetchLockedBookmarkFileIds(forceRefresh),
-          fetchDocumentsResponse(),
-          bookmarksPromise,
-        ]);
-        lockedFileIds = lockedIds;
-        response = docsRes;
-        if (wsId == null) {
-          workspaceBookmarksPayload = [];
-        } else if (bmRes && (bmRes as any).success && (bmRes as any).data) {
-          const raw = (bmRes as any).data;
-          workspaceBookmarksPayload = Array.isArray(raw)
-            ? raw
-            : ((raw as any).bookmarks || []);
+        // For infinite-scroll pagination, avoid repeating expensive bookmark sweeps.
+        // Reuse the cached locked IDs/workspace bookmarks from the initial load.
+        if (append && !forceRefresh) {
+          lockedFileIds = lockedFileIdsRef.current;
+          response = await fetchDocumentsResponse();
+          if (wsId == null) {
+            workspaceBookmarksPayload = [];
+          } else {
+            workspaceBookmarksPayload = workspaceBookmarks;
+          }
+          setWorkspaceBookmarks(workspaceBookmarksPayload);
         } else {
-          workspaceBookmarksPayload = [];
+          // Do not await locked-bookmark sweep: it can be many requests and was blocking first paint.
+          // Use cached/stale locked IDs for this response; refresh in background and filter when ready.
+          const bookmarksPromise =
+            wsId != null
+              ? apiClient.getBookmarks(100, 0, wsId)
+              : Promise.resolve({ success: false } as const);
+          let docsRes: any;
+          let bmRes: any;
+          if (wsId != null) {
+            [docsRes, bmRes] = await Promise.all([
+              fetchDocumentsResponse(),
+              bookmarksPromise,
+            ]);
+          } else {
+            docsRes = await fetchDocumentsResponse();
+            bmRes = { success: false } as const;
+          }
+          lockedFileIds = lockedFileIdsRef.current;
+          response = docsRes;
+          if (wsId == null) {
+            workspaceBookmarksPayload = [];
+          } else if (bmRes && (bmRes as any).success && (bmRes as any).data) {
+            const raw = (bmRes as any).data;
+            workspaceBookmarksPayload = Array.isArray(raw)
+              ? raw
+              : ((raw as any).bookmarks || []);
+          } else {
+            workspaceBookmarksPayload = [];
+          }
+          setWorkspaceBookmarks(workspaceBookmarksPayload);
+
+          void fetchLockedBookmarkFileIds(forceRefresh).then((ids) => {
+            lockedFileIdsRef.current = ids;
+            setFileIdsInLockedBookmarks(ids);
+            setDocuments((prev) => prev.filter((d) => !ids.has(d.id)));
+          });
         }
-        lockedFileIdsRef.current = lockedFileIds;
-        setFileIdsInLockedBookmarks(lockedFileIds);
-        setWorkspaceBookmarks(workspaceBookmarksPayload);
       }
     } catch (err) {
       isLoadingDocumentsRef.current = false;
@@ -910,6 +957,10 @@ export default function QuickFilesScreen() {
           });
           
           setDocuments(mappedForms);
+          currentPageRef.current = 1;
+          setCurrentPage(1);
+          hasMoreRef.current = false;
+          setHasMore(false);
           setLastLoadTime(now);
           
           apiCacheRef.current = {
@@ -980,20 +1031,41 @@ export default function QuickFilesScreen() {
                 user_id: doc.user_id ?? (doc as any).owner?.id,
               };
             });
-          
-          setDocuments(mappedDocs);
+
+          const pagination = (response as any)?.pagination;
+          const hasMoreFromApi =
+            (response as any)?.has_more === true ||
+            (response as any)?.next_offset != null ||
+            pagination?.has_more === true ||
+            (pagination?.has_more !== false && docsArray.length >= MOBILE_FILES_PAGE_SIZE);
+
+          if (append) {
+            setDocuments(prev => {
+              const existingIds = new Set(prev.map(doc => doc.id));
+              const next = mappedDocs.filter(doc => !existingIds.has(doc.id));
+              return [...prev, ...next];
+            });
+          } else {
+            setDocuments(mappedDocs);
+          }
+          currentPageRef.current = pageToLoad;
+          setCurrentPage(pageToLoad);
+          hasMoreRef.current = Boolean(hasMoreFromApi);
+          setHasMore(Boolean(hasMoreFromApi));
           setLastLoadTime(now);
-          
-          apiCacheRef.current = {
-            data: mappedDocs,
-            timestamp: now,
-            isFormsMode: false,
-            workspaceId,
-            workspaceBookmarks:
-              workspaceId != null && Number.isFinite(workspaceId)
-                ? workspaceBookmarksPayload
-                : [],
-          };
+
+          if (!append && pageToLoad === 1) {
+            apiCacheRef.current = {
+              data: mappedDocs,
+              timestamp: now,
+              isFormsMode: false,
+              workspaceId,
+              workspaceBookmarks:
+                workspaceId != null && Number.isFinite(workspaceId)
+                  ? workspaceBookmarksPayload
+                  : [],
+            };
+          }
         } else {
           setDocuments([]);
           setError('No documents found or API returned unexpected format.');
@@ -1010,6 +1082,8 @@ export default function QuickFilesScreen() {
       }
     } finally {
       isLoadingDocumentsRef.current = false;
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
       setLoading(false);
     }
   }, [workspaceId, fetchLockedBookmarkFileIds]);
@@ -1116,9 +1190,20 @@ export default function QuickFilesScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadDocuments(true);
+    currentPageRef.current = 1;
+    setCurrentPage(1);
+    hasMoreRef.current = true;
+    setHasMore(true);
+    await loadDocuments(true, 1, false);
     setRefreshing(false);
   }, [loadDocuments]);
+
+  const onEndReached = useCallback(async () => {
+    if (onEndReachedCalledDuringMomentumRef.current) return;
+    onEndReachedCalledDuringMomentumRef.current = true;
+    if (loading || refreshing || loadingMoreRef.current || !hasMoreRef.current) return;
+    await loadDocuments(false, currentPageRef.current + 1, true);
+  }, [loading, refreshing, loadDocuments]);
 
   useEffect(() => {
     if (user) {
@@ -2611,6 +2696,16 @@ export default function QuickFilesScreen() {
         accessibilityLabel="Documents"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.4}
+        onMomentumScrollBegin={() => {
+          onEndReachedCalledDuringMomentumRef.current = false;
+        }}
+        ListFooterComponent={loadingMore ? (
+          <View style={{ paddingVertical: 16 }}>
+            <ActivityIndicator size="small" color="#007AFF" />
+          </View>
+        ) : null}
         ListEmptyComponent={
           <View style={dynamicStyles.emptyContainer}>
             <Ionicons name="folder-open-outline" size={64} color="#ccc" />

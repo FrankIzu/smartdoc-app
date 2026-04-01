@@ -16,6 +16,7 @@ import {
     Text,
     TextInput,
     TouchableOpacity,
+    useColorScheme,
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -65,14 +66,30 @@ function stripExtension(name?: string): string {
 }
 
 /** Base editor HTML with empty content; real content is injected in onLoadEnd to avoid escaping/timing issues. */
-function getRichEditorBaseHtml(bgColor: string, textColor: string): string {
+function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: boolean): string {
   const safeBg = bgColor.replace(/[^a-zA-Z0-9#(),.% ]/g, '');
   const safeText = textColor.replace(/[^a-zA-Z0-9#(),.% ]/g, '');
+  const darkModeBlackTextFix = isDarkMode
+    ? `
+    #content [style*="color:#000"],
+    #content [style*="color: #000"],
+    #content [style*="color:#000000"],
+    #content [style*="color: #000000"],
+    #content [style*="color:rgb(0,0,0)"],
+    #content [style*="color: rgb(0,0,0)"],
+    #content [style*="color: rgb(0, 0, 0)"],
+    #content font[color="black"],
+    #content font[color="#000"],
+    #content font[color="#000000"]{
+      color:${safeText} !important;
+    }`
+    : '';
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/><style>
     *{box-sizing:border-box}
     body{margin:0;padding:0;padding-left:12px;padding-right:12px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:1.5;background:${safeBg};color:${safeText};min-height:100vh;-webkit-user-select:auto;user-select:auto}
     #content{outline:0;min-height:200px}
     #content:empty:before{content:attr(data-placeholder);color:gray}
+    ${darkModeBlackTextFix}
   </style></head><body><div id="content" contenteditable="true" data-placeholder="Start typing..."></div>
   <script>
     (function(){
@@ -101,6 +118,8 @@ export default function DraftEditScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const colors = useThemeColors();
+  const colorScheme = useColorScheme();
+  const isDarkMode = colorScheme === 'dark';
   const draftId = id ? parseInt(id, 10) : NaN;
   const { toggleHeader, toggleEnabled } = useHeaderVisibility();
 
@@ -1030,8 +1049,8 @@ export default function DraftEditScreen() {
   ];
 
   const webViewSource = useMemo(
-    () => ({ html: getRichEditorBaseHtml(colors.background || '#fff', colors.text || '#000') }),
-    [colors.background, colors.text]
+    () => ({ html: getRichEditorBaseHtml(colors.background || '#fff', colors.text || '#000', isDarkMode) }),
+    [colors.background, colors.text, isDarkMode]
   );
 
   const dynamicStyles = useMemo(() => StyleSheet.create({

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -13,6 +13,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { Form } from '../../types/form';
 
@@ -37,12 +38,19 @@ interface FormField {
 
 export default function CreateFormScreen() {
   const router = useRouter();
+  const colors = useThemeColors();
   const params = useLocalSearchParams<{ tab?: string }>();
   const [templates, setTemplates] = useState<FormTemplate[]>([]);
   const [userForms, setUserForms] = useState<Form[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'recent' | 'templates'>(params.tab === 'recent' ? 'recent' : 'templates');
+  const dynamicStyles = useMemo(() => ({
+    page: { backgroundColor: colors.background },
+    card: { backgroundColor: colors.card, borderColor: colors.border },
+    text: { color: colors.text },
+    textSecondary: { color: colors.textSecondary },
+  }), [colors]);
 
   useEffect(() => {
     loadData();
@@ -274,7 +282,7 @@ export default function CreateFormScreen() {
   };
 
   const renderTemplateItem = ({ item }: { item: FormTemplate }) => (
-    <TouchableOpacity style={styles.templateCard} onPress={() => selectTemplate(item)}>
+    <TouchableOpacity style={[styles.templateCard, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => selectTemplate(item)}>
       <View style={[styles.templateIcon, { backgroundColor: getTemplateColor(item.category, item.name) + '20' }]}>
         <Ionicons 
           name={getTemplateIcon(item.category) as any} 
@@ -283,16 +291,16 @@ export default function CreateFormScreen() {
         />
       </View>
       <View style={styles.templateContent}>
-        <Text style={styles.templateName}>{item.name}</Text>
-        <Text style={styles.templateDescription}>{item.description}</Text>
+        <Text style={[styles.templateName, { color: colors.text }]}>{item.name}</Text>
+        <Text style={[styles.templateDescription, { color: colors.textSecondary }]}>{item.description}</Text>
         <View style={styles.templateMeta}>
           <View style={[styles.categoryBadge, { backgroundColor: getTemplateColor(item.category, item.name) }]}>
             <Text style={styles.categoryText}>{item.category}</Text>
           </View>
-          <Text style={styles.fieldsCount}>{(item.fields || []).length} fields</Text>
+          <Text style={[styles.fieldsCount, { color: colors.textSecondary }]}>{(item.fields || []).length} fields</Text>
         </View>
       </View>
-      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+      <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
     </TouchableOpacity>
   );
 
@@ -327,7 +335,7 @@ export default function CreateFormScreen() {
 
   const renderUserFormItem = ({ item }: { item: Form }) => (
     <TouchableOpacity 
-      style={styles.templateCard} 
+      style={[styles.templateCard, { backgroundColor: colors.card, borderColor: colors.border }]} 
       onPress={() => selectUserForm(item)}
       activeOpacity={0.7}
     >
@@ -339,14 +347,14 @@ export default function CreateFormScreen() {
         />
       </View>
       <View style={styles.templateContent}>
-        <Text style={styles.templateName}>{item.title}</Text>
-        <Text style={styles.templateDescription}>{item.description || 'No description'}</Text>
+        <Text style={[styles.templateName, { color: colors.text }]}>{item.title}</Text>
+        <Text style={[styles.templateDescription, { color: colors.textSecondary }]}>{item.description || 'No description'}</Text>
         <View style={styles.templateMeta}>
           <View style={[styles.categoryBadge, { backgroundColor: '#007AFF' }]}>
             <Text style={styles.categoryText}>My Form</Text>
           </View>
           <View style={styles.metaRight}>
-            <Text style={styles.fieldsCount}>
+            <Text style={[styles.fieldsCount, { color: colors.textSecondary }]}>
               {item.json_fields?.length || 0} fields • {item.response_count || 0} responses
             </Text>
             <TouchableOpacity
@@ -362,48 +370,48 @@ export default function CreateFormScreen() {
           </View>
         </View>
       </View>
-      <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+      <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
     </TouchableOpacity>
   );
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={[styles.container, dynamicStyles.page]}>
+        <View style={[styles.header, dynamicStyles.card]}>
           <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+            <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Create Form</Text>
+          <Text style={[styles.headerTitle, dynamicStyles.text]}>Create Form</Text>
           <View style={{ width: 24 }} />
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading templates...</Text>
+          <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
+          <Text style={[styles.loadingText, dynamicStyles.textSecondary]}>Loading templates...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.container, dynamicStyles.page]}>
+      <View style={[styles.header, dynamicStyles.card]}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Form</Text>
+        <Text style={[styles.headerTitle, dynamicStyles.text]}>Create Form</Text>
         <View style={{ width: 24 }} />
       </View>
 
       {/* Blank Form Option */}
-      <View style={styles.blankFormSection}>
-        <Text style={styles.sectionTitle}>Start Fresh</Text>
-        <TouchableOpacity style={styles.blankFormCard} onPress={createBlankForm}>
+      <View style={[styles.blankFormSection, dynamicStyles.card]}>
+        <Text style={[styles.sectionTitle, dynamicStyles.text]}>Start Fresh</Text>
+        <TouchableOpacity style={[styles.blankFormCard, dynamicStyles.card]} onPress={createBlankForm}>
           <View style={styles.blankFormIcon}>
-            <Ionicons name="add" size={32} color="#007AFF" />
+            <Ionicons name="add" size={32} color={colors.primary || '#007AFF'} />
           </View>
           <View style={styles.blankFormContent}>
-            <Text style={styles.blankFormTitle}>Create Blank Form</Text>
-            <Text style={styles.blankFormDescription}>
+            <Text style={[styles.blankFormTitle, dynamicStyles.text]}>Create Blank Form</Text>
+            <Text style={[styles.blankFormDescription, dynamicStyles.textSecondary]}>
               Start with an empty form and add your own fields
             </Text>
           </View>
@@ -412,14 +420,14 @@ export default function CreateFormScreen() {
       </View>
 
       {/* Tab Navigation */}
-      <View style={styles.tabContainer}>
+      <View style={[styles.tabContainer, dynamicStyles.card]}>
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'templates' && styles.activeTab]} 
           onPress={() => {
             setActiveTab('templates');
           }}
         >
-          <Text style={[styles.tabText, activeTab === 'templates' && styles.activeTabText]}>
+          <Text style={[styles.tabText, dynamicStyles.textSecondary, activeTab === 'templates' && styles.activeTabText]}>
             Templates
           </Text>
         </TouchableOpacity>
@@ -430,7 +438,7 @@ export default function CreateFormScreen() {
             // Refresh will happen automatically via useEffect when activeTab changes
           }}
         >
-          <Text style={[styles.tabText, activeTab === 'recent' && styles.activeTabText]}>
+          <Text style={[styles.tabText, dynamicStyles.textSecondary, activeTab === 'recent' && styles.activeTabText]}>
             My Forms
           </Text>
         </TouchableOpacity>
@@ -443,8 +451,8 @@ export default function CreateFormScreen() {
       >
         {activeTab === 'templates' ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Choose Template</Text>
-            <Text style={styles.sectionSubtitle}>
+            <Text style={[styles.sectionTitle, dynamicStyles.text]}>Choose Template</Text>
+            <Text style={[styles.sectionSubtitle, dynamicStyles.textSecondary]}>
               Select a pre-built template to get started quickly
             </Text>
             
@@ -458,8 +466,8 @@ export default function CreateFormScreen() {
           </View>
         ) : (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Forms</Text>
-            <Text style={styles.sectionSubtitle}>
+            <Text style={[styles.sectionTitle, dynamicStyles.text]}>Your Forms</Text>
+            <Text style={[styles.sectionSubtitle, dynamicStyles.textSecondary]}>
               Continue working on your existing forms or create new ones based on them
               {userForms.length > 0 && ` (${userForms.length} found)`}
             </Text>

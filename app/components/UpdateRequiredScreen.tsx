@@ -1,8 +1,9 @@
 import React from 'react';
-import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../constants/Config';
 import { useTheme } from '../../contexts/ThemeContext';
+import { openStoreUpdatePage } from '../../services/updateService';
 
 interface UpdateRequiredScreenProps {
   storeUrl: string;
@@ -12,7 +13,9 @@ interface UpdateRequiredScreenProps {
 export default function UpdateRequiredScreen({ storeUrl, message }: UpdateRequiredScreenProps) {
   const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const openStore = () => Linking.openURL(storeUrl);
+  const openStore = () => {
+    openStoreUpdatePage(storeUrl).catch(() => {});
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: isDark ? COLORS.backgroundDark : COLORS.background }]}>
