@@ -305,6 +305,22 @@ export default function DraftEditScreen() {
           setLoading(false);
         }
 
+        // Local-only drafts (negative IDs) never fetch from API.
+        if (draftsCache.isLocalDraftId(draftId)) {
+          setIsOffline(true);
+          if (!cached) {
+            const emptyHtml = '<p><br></p>';
+            setFilename('Untitled Draft');
+            initialFilenameRef.current = 'Untitled Draft';
+            setContentText('');
+            setContentHtml(emptyHtml);
+            setInitialEditorHtml(emptyHtml);
+            contentToInjectRef.current = emptyHtml;
+            draftLoadedRef.current = true;
+          }
+          return;
+        }
+
         // 2. Fetch from API to get latest version
         const res = await apiClient.getDraftContent(draftId);
         if (cancelled) return;
@@ -348,19 +364,7 @@ export default function DraftEditScreen() {
             updated_at: updatedAt != null ? String(updatedAt) : undefined,
           });
 
-          // Retry any pending saves that were queued while offline
-          const pending = await draftsCache.getPendingSaves();
-          const thisPending = pending.find(p => p.id === draftId);
-          if (thisPending) {
-            // Server is available now — flush the pending save
-            try {
-              await apiClient.saveDraft(draftId, thisPending.html, thisPending.plainText);
-              await draftsCache.removePendingSave(draftId);
-              setSaveStatus('saved');
-            } catch (_) {
-              // Will retry next time
-            }
-          }
+          await flushPendingOpsForDraft();
         } else if (!cached) {
           Alert.alert('Error', 'Failed to load draft', [{ text: 'OK', onPress: () => router.back() }]);
         }
@@ -391,7 +395,7 @@ export default function DraftEditScreen() {
 
   // Socket.IO: connect, join document room, presence
   useEffect(() => {
-    if (!draftId || isNaN(draftId) || !user?.id) return;
+    if (!draftId || isNaN(draftId) || draftsCache.isLocalDraftId(draftId) || !user?.id) return;
     let socket: Socket | null = null;
     const currentUserId = parseInt(String(user.id), 10);
     if (isNaN(currentUserId)) return;
@@ -420,7 +424,7 @@ export default function DraftEditScreen() {
             display_name: displayName,
           });
           // Network just came back — flush any locally queued save immediately
-          flushPendingSave();
+          flushPendingOpsForDraft();
         });
 
         socket.on('doc_presence_list', (data: { members?: Array<{ user_id: number; display_name: string }> }) => {
@@ -525,6 +529,17 @@ export default function DraftEditScreen() {
     setSaving(true);
     setSaveStatus('saving');
     try {
+      if (draftsCache.isLocalDraftId(draftId)) {
+        await draftsCache.updatePendingCreate(draftId, {
+          html,
+          plainText,
+          filename: currentFilenameRef.current || 'Untitled Draft',
+        });
+        setIsOffline(true);
+        setSaveStatus('local');
+        setHasUnsavedChanges(false);
+        return;
+      }
       // Debug: verify HTML contains formatting tags
       if (__DEV__) {
         const hasBold = /<(strong|b)>/i.test(html);
@@ -575,6 +590,7 @@ export default function DraftEditScreen() {
 
   const refetchDraftContent = useCallback(async (version: number, updatedAt: string) => {
     if (!draftId || isNaN(draftId)) return;
+    if (draftsCache.isLocalDraftId(draftId)) return;
     try {
       const res = await apiClient.getDraftContent(draftId);
       if (!(res as any)?.success) return;
@@ -602,39 +618,52 @@ export default function DraftEditScreen() {
     return () => { refetchDraftContentRef.current = null; };
   }, [refetchDraftContent]);
 
-  /** Flush any pending save for this draft to the server. Safe to call speculatively. */
-  const flushPendingSave = useCallback(async () => {
+  /** Flush pending save/rename for this draft to the server. Safe to call speculatively. */
+  const flushPendingOpsForDraft = useCallback(async () => {
     if (!draftId || isNaN(draftId)) return;
+    if (draftsCache.isLocalDraftId(draftId)) return;
     const pending = await draftsCache.getPendingSaves();
     const item = pending.find(p => p.id === draftId);
-    if (!item) return;
+    if (item) {
+      try {
+        await apiClient.saveDraft(draftId, item.html, item.plainText);
+        await draftsCache.removePendingSave(draftId);
+        setIsOffline(false);
+        setSaveStatus('saved');
+        setHasUnsavedChanges(false);
+        if (item.filename) {
+          await draftsCache.saveDraftContent(draftId, {
+            filename: item.filename,
+            content_html: item.html,
+          });
+        }
+      } catch {
+        return;
+      }
+    }
+
+    const pendingRenames = await draftsCache.getPendingRenames();
+    const rename = pendingRenames.find(r => r.id === draftId);
+    if (!rename) return;
     try {
-      await apiClient.saveDraft(draftId, item.html, item.plainText);
-      await draftsCache.removePendingSave(draftId);
+      await apiClient.renameFile(draftId, rename.filename);
+      await draftsCache.removePendingRename(draftId);
       setIsOffline(false);
       setSaveStatus('saved');
-      setHasUnsavedChanges(false);
-      // Update cache with whatever filename was pending
-      if (item.filename) {
-        await draftsCache.saveDraftContent(draftId, {
-          filename: item.filename,
-          content_html: item.html,
-        });
-      }
     } catch {
       // Still offline — leave in queue
     }
   }, [draftId]);
 
-  // Sync pending save when app comes to foreground
+  // Sync pending operations when app comes to foreground
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        flushPendingSave();
+        flushPendingOpsForDraft();
       }
     });
     return () => sub.remove();
-  }, [flushPendingSave]);
+  }, [flushPendingOpsForDraft]);
 
   const handleContentChange = useCallback((text: string) => {
     setContentText(text);
@@ -856,11 +885,17 @@ export default function DraftEditScreen() {
     // Always update local cache immediately
     await draftsCache.updateCachedFilename(draftId, name);
     initialFilenameRef.current = name;
+    if (draftsCache.isLocalDraftId(draftId)) {
+      await draftsCache.updatePendingCreate(draftId, { filename: name });
+      return;
+    }
     try {
       await apiClient.renameFile(draftId, name);
     } catch (e: any) {
       if (!isNetworkError(e)) throw e;
-      // Offline: cache already updated, server will see it on next sync
+      await draftsCache.addPendingRename({ id: draftId, filename: name });
+      setIsOffline(true);
+      setSaveStatus('local');
     }
   }, [draftId]);
 

@@ -74,15 +74,61 @@ export default function DraftsListScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isOffline, setIsOffline] = useState(false);
 
+  const flushPendingCreates = useCallback(async (): Promise<void> => {
+    const pendingCreates = await draftsCache.getPendingCreates();
+    if (pendingCreates.length === 0) return;
+    const sorted = [...pendingCreates].sort((a, b) => a.queued_at - b.queued_at);
+    for (const create of sorted) {
+      try {
+        const res = await apiClient.createDraft();
+        const serverId = (res as any)?.draft?.id;
+        if (!serverId) break;
+
+        await apiClient.saveDraft(serverId, create.html, create.plainText);
+        if ((create.filename || 'Untitled Draft') !== 'Untitled Draft') {
+          await apiClient.renameFile(serverId, create.filename);
+        }
+
+        await draftsCache.saveDraftContent(serverId, {
+          filename: create.filename || 'Untitled Draft',
+          content_html: create.html || '<p><br></p>',
+        });
+        await draftsCache.deleteDraftContent(create.localId);
+        await draftsCache.remapPendingSaves(create.localId, serverId);
+        await draftsCache.remapPendingRenames(create.localId, serverId);
+        await draftsCache.removePendingCreate(create.localId);
+        await draftsCache.removeFromDraftsList(create.localId);
+      } catch {
+        // Stop here; later reconnect will retry remaining creates.
+        break;
+      }
+    }
+  }, []);
+
   const flushAllPendingSaves = useCallback(async () => {
     const pending = await draftsCache.getPendingSaves();
     if (pending.length === 0) return;
     for (const item of pending) {
+      if (draftsCache.isLocalDraftId(item.id)) continue;
       try {
         await apiClient.saveDraft(item.id, item.html, item.plainText);
         await draftsCache.removePendingSave(item.id);
       } catch {
         // Still offline or error — leave in queue
+        break;
+      }
+    }
+  }, []);
+
+  const flushAllPendingRenames = useCallback(async () => {
+    const pending = await draftsCache.getPendingRenames();
+    if (pending.length === 0) return;
+    for (const item of pending) {
+      if (draftsCache.isLocalDraftId(item.id)) continue;
+      try {
+        await apiClient.renameFile(item.id, item.filename);
+        await draftsCache.removePendingRename(item.id);
+      } catch {
         break;
       }
     }
@@ -99,15 +145,28 @@ export default function DraftsListScreen() {
     }
 
     try {
+      // Strictly serialized flush order: creates -> saves -> renames
+      await flushPendingCreates();
+      await flushAllPendingSaves();
+      await flushAllPendingRenames();
+
       const res = await apiClient.getDrafts();
       const list = (res as any).drafts ?? (res?.data?.drafts ?? []) ?? [];
-      const arr: DraftItem[] = Array.isArray(list) ? list : [];
-      setDrafts(arr);
+      const serverDrafts: DraftItem[] = Array.isArray(list) ? list : [];
+      const refreshedCache = await draftsCache.getDraftsList();
+      const localDrafts = (refreshedCache || []).filter(d => draftsCache.isLocalDraftId(d.id)) as DraftItem[];
+      const serverIds = new Set(serverDrafts.map(d => d.id));
+      const localOnly = localDrafts.filter(d => !serverIds.has(d.id));
+      const merged = [...serverDrafts, ...localOnly].sort((a, b) => {
+        const ta = new Date(a.updated_at || a.created_at || 0).getTime();
+        const tb = new Date(b.updated_at || b.created_at || 0).getTime();
+        return tb - ta;
+      });
+
+      setDrafts(merged);
       setIsOffline(false);
       // Persist fetched list to cache
-      await draftsCache.saveDraftsList(arr as CachedDraftMeta[]);
-      // Network confirmed — flush all pending saves in the background
-      flushAllPendingSaves();
+      await draftsCache.saveDraftsList(merged as CachedDraftMeta[]);
     } catch (e: any) {
       if (isNetworkError(e)) {
         setIsOffline(true);
@@ -123,7 +182,7 @@ export default function DraftsListScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user]);
+  }, [user, flushAllPendingRenames, flushAllPendingSaves, flushPendingCreates]);
 
   useFocusEffect(
     useCallback(() => {
@@ -165,12 +224,36 @@ export default function DraftsListScreen() {
 
   const handleNewDraft = async () => {
     if (creating) return;
-    if (isOffline) {
-      Alert.alert('Offline', 'Creating new notes requires a network connection. Your existing notes are available below.');
-      return;
-    }
     setCreating(true);
     try {
+      if (isOffline) {
+        const localId = -Date.now();
+        const nowIso = new Date().toISOString();
+        const localDraft: CachedDraftMeta = {
+          id: localId,
+          original_filename: 'Untitled Draft',
+          file_kind: 'draft',
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        const currentList = (await draftsCache.getDraftsList()) || [];
+        const updated = [localDraft, ...currentList.filter(d => d.id !== localId)];
+        await draftsCache.saveDraftsList(updated);
+        await draftsCache.saveDraftContent(localId, {
+          filename: 'Untitled Draft',
+          content_html: '<p><br></p>',
+        });
+        await draftsCache.addPendingCreate({
+          localId,
+          filename: 'Untitled Draft',
+          html: '<p><br></p>',
+          plainText: '',
+        });
+        setDrafts(updated as DraftItem[]);
+        router.push(`/drafts/edit/${localId}`);
+        return;
+      }
+
       const res = await apiClient.createDraft();
       if (res?.success && (res as any).draft?.id) {
         const newDraft = (res as any).draft;
@@ -184,7 +267,30 @@ export default function DraftsListScreen() {
     } catch (e: any) {
       if (isNetworkError(e)) {
         setIsOffline(true);
-        Alert.alert('Offline', 'Creating new notes requires a network connection.');
+        const localId = -Date.now();
+        const nowIso = new Date().toISOString();
+        const localDraft: CachedDraftMeta = {
+          id: localId,
+          original_filename: 'Untitled Draft',
+          file_kind: 'draft',
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        const currentList = (await draftsCache.getDraftsList()) || [];
+        const updated = [localDraft, ...currentList.filter(d => d.id !== localId)];
+        await draftsCache.saveDraftsList(updated);
+        await draftsCache.saveDraftContent(localId, {
+          filename: 'Untitled Draft',
+          content_html: '<p><br></p>',
+        });
+        await draftsCache.addPendingCreate({
+          localId,
+          filename: 'Untitled Draft',
+          html: '<p><br></p>',
+          plainText: '',
+        });
+        setDrafts(updated as DraftItem[]);
+        router.push(`/drafts/edit/${localId}`);
       } else {
         Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to create draft'));
       }
