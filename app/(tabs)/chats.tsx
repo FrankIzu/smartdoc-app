@@ -7282,7 +7282,7 @@ export default function ChatsScreen() {
             accessibilityLabel="Go back"
             accessibilityRole="button"
           >
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+            <Ionicons name="arrow-back" size={28} color="#007AFF" />
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -7295,7 +7295,7 @@ export default function ChatsScreen() {
             >
               <Ionicons
                 name="refresh"
-                size={26}
+                size={30}
                 color={refreshing ? "#999" : "#007AFF"}
               />
             </TouchableOpacity>
@@ -7305,7 +7305,7 @@ export default function ChatsScreen() {
               accessibilityLabel="New chat"
               accessibilityRole="button"
             >
-              <Ionicons name="add" size={26} color="#007AFF" />
+              <Ionicons name="add" size={30} color="#007AFF" />
             </TouchableOpacity>
           </View>
         </View>
@@ -7401,7 +7401,7 @@ export default function ChatsScreen() {
           accessibilityLabel="Go back"
           accessibilityRole="button"
         >
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          <Ionicons name="arrow-back" size={28} color="#007AFF" />
         </TouchableOpacity>
         
         <View style={dynamicStyles.chatHeaderInfo}>
@@ -7438,7 +7438,7 @@ export default function ChatsScreen() {
             accessibilityLabel="Chat history"
             accessibilityRole="button"
           >
-            <Ionicons name="time-outline" size={26} color="#007AFF" />
+            <Ionicons name="time-outline" size={30} color="#007AFF" />
           </TouchableOpacity>
           <TouchableOpacity
             style={dynamicStyles.searchTypeButton}
@@ -7447,7 +7447,7 @@ export default function ChatsScreen() {
           >
             <Ionicons
               name="share-outline"
-              size={26}
+              size={30}
               color={!selectedChat || messages.length === 0 ? '#999' : '#007AFF'}
             />
           </TouchableOpacity>
@@ -7456,7 +7456,7 @@ export default function ChatsScreen() {
             style={dynamicStyles.searchTypeButton} 
             onPress={() => setShowNewChatModal(true)}
           >
-            <Ionicons name="add" size={26} color="#007AFF" />
+            <Ionicons name="add" size={30} color="#007AFF" />
           </TouchableOpacity>
           
         </View>
@@ -8064,6 +8064,7 @@ export default function ChatsScreen() {
     },
     newChatButton: {
       padding: 10,
+      marginTop: 4,
     },
     loadingContainer: {
       flex: 1,
@@ -8175,7 +8176,8 @@ export default function ChatsScreen() {
       minHeight: 64,
     },
     backButton: {
-      padding: 6,
+      padding: 10,
+      marginTop: 4,
       marginRight: 6,
     },
     chatHeaderInfo: {
@@ -8189,7 +8191,8 @@ export default function ChatsScreen() {
       marginTop: 2,
     },
     searchTypeButton: {
-      padding: 8,
+      padding: 10,
+      marginTop: 4,
     },
     chatContainer: {
       flex: 1,
@@ -8757,6 +8760,7 @@ const styles = StyleSheet.create({
   },
   newChatButton: {
     padding: 10,
+    marginTop: 4,
   },
   loadingContainer: {
     flex: 1,
@@ -8868,7 +8872,8 @@ const styles = StyleSheet.create({
     minHeight: 64,
   },
   backButton: {
-    padding: 6,
+    padding: 10,
+    marginTop: 4,
     marginRight: 6,
   },
   chatHeaderInfo: {
@@ -8887,7 +8892,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   searchTypeButton: {
-    padding: 8,
+    padding: 10,
+    marginTop: 4,
   },
   chatContainer: {
     flex: 1,

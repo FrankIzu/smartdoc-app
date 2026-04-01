@@ -32,6 +32,11 @@ interface DraftItem {
 
 type SectionKey = 'today' | 'yesterday' | 'last30' | 'older';
 
+function stripExtension(name?: string): string {
+  if (!name) return 'Untitled Draft';
+  return name.replace(/\.[^./\\]+$/, '');
+}
+
 function getSectionKey(date: Date): SectionKey {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -203,8 +208,8 @@ export default function DraftsListScreen() {
       borderBottomColor: colors.border,
       backgroundColor: colors.card,
     },
-    backBtn: { padding: 8, marginRight: 4 },
-    headerBtn: { padding: 8, marginRight: 4 },
+    backBtn: { padding: 10, marginRight: 6, marginTop: 4 },
+    headerBtn: { padding: 10, marginRight: 6, marginTop: 4 },
     headerTitleWrap: { flex: 1, minWidth: 0 },
     headerTitle: { fontSize: 22, fontWeight: '700', color: colors.text },
     headerSubtitle: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
@@ -215,6 +220,15 @@ export default function DraftsListScreen() {
       width: 28,
       height: 28,
       borderRadius: 14,
+    },
+    headerNewButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#5AC8FA',
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      marginTop: 4,
     },
     offlineBanner: {
       flexDirection: 'row',
@@ -294,7 +308,7 @@ export default function DraftsListScreen() {
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
           <TouchableOpacity style={dynamicStyles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
+            <Ionicons name="arrow-back" size={28} color={colors.text} />
           </TouchableOpacity>
           <View style={dynamicStyles.headerTitleWrap}>
             <Text style={dynamicStyles.headerTitle}>Drafts</Text>
@@ -304,14 +318,14 @@ export default function DraftsListScreen() {
             {refreshing ? (
               <ActivityIndicator size="small" color={colors.primary || '#007AFF'} />
             ) : (
-              <Ionicons name="refresh-outline" size={24} color={colors.text} />
+              <Ionicons name="refresh-outline" size={28} color={colors.text} />
             )}
           </TouchableOpacity>
-          <TouchableOpacity style={dynamicStyles.newButton} onPress={handleNewDraft} disabled={creating}>
+          <TouchableOpacity style={dynamicStyles.headerNewButton} onPress={handleNewDraft} disabled={creating}>
             {creating ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Ionicons name="add" size={18} color="#fff" />
+              <Ionicons name="add" size={24} color="#fff" />
             )}
           </TouchableOpacity>
         </View>
@@ -398,7 +412,7 @@ export default function DraftsListScreen() {
                 >
                   <View style={dynamicStyles.itemContent}>
                     <Text style={dynamicStyles.itemTitle} numberOfLines={1}>
-                      {draft.original_filename || 'Untitled Draft'}
+                      {stripExtension(draft.original_filename)}
                     </Text>
                     <Text style={dynamicStyles.itemSubtitle} numberOfLines={1}>
                       {draft.json_data?.created_from ? `From: ${draft.json_data.created_from}` : ''}

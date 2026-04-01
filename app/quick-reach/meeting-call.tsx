@@ -940,7 +940,8 @@ export default function MeetingCallScreen() {
       borderBottomColor: colors.border,
     },
     backButton: {
-      padding: 8,
+      padding: 10,
+      marginTop: 4,
       marginRight: 8,
     },
     headerSpacer: {
@@ -952,7 +953,8 @@ export default function MeetingCallScreen() {
       color: colors.text,
     },
     refreshButton: {
-      padding: 8,
+      padding: 10,
+      marginTop: 4,
     },
     loadingContainer: {
       flex: 1,
@@ -1514,7 +1516,7 @@ export default function MeetingCallScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+            <Ionicons name="arrow-back" size={28} color="#007AFF" />
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
           <View style={dynamicStyles.headerSpacer} />
@@ -1541,7 +1543,7 @@ export default function MeetingCallScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
+            <Ionicons name="arrow-back" size={28} color="#007AFF" />
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
           <View style={dynamicStyles.headerSpacer} />
@@ -1558,7 +1560,7 @@ export default function MeetingCallScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+          <Ionicons name="arrow-back" size={28} color="#007AFF" />
         </TouchableOpacity>
         <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
         <TouchableOpacity
@@ -1566,7 +1568,7 @@ export default function MeetingCallScreen() {
           onPress={handleRefresh}
           disabled={refreshing}
         >
-          <Ionicons name="refresh" size={24} color="#007AFF" />
+          <Ionicons name="refresh" size={28} color="#007AFF" />
         </TouchableOpacity>
       </View>
 

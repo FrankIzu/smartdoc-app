@@ -59,6 +59,11 @@ function textToSimpleHtml(text: string): string {
   return paras.map(p => `<p>${p}</p>`).join('');
 }
 
+function stripExtension(name?: string): string {
+  if (!name) return 'Untitled Draft';
+  return name.replace(/\.[^./\\]+$/, '');
+}
+
 /** Base editor HTML with empty content; real content is injected in onLoadEnd to avoid escaping/timing issues. */
 function getRichEditorBaseHtml(bgColor: string, textColor: string): string {
   const safeBg = bgColor.replace(/[^a-zA-Z0-9#(),.% ]/g, '');
@@ -982,7 +987,7 @@ export default function DraftEditScreen() {
     }
   }, [draftId, shareLink, shareEmails, shareMessage]);
 
-  const displayFilename = filename && filename !== 'Untitled Draft' ? `${filename}.txt` : 'Untitled Draft.txt';
+  const displayFilename = stripExtension(filename);
   const roleOptions: { value: 'viewer' | 'member' | 'admin'; label: string }[] = [
     { value: 'viewer', label: 'Viewer' },
     { value: 'member', label: 'Member' },
@@ -1005,7 +1010,7 @@ export default function DraftEditScreen() {
       borderBottomColor: colors.border,
       backgroundColor: colors.card,
     },
-    backBtn: { padding: 8, marginRight: 4 },
+    backBtn: { padding: 10, marginRight: 6, marginTop: 4 },
     titleWrap: { flex: 1, minWidth: 0 },
     title: { fontSize: 17, fontWeight: '600', color: colors.text },
     titleInput: {
@@ -1016,7 +1021,7 @@ export default function DraftEditScreen() {
       margin: 0,
     },
     headerActions: { flexDirection: 'row', alignItems: 'center' },
-    headerBtn: { padding: 8 },
+    headerBtn: { padding: 10, marginTop: 4 },
     offlineBanner: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1226,7 +1231,7 @@ export default function DraftEditScreen() {
         <AnimatedHeaderContainer height={100}>
           <View style={dynamicStyles.header}>
             <TouchableOpacity style={dynamicStyles.backBtn} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={24} color={colors.text} />
+              <Ionicons name="arrow-back" size={28} color={colors.text} />
             </TouchableOpacity>
             <View style={dynamicStyles.titleWrap}>
               <TextInput
@@ -1250,7 +1255,7 @@ export default function DraftEditScreen() {
                   setShowShareModal(true);
                 }
               }}>
-                <Ionicons name="share-outline" size={22} color={colors.text} />
+                <Ionicons name="share-outline" size={26} color={colors.text} />
               </TouchableOpacity>
               <TouchableOpacity style={dynamicStyles.headerBtn} onPress={() => {
                 if (shareLink) {
@@ -1259,7 +1264,7 @@ export default function DraftEditScreen() {
                   setShowShareModal(true);
                 }
               }}>
-                <Ionicons name="person-add-outline" size={22} color={colors.text} />
+                <Ionicons name="person-add-outline" size={26} color={colors.text} />
               </TouchableOpacity>
               <TouchableOpacity style={dynamicStyles.headerBtn} onPress={async () => {
                 try {
@@ -1271,7 +1276,7 @@ export default function DraftEditScreen() {
                 );
                 if (!webViewRef.current) handleSave(contentHtmlRef.current || '', true);
               }} disabled={saving}>
-                {saving ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="save-outline" size={22} color={colors.text} />}
+                {saving ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="save-outline" size={26} color={colors.text} />}
               </TouchableOpacity>
             </View>
           </View>

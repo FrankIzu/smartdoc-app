@@ -161,7 +161,7 @@ export default function ProcessScanScreen() {
           onPress={handleClose}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="close" size={24} color="#fff" />
+          <Ionicons name="close" size={28} color="#fff" />
         </Pressable>
         <Text style={styles.headerTitle}>Review Scan</Text>
         <Pressable
@@ -259,10 +259,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#0f0f0f',
   },
   headerButton: {
-    width: 40,
-    height: 40,
+    width: 46,
+    height: 46,
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 4,
   },
   headerTitle: {
     fontSize: 17,

@@ -1970,7 +1970,8 @@ export default function QuickFilesScreen() {
       gap: 8,
     },
     headerButton: {
-      padding: 8,
+      padding: 10,
+      marginTop: 4,
     },
     refreshingButton: {
       opacity: 0.5,
@@ -2427,13 +2428,13 @@ export default function QuickFilesScreen() {
               <Text style={dynamicStyles.headerTitle}>Files</Text>
               <View style={dynamicStyles.headerActions}>
                 <TouchableOpacity style={dynamicStyles.headerButton}>
-                  <Ionicons name="cloud-upload" size={24} color="#007AFF" />
+                  <Ionicons name="cloud-upload" size={28} color="#007AFF" />
                 </TouchableOpacity>
                 <TouchableOpacity style={dynamicStyles.headerButton}>
-                  <Ionicons name="camera" size={24} color="#007AFF" />
+                  <Ionicons name="camera" size={28} color="#007AFF" />
                 </TouchableOpacity>
                 <TouchableOpacity style={dynamicStyles.headerButton}>
-                  <Ionicons name="images" size={24} color="#5856D6" />
+                  <Ionicons name="images" size={28} color="#5856D6" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -2467,7 +2468,7 @@ export default function QuickFilesScreen() {
             accessibilityLabel="Go back"
             accessibilityRole="button"
           >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
+              <Ionicons name="arrow-back" size={28} color={colors.text} />
           </TouchableOpacity>
           <View style={dynamicStyles.headerTitleContainer}>
             <Text style={dynamicStyles.headerTitle}>
@@ -2487,7 +2488,7 @@ export default function QuickFilesScreen() {
               accessibilityLabel="Upload files"
               accessibilityRole="button"
             >
-              <Ionicons name="document" size={24} color="#007AFF" />
+              <Ionicons name="document" size={28} color="#007AFF" />
             </TouchableOpacity>
             <TouchableOpacity
               style={dynamicStyles.headerButton}
@@ -2495,7 +2496,7 @@ export default function QuickFilesScreen() {
               accessibilityLabel="Scan document"
               accessibilityRole="button"
             >
-              <Ionicons name="camera" size={24} color="#007AFF" />
+              <Ionicons name="camera" size={28} color="#007AFF" />
             </TouchableOpacity>
             <TouchableOpacity
               style={dynamicStyles.headerButton}
@@ -2503,7 +2504,7 @@ export default function QuickFilesScreen() {
               accessibilityLabel="Upload from gallery"
               accessibilityRole="button"
             >
-              <Ionicons name="images" size={24} color="#5856D6" />
+              <Ionicons name="images" size={28} color="#5856D6" />
             </TouchableOpacity>
             <TouchableOpacity
               style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}

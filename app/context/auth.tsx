@@ -23,6 +23,8 @@ interface AuthContextType {
   forceReset: () => Promise<void>;
   loadRememberedCredentials: () => Promise<{ email: string; password: string; remember: boolean } | null>;
   refreshSession: () => Promise<void>;
+  /** Directly set authenticated user from external providers (Apple, Google) without calling checkAuth. */
+  setUserFromExternal: (userData: User, token?: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -39,6 +41,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []); // Empty dependency array ensures this only runs once
 
   // Handle Google OAuth backend redirect: grabdocs://login-success?token=... or grabdocs://login-error?...
+  // Uses setUserFromExternal (defined below) so storage + React state are set in one consistent call,
+  // matching the Apple sign-in path. Safe to reference here because this function is only called
+  // from useEffect/Linking listeners, well after all const declarations are initialised.
   const handleOAuthDeepLink = async (url: string) => {
     if (!url || !url.startsWith('grabdocs://')) return;
     try {
@@ -57,19 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             last_name: u.lastName ?? undefined,
             username: u.username ?? undefined,
           };
-          await secureStorage.setItem('user', JSON.stringify(userData));
-          
-          // Store JWT only when provided; otherwise rely on cookie-based session.
-          const authToken = (result as any).token;
-          if (authToken) {
-            await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, authToken);
-            console.log('✅ Google OAuth deep link: JWT token stored');
-          } else {
-            await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
-            console.log('ℹ️ Google OAuth deep link: no JWT returned, relying on cookie session');
-          }
-          
-          setUser(userData);
+          await setUserFromExternal(userData, (result as any).token || undefined);
           console.log('✅ Google OAuth deep link: session established');
         }
       } else if (parsed.hostname === 'login-error') {
@@ -389,8 +382,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await checkSession();
   };
 
+  // Directly establishes an authenticated session from an external provider (Apple, Google).
+  // Bypasses checkAuth so a missing or cookie-only session cannot bounce the user back to login.
+  const setUserFromExternal = async (userData: User, token?: string) => {
+    try {
+      await secureStorage.setItem('user', JSON.stringify(userData));
+      if (token) {
+        await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
+      } else {
+        await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+      }
+      setUser(userData);
+      console.log('✅ setUserFromExternal: session established for', userData.email);
+    } catch (error) {
+      console.error('❌ setUserFromExternal failed:', error);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, forceReset, loadRememberedCredentials, refreshSession }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, forceReset, loadRememberedCredentials, refreshSession, setUserFromExternal }}>
       {children}
     </AuthContext.Provider>
   );

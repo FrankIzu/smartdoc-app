@@ -1876,8 +1876,8 @@ export default function AnalyticsDashboard() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={28} color="#333" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Financials</Text>
           <View style={styles.placeholder} />
@@ -1896,12 +1896,12 @@ export default function AnalyticsDashboard() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={28} color="#333" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Financials</Text>
-          <TouchableOpacity onPress={() => loadAnalytics()}>
-            <Ionicons name="refresh" size={24} color="#007AFF" />
+          <TouchableOpacity style={styles.headerButton} onPress={() => loadAnalytics()}>
+            <Ionicons name="refresh" size={28} color="#007AFF" />
           </TouchableOpacity>
         </View>
         <View style={styles.errorContainer}>
@@ -1985,16 +1985,16 @@ export default function AnalyticsDashboard() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+        <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={28} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Financials</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={handleShareReport} style={styles.shareButton}>
-            <Ionicons name="share-outline" size={24} color="#10B981" />
+            <Ionicons name="share-outline" size={28} color="#10B981" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={onRefresh}>
-            <Ionicons name="refresh" size={24} color="#007AFF" />
+          <TouchableOpacity style={styles.headerButton} onPress={onRefresh}>
+            <Ionicons name="refresh" size={28} color="#007AFF" />
           </TouchableOpacity>
         </View>
       </View>
@@ -3379,8 +3379,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  headerButton: {
+    padding: 10,
+    marginTop: 4,
+  },
   shareButton: {
-    padding: 4,
+    padding: 10,
+    marginTop: 4,
   },
   placeholder: {
     width: 24,

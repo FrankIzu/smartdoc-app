@@ -1111,7 +1111,8 @@ function DashboardScreen() {
     alignItems: 'center',
   },
   headerButton: {
-    padding: 4,
+    padding: 8,
+    marginTop: 4,
   },
   headerAvatar: {
     width: 34,
@@ -1325,7 +1326,7 @@ function DashboardScreen() {
                   accessibilityRole="button"
                 >
                   <View style={{ position: 'relative' }}>
-                    <Ionicons name="notifications-outline" size={26} color="#007AFF" />
+                    <Ionicons name="notifications-outline" size={30} color="#007AFF" />
                     {stats.unreadNotifications > 0 ? (
                       <View style={dynamicStyles.headerBadge}>
                         <Text style={dynamicStyles.headerBadgeText}>{String(stats.unreadNotifications)}</Text>
@@ -1337,7 +1338,7 @@ function DashboardScreen() {
                   style={dynamicStyles.headerButton}
                   onPress={() => router.push('/(tabs)/help')}
                 >
-                  <Ionicons name="help-circle-outline" size={26} color="#007AFF" />
+                  <Ionicons name="help-circle-outline" size={30} color="#007AFF" />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={dynamicStyles.headerButton}
@@ -1352,7 +1353,7 @@ function DashboardScreen() {
                         </View>
                       );
                     }
-                    return <Ionicons name="person-circle" size={34} color="#007AFF" />;
+                    return <Ionicons name="person-circle" size={38} color="#007AFF" />;
                   })()}
                 </TouchableOpacity>
               </>

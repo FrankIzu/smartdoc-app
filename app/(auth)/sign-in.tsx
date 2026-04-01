@@ -40,7 +40,7 @@ export default function SignInScreen() {
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
   // Note: We use local isSubmitting for the button so the screen doesn't unmount on login (auth loading would hide entire app)
-  const { signIn, loading: authLoading, refreshSession } = useAuth();
+  const { signIn, loading: authLoading, setUserFromExternal } = useAuth();
   const loading = authLoading || isSubmitting;
   const { loginWithBiometric } = useEnhanced2FAAuth();
 
@@ -158,20 +158,25 @@ export default function SignInScreen() {
           return;
         }
         
-        // If login fails for other reasons, check if user needs OTP verification
+        // If login fails for other reasons, check if user needs OTP verification.
+        // Capture the original login error now so we can fall back to it if OTP also fails.
+        const originalLoginError = loginError.message || 'Invalid username or password';
         console.log('Initial login failed, checking if OTP verification is needed');
         
         // Step 2: Check if user needs OTP verification
         const shouldUseOtp = await checkUserForOtpVerification(username);
         
         if (shouldUseOtp) {
-          // Request OTP - this will navigate to OTP screen on success
-          await requestOtpForUser(username, password, rememberDevice);
+          // Attempt OTP flow. If OTP request fails (e.g. "Phone number is required"),
+          // show the original login error instead of the internal OTP error.
+          const otpSent = await requestOtpForUser(username, password, rememberDevice);
+          if (!otpSent) {
+            console.log('❌ OTP request failed - showing original login error');
+            setError(originalLoginError);
+          }
         } else {
-          // If no OTP needed, show the login error and STAY on login screen (do not redirect)
-          const errorMessage = loginError.message || 'Invalid username or password';
-          console.log('❌ Login failed - showing error on login screen:', errorMessage);
-          setError(errorMessage);
+          console.log('❌ Login failed - showing error on login screen:', originalLoginError);
+          setError(originalLoginError);
           return;
         }
       }
@@ -207,12 +212,14 @@ export default function SignInScreen() {
     }
   };
 
-  // Request OTP for the user (password needed so after verify-otp we can POST /login with otpVerified: true)
+  // Request OTP for the user (password needed so after verify-otp we can POST /login with otpVerified: true).
+  // Returns true if OTP was sent and the user was navigated to the verification screen,
+  // false if the OTP request failed (caller is responsible for showing an error).
   const requestOtpForUser = async (
     username: string,
     password: string,
     rememberDevice: boolean
-  ) => {
+  ): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/mobile/auth/request-otp`, {
         method: 'POST',
@@ -264,12 +271,14 @@ export default function SignInScreen() {
             rememberDevice: rememberDevice ? 'true' : 'false',
           }
         });
+        return true;
       } else {
-        setError(data.message || 'Failed to send verification code');
+        console.warn('OTP request failed:', data.message);
+        return false;
       }
     } catch (error) {
       console.error('Error requesting OTP:', error);
-      setError('Failed to send verification code. Please try again.');
+      return false;
     }
   };
 
@@ -325,10 +334,6 @@ export default function SignInScreen() {
       const result = await appleAuthService.signInWithAppleEnhanced();
       
       if (result.success && result.user) {
-        // Format user data to match auth context expectations
-        const { secureStorage } = await import('../../utils/storage');
-        
-        // Format user data using consistent utility function
         const backendUser = result.user;
         const fullName = backendUser.first_name || backendUser.firstName
           ? `${backendUser.first_name || backendUser.firstName || ''} ${backendUser.last_name || backendUser.lastName || ''}`.trim()
@@ -341,39 +346,21 @@ export default function SignInScreen() {
           name: displayName,
         };
         
-        // Validate user data before storing
         if (!userData.id) {
           console.error('Invalid user data from Apple sign-in: missing ID', backendUser);
           setError('Failed to retrieve user information. Please try again.');
           return;
         }
         
-        // Email might be null if user chose to hide it - use a placeholder
+        // Apple only returns email on first consent — use a stable placeholder when hidden.
         if (!userData.email) {
           userData.email = `apple-${userData.id}@grabdocs.app`;
-          console.warn('Apple user email hidden, using placeholder:', userData.email);
         }
         
-        console.log('💾 Storing Apple sign-in user data:', userData);
-        await secureStorage.setItem('user', JSON.stringify(userData));
+        // Directly set user in auth context — bypasses checkAuth so a cookie/token
+        // hiccup cannot bounce the user back to the login screen.
+        await setUserFromExternal(userData, result.token || undefined);
         
-        // Store JWT only when backend returns one; otherwise rely on cookie session.
-        const authToken = result.token;
-        if (authToken) {
-          await secureStorage.setItem('auth_token', authToken);
-          console.log('✅ Apple Sign-In: JWT token stored');
-        } else {
-          await secureStorage.removeItem('auth_token');
-          console.log('ℹ️ Apple Sign-In: no JWT returned, relying on cookie session');
-        }
-        
-        // Refresh the auth context to pick up the new user
-        await refreshSession();
-        
-        // Small delay to ensure state propagation
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Navigate to main app
         router.replace('/(tabs)');
       } else {
         if (result.requires2FA) {

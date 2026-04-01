@@ -2912,48 +2912,47 @@ export default function MeetingDetailsScreen() {
                 }}
               >
         <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {/* Floating close – top center, same row as native player controls bar */}
-            <View style={{ position: 'absolute', top: (insets.top || 12) + 4, left: 0, right: 0, alignItems: 'center', zIndex: 20 }}>
-              <TouchableOpacity
-                onPress={async () => {
-                  setShowVideoPlayer(false);
-                  if (videoRef) {
-                    try {
-                      const status = await videoRef.getStatusAsync();
-                      if (status.isLoaded) {
-                        await videoRef.unloadAsync();
-                      }
-                    } catch (error) {
-                      // Ignore errors when closing
+          {/* Close button in its own row above the video — avoids native-control touch interception */}
+          <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+            <TouchableOpacity
+              onPress={async () => {
+                setShowVideoPlayer(false);
+                if (videoRef) {
+                  try {
+                    const status = await videoRef.getStatusAsync();
+                    if (status.isLoaded) {
+                      await videoRef.unloadAsync();
                     }
+                  } catch (error) {
+                    // Ignore errors when closing
                   }
-                  setSelectedVideoUrl(null);
-                  setOriginalVideoUrl(null);
-                  setVideoDirectUrl(null);
-                  setHasTriedVideoFallback(false);
-                  setIsVideoFallbackInProgress(false);
-                  setVideoLoading(false);
-                  setVideoBuffering(false);
-                  hasShownVideoErrorRef.current = false;
-                  currentVideoStreamUrlRef.current = null;
-                  if (videoBufferingCheckRef.current) {
-                    clearInterval(videoBufferingCheckRef.current);
-                    videoBufferingCheckRef.current = null;
-                  }
-                }}
-                style={{
-                  backgroundColor: 'rgba(0,0,0,0.5)',
-                  borderRadius: 22,
-                  padding: 10,
-                  paddingHorizontal: 12,
-                }}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              >
-                <Ionicons name="close" size={24} color="#fff" />
-              </TouchableOpacity>
-            </View>
-
+                }
+                setSelectedVideoUrl(null);
+                setOriginalVideoUrl(null);
+                setVideoDirectUrl(null);
+                setHasTriedVideoFallback(false);
+                setIsVideoFallbackInProgress(false);
+                setVideoLoading(false);
+                setVideoBuffering(false);
+                hasShownVideoErrorRef.current = false;
+                currentVideoStreamUrlRef.current = null;
+                if (videoBufferingCheckRef.current) {
+                  clearInterval(videoBufferingCheckRef.current);
+                  videoBufferingCheckRef.current = null;
+                }
+              }}
+              style={{
+                backgroundColor: 'rgba(255,255,255,0.15)',
+                borderRadius: 22,
+                padding: 10,
+                paddingHorizontal: 12,
+              }}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="close" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             {videoLoading && !selectedVideoUrl ? (
               <View style={{ alignItems: 'center', width: '100%', paddingHorizontal: 40 }}>
                 <View style={{ 
@@ -3231,7 +3230,7 @@ export default function MeetingDetailsScreen() {
         <SafeAreaView style={{ flex: 1, backgroundColor: themeColors.background }}>
           <View style={{ flex: 1, padding: 20 }}>
             {/* Close center top; title below so it doesn't cover progress/play controls */}
-            <View style={{ marginBottom: 24, paddingTop: Math.max(insets.top - 20, 8), alignItems: 'center' }}>
+            <View style={{ marginBottom: 24, paddingTop: 0, alignItems: 'center' }}>
               <TouchableOpacity
                 onPress={async () => {
                   if (audioSound) {
