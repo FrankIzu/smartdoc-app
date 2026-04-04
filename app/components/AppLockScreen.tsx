@@ -2,6 +2,7 @@ import { BlurView } from 'expo-blur';
 import * as LocalAuthentication from 'expo-local-authentication';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+    InteractionManager,
     KeyboardAvoidingView,
     Platform,
     StyleSheet,
@@ -19,6 +20,7 @@ export default function AppLockScreen() {
   const insets = useSafeAreaInsets();
   const {
     unlockWithBiometric,
+    lockAfterMinutes,
     // unlockWithPin, resetAppLockAndUnlock, hasPinSet - GrabDocs PIN hidden; unlock via biometric + device passcode only
     biometricAvailable,
   } = useAppLock();
@@ -26,6 +28,8 @@ export default function AppLockScreen() {
   // const [showPinInput, setShowPinInput] = useState(false);
   // const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  /** After an automatic prompt fails or is dismissed, show the manual unlock button. */
+  const [showManualUnlockButton, setShowManualUnlockButton] = useState(false);
   // Button label is generic so it stays correct when system shows passcode instead (e.g. Expo Go)
   const [unlockButtonLabel, setUnlockButtonLabel] = useState('Unlock');
 
@@ -42,6 +46,42 @@ export default function AppLockScreen() {
       }
     })();
   }, [biometricAvailable]);
+
+  // Trigger biometric as soon as the lock screen is shown; button appears only if that attempt fails.
+  useEffect(() => {
+    if (!biometricAvailable) {
+      setShowManualUnlockButton(false);
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const interactionHandle = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        setError('');
+        const result = await unlockWithBiometric();
+        if (cancelled) return;
+        if (result.success) return;
+        setShowManualUnlockButton(true);
+        const userCancelled =
+          result.error === 'user_cancel' ||
+          result.error === 'system_cancel' ||
+          result.error === 'app_cancel';
+        if (!userCancelled) {
+          setError('Try again or use your device passcode.');
+        }
+      }, Platform.OS === 'android' ? 280 : 120);
+    });
+
+    return () => {
+      cancelled = true;
+      interactionHandle.cancel();
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    };
+  }, [biometricAvailable, unlockWithBiometric]);
 
   const handleBiometric = useCallback(async () => {
     setError('');
@@ -109,13 +149,17 @@ export default function AppLockScreen() {
         <View style={[styles.overlay, dynamicStyles.overlay, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 }]}>
           <Text style={[styles.title, dynamicStyles.title]}>Unlock GrabDocs</Text>
           <Text style={[styles.subtitle, dynamicStyles.subtitle]}>
-            App locked after 10 minutes in background. Use the button below to unlock.
+            {biometricAvailable
+              ? showManualUnlockButton
+                ? 'Use the button below if the prompt did not appear, or to try again.'
+                : `App locked after ${lockAfterMinutes} minutes in background. Confirm your identity when prompted.`
+              : `App locked after ${lockAfterMinutes} minutes in background.`}
           </Text>
 
           {error ? <Text style={[styles.error, dynamicStyles.error]}>{error}</Text> : null}
 
           <View style={styles.actions}>
-            {biometricAvailable && (
+            {biometricAvailable && showManualUnlockButton && (
               <TouchableOpacity
                 style={[styles.primaryButton, dynamicStyles.button]}
                 onPress={handleBiometric}

@@ -1924,8 +1924,9 @@ export default function UserChatScreen() {
                   value={newMessage}
                   onChangeText={handleTyping}
                   multiline
-                  blurOnSubmit={false}
-                  returnKeyType="default"
+                  submitBehavior="submit"
+                  returnKeyType="send"
+                  onSubmitEditing={handleSendMessage}
                   maxLength={4000}
                   onContentSizeChange={(event) => {
                     const { height } = event.nativeEvent.contentSize;
@@ -2078,8 +2079,9 @@ export default function UserChatScreen() {
                   value={newMessage}
                   onChangeText={handleTyping}
                   multiline
-                  blurOnSubmit={false}
-                  returnKeyType="default"
+                  submitBehavior="submit"
+                  returnKeyType="send"
+                  onSubmitEditing={handleSendMessage}
                   maxLength={4000}
                   onContentSizeChange={(event) => {
                     const { height } = event.nativeEvent.contentSize;

@@ -121,6 +121,35 @@ interface ChatMessage {
     name: string;
     type: string;
   };
+  /** Document-chat preview pipeline: show status row + dots (parity with web SSE). */
+  refining_answer_pending?: boolean;
+  main_search_pending?: boolean;
+}
+
+/** 1→2→3 visible dots (~400ms); uses Views so Android always draws (period+fontWeight can vanish). */
+function RefiningStatusDots({ color }: { color: string }) {
+  const [dotCount, setDotCount] = useState(1);
+  useEffect(() => {
+    const t = setInterval(() => setDotCount((d) => (d % 3) + 1), 400);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 6 }}>
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 2.5,
+            marginHorizontal: 3,
+            backgroundColor: color,
+            opacity: i < dotCount ? 0.55 : 0.2,
+          }}
+        />
+      ))}
+    </View>
+  );
 }
 
 interface Workspace {
@@ -3742,6 +3771,8 @@ export default function ChatsScreen() {
             is_preview: isPreviewPhaseRef.current,
             is_own_message: false,
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
+            refining_answer_pending: newMessages[i].refining_answer_pending,
+            main_search_pending: newMessages[i].main_search_pending,
           };
           streamingMessageIndexRef.current = i;
         } else {
@@ -3814,6 +3845,8 @@ export default function ChatsScreen() {
             ...(typeof mid === 'number' && mid > 0 ? { id: mid } : {}),
             content: keepContent,
             is_preview: false,
+            refining_answer_pending: false,
+            main_search_pending: false,
             is_own_message: false,
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             citations: citationsFromStreamRef.current ?? undefined,
@@ -3838,6 +3871,8 @@ export default function ChatsScreen() {
             is_own_message: false,
             created_at: new Date().toISOString(),
             is_preview: false,
+            refining_answer_pending: false,
+            main_search_pending: false,
             citations: citationsFromStreamRef.current ?? undefined,
             ...(chartFromStreamRef.current
               ? {
@@ -4154,7 +4189,9 @@ export default function ChatsScreen() {
                 ...newMessages[assistantMessageIndex],
                 content: data.content || 'Sorry, there was an error processing your request. Please try again.',
                 is_own_message: false,
-                sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }
+                sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
+                refining_answer_pending: false,
+                main_search_pending: false,
               };
             }
             return newMessages;
@@ -4215,9 +4252,50 @@ export default function ChatsScreen() {
           break;
         }
 
+        case 'main_search_pending': {
+          const idx = pollingAssistantIndexRef.current;
+          const bufLen = contentBufferRef.current.length;
+          if (bufLen > 0 && displayedCharsRef.current < bufLen) {
+            displayedCharsRef.current = bufLen;
+          }
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const rowId = streamingAssistantRowIdRef.current;
+            let i = rowId != null ? newMessages.findIndex((m) => m.id === rowId) : -1;
+            if (i < 0) i = idx;
+            if (i >= 0 && newMessages[i] && !newMessages[i].is_own_message) {
+              newMessages[i] = {
+                ...newMessages[i],
+                content:
+                  bufLen > 0 ? contentBufferRef.current : newMessages[i].content,
+                refining_answer_pending: true,
+                main_search_pending: true,
+                is_preview: isPreviewPhaseRef.current,
+              };
+            }
+            return newMessages;
+          });
+          break;
+        }
+
         case 'preview_complete':
           console.log('✅ Preview complete - phase transition detected');
           console.log('📊 Preview content length:', data.preview_length || contentBufferRef.current.length);
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const rowId = streamingAssistantRowIdRef.current;
+            let i = rowId != null ? newMessages.findIndex((m) => m.id === rowId) : -1;
+            if (i < 0) i = pollingAssistantIndexRef.current;
+            if (i >= 0 && newMessages[i] && !newMessages[i].is_own_message) {
+              newMessages[i] = {
+                ...newMessages[i],
+                refining_answer_pending: true,
+                main_search_pending: false,
+                is_preview: isPreviewPhaseRef.current,
+              };
+            }
+            return newMessages;
+          });
           break;
 
         case 'refinement_chunk': {
@@ -4270,14 +4348,18 @@ export default function ChatsScreen() {
                   content: initialDisplayText,
                   sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
                   is_own_message: false,
-                  created_at: new Date().toISOString()
+                  created_at: new Date().toISOString(),
+                  refining_answer_pending: false,
+                  main_search_pending: false,
                 };
                 newMessages.push(assistantMessage);
                 console.log(`🔄 Created message ${assistantMessageIndex} for refinement with initial content`);
               } else {
                 newMessages[assistantMessageIndex] = {
                   ...newMessages[assistantMessageIndex],
-                  content: initialDisplayText
+                  content: initialDisplayText,
+                  refining_answer_pending: false,
+                  main_search_pending: false,
                 };
                 console.log(`🔄 Updated message ${assistantMessageIndex} with initial refinement content`);
               }
@@ -4538,7 +4620,8 @@ export default function ChatsScreen() {
             content: '', // Fake streaming from file will populate this
             sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
             is_own_message: false,
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            is_preview: true,
           };
         // CRITICAL: Set assistant index SYNCHRONOUSLY. Previously assistantMessageIndex was set inside
         // setMessages — that callback runs async, so pollingAssistantIndexRef stayed at messages.length
@@ -6870,6 +6953,7 @@ export default function ChatsScreen() {
     const msgLabel = isOwnMessage
       ? `Your message${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`
       : `Message from ${item.sender?.username || 'assistant'}${preview ? `: ${preview}${preview.length >= 80 ? '…' : ''}` : ''}`;
+    const refiningStatusColor = colors.primary ?? '#007AFF';
 
     // User messages always have bubbles (right); others on left
     if (isOwnMessage) {
@@ -6983,6 +7067,29 @@ export default function ChatsScreen() {
                           View chart: {item.chartTitle || 'Chart'}
                         </Text>
                       </TouchableOpacity>
+                    ) : null}
+                    {item.refining_answer_pending &&
+                    hasContent &&
+                    item.is_preview !== false ? (
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          marginTop: 10,
+                          flexWrap: 'wrap',
+                        }}
+                        accessibilityRole="text"
+                        accessibilityLabel={
+                          item.main_search_pending
+                            ? 'Searching your library'
+                            : 'Refining response'
+                        }
+                      >
+                        <Text style={{ color: refiningStatusColor, fontSize: 15 }}>
+                          {item.main_search_pending ? 'Searching your library' : 'Refining response'}
+                        </Text>
+                        <RefiningStatusDots color={refiningStatusColor} />
+                      </View>
                     ) : null}
                   </>
                 ) : null}
@@ -7707,8 +7814,9 @@ export default function ChatsScreen() {
               placeholder="Ask questions from your documents"
               placeholderTextColor={colors.textSecondary}
               multiline
-              blurOnSubmit={false}
-              returnKeyType="default"
+              submitBehavior="submit"
+              returnKeyType="send"
+              onSubmitEditing={() => (sendingMessage ? stopProcessing() : sendMessage())}
               maxLength={1000}
               onContentSizeChange={(event) => {
                 const { height } = event.nativeEvent.contentSize;

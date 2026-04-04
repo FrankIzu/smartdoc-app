@@ -2129,6 +2129,8 @@ class ApiService {
                     onChunk('status', data);
                   } else if (data.type === 'instant_preview') {
                     onChunk('instant_preview', data);
+                  } else if (data.type === 'main_search_pending') {
+                    onChunk('main_search_pending', data);
                   } else if (data.type === 'preview_complete') {
                     onChunk('preview_complete', data);
                   } else if (data.type === 'preview_chunk' || data.type === 'chunk') {
@@ -2197,6 +2199,8 @@ class ApiService {
               
               if (data.type === 'instant_preview') {
                 onChunk('instant_preview', data);
+              } else if (data.type === 'main_search_pending') {
+                onChunk('main_search_pending', data);
               } else if (data.type === 'preview_chunk' || data.type === 'chunk') {
                 onChunk('preview_chunk', {
                   content: data.content || data.response || '',
@@ -2498,6 +2502,9 @@ class ApiService {
       let previewContentLength = 0; // Track where preview ends
       let refinementContentReceived = false; // Track if we've received any refinement content
       let previewContentReceived = false; // Track if we've actually received any preview content
+      /** Job-store gap UX (library search vs refining); mirrors SSE main_search_pending / preview_complete */
+      let prevJobRap = false;
+      let prevJobMsp = false;
       const pollInterval = 200; // Poll every 200ms for faster preview capture
       const initialPollInterval = 100; // Poll every 100ms for first few polls to catch preview quickly
       const maxPollTime = 300000; // Max 5 minutes
@@ -2596,9 +2603,27 @@ class ApiService {
             preview_started,
             is_preview_phase,
             preview_cursor_reset,
-            refinement_cursor_reset
+            refinement_cursor_reset,
+            refining_answer_pending: jobRap,
+            main_search_pending: jobMsp,
           } = chunkResponse;
           const accumulatedSnapshotBeforeChunk = accumulatedContent;
+
+          const rap = jobRap === true;
+          const msp = jobMsp === true;
+          if (onChunk && status !== 'error' && status !== 'cancelled') {
+            if (rap && msp && !(prevJobRap && prevJobMsp)) {
+              onChunk('main_search_pending', { type: 'main_search_pending' });
+            }
+            if (rap && !msp && !(prevJobRap && !prevJobMsp)) {
+              onChunk('preview_complete', {
+                type: 'preview_complete',
+                preview_length: accumulatedContent.length,
+              });
+            }
+            prevJobRap = rap;
+            prevJobMsp = msp;
+          }
 
           // Handle status changes
           if (status === 'cancelled') {
