@@ -35,6 +35,7 @@ import Toast from 'react-native-toast-message';
 import { io, Socket } from 'socket.io-client';
 import AssistantMessageBody from '../../components/AssistantMessageBody';
 import ChartImageModal from '../../components/ChartImageModal';
+import InAppWebViewModal, { shouldUseExternalLinking } from '../../components/InAppWebViewModal';
 import SermonViewerModal from '../../components/SermonViewerModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useLimitError } from '../../contexts/LimitErrorContext';
@@ -43,6 +44,7 @@ import { apiService as api } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import type { ChatHistory } from '../../types';
+import { parseGrabDocsFileViewUrl } from '../../utils/chatFileLinks';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 import { screenCache } from '../../utils/screenCache';
@@ -398,12 +400,18 @@ export default function ChatsScreen() {
     paragraph: number;
     paragraphEnd?: number;
     title?: string;
-  }>({ visible: false, fileId: 0, paragraph: 1 });
+    pdfUri?: string | null;
+    defaultTab?: 'text' | 'pdf';
+  }>({ visible: false, fileId: 0, paragraph: 1, defaultTab: 'text' });
   const [chartModal, setChartModal] = useState<{
     visible: boolean;
     chartFileId: number;
     title?: string;
   }>({ visible: false, chartFileId: 0 });
+  const [webPopup, setWebPopup] = useState<{ visible: boolean; url: string; title?: string }>({
+    visible: false,
+    url: '',
+  });
   const lastStreamedMessageIndexRef = useRef<number | null>(null); // Track which message index was last streamed
   const lastStreamCompleteTimeRef = useRef<number>(0); // Track when streaming last completed
   
@@ -7039,14 +7047,43 @@ export default function ChatsScreen() {
                             paragraph,
                             paragraphEnd,
                             title,
+                            pdfUri: undefined,
+                            defaultTab: 'text',
                           })
                         }
                         onOpenLink={(url) => {
+                          const fileLink = parseGrabDocsFileViewUrl(url);
+                          if (fileLink) {
+                            setSermonModal({
+                              visible: true,
+                              fileId: fileLink.fileId,
+                              paragraph: 0,
+                              title: 'Document',
+                              pdfUri: fileLink.pdfUri ?? null,
+                              defaultTab: 'pdf',
+                            });
+                            return;
+                          }
                           if (url.startsWith('/')) {
                             router.push(url as any);
-                          } else {
-                            Linking.openURL(url);
+                            return;
                           }
+                          if (shouldUseExternalLinking(url)) {
+                            Linking.openURL(url);
+                            return;
+                          }
+                          const trimmed = url.trim();
+                          if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+                            let linkTitle = 'Link';
+                            try {
+                              linkTitle = new URL(trimmed).hostname;
+                            } catch {
+                              /* keep default */
+                            }
+                            setWebPopup({ visible: true, url: trimmed, title: linkTitle });
+                            return;
+                          }
+                          Linking.openURL(url);
                         }}
                       />
                     ) : (
@@ -8811,6 +8848,8 @@ export default function ChatsScreen() {
         paragraph={sermonModal.paragraph}
         paragraphEnd={sermonModal.paragraphEnd}
         title={sermonModal.title}
+        pdfUri={sermonModal.pdfUri}
+        defaultTab={sermonModal.defaultTab}
         onClose={() => setSermonModal((s) => ({ ...s, visible: false }))}
       />
       <ChartImageModal
@@ -8818,6 +8857,12 @@ export default function ChatsScreen() {
         chartFileId={chartModal.chartFileId}
         title={chartModal.title}
         onClose={() => setChartModal((c) => ({ ...c, visible: false }))}
+      />
+      <InAppWebViewModal
+        visible={webPopup.visible}
+        url={webPopup.url}
+        title={webPopup.title}
+        onClose={() => setWebPopup((w) => ({ ...w, visible: false }))}
       />
       {/* Search Type Menu Modal */}
       <Modal
