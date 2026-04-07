@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
+import { useDelayedOfflineBanner } from '../../hooks/useDelayedOfflineBanner';
 import {
     ActivityIndicator,
     Alert,
@@ -13,6 +14,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { toAlertMessage } from '../../utils/alertUtils';
@@ -67,12 +69,14 @@ export default function DraftsListScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const colors = useThemeColors();
+  const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
   const [drafts, setDrafts] = useState<DraftItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isOffline, setIsOffline] = useState(false);
+  const { offlineBannerVisible, showOfflineBannerAfterDelay } = useDelayedOfflineBanner(isOffline);
 
   const flushPendingCreates = useCallback(async (): Promise<void> => {
     const pendingCreates = await draftsCache.getPendingCreates();
@@ -170,6 +174,7 @@ export default function DraftsListScreen() {
     } catch (e: any) {
       if (isNetworkError(e)) {
         setIsOffline(true);
+        showOfflineBannerAfterDelay();
         // Already showing cached data — no additional alert needed
         if (!cached || cached.length === 0) {
           setDrafts([]);
@@ -182,7 +187,7 @@ export default function DraftsListScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user, flushAllPendingRenames, flushAllPendingSaves, flushPendingCreates]);
+  }, [user, flushAllPendingRenames, flushAllPendingSaves, flushPendingCreates, showOfflineBannerAfterDelay]);
 
   useFocusEffect(
     useCallback(() => {
@@ -267,6 +272,7 @@ export default function DraftsListScreen() {
     } catch (e: any) {
       if (isNetworkError(e)) {
         setIsOffline(true);
+        showOfflineBannerAfterDelay();
         const localId = -Date.now();
         const nowIso = new Date().toISOString();
         const localDraft: CachedDraftMeta = {
@@ -435,7 +441,7 @@ export default function DraftsListScreen() {
             )}
           </TouchableOpacity>
         </View>
-        {isOffline && (
+        {offlineBannerVisible && (
           <View style={dynamicStyles.offlineBanner}>
             <Ionicons name="cloud-offline-outline" size={16} color="#fff" />
             <Text style={dynamicStyles.offlineBannerText}>Offline — showing cached notes</Text>
@@ -471,6 +477,7 @@ export default function DraftsListScreen() {
         <ScrollView
           contentContainerStyle={dynamicStyles.empty}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          {...scrollRestoresHeaderProps}
         >
           <Ionicons name="create-outline" size={56} color={colors.textSecondary} style={dynamicStyles.emptyIcon} />
           <Text style={dynamicStyles.emptyTitle}>No drafts yet</Text>
@@ -493,6 +500,7 @@ export default function DraftsListScreen() {
         <ScrollView
           contentContainerStyle={dynamicStyles.empty}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          {...scrollRestoresHeaderProps}
         >
           <Ionicons name="search-outline" size={56} color={colors.textSecondary} style={dynamicStyles.emptyIcon} />
           <Text style={dynamicStyles.emptyTitle}>No drafts found</Text>
@@ -503,6 +511,7 @@ export default function DraftsListScreen() {
           style={dynamicStyles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           showsVerticalScrollIndicator={false}
+          {...scrollRestoresHeaderProps}
         >
           {grouped.map(({ key, label, items }) => (
             <View key={key}>

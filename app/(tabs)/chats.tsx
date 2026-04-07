@@ -38,6 +38,7 @@ import ChartImageModal from '../../components/ChartImageModal';
 import InAppWebViewModal, { shouldUseExternalLinking } from '../../components/InAppWebViewModal';
 import SermonViewerModal from '../../components/SermonViewerModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useLimitError } from '../../contexts/LimitErrorContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
@@ -341,6 +342,7 @@ export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const { user: authUser } = useAuth();
   const { showLimitError } = useLimitError();
+  const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
 
   const [chats, setChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with ChatGD Assistant
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
@@ -7504,6 +7506,7 @@ export default function ChatsScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           style={dynamicStyles.chatsList}
+          {...scrollRestoresHeaderProps}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ flexGrow: 1 }}
           onTouchStart={() => setShowQuickChatTypes(false)}
@@ -7638,6 +7641,7 @@ export default function ChatsScreen() {
               ref={messagesRef}
               data={flatMessageData}
               extraData={messages}
+              {...scrollRestoresHeaderProps}
               accessibilityRole="list"
               accessibilityLabel="Chat messages"
               renderItem={({ item: flatItem }) =>
@@ -7769,6 +7773,7 @@ export default function ChatsScreen() {
                   <FlatList
                     data={mentionResults}
                     keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
+                    {...scrollRestoresHeaderProps}
                     renderItem={({ item }) => (
                       <TouchableOpacity
                         style={dynamicStyles.mentionDropdownItem}

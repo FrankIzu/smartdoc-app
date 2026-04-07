@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useAuth } from '../context/auth';
@@ -437,6 +438,7 @@ export function NotificationsInboxContent({
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
+        {...scrollRestoresHeaderProps}
       >
         {notifications.length === 0 ? (
           <View style={dynamicStyles.empty}>

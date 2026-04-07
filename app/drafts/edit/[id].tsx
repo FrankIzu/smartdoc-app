@@ -10,6 +10,8 @@ import {
     Keyboard,
     KeyboardAvoidingView,
     Modal,
+    NativeScrollEvent,
+    NativeSyntheticEvent,
     Platform,
     ScrollView,
     StyleSheet,
@@ -24,7 +26,11 @@ import 'react-native-url-polyfill/auto';
 import { WebView } from 'react-native-webview';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../../../constants/Config';
-import { useHeaderVisibility } from '../../../contexts/HeaderVisibilityContext';
+import {
+  shouldRestoreHeaderAfterScrollToEdge,
+  useHeaderVisibility,
+} from '../../../contexts/HeaderVisibilityContext';
+import { useDelayedOfflineBanner } from '../../../hooks/useDelayedOfflineBanner';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiClient } from '../../../services/api';
 import { toAlertMessage } from '../../../utils/alertUtils';
@@ -64,6 +70,9 @@ function stripExtension(name?: string): string {
   if (!name) return 'Untitled Draft';
   return name.replace(/\.[^./\\]+$/, '');
 }
+
+/** Allowed font sizes (px) for the rich-text toolbar — applied as inline `font-size` on a wrapping span. */
+const DRAFT_FONT_SIZES_PX = [12, 14, 16, 18, 20, 24, 28, 32] as const;
 
 /** Base editor HTML with empty content; real content is injected in onLoadEnd to avoid escaping/timing issues. */
 function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: boolean): string {
@@ -113,6 +122,24 @@ function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: b
   </script></body></html>`;
 }
 
+/** Blur editor + clear selection so the system keyboard hides; blur listener may postMessage, else we post here. */
+const DRAFT_WEBVIEW_BLUR_FOR_SAVE_JS = `(function(){
+  var el=document.getElementById('content');
+  if(!el){
+    if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('<p><br></p>');
+    return;
+  }
+  var html=el.innerHTML;
+  var ae=document.activeElement;
+  var hadFocus=ae && (ae===el || el.contains(ae));
+  el.blur();
+  try{
+    var s=window.getSelection();
+    if(s&&s.removeAllRanges) s.removeAllRanges();
+  }catch(e0){}
+  if(!hadFocus && window.ReactNativeWebView) window.ReactNativeWebView.postMessage(html);
+})();true;`;
+
 export default function DraftEditScreen() {
   const { id, share } = useLocalSearchParams<{ id: string; share?: string }>();
   const router = useRouter();
@@ -121,7 +148,7 @@ export default function DraftEditScreen() {
   const colorScheme = useColorScheme();
   const isDarkMode = colorScheme === 'dark';
   const draftId = id ? parseInt(id, 10) : NaN;
-  const { toggleHeader, toggleEnabled } = useHeaderVisibility();
+  const { toggleHeader, toggleEnabled, showHeader } = useHeaderVisibility();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -156,7 +183,9 @@ export default function DraftEditScreen() {
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [showColorPicker, setShowColorPicker] = useState<'fore' | 'back' | null>(null);
+  const [showFontSizePicker, setShowFontSizePicker] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const { offlineBannerVisible, showOfflineBannerAfterDelay, showOfflineBannerNow } = useDelayedOfflineBanner(isOffline);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'local' | 'error' | null>(null);
   const initialFilenameRef = useRef<string | null>(null);
   const currentFilenameRef = useRef<string>('Untitled Draft');
@@ -267,7 +296,10 @@ export default function DraftEditScreen() {
   const hasUnsavedRef = useRef(false);
   const contentTextRef = useRef('');
   const editorRef = useRef<TextInput>(null);
+  const filenameInputRef = useRef<TextInput>(null);
   const webViewRef = useRef<WebView>(null);
+  const webViewScrollHeaderRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webViewScrollLastEventRef = useRef<NativeScrollEvent | null>(null);
   const contentHtmlRef = useRef('');
   const saveRequestedRef = useRef(false);
   const ignoreFirstEmptyMessageRef = useRef(false);
@@ -295,6 +327,14 @@ export default function DraftEditScreen() {
     return () => {
       showSub.remove();
       hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (webViewScrollHeaderRestoreTimerRef.current) {
+        clearTimeout(webViewScrollHeaderRestoreTimerRef.current);
+      }
     };
   }, []);
 
@@ -327,6 +367,7 @@ export default function DraftEditScreen() {
         // Local-only drafts (negative IDs) never fetch from API.
         if (draftsCache.isLocalDraftId(draftId)) {
           setIsOffline(true);
+          showOfflineBannerNow();
           if (!cached) {
             const emptyHtml = '<p><br></p>';
             setFilename('Untitled Draft');
@@ -391,6 +432,7 @@ export default function DraftEditScreen() {
         if (cancelled) return;
         if (isNetworkError(e)) {
           setIsOffline(true);
+          showOfflineBannerAfterDelay();
           if (!draftLoadedRef.current) {
             // No cache and no network — go back
             Alert.alert('Offline', 'This note is not available offline yet. Open it while online first to cache it locally.', [
@@ -410,7 +452,7 @@ export default function DraftEditScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [draftId, router]);
+  }, [draftId, router, showOfflineBannerAfterDelay, showOfflineBannerNow]);
 
   // Socket.IO: connect, join document room, presence
   useEffect(() => {
@@ -467,22 +509,31 @@ export default function DraftEditScreen() {
           });
         });
 
-        socket.on('draft_saved', (data: { draft_id: number; version: number; updated_at: string }) => {
-          if (data.draft_id !== draftId) return;
-          if (data.version <= (lastKnownVersionRef.current ?? 0)) return;
-          if (hasUnsavedRef.current) {
-            Alert.alert(
-              'Draft updated elsewhere',
-              'This draft was updated on another device. Reload?',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Reload', onPress: () => refetchDraftContentRef.current?.(data.version, data.updated_at) },
-              ]
-            );
-            return;
+        socket.on(
+          'draft_saved',
+          (data: { draft_id: number; version: number; updated_at: string; saved_by_user_id?: number | null }) => {
+            if (data.draft_id !== draftId) return;
+            if (data.version <= (lastKnownVersionRef.current ?? 0)) return;
+            const saver = data.saved_by_user_id;
+            if (saver != null && saver === currentUserId) {
+              lastKnownVersionRef.current = data.version;
+              lastKnownUpdatedAtRef.current = data.updated_at;
+              return;
+            }
+            if (hasUnsavedRef.current) {
+              Alert.alert(
+                'Draft updated elsewhere',
+                'This draft was updated on another device. Reload?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Reload', onPress: () => refetchDraftContentRef.current?.(data.version, data.updated_at) },
+                ]
+              );
+              return;
+            }
+            refetchDraftContentRef.current?.(data.version, data.updated_at);
           }
-          refetchDraftContentRef.current?.(data.version, data.updated_at);
-        });
+        );
 
         socketRef.current = socket;
       } catch (e: any) {
@@ -555,6 +606,7 @@ export default function DraftEditScreen() {
           filename: currentFilenameRef.current || 'Untitled Draft',
         });
         setIsOffline(true);
+        showOfflineBannerNow();
         setSaveStatus('local');
         setHasUnsavedChanges(false);
         return;
@@ -590,6 +642,7 @@ export default function DraftEditScreen() {
       } else if (isNetworkError(e)) {
         // Queue for later sync — content already saved locally above
         setIsOffline(true);
+        showOfflineBannerAfterDelay();
         setSaveStatus('local');
         await draftsCache.addPendingSave({
           id: draftId,
@@ -605,7 +658,7 @@ export default function DraftEditScreen() {
     } finally {
       setSaving(false);
     }
-  }, [draftId, normalizeHtml]);
+  }, [draftId, normalizeHtml, showOfflineBannerAfterDelay, showOfflineBannerNow]);
 
   const refetchDraftContent = useCallback(async (version: number, updatedAt: string) => {
     if (!draftId || isNaN(draftId)) return;
@@ -734,6 +787,25 @@ export default function DraftEditScreen() {
     webViewRef.current?.injectJavaScript(script);
   }, []);
 
+  /** WebView has no onScrollEndDrag — debounce scroll and restore header only when idle at a scroll extreme. */
+  const handleWebViewScrollRestoreHeader = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!toggleEnabled) return;
+      webViewScrollLastEventRef.current = e.nativeEvent;
+      if (webViewScrollHeaderRestoreTimerRef.current) {
+        clearTimeout(webViewScrollHeaderRestoreTimerRef.current);
+      }
+      webViewScrollHeaderRestoreTimerRef.current = setTimeout(() => {
+        webViewScrollHeaderRestoreTimerRef.current = null;
+        const ne = webViewScrollLastEventRef.current;
+        if (ne && shouldRestoreHeaderAfterScrollToEdge(ne)) {
+          showHeader();
+        }
+      }, 120);
+    },
+    [showHeader, toggleEnabled]
+  );
+
   const handleSelectionChange = useCallback((e: any) => {
     const { start, end } = e.nativeEvent.selection;
     setSelection({ start, end });
@@ -798,6 +870,28 @@ export default function DraftEditScreen() {
     })(); true;`;
     webViewRef.current?.injectJavaScript(script);
     setShowColorPicker(null);
+  }, []);
+
+  const applySelectionFontSize = useCallback((sizePx: (typeof DRAFT_FONT_SIZES_PX)[number]) => {
+    const script = `(function(){
+      var el=document.getElementById('content');
+      if(!el) return;
+      el.focus();
+      var sel=window.getSelection();
+      if(!sel||sel.rangeCount===0) return;
+      var range=sel.getRangeAt(0);
+      if(range.collapsed) return;
+      var span=document.createElement('span');
+      span.style.fontSize='${sizePx}px';
+      try{range.surroundContents(span);}catch(e){
+        var contents=range.extractContents();
+        span.appendChild(contents);
+        range.insertNode(span);
+      }
+      if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(el.innerHTML);
+    })(); true;`;
+    webViewRef.current?.injectJavaScript(script);
+    setShowFontSizePicker(false);
   }, []);
 
   const insertTable = useCallback(() => {
@@ -914,9 +1008,10 @@ export default function DraftEditScreen() {
       if (!isNetworkError(e)) throw e;
       await draftsCache.addPendingRename({ id: draftId, filename: name });
       setIsOffline(true);
+      showOfflineBannerAfterDelay();
       setSaveStatus('local');
     }
-  }, [draftId]);
+  }, [draftId, showOfflineBannerAfterDelay]);
 
   const handleRenameBlur = useCallback(async () => {
     try {
@@ -1289,6 +1384,7 @@ export default function DraftEditScreen() {
             </TouchableOpacity>
             <View style={dynamicStyles.titleWrap}>
               <TextInput
+                ref={filenameInputRef}
                 style={dynamicStyles.titleInput}
                 value={filename}
                 onChangeText={setFilename}
@@ -1321,20 +1417,21 @@ export default function DraftEditScreen() {
                 <Ionicons name="person-add-outline" size={26} color={colors.text} />
               </TouchableOpacity>
               <TouchableOpacity style={dynamicStyles.headerBtn} onPress={async () => {
+                filenameInputRef.current?.blur();
+                editorRef.current?.blur();
+                Keyboard.dismiss();
                 try {
                   await persistFilenameIfChanged();
                 } catch (_) {}
                 saveRequestedRef.current = true;
-                webViewRef.current?.injectJavaScript(
-                  "(function(){ var el=document.getElementById('content'); if(el&&window.ReactNativeWebView) window.ReactNativeWebView.postMessage(el.innerHTML); })(); true;"
-                );
+                webViewRef.current?.injectJavaScript(DRAFT_WEBVIEW_BLUR_FOR_SAVE_JS);
                 if (!webViewRef.current) handleSave(contentHtmlRef.current || '', true);
               }} disabled={saving}>
-                {saving ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="save-outline" size={26} color={colors.text} />}
+                {saving ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="checkmark-outline" size={26} color={colors.text} />}
               </TouchableOpacity>
             </View>
           </View>
-          {isOffline && (
+          {offlineBannerVisible && (
             <View style={dynamicStyles.offlineBanner}>
               <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
               <Text style={dynamicStyles.offlineBannerText}>
@@ -1370,6 +1467,8 @@ export default function DraftEditScreen() {
               source={webViewSource}
               onLoadEnd={handleWebViewLoadEnd}
               onMessage={handleWebViewMessage}
+              onScroll={toggleEnabled ? handleWebViewScrollRestoreHeader : undefined}
+              scrollEventThrottle={toggleEnabled ? 16 : undefined}
               style={[dynamicStyles.editor, { backgroundColor: colors.background, minHeight: 200 }]}
               scrollEnabled={true}
               keyboardDisplayRequiresUserAction={false}
@@ -1406,6 +1505,16 @@ export default function DraftEditScreen() {
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('underline')} accessibilityLabel="Underline">
               <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text, textDecorationLine: 'underline' }}>U</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={dynamicStyles.toolBtn}
+              onPress={() => {
+                setShowColorPicker(null);
+                setShowFontSizePicker(true);
+              }}
+              accessibilityLabel="Font size"
+            >
+              <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>Aa</Text>
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('insertUnorderedList')} accessibilityLabel="Bullet list">
               <Ionicons name="ellipse-outline" size={18} color={colors.text} />
@@ -1471,6 +1580,41 @@ export default function DraftEditScreen() {
                   />
                 ))}
               </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={showFontSizePicker} transparent animationType="fade">
+        <TouchableOpacity
+          activeOpacity={1}
+          style={dynamicStyles.modalOverlay}
+          onPress={() => setShowFontSizePicker(false)}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={e => e.stopPropagation()} style={[dynamicStyles.modalBoxCompact, { minWidth: 200, maxWidth: 280 }]}>
+            <View style={[dynamicStyles.modalHeader, { paddingTop: 8, paddingBottom: 6, paddingHorizontal: 12 }]}>
+              <Text style={[dynamicStyles.modalTitle, { fontSize: 14, marginLeft: 4 }]}>Font size</Text>
+              <TouchableOpacity style={dynamicStyles.modalCloseBtn} onPress={() => setShowFontSizePicker(false)}>
+                <Ionicons name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ paddingHorizontal: 8, paddingBottom: 12 }}>
+              {DRAFT_FONT_SIZES_PX.map((px) => (
+                <TouchableOpacity
+                  key={px}
+                  onPress={() => applySelectionFontSize(px)}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: colors.border,
+                  }}
+                >
+                  <Text style={{ fontSize: px, color: colors.text }}>
+                    {px}px{px === 16 ? ' — default' : ''}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </TouchableOpacity>
         </TouchableOpacity>

@@ -12,6 +12,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
@@ -30,6 +31,7 @@ export default function HelpScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const colors = useThemeColors();
+  const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
   const [loading, setLoading] = useState(false);
   const [feedbackData, setFeedbackData] = useState({
     category: 'feedback',
@@ -227,6 +229,7 @@ export default function HelpScreen() {
           style={dynamicStyles.content}
           contentContainerStyle={{ paddingBottom: 16 }}
           showsVerticalScrollIndicator={false}
+          {...scrollRestoresHeaderProps}
         >
           {/* Header */}
           <View style={[dynamicStyles.section, { marginTop: 0 }]}>

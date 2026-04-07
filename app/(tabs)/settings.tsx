@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppLock } from '../../contexts/AppLockContext';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { MAX_SCALE, MIN_SCALE, useDisplayScale } from '../../contexts/DisplayScaleContext';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -107,6 +108,7 @@ export default function SettingsScreen() {
     // hasPinSet, setPin - GrabDocs PIN hidden; app lock uses biometric + device passcode only
     lockAfterMinutes,
   } = useAppLock();
+  const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [loading, setLoading] = useState(true);
@@ -970,7 +972,7 @@ export default function SettingsScreen() {
         </View>
       </AnimatedHeaderContainer>
 
-      <ScrollView style={dynamicStyles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView style={dynamicStyles.scrollView} showsVerticalScrollIndicator={false} {...scrollRestoresHeaderProps}>
 
         {/* Notifications Section - HIDDEN */}
         {/* {preferences && (

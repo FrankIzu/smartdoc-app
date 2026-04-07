@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { formatDateToLocal } from '../../utils/timeFormatting';
@@ -68,6 +69,7 @@ export default function BookmarkDetailScreen() {
   const { user } = useAuth();
   const themeColors = useThemeColors();
   const insets = useSafeAreaInsets();
+  const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
 
   const [bookmark, setBookmark] = useState<Bookmark | null>(null);
   const [files, setFiles] = useState<Document[]>([]);
@@ -1083,6 +1085,7 @@ export default function BookmarkDetailScreen() {
         renderItem={renderFileItem}
         keyExtractor={(item) => item.id}
         style={dynamicStyles.filesList}
+        {...scrollRestoresHeaderProps}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
           <View style={dynamicStyles.emptyState}>
@@ -1190,6 +1193,7 @@ export default function BookmarkDetailScreen() {
                renderItem={renderAvailableFileItem}
                keyExtractor={(item) => item.id}
                style={dynamicStyles.availableFilesList}
+               {...scrollRestoresHeaderProps}
                ListEmptyComponent={
                  <View style={dynamicStyles.emptyState}>
                    <Ionicons name="document-outline" size={48} color={themeColors.textLight} />

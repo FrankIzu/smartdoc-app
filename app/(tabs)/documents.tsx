@@ -32,6 +32,7 @@ import { useFileStore } from '../../stores/fileStore';
 import { toAlertMessage } from '../../utils/alertUtils';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { scaleStyleObject } from '../../utils/styleUtils';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -149,6 +150,7 @@ export default function QuickFilesScreen() {
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
+  const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
   const { uploadFromGallery, lastUploadTime, pendingUploads } = useFileStore();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -2635,6 +2637,7 @@ export default function QuickFilesScreen() {
         <FlatList
           horizontal
           showsHorizontalScrollIndicator={false}
+          {...scrollRestoresHeaderProps}
           data={availableCategories.map(category => {
             const labels: Record<FilterOption, string> = {
               'all': 'All',
@@ -2692,6 +2695,7 @@ export default function QuickFilesScreen() {
         renderItem={renderDocument}
         keyExtractor={(item) => (item as Document).id}
         style={dynamicStyles.documentsList}
+        {...scrollRestoresHeaderProps}
         accessibilityRole="list"
         accessibilityLabel="Documents"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
