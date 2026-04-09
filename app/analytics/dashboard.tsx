@@ -25,7 +25,7 @@ import Svg, { Path } from 'react-native-svg';
 import DocumentViewer from '../../components/DocumentViewer';
 import { useAuth } from '../context/auth';
 import { useThemeColors } from '../../hooks/useThemeColors';
-import { apiClient } from '../../services/api';
+import { apiClient, type WebAnalysisDownloadReportBody } from '../../services/api';
 
 /** Rows shown initially in Recent Receipts / Recent Invoices; full lists stay in state for charts & summaries. */
 const FINANCIALS_LIST_PAGE_SIZE = 10;
@@ -359,7 +359,8 @@ export default function AnalyticsDashboard() {
   const [analytics, setAnalytics] = useState<ComprehensiveAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [timePeriod, setTimePeriod] = useState('30'); // Default to 30 days
+  /** Default window: last 12 months from today (matches common “1 year” financial view). */
+  const [timePeriod, setTimePeriod] = useState('365');
   const [selectedCategory, setSelectedCategory] = useState('All'); // Category filter for receipts
   const [selectedInvoiceCategory, setSelectedInvoiceCategory] = useState('All'); // Category filter for invoices
   const [activeTab, setActiveTab] = useState<'receipts' | 'invoices'>('receipts');
@@ -401,7 +402,7 @@ export default function AnalyticsDashboard() {
   /** True when we're reopening the Advanced Filter modal after iOS date picker; skip overwriting draft dates in sync. */
   const reopeningAfterDatePickerRef = useRef(false);
 
-  /** Draft "1 Year" in Advanced Filter; applied only when user taps Apply Filters. */
+  /** Draft 1yr preset in Advanced Filter; applied only when user taps Apply Filters. */
   const [draftUseOneYear, setDraftUseOneYear] = useState(false);
 
   /** When Advanced Filter modal opens, sync draft from current applied values so typing doesn't refresh until Apply. */
@@ -489,7 +490,7 @@ export default function AnalyticsDashboard() {
     return { from: formatDateLocal(from), to: formatDateLocal(to) };
   };
 
-  /** Human-readable period label: "last 7 days" or "Jan 15 – Feb 12, 2025" for custom range. */
+  /** Human-readable period label: "last 7d" / "last 1yr" or "Jan 15 – Feb 12, 2025" for custom range. */
   const getPeriodLabel = (days: string, fromStr: string, toStr: string, useCustom: boolean): string => {
     if (useCustom && fromStr && toStr) {
       const fromDate = parseLocalDateString(fromStr);
@@ -499,12 +500,12 @@ export default function AnalyticsDashboard() {
         return `${fmt(fromDate)} – ${fmt(toDate)}`;
       }
     }
-    const n = days === '365' ? 365 : parseInt(String(days || '30'), 10) || 30;
-    if (n === 7) return 'last 7 days';
-    if (n === 30) return 'last 30 days';
-    if (n === 90) return 'last 90 days';
-    if (n === 365) return 'last 12 months';
-    return `last ${n} days`;
+    const n = days === '365' ? 365 : parseInt(String(days || '365'), 10) || 365;
+    if (n === 7) return 'last 7d';
+    if (n === 30) return 'last 30d';
+    if (n === 90) return 'last 90d';
+    if (n === 365) return 'last 1yr';
+    return `last ${n}d`;
   };
 
   /** True if date (Date or ISO string) falls within [from, to] (local YYYY-MM-DD inclusive). Missing/invalid date is treated as in range (include). */
@@ -744,7 +745,7 @@ export default function AnalyticsDashboard() {
         const noAuthData = {
           summary: {
             period: periodLabel,
-            period_days: parseInt(days) || 30,
+            period_days: parseInt(days) || 365,
             total_files: 0,
             total_size_mb: 0,
             total_receipts: 0,
@@ -757,7 +758,7 @@ export default function AnalyticsDashboard() {
               total_receipts: 0,
               total_amount: 0,
               average_amount: 0,
-              period_days: parseInt(days),
+              period_days: parseInt(String(days), 10) || 365,
             },
             categories: [],
             timeline: [],
@@ -798,7 +799,7 @@ export default function AnalyticsDashboard() {
         const category = selectedCategory !== 'All' ? selectedCategory : undefined;
         // Match web: only use custom date range when BOTH from and to are set; backend requires both
         const hasCustomDateRange = useCustomFilters && customDateFrom && customDateTo;
-        const daysParam = hasCustomDateRange ? undefined : (parseInt(days, 10) || 30);
+        const daysParam = hasCustomDateRange ? undefined : (parseInt(days, 10) || 365);
         const dateFrom = hasCustomDateRange ? customDateFrom : undefined;
         const dateTo = hasCustomDateRange ? customDateTo : undefined;
         const search = (useCustomFilters && storeVendorName) ? storeVendorName : undefined;
@@ -827,7 +828,7 @@ export default function AnalyticsDashboard() {
               total_receipts: totalReceipts,
               total_amount: totalAmount,
               average_amount: averageAmount,
-              period_days: parseInt(days),
+              period_days: parseInt(String(days), 10) || 365,
               recent_30d: receiptResponse.data.overview?.recent_30d || 0,
             },
             categories: receiptResponse.data.category_distribution || [],
@@ -855,7 +856,7 @@ export default function AnalyticsDashboard() {
         const category = selectedInvoiceCategory !== 'All' ? selectedInvoiceCategory : undefined;
         // Match web: only use custom date range when BOTH from and to are set; backend requires both
         const hasCustomDateRange = useCustomFilters && customDateFrom && customDateTo;
-        const daysParam = hasCustomDateRange ? undefined : (parseInt(days, 10) || 30);
+        const daysParam = hasCustomDateRange ? undefined : (parseInt(days, 10) || 365);
         const dateFrom = hasCustomDateRange ? customDateFrom : undefined;
         const dateTo = hasCustomDateRange ? customDateTo : undefined;
         const search = (useCustomFilters && storeVendorName) ? storeVendorName : undefined;
@@ -885,7 +886,7 @@ export default function AnalyticsDashboard() {
       const analyticsData: ComprehensiveAnalytics = {
         summary: {
           period: periodLabel,
-          period_days: parseInt(days) || 30,
+          period_days: parseInt(days) || 365,
           total_files: 0,
           total_size_mb: 0,
           total_receipts: receiptAnalytics?.summary?.total_receipts || 0,
@@ -900,7 +901,7 @@ export default function AnalyticsDashboard() {
             total_receipts: 0,
             total_amount: 0,
             average_amount: 0,
-            period_days: parseInt(days),
+            period_days: parseInt(String(days), 10) || 365,
           },
           categories: [],
           timeline: [],
@@ -1009,7 +1010,7 @@ export default function AnalyticsDashboard() {
               });
               // Recent section: obey time period and category
               if (!useCustomFilters && timePeriod) {
-                const n = parseInt(timePeriod, 10) || 30;
+                const n = parseInt(timePeriod, 10) || 365;
                 const { from, to } = getLastNDaysRange(n);
                 sortedReceipts = sortedReceipts.filter((receipt: any) => {
                   const itemDate = getItemDateForFilter(receipt, true);
@@ -1234,7 +1235,7 @@ export default function AnalyticsDashboard() {
       const basicData = {
         summary: {
           period: periodLabel,
-          period_days: parseInt(days) || 30,
+          period_days: parseInt(days) || 365,
           total_files: 0,
           total_size_mb: 0,
           total_receipts: 0,
@@ -1247,7 +1248,7 @@ export default function AnalyticsDashboard() {
             total_receipts: 0,
             total_amount: 0,
             average_amount: 0,
-            period_days: parseInt(days),
+            period_days: parseInt(String(days), 10) || 365,
           },
           categories: [],
           timeline: [],
@@ -1570,171 +1571,10 @@ export default function AnalyticsDashboard() {
     }
   };
 
-  const generateReportCSV = (reportType: 'receipts' | 'invoices'): string => {
-    if (!analytics) {
-      return '';
-    }
-
-    const formatCurrency = (amount: number) => {
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-      }).format(amount);
-    };
-
-    const escapeCSV = (value: any): string => {
-      if (value === null || value === undefined) return '';
-      const str = String(value);
-      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-
-    let csvRows: string[] = [];
-
-    if (reportType === 'receipts') {
-      // Receipts Report
-      csvRows.push('RECEIPTS ANALYTICS REPORT');
-      csvRows.push(`Period: ${analytics.summary?.period ?? (timePeriod ? `${timePeriod} days` : 'N/A')}`);
-      csvRows.push(`Generated: ${new Date().toLocaleString()}`);
-      csvRows.push('');
-
-      // Summary Section
-      csvRows.push('SUMMARY');
-      csvRows.push('Metric,Value');
-      csvRows.push(`Total Receipts,${analytics.receipts?.summary?.total_receipts || 0}`);
-      csvRows.push(`Total Amount,${formatCurrency(analytics.receipts?.summary?.total_amount || 0)}`);
-      csvRows.push(`Average Amount,${formatCurrency(analytics.receipts?.summary?.average_amount || 0)}`);
-      csvRows.push('');
-
-      // Categories Section
-      if (analytics.receipts?.categories && analytics.receipts.categories.length > 0) {
-        csvRows.push('CATEGORY BREAKDOWN');
-        csvRows.push('Category,Count,Total Amount,Percentage');
-        analytics.receipts.categories.forEach(cat => {
-          csvRows.push(`${escapeCSV(cat.category)},${cat.count},${formatCurrency(cat.total_amount)},${cat.percentage.toFixed(2)}%`);
-        });
-        csvRows.push('');
-      }
-
-      // Top Businesses Section
-      if (analytics.receipts?.top_businesses && analytics.receipts.top_businesses.length > 0) {
-        csvRows.push('TOP BUSINESSES');
-        csvRows.push('Business,Visit Count,Total Amount,Average Amount');
-        analytics.receipts.top_businesses.forEach(business => {
-          const avgAmount = business.count > 0 ? business.total_amount / business.count : 0;
-          csvRows.push(`${escapeCSV(business.business)},${business.count},${formatCurrency(business.total_amount)},${formatCurrency(avgAmount)}`);
-        });
-        csvRows.push('');
-      }
-
-      // Payment Methods Section
-      if (analytics.receipts?.payment_methods && analytics.receipts.payment_methods.length > 0) {
-        csvRows.push('PAYMENT METHODS');
-        csvRows.push('Payment Method,Count,Total Amount');
-        analytics.receipts.payment_methods.forEach(method => {
-          csvRows.push(`${escapeCSV(method.method)},${method.count},${formatCurrency(method.total_amount)}`);
-        });
-        csvRows.push('');
-      }
-
-      // Timeline Section
-      if (analytics.receipts?.timeline && analytics.receipts.timeline.length > 0) {
-        csvRows.push('TIMELINE');
-        csvRows.push('Month,Count,Total Amount');
-        analytics.receipts.timeline.forEach(item => {
-          csvRows.push(`${escapeCSV(item.month)},${item.count},${formatCurrency(item.total_amount)}`);
-        });
-      }
-    } else {
-      // Invoices Report
-      if (!analytics.invoices) {
-        return '';
-      }
-
-      csvRows.push('INVOICES ANALYTICS REPORT');
-      csvRows.push(`Period: ${analytics.summary?.period ?? (timePeriod ? `${timePeriod} days` : 'N/A')}`);
-      csvRows.push(`Generated: ${new Date().toLocaleString()}`);
-      csvRows.push('');
-
-      // Overview Section
-      csvRows.push('OVERVIEW');
-      csvRows.push('Metric,Value');
-      csvRows.push(`Total Invoices,${analytics.invoices.overview?.total_invoices || 0}`);
-      csvRows.push(`Total Amount,${formatCurrency(analytics.invoices.overview?.total_amount || 0)}`);
-      csvRows.push(`Paid Amount,${formatCurrency(analytics.invoices.overview?.paid_amount || 0)}`);
-      csvRows.push(`Unpaid Amount,${formatCurrency(analytics.invoices.overview?.unpaid_amount || 0)}`);
-      csvRows.push(`Average Invoice Amount,${formatCurrency(analytics.invoices.overview?.avg_invoice_amount || 0)}`);
-      csvRows.push(`Paid Count,${analytics.invoices.overview?.paid_count || 0}`);
-      csvRows.push(`Unpaid Count,${analytics.invoices.overview?.unpaid_count || 0}`);
-      csvRows.push(`Overdue Count,${analytics.invoices.overview?.overdue_count || 0}`);
-      csvRows.push(`Overdue Amount,${formatCurrency(analytics.invoices.overview?.overdue_amount || 0)}`);
-      csvRows.push('');
-
-      // Payment Distribution Section
-      if (analytics.invoices.payment_distribution && analytics.invoices.payment_distribution.length > 0) {
-        csvRows.push('PAYMENT STATUS DISTRIBUTION');
-        csvRows.push('Status,Count,Total Amount,Percentage');
-        analytics.invoices.payment_distribution.forEach(item => {
-          csvRows.push(`${escapeCSV(item.status)},${item.count},${formatCurrency(item.total_amount)},${item.percentage.toFixed(2)}%`);
-        });
-        csvRows.push('');
-      }
-
-      // Category Distribution Section
-      if (analytics.invoices.category_distribution && analytics.invoices.category_distribution.length > 0) {
-        csvRows.push('CATEGORY DISTRIBUTION');
-        csvRows.push('Category,Count,Total Amount,Average Amount,Percentage');
-        analytics.invoices.category_distribution.forEach(item => {
-          csvRows.push(`${escapeCSV(item.category)},${item.count},${formatCurrency(item.total_amount)},${formatCurrency(item.avg_amount)},${item.percentage.toFixed(2)}%`);
-        });
-        csvRows.push('');
-      }
-
-      // Top Vendors Section
-      if (analytics.invoices.top_vendors && analytics.invoices.top_vendors.length > 0) {
-        csvRows.push('TOP VENDORS');
-        csvRows.push('Vendor Name,Invoice Count,Total Amount,Average Amount');
-        analytics.invoices.top_vendors.forEach(vendor => {
-          csvRows.push(`${escapeCSV(vendor.vendor_name)},${vendor.count},${formatCurrency(vendor.total_amount)},${formatCurrency(vendor.avg_amount)}`);
-        });
-        csvRows.push('');
-      }
-
-      // Monthly Trends Section
-      if (analytics.invoices.monthly_trends && analytics.invoices.monthly_trends.length > 0) {
-        csvRows.push('MONTHLY TRENDS');
-        csvRows.push('Month,Total Count,Total Amount,Paid Count,Unpaid Count');
-        analytics.invoices.monthly_trends.forEach(trend => {
-          csvRows.push(`${escapeCSV(trend.month)},${trend.count},${formatCurrency(trend.total_amount)},${trend.paid_count || 0},${trend.unpaid_count || 0}`);
-        });
-        csvRows.push('');
-      }
-
-      // Aging Buckets Section
-      if (analytics.invoices.aging_buckets) {
-        csvRows.push('AGING BUCKETS');
-        csvRows.push('Age Range,Count,Amount');
-        const buckets = analytics.invoices.aging_buckets;
-        if (buckets['0-30']) csvRows.push(`0-30 days,${buckets['0-30'].count},${formatCurrency(buckets['0-30'].amount)}`);
-        if (buckets['31-60']) csvRows.push(`31-60 days,${buckets['31-60'].count},${formatCurrency(buckets['31-60'].amount)}`);
-        if (buckets['61-90']) csvRows.push(`61-90 days,${buckets['61-90'].count},${formatCurrency(buckets['61-90'].amount)}`);
-        if (buckets['90+']) csvRows.push(`90+ days,${buckets['90+'].count},${formatCurrency(buckets['90+'].amount)}`);
-      }
-    }
-
-    return csvRows.join('\n');
-  };
-
   const handleShareReport = async () => {
     try {
       const reportType = activeTab === 'receipts' ? 'receipts' : 'invoices';
       console.log(`📊 Sharing ${reportType} report...`);
-
-      // Use the correct web endpoint (POST request)
-      const endpoint = `/api/v1/web/analysis/${reportType}/download-report`;
-      console.log(`📊 Calling endpoint: ${endpoint}`);
 
       // Get cache directory
       const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
@@ -1742,72 +1582,59 @@ export default function AnalyticsDashboard() {
         throw new Error('Unable to access file system directories');
       }
 
-      // Create filename with .docx extension (matching web version format: Receipt_Report_YYYY-MM-DD.docx)
-      const dateStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-      const fileName = `${reportType.charAt(0).toUpperCase() + reportType.slice(1)}_Report_${dateStr}.docx`;
-      const fileUri = `${cacheDir}${fileName}`;
-
-      // Use same request body as web so the backend generates the same report layout and filtered content.
-      // Backend accepts: category, days, date_from, date_to, search, amount_min, amount_max.
-      const useCustom = useCustomFilters && (customDateFrom || customDateTo || storeVendorName.trim() || amountMin.trim() || amountMax.trim());
-      const daysInt = parseInt(timePeriod, 10) || 30;
-      const requestBody: Record<string, unknown> = {
-        days: useCustom && (customDateFrom || customDateTo) ? null : daysInt,
-        category: reportType === 'receipts' ? (selectedCategory !== 'All' ? selectedCategory : null) : (selectedInvoiceCategory !== 'All' ? selectedInvoiceCategory : null),
-        date_from: useCustom && customDateFrom ? customDateFrom : null,
-        date_to: useCustom && customDateTo ? customDateTo : null,
-        search: useCustom && storeVendorName.trim() ? storeVendorName.trim() : null,
-        amount_min: useCustom && amountMin.trim() && !Number.isNaN(parseFloat(amountMin.trim())) ? parseFloat(amountMin.trim()) : null,
-        amount_max: useCustom && amountMax.trim() && !Number.isNaN(parseFloat(amountMax.trim())) ? parseFloat(amountMax.trim()) : null,
+      // Same JSON body shape as web `analysis.tsx` (handleDownloadReceiptReport / handleDownloadInvoiceReport).
+      const hasCustomDateRange = useCustomFilters && !!customDateFrom && !!customDateTo;
+      const daysParsed = parseInt(timePeriod, 10);
+      const body: WebAnalysisDownloadReportBody = {
+        category: reportType === 'receipts' ? selectedCategory : selectedInvoiceCategory,
+        days: hasCustomDateRange ? null : Number.isNaN(daysParsed) ? 365 : daysParsed,
+        date_from: hasCustomDateRange ? customDateFrom : null,
+        date_to: hasCustomDateRange ? customDateTo : null,
+        search: storeVendorName.trim() || null,
+        amount_min:
+          amountMin.trim() && !Number.isNaN(parseFloat(amountMin.trim())) ? parseFloat(amountMin.trim()) : null,
+        amount_max:
+          amountMax.trim() && !Number.isNaN(parseFloat(amountMax.trim())) ? parseFloat(amountMax.trim()) : null,
       };
-      // Omit nulls so backend uses defaults where appropriate
-      const body: Record<string, unknown> = {};
-      Object.entries(requestBody).forEach(([k, v]) => {
-        if (v !== null && v !== undefined && v !== '') body[k] = v;
-      });
-      // When using custom date range we send date_from/date_to and no days; otherwise default days
-      if (body.days === undefined && !(useCustom && (customDateFrom || customDateTo))) body.days = daysInt;
 
-      console.log(`📊 Request body (same as web):`, body);
+      console.log(`📊 POST /api/v1/web/analysis/${reportType}/download-report`, body);
 
-      // Use apiClient to download the file with proper authentication (POST request)
-      // Use 'arraybuffer' instead of 'blob' for React Native compatibility
-      const response = await apiClient.client.post(endpoint, body, {
-        responseType: 'arraybuffer', // Use arraybuffer for React Native
-      });
+      const { arrayBuffer, filename: headerFilename } = await apiClient.postWebAnalysisDownloadReport(
+        reportType,
+        body
+      );
 
-      // Convert arraybuffer to base64 for FileSystem
-      const arrayBuffer = response.data;
+      const dateStr = new Date().toISOString().split('T')[0];
+      const defaultBase = reportType === 'receipts' ? 'Receipt_Report' : 'Invoice_Report';
+      const safeName = (headerFilename || `${defaultBase}_${dateStr}.docx`).replace(/[/\\?%*:|"<>]/g, '_');
+      const fileUri = `${cacheDir}${safeName}`;
+
       const bytes = new Uint8Array(arrayBuffer);
+      const base64Data =
+        typeof Buffer !== 'undefined'
+          ? Buffer.from(bytes).toString('base64')
+          : (() => {
+              const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+              }
+              let result = '';
+              let i = 0;
+              while (i < binary.length) {
+                const a = binary.charCodeAt(i++);
+                const b = i < binary.length ? binary.charCodeAt(i++) : 0;
+                const c = i < binary.length ? binary.charCodeAt(i++) : 0;
+                const bitmap = (a << 16) | (b << 8) | c;
+                result +=
+                  chars.charAt((bitmap >> 18) & 63) +
+                  chars.charAt((bitmap >> 12) & 63) +
+                  (i - 2 < binary.length ? chars.charAt((bitmap >> 6) & 63) : '=') +
+                  (i - 1 < binary.length ? chars.charAt(bitmap & 63) : '=');
+              }
+              return result;
+            })();
 
-      // Convert to base64
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-
-      // Use Buffer if available, otherwise manual base64 encoding
-      let base64Data: string;
-      if (typeof Buffer !== 'undefined') {
-        base64Data = Buffer.from(binary, 'binary').toString('base64');
-      } else {
-        // Manual base64 encoding
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-        let result = '';
-        let i = 0;
-        while (i < binary.length) {
-          const a = binary.charCodeAt(i++);
-          const b = i < binary.length ? binary.charCodeAt(i++) : 0;
-          const c = i < binary.length ? binary.charCodeAt(i++) : 0;
-          const bitmap = (a << 16) | (b << 8) | c;
-          result += chars.charAt((bitmap >> 18) & 63) + chars.charAt((bitmap >> 12) & 63) +
-            (i - 2 < binary.length ? chars.charAt((bitmap >> 6) & 63) : '=') +
-            (i - 1 < binary.length ? chars.charAt(bitmap & 63) : '=');
-        }
-        base64Data = result;
-      }
-
-      // Write file
       await FileSystem.writeAsStringAsync(fileUri, base64Data, {
         encoding: FileSystem.EncodingType.Base64,
       });
@@ -1922,12 +1749,12 @@ export default function AnalyticsDashboard() {
       if (customDateFrom && customDateTo) {
         filters.push(`${customDateFrom} to ${customDateTo}`);
       } else if (timePeriod === '365') {
-        filters.push('1 Year');
+        filters.push('1yr');
       } else if (timePeriod) {
-        filters.push(`${timePeriod === '7' ? '7 Days' : timePeriod === '30' ? '30 Days' : '90 Days'}`);
+        filters.push(`${timePeriod === '7' ? '7d' : timePeriod === '30' ? '30d' : '90d'}`);
       }
     } else if (timePeriod) {
-      filters.push(`${timePeriod === '7' ? '7 Days' : timePeriod === '30' ? '30 Days' : timePeriod === '90' ? '90 Days' : '1 Year'}`);
+      filters.push(`${timePeriod === '7' ? '7d' : timePeriod === '30' ? '30d' : timePeriod === '90' ? '90d' : '1yr'}`);
     }
     
     if (amountMin || amountMax) {
@@ -1952,8 +1779,8 @@ export default function AnalyticsDashboard() {
           <Text style={[styles.activeFiltersText, themeStyles.activeFiltersText]}>{getActiveFiltersText()}</Text>
         )}
       </View>
-      <View style={styles.timePeriodButtons}>
-        {['7', '30', '90'].map((days) => (
+      <View style={[styles.timePeriodButtons, styles.timePeriodButtonsRow]}>
+        {(['7', '30', '90', '365'] as const).map((days) => (
           <TouchableOpacity
             key={days}
             style={[
@@ -1976,7 +1803,7 @@ export default function AnalyticsDashboard() {
                 timePeriod === days && !useCustomFilters && themeStyles.timePeriodButtonLabelActive,
               ]}
             >
-              {days === '7' ? '7 Days' : days === '30' ? '30 Days' : '90 Days'}
+              {days === '7' ? '7d' : days === '30' ? '30d' : days === '90' ? '90d' : '1yr'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -2119,7 +1946,7 @@ export default function AnalyticsDashboard() {
                 console.log('🔄 Loading sample data for testing');
                 const sampleData = {
                   summary: {
-                    period: '7 days',
+                    period: 'last 7d',
                     period_days: 7,
                     total_files: 1,
                     total_size_mb: 2.5,
@@ -2258,7 +2085,7 @@ export default function AnalyticsDashboard() {
                             ? (analytics.receipts.summary.total_amount / analytics.receipts.summary.total_receipts)
                             : 0
                       )}
-                      subtitle={`${analytics.receipts?.summary?.recent_30d ?? analytics.receipts?.summary?.total_receipts ?? 0} in ${analytics.summary?.period ?? 'last 30 days'}`}
+                      subtitle={`${analytics.receipts?.summary?.recent_30d ?? analytics.receipts?.summary?.total_receipts ?? 0} in ${analytics.summary?.period ?? 'last 1yr'}`}
                       icon="calculator"
                       color="#007AFF"
                     />
@@ -3237,7 +3064,7 @@ export default function AnalyticsDashboard() {
                   onPress={() => setDraftUseOneYear((prev) => !prev)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.filterOptionText, themeStyles.filterOptionText]}>1 Year</Text>
+                  <Text style={[styles.filterOptionText, themeStyles.filterOptionText]}>1yr</Text>
                   <View style={[styles.filterCheckbox, draftUseOneYear && styles.filterCheckboxChecked]}>
                     {draftUseOneYear && <Ionicons name="checkmark" size={16} color="#fff" />}
                   </View>
@@ -3373,11 +3200,11 @@ export default function AnalyticsDashboard() {
                     setAmountMax('');
                     setStoreVendorName('');
                     setUseCustomFilters(false);
-                    setTimePeriod('30'); // Restore default preset when clearing custom filters
+                    setTimePeriod('365'); // Restore default preset when clearing custom filters (1 year)
                     Keyboard.dismiss();
                     setTimeout(() => {
                       setShowAdvancedFilterModal(false);
-                      loadAnalytics('30');
+                      loadAnalytics('365');
                     }, 100);
                   }}
                 >
@@ -3713,6 +3540,9 @@ const styles = StyleSheet.create({
   timePeriodButtons: {
     flexDirection: 'row',
     gap: Platform.OS === 'android' ? 4 : 8,
+  },
+  timePeriodButtonsRow: {
+    flexWrap: 'wrap',
   },
   timePeriodButton: {
     flex: 1,

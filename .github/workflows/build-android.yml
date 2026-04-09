@@ -297,6 +297,22 @@ jobs:
           fi
           echo "OK: $NDK_DIR"
 
+      # Last line of defense: ensure defaultConfig versionCode matches app.versions.json right before Gradle runs
+      # (avoids any intermediate step or cache leaving an older integer in build.gradle).
+      - name: Final sync versionCode before EAS Build
+        run: |
+          VERSION_CODE=$(node -e "const v=require('./app.versions.json'); console.log(v?.android?.versionCode ?? 0)")
+          echo "app.versions.json versionCode: $VERSION_CODE"
+          if [ -z "$VERSION_CODE" ] || [ "$VERSION_CODE" = "0" ]; then
+            echo "::error::android versionCode missing in app.versions.json"
+            exit 1
+          fi
+          if [ -f android/app/build.gradle ]; then
+            sed -i -E 's/(versionCode[[:space:]]+)[0-9]+/\1'"$VERSION_CODE"'/g' android/app/build.gradle
+            echo "versionCode lines in android/app/build.gradle:"
+            grep -n versionCode android/app/build.gradle || true
+          fi
+
       # Use version and versionCode from app.versions.json (set by deploy.ps1 before triggering this workflow).
       - name: EAS Build (local)
         run: |
@@ -322,22 +338,72 @@ jobs:
           path: ${{ env.GRADLE_USER_HOME }}
           key: gradle-${{ runner.os }}-${{ env.CACHE_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'package-lock.json') }}
 
-      - name: Record versionCode for logs
-        if: success()
+      # Play uses the versionCode *inside the AAB*, not app.versions.json. Record + verify from the bundle
+      # (bundletool — aapt/aapt2 often cannot read .aab badging directly).
+      - name: Verify AAB versionCode and stage upload.aab (production)
+        if: success() && github.event.inputs.profile == 'production'
+        run: |
+          set -euo pipefail
+          EXPECT="${{ github.event.inputs.android_version_code }}"
+          if [ -z "$EXPECT" ]; then
+            echo "::error::android_version_code workflow input is empty"
+            exit 1
+          fi
+          if ! command -v java >/dev/null 2>&1; then
+            echo "::error::java not found (required for bundletool / Gradle)"
+            exit 1
+          fi
+          BUNDLETOOL_URL="https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar"
+          curl -fsSL -o /tmp/bundletool.jar "$BUNDLETOOL_URL"
+          # Newest .aab outside Gradle caches (avoids picking an intermediate/stale bundle).
+          AAB=$(find . -name "*.aab" -type f \
+            ! -path '*/.gradle/*' ! -path '*/intermediates/*' ! -path '*/transforms/*' 2>/dev/null -printf '%T@\t%p\n' | sort -n | tail -1 | cut -f2-)
+          if [ -z "$AAB" ]; then
+            echo "::error::No .aab file found after EAS build"
+            exit 1
+          fi
+          echo "Resolved release AAB (newest by mtime): $AAB"
+          set +e
+          RAW=$(java -jar /tmp/bundletool.jar dump manifest --bundle "$AAB" --xpath /manifest/@android:versionCode 2>&1)
+          BT_EXIT=$?
+          set -e
+          if [ "$BT_EXIT" -ne 0 ]; then
+            echo "::error::bundletool failed (exit $BT_EXIT): $RAW"
+            exit 1
+          fi
+          echo "bundletool versionCode xpath: $RAW"
+          ACTUAL=$(echo "$RAW" | grep -oE '[0-9]+' | head -1)
+          if [ -z "$ACTUAL" ]; then
+            echo "::error::Could not parse versionCode from bundletool output"
+            exit 1
+          fi
+          echo "Embedded AAB versionCode: $ACTUAL (workflow input: $EXPECT)"
+          if [ "$ACTUAL" != "$EXPECT" ]; then
+            echo "::error::AAB versionCode $ACTUAL does not match workflow android_version_code $EXPECT — Gradle/EAS did not pick up app.versions.json. Do not submit."
+            exit 1
+          fi
+          cp -f "$AAB" upload.aab
+          echo "BUILD_ANDROID_VERSION_CODE=$ACTUAL" | tee android-build-version.txt
+          echo "AAB_VERSION_CODE=$ACTUAL" | tee android-aab-version.txt
+          ls -la upload.aab
+
+      - name: Record versionCode for logs (non-production)
+        if: success() && github.event.inputs.profile != 'production'
         run: |
           VC=$(node -e "try{console.log(require('./app.versions.json').android.versionCode||'')}catch(e){console.log('')}")
           echo "BUILD_ANDROID_VERSION_CODE=$VC" | tee android-build-version.txt
-          echo "If submit fails with duplicate version, Play max must be < this value."
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-build
           path: |
+            upload.aab
             build-*.aab
             *.apk
             android/app/build/outputs/mapping/release/mapping.txt
             android-build-version.txt
+            android-aab-version.txt
           if-no-files-found: ignore
 
   submit:
@@ -376,27 +442,29 @@ jobs:
             echo "::error::android_version_code workflow input is empty"
             exit 1
           fi
-          AAB=$(find . -maxdepth 6 -name "*.aab" -type f 2>/dev/null | head -1)
-          if [ -z "$AAB" ]; then
-            echo "::error::No .aab file found in artifact"
+          if [ -f upload.aab ]; then
+            AAB="./upload.aab"
+          else
+            AAB=$(find . -maxdepth 8 -name "*.aab" -type f 2>/dev/null | head -1)
+          fi
+          if [ -z "$AAB" ] || [ ! -f "$AAB" ]; then
+            echo "::error::No .aab file found in artifact (expected upload.aab from production build)"
             exit 1
           fi
           echo "AAB: $AAB"
-          # Read the version code recorded at build time
           if [ -f android-build-version.txt ]; then
             cat android-build-version.txt
-            BUILT=$(grep -oP 'BUILD_ANDROID_VERSION_CODE=\K[0-9]+' android-build-version.txt 2>/dev/null || echo "")
+            BUILT=$(grep '^BUILD_ANDROID_VERSION_CODE=' android-build-version.txt | cut -d= -f2 || echo "")
             if [ -n "$BUILT" ] && [ "$BUILT" != "$EXP" ]; then
-              echo "::error::versionCode mismatch — built=$BUILT but input=$EXP"
-              echo "::error::The AAB does not have the version code you intended. Run a full new build."
+              echo "::error::versionCode mismatch — AAB manifest check in build job recorded $BUILT but input=$EXP"
               exit 1
             fi
-            echo "✅ versionCode verified: $BUILT"
+            echo "✅ versionCode verified against workflow input: $BUILT"
           else
-            echo "android-build-version.txt not found — skipping cross-check (verify in Play Console after submit)"
+            echo "::error::android-build-version.txt missing — production build should always emit it"
+            exit 1
           fi
-          echo "NOTE: If Play still rejects with 'already submitted', Play already received versionCode=$EXP"
-          echo "      from a previous failed run. Increment android_version_code and run a full new build."
+          echo "NOTE: Play 'already submitted' means this exact versionCode exists on the track; bump android_version_code and rebuild."
 
       - name: Submit to Google Play
         run: |
@@ -404,8 +472,12 @@ jobs:
             echo "::error::ANDROID_SERVICE_ACCOUNT_JSON not set. Add it to GitHub Secrets to enable auto-submit."
             exit 1
           fi
-          AAB=$(find . -maxdepth 5 -name "*.aab" -type f 2>/dev/null | head -1)
-          if [ -z "$AAB" ]; then
+          if [ -f upload.aab ]; then
+            AAB="./upload.aab"
+          else
+            AAB=$(find . -maxdepth 8 -name "*.aab" -type f 2>/dev/null | head -1)
+          fi
+          if [ -z "$AAB" ] || [ ! -f "$AAB" ]; then
             echo "::error::No .aab file found in artifact"
             exit 1
           fi

@@ -4,6 +4,7 @@ export default function DraftsLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" options={{ title: 'Drafts', headerShown: false }} />
+      <Stack.Screen name="recent" options={{ title: 'Deleted & shared', headerShown: false }} />
       <Stack.Screen name="edit/[id]" options={{ presentation: 'card', headerShown: false }} />
     </Stack>
   );

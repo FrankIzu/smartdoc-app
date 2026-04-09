@@ -66,6 +66,10 @@ const CHATGD_MESSAGE_INPUT_MIN_HEIGHT = 40;
 /** Cap composer growth at two rows. */
 const CHATGD_MESSAGE_INPUT_MAX_HEIGHT = 64;
 
+/** Android EditText draws a default underline; without this it shows a line above/below the field inside rounded shells. */
+const ANDROID_TEXT_INPUT_PROPS =
+  Platform.OS === 'android' ? { underlineColorAndroid: 'transparent' as const } : {};
+
 interface ChatParticipant {
   id: number;
   username: string;
@@ -7279,7 +7283,8 @@ export default function ChatsScreen() {
           }}>
             <Ionicons name="search" size={18} color="#666" style={{ marginRight: 6 }} />
             <TextInput
-              style={{ flex: 1, fontSize: 15, color: colors.text, paddingVertical: 8 }}
+              {...ANDROID_TEXT_INPUT_PROPS}
+              style={{ flex: 1, fontSize: 15, color: colors.text, paddingVertical: 8, backgroundColor: 'transparent' }}
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder="Search chats..."
@@ -7471,6 +7476,7 @@ export default function ChatsScreen() {
         <View style={dynamicStyles.searchInputContainer}>
           <Ionicons name="search" size={20} color="#666" style={dynamicStyles.searchIcon} />
           <TextInput
+            {...ANDROID_TEXT_INPUT_PROPS}
             style={dynamicStyles.searchInput}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -7842,6 +7848,7 @@ export default function ChatsScreen() {
         >
           <View style={dynamicStyles.messageInputShell}>
             <TextInput
+              {...ANDROID_TEXT_INPUT_PROPS}
               style={[dynamicStyles.messageInput, { height: Math.max(CHATGD_MESSAGE_INPUT_MIN_HEIGHT, Math.min(CHATGD_MESSAGE_INPUT_MAX_HEIGHT, textInputHeight)) }]}
               value={newMessage}
               onChangeText={handleMentionInput}
@@ -8016,6 +8023,7 @@ export default function ChatsScreen() {
               <View style={dynamicStyles.searchInputContainer}>
                 <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
+                  {...ANDROID_TEXT_INPUT_PROPS}
                   style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search documents..."
                   placeholderTextColor="#999"
@@ -8054,6 +8062,7 @@ export default function ChatsScreen() {
               <View style={dynamicStyles.searchInputContainer}>
                 <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
+                  {...ANDROID_TEXT_INPUT_PROPS}
                   style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search workspaces..."
                   placeholderTextColor="#999"
@@ -8092,6 +8101,7 @@ export default function ChatsScreen() {
               <View style={dynamicStyles.searchInputContainer}>
                 <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
+                  {...ANDROID_TEXT_INPUT_PROPS}
                   style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search users..."
                   placeholderTextColor="#999"
@@ -8147,6 +8157,7 @@ export default function ChatsScreen() {
               <View style={dynamicStyles.searchInputContainer}>
                 <Ionicons name="search" size={16} color="#666" style={dynamicStyles.searchIcon} />
                 <TextInput
+                  {...ANDROID_TEXT_INPUT_PROPS}
                   style={[dynamicStyles.searchInput, { fontSize: 14 }]}
                   placeholder="Search bookmarks..."
                   placeholderTextColor="#999"
@@ -8554,6 +8565,7 @@ export default function ChatsScreen() {
       paddingLeft: 12,
       paddingRight: 2,
       paddingVertical: 3,
+      overflow: 'hidden',
     },
     messageInput: {
       flex: 1,
@@ -8570,6 +8582,13 @@ export default function ChatsScreen() {
       maxHeight: CHATGD_MESSAGE_INPUT_MAX_HEIGHT,
       textAlignVertical: 'top',
       includeFontPadding: false,
+      ...(Platform.OS === 'android'
+        ? {
+            borderWidth: 0,
+            paddingVertical: 4,
+            paddingTop: 6,
+          }
+        : {}),
     },
     composerSendWrap: {
       marginBottom: 4,
@@ -8654,6 +8673,8 @@ export default function ChatsScreen() {
       paddingVertical: 8,
       fontSize: 14,
       color: colors.text,
+      backgroundColor: 'transparent',
+      ...(Platform.OS === 'android' ? { paddingVertical: 6 } : {}),
     },
     searchIcon: {
       marginRight: 8,

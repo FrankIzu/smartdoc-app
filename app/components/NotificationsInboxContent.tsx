@@ -64,6 +64,7 @@ export function NotificationsInboxContent({
   const [markingId, setMarkingId] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
   const [actionTaken, setActionTaken] = useState<Record<number, 'accepted' | 'rejected'>>({});
+  const inboxHeaderScrollRestore = useScrollRestoresHeaderProps();
 
   const loadNotifications = useCallback(async () => {
     if (!user) {
@@ -343,7 +344,8 @@ export function NotificationsInboxContent({
       paddingVertical: variant === 'modal' ? 10 : 12,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
-      backgroundColor: colors.background,
+      // Modal sheet wrapper uses `colors.card`; match it so the header is not a different plane than the rest of the popup.
+      backgroundColor: variant === 'modal' ? colors.card : colors.background,
     },
     headerTitle: {
       fontSize: variant === 'modal' ? 17 : 18,
@@ -368,9 +370,12 @@ export function NotificationsInboxContent({
       padding: variant === 'modal' ? 12 : 16,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
-      backgroundColor: colors.background,
+      backgroundColor: variant === 'modal' ? colors.card : colors.background,
     },
-    rowUnread: { backgroundColor: colors.card },
+    // Full screen: unread uses elevated card. Modal: same card base, surface tint for unread so rows stay aligned with the sheet.
+    rowUnread: {
+      backgroundColor: variant === 'modal' ? colors.surface : colors.card,
+    },
     iconWrap: {
       width: 40,
       height: 40,
@@ -438,7 +443,8 @@ export function NotificationsInboxContent({
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
-        {...scrollRestoresHeaderProps}
+        onScrollEndDrag={inboxHeaderScrollRestore.onScrollEndDrag}
+        onMomentumScrollEnd={inboxHeaderScrollRestore.onMomentumScrollEnd}
       >
         {notifications.length === 0 ? (
           <View style={dynamicStyles.empty}>

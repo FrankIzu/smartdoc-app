@@ -63,6 +63,9 @@ const FAVORITE_CHATS_KEY = '@grabdocs_user_chat_favorites';
 const USER_CHAT_INPUT_MIN_HEIGHT = 40;
 const USER_CHAT_INPUT_MAX_HEIGHT = 64;
 
+const ANDROID_TEXT_INPUT_PROPS =
+  Platform.OS === 'android' ? { underlineColorAndroid: 'transparent' as const } : {};
+
 interface ChatMessage {
   id: number;
   content: string;
@@ -1374,6 +1377,7 @@ export default function UserChatScreen() {
       fontSize: 14,
       color: colors.text,
       padding: 0,
+      backgroundColor: 'transparent',
     },
     chatsList: {
       flex: 1,
@@ -1544,6 +1548,7 @@ export default function UserChatScreen() {
       paddingLeft: 12,
       paddingRight: 2,
       paddingVertical: 3,
+      overflow: 'hidden',
     },
     messageInput: {
       flex: 1,
@@ -1560,6 +1565,13 @@ export default function UserChatScreen() {
       maxHeight: USER_CHAT_INPUT_MAX_HEIGHT,
       textAlignVertical: 'top',
       includeFontPadding: false,
+      ...(Platform.OS === 'android'
+        ? {
+            borderWidth: 0,
+            paddingVertical: 4,
+            paddingTop: 6,
+          }
+        : {}),
     },
     sendButton: {
       width: 32,
@@ -1917,6 +1929,7 @@ export default function UserChatScreen() {
             >
               <View style={dynamicStyles.messageInputShell}>
                 <TextInput
+                  {...ANDROID_TEXT_INPUT_PROPS}
                   ref={messageInputRef}
                   style={[dynamicStyles.messageInput, { height: Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, textInputHeight)) }]}
                   placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
@@ -2072,6 +2085,7 @@ export default function UserChatScreen() {
             >
               <View style={dynamicStyles.messageInputShell}>
                 <TextInput
+                  {...ANDROID_TEXT_INPUT_PROPS}
                   ref={messageInputRef}
                   style={[dynamicStyles.messageInput, { height: Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, textInputHeight)) }]}
                   placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
@@ -2142,6 +2156,7 @@ export default function UserChatScreen() {
         <View style={dynamicStyles.searchInputContainer}>
           <Ionicons name="search" size={20} color={colors.textSecondary} style={dynamicStyles.searchIcon} />
           <TextInput
+            {...ANDROID_TEXT_INPUT_PROPS}
             style={dynamicStyles.searchInput}
             placeholder="Search conversations..."
             placeholderTextColor={colors.textSecondary}

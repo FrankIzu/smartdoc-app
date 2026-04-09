@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useDelayedOfflineBanner } from '../../hooks/useDelayedOfflineBanner';
 import {
     ActivityIndicator,
@@ -13,6 +13,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -77,6 +78,7 @@ export default function DraftsListScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isOffline, setIsOffline] = useState(false);
   const { offlineBannerVisible, showOfflineBannerAfterDelay } = useDelayedOfflineBanner(isOffline);
+  const draftSwipeRefs = useRef<Map<number, Swipeable>>(new Map());
 
   const flushPendingCreates = useCallback(async (): Promise<void> => {
     const pendingCreates = await draftsCache.getPendingCreates();
@@ -309,6 +311,45 @@ export default function DraftsListScreen() {
     router.push(`/drafts/edit/${draft.id}`);
   };
 
+  const performDeleteDraft = useCallback(async (draft: DraftItem) => {
+    const label = stripExtension(draft.original_filename);
+    const ref = draftSwipeRefs.current.get(draft.id);
+    try {
+      if (draftsCache.isLocalDraftId(draft.id)) {
+        await draftsCache.removePendingCreate(draft.id);
+        await draftsCache.removePendingSave(draft.id);
+        await draftsCache.removePendingRename(draft.id);
+        await draftsCache.removeFromDraftsList(draft.id);
+        await draftsCache.deleteDraftContent(draft.id);
+      } else {
+        await apiClient.deleteDraft(draft.id);
+        await draftsCache.removePendingSave(draft.id);
+        await draftsCache.removePendingRename(draft.id);
+        await draftsCache.removeFromDraftsList(draft.id);
+        await draftsCache.deleteDraftContent(draft.id);
+      }
+      setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+      ref?.close();
+    } catch (e: any) {
+      Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not delete draft'));
+      ref?.close();
+    }
+  }, []);
+
+  const confirmDeleteDraft = useCallback(
+    (draft: DraftItem) => {
+      Alert.alert(
+        'Move this file to trash?',
+        'You can restore it within 30 days from the Deleted tab.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => draftSwipeRefs.current.get(draft.id)?.close() },
+          { text: 'Move to trash', style: 'destructive', onPress: () => void performDeleteDraft(draft) },
+        ]
+      );
+    },
+    [performDeleteDraft]
+  );
+
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     header: {
@@ -424,8 +465,16 @@ export default function DraftsListScreen() {
           </TouchableOpacity>
           <View style={dynamicStyles.headerTitleWrap}>
             <Text style={dynamicStyles.headerTitle}>Drafts</Text>
-            <Text style={dynamicStyles.headerSubtitle}>Notes | Invite other to edit | ChatGD</Text>
+            <Text style={dynamicStyles.headerSubtitle}>Notes | Invite others</Text>
           </View>
+          <TouchableOpacity
+            style={dynamicStyles.headerBtn}
+            onPress={() => router.push('/drafts/recent')}
+            accessibilityLabel="Recently deleted and shared notes"
+            accessibilityRole="button"
+          >
+            <Ionicons name="archive-outline" size={26} color={colors.text} />
+          </TouchableOpacity>
           <TouchableOpacity style={dynamicStyles.headerBtn} onPress={onRefresh} disabled={refreshing}>
             {refreshing ? (
               <ActivityIndicator size="small" color={colors.primary || '#007AFF'} />
@@ -518,24 +567,54 @@ export default function DraftsListScreen() {
               <View style={dynamicStyles.sectionHeader}>
                 <Text style={dynamicStyles.sectionTitle}>{label}</Text>
               </View>
-              {items.map(draft => (
-                <TouchableOpacity
+              {items.map((draft) => (
+                <Swipeable
                   key={draft.id}
-                  style={dynamicStyles.item}
-                  onPress={() => handleOpenDraft(draft)}
-                  activeOpacity={0.7}
+                  ref={(r) => {
+                    if (r) draftSwipeRefs.current.set(draft.id, r);
+                    else draftSwipeRefs.current.delete(draft.id);
+                  }}
+                  renderRightActions={() => (
+                    <View style={{ flexDirection: 'row', alignItems: 'stretch' }}>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FF3B30',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          width: 88,
+                        }}
+                        onPress={() => confirmDeleteDraft(draft)}
+                        accessibilityLabel="Delete draft"
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="trash-outline" size={22} color="#fff" />
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600', marginTop: 4 }}>
+                          Delete
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  overshootRight={false}
+                  friction={2}
+                  containerStyle={{ backgroundColor: colors.card }}
                 >
-                  <View style={dynamicStyles.itemContent}>
-                    <Text style={dynamicStyles.itemTitle} numberOfLines={1}>
-                      {stripExtension(draft.original_filename)}
-                    </Text>
-                    <Text style={dynamicStyles.itemSubtitle} numberOfLines={1}>
-                      {draft.json_data?.created_from ? `From: ${draft.json_data.created_from}` : ''}
-                      {draft.json_data?.created_from && draft.created_at ? ' · ' : ''}
-                      {draft.created_at ? new Date(draft.created_at).toLocaleDateString() : ''}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={dynamicStyles.item}
+                    onPress={() => handleOpenDraft(draft)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={dynamicStyles.itemContent}>
+                      <Text style={dynamicStyles.itemTitle} numberOfLines={1}>
+                        {stripExtension(draft.original_filename)}
+                      </Text>
+                      <Text style={dynamicStyles.itemSubtitle} numberOfLines={1}>
+                        {draft.json_data?.created_from ? `From: ${draft.json_data.created_from}` : ''}
+                        {draft.json_data?.created_from && draft.created_at ? ' · ' : ''}
+                        {draft.created_at ? new Date(draft.created_at).toLocaleDateString() : ''}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </Swipeable>
               ))}
             </View>
           ))}

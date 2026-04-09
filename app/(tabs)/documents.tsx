@@ -77,6 +77,9 @@ interface ApiDocument {
   processing_status?: 'pending' | 'processing' | 'processed' | 'error';
   is_global?: boolean;
   user_id?: number; // File owner's user ID
+  /** When present from API, trashed rows must not appear on the main Files list */
+  is_deleted?: boolean;
+  lifecycle_state?: string | null;
 }
 
 type SortOption = 'name' | 'date' | 'size' | 'type';
@@ -94,7 +97,8 @@ type FilterOption =
   | 'spreadsheet'
   | 'picture'
   | 'pending'
-  | 'unknown';
+  | 'unknown'
+  | 'deleted';
 
 // Helper to check if a file is editable as Draft (text-like formats)
 function isEditableTextFormat(file: Document | { original_filename?: string; filename?: string; file_kind?: string }): boolean {
@@ -174,6 +178,29 @@ export default function QuickFilesScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  /** Trash tab: server soft-deleted files */
+  type DeletedFileRow = {
+    id: number;
+    original_filename?: string;
+    file_kind?: string;
+    file_type?: string;
+    deleted_at?: string | null;
+    days_remaining?: number | null;
+    purge_at?: string | null;
+    restoring?: boolean;
+    lifecycle_state?: string | null;
+  };
+  const [deletedFiles, setDeletedFiles] = useState<DeletedFileRow[]>([]);
+  const [deletedLoading, setDeletedLoading] = useState(false);
+  const [deletedActionId, setDeletedActionId] = useState<number | null>(null);
+  const [showDeletedKebabMenu, setShowDeletedKebabMenu] = useState(false);
+  const [selectedDeletedFileForMenu, setSelectedDeletedFileForMenu] = useState<DeletedFileRow | null>(null);
+  /** Poll until restored files disappear from trash (indexing finished on server). */
+  const restorePollRef = useRef<{
+    intervalId: ReturnType<typeof setInterval> | null;
+    pendingIds: Set<number>;
+    attempts: number;
+  }>({ intervalId: null, pendingIds: new Set(), attempts: 0 });
   // Refs mirror the pagination state so loadDocuments can read them without
   // being in its dependency array (prevents the useCallback from being recreated
   // on every page load, which would re-trigger useEffect and reset to page 1).
@@ -268,6 +295,14 @@ export default function QuickFilesScreen() {
     workspaceId?: number;
     workspaceBookmarks?: any[];
   } | null>(null);
+
+  /** Optimistic move-to-trash: hide these ids on every server-driven list merge until DELETE completes + refresh. */
+  const pendingMoveToTrashIdsRef = React.useRef<Set<string>>(new Set());
+  const filterPendingTrash = useCallback((docs: Document[]) => {
+    const p = pendingMoveToTrashIdsRef.current;
+    if (p.size === 0) return docs;
+    return docs.filter((d) => !p.has(String(d.id)));
+  }, []);
 
   // Locked-bookmark file ID cache — keyed so we don't re-fetch on every loadDocuments call.
   // Refreshed when bookmark mutations happen or after LOCKED_BOOKMARK_CACHE_MS elapses.
@@ -583,8 +618,41 @@ export default function QuickFilesScreen() {
     });
   }, [documents]);
 
+  const loadDeletedFiles = useCallback(
+    async (opts?: { silent?: boolean }): Promise<DeletedFileRow[]> => {
+      if (!user) {
+        setDeletedFiles([]);
+        return [];
+      }
+      if (!opts?.silent) setDeletedLoading(true);
+      try {
+        const res = await apiClient.getDeletedFiles(1, 100);
+        const list = (res as { files?: DeletedFileRow[] }).files;
+        const next = Array.isArray(list) ? list : [];
+        setDeletedFiles(next);
+        return next;
+      } catch {
+        setDeletedFiles([]);
+        return [];
+      } finally {
+        if (!opts?.silent) setDeletedLoading(false);
+      }
+    },
+    [user]
+  );
+
+  useEffect(() => {
+    if (filterBy === 'deleted' && user) {
+      loadDeletedFiles();
+    }
+  }, [filterBy, user, loadDeletedFiles]);
+
   // Memoized filtered and sorted documents for better performance
   const filteredAndSortedDocuments = useMemo(() => {
+    if (filterBy === 'deleted') {
+      return [];
+    }
+
     let filtered = documents;
 
     // Hide files that are in a locked bookmark (empty Set = no-op)
@@ -820,7 +888,9 @@ export default function QuickFilesScreen() {
       cache.workspaceId === workspaceId
     ) {
       console.log('📁 Using cached documents for workspaceId:', workspaceId);
-      const filtered = cache.data.filter(doc => !lockedFileIdsRef.current.has(doc.id));
+      const filtered = filterPendingTrash(
+        cache.data.filter((doc) => !lockedFileIdsRef.current.has(doc.id))
+      );
       setDocuments(filtered);
       setWorkspaceBookmarks(cache.workspaceBookmarks ?? []);
       setLoading(false);
@@ -852,7 +922,18 @@ export default function QuickFilesScreen() {
       }
       try {
         console.log('📁 Loading documents (no workspace)');
-        const res = await apiClient.getDocuments(pageToLoad, MOBILE_FILES_PAGE_SIZE, undefined, undefined);
+        // Longer than default 25s — slow DB / background work on server can exceed axios default
+        const FILES_LIST_TIMEOUT_MS = 60000;
+        const res = await apiClient.getDocuments(
+          pageToLoad,
+          MOBILE_FILES_PAGE_SIZE,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          false,
+          FILES_LIST_TIMEOUT_MS
+        );
         console.log('📁 Documents response received:', res?.success, 'Files count:', (res as any)?.data?.length || (res as any)?.files?.length || 0);
         return res;
       } catch (err) {
@@ -978,10 +1059,24 @@ export default function QuickFilesScreen() {
         }
       } else {
         // Handle documents data (non-forms)
+        if ((response as { timedOut?: boolean })?.timedOut) {
+          if (!append) {
+            setError(
+              "Couldn't refresh — request timed out. Pull down to try again."
+            );
+          }
+          // Same as chats @-mention cache: do not replace the list with an empty timed-out response
+        } else {
         const docsArray = (response as any).data || (response as any).files || (response as any).documents || [];
         if (Array.isArray(docsArray)) {
           const mappedDocs = docsArray
             .filter((doc: ApiDocument) => !lockedFileIds.has(String(doc.id)))
+            .filter((doc: ApiDocument) => {
+              if (doc.is_deleted === true) return false;
+              const ls = (doc.lifecycle_state || '').toLowerCase();
+              if (ls === 'deleted') return false;
+              return true;
+            })
             .map((doc: ApiDocument) => {
               const originalName = doc.original_filename || doc.filename || 'Untitled';
               const fallbackName = removeFileExtension(originalName);
@@ -1042,13 +1137,14 @@ export default function QuickFilesScreen() {
             (pagination?.has_more !== false && docsArray.length >= MOBILE_FILES_PAGE_SIZE);
 
           if (append) {
-            setDocuments(prev => {
-              const existingIds = new Set(prev.map(doc => doc.id));
-              const next = mappedDocs.filter(doc => !existingIds.has(doc.id));
+            const mappedFiltered = filterPendingTrash(mappedDocs);
+            setDocuments((prev) => {
+              const existingIds = new Set(prev.map((doc) => doc.id));
+              const next = mappedFiltered.filter((doc) => !existingIds.has(doc.id));
               return [...prev, ...next];
             });
           } else {
-            setDocuments(mappedDocs);
+            setDocuments(filterPendingTrash(mappedDocs));
           }
           currentPageRef.current = pageToLoad;
           setCurrentPage(pageToLoad);
@@ -1072,6 +1168,7 @@ export default function QuickFilesScreen() {
           setDocuments([]);
           setError('No documents found or API returned unexpected format.');
         }
+        }
       }
     } catch (err: any) {
       console.error('Unexpected error in loadDocuments:', err);
@@ -1088,7 +1185,7 @@ export default function QuickFilesScreen() {
       setLoadingMore(false);
       setLoading(false);
     }
-  }, [workspaceId, fetchLockedBookmarkFileIds]);
+  }, [workspaceId, fetchLockedBookmarkFileIds, filterPendingTrash]);
 
   // When connection error is shown, retry so it clears as soon as connection is back
   const CONNECTION_ERROR_MSG = 'Connection Error: Connecting you back ...';
@@ -1172,6 +1269,9 @@ export default function QuickFilesScreen() {
   // Merge optimistic placeholder rows (from in-flight uploads) at the top of the list
   // (must be after getFileTypeFromExtension / formatFileSize — defined above)
   const documentsWithPending = useMemo<Document[]>(() => {
+    if (filterBy === 'deleted') {
+      return [];
+    }
     const placeholders: Document[] = pendingUploads.map((u) => ({
       id: u.id,
       name: u.name,
@@ -1188,17 +1288,33 @@ export default function QuickFilesScreen() {
       return !pendingNameKeys.has(doc.name.trim().toLowerCase());
     });
     return [...placeholders, ...withoutDupServerPending];
-  }, [pendingUploads, filteredAndSortedDocuments]);
+  }, [pendingUploads, filteredAndSortedDocuments, filterBy]);
+
+  const filteredDeletedFiles = useMemo(() => {
+    if (!searchQuery.trim()) return deletedFiles;
+    const q = searchQuery.toLowerCase().trim();
+    return deletedFiles.filter(
+      (f) =>
+        (f.original_filename || '').toLowerCase().includes(q) ||
+        (f.file_kind || '').toLowerCase().includes(q) ||
+        (f.file_type || '').toLowerCase().includes(q)
+    );
+  }, [deletedFiles, searchQuery]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    if (filterByRef.current === 'deleted') {
+      await loadDeletedFiles();
+      setRefreshing(false);
+      return;
+    }
     currentPageRef.current = 1;
     setCurrentPage(1);
     hasMoreRef.current = true;
     setHasMore(true);
     await loadDocuments(true, 1, false);
     setRefreshing(false);
-  }, [loadDocuments]);
+  }, [loadDocuments, loadDeletedFiles]);
 
   const onEndReached = useCallback(async () => {
     if (onEndReachedCalledDuringMomentumRef.current) return;
@@ -1522,28 +1638,53 @@ export default function QuickFilesScreen() {
 
   const handleDeleteDocument = () => {
     if (!selectedDocumentForMenu) return;
+    const docToRemove = selectedDocumentForMenu;
 
     Alert.alert(
-      'Delete Document',
-      `Are you sure you want to delete "${selectedDocumentForMenu.name}"?`,
+      'Move this file to trash?',
+      'You can restore it within 30 days from the Deleted tab.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Move to trash',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              const response = await apiClient.deleteFile(parseInt(selectedDocumentForMenu.id));
-              if (response.success) {
-                setDocuments(prev => prev.filter(doc => doc.id !== selectedDocumentForMenu.id));
-                Alert.alert('Success', 'Document deleted successfully!');
-              } else {
-                Alert.alert('Error', response.message || 'Failed to delete document');
-              }
-            } catch (error: any) {
-              Alert.alert('Error', error.message || 'Failed to delete document');
-            }
+          onPress: () => {
+            const idStr = String(docToRemove.id);
+            apiCacheRef.current = null;
+            pendingMoveToTrashIdsRef.current.add(idStr);
             setShowKebabMenu(false);
+            setSelectedDocumentForMenu(null);
+            setDocuments((prev) => prev.filter((d) => String(d.id) !== idStr));
+
+            const waitForLoadSlot = async (maxMs = 12000) => {
+              const step = 100;
+              let waited = 0;
+              while (isLoadingDocumentsRef.current && waited < maxMs) {
+                await new Promise((r) => setTimeout(r, step));
+                waited += step;
+              }
+            };
+
+            void (async () => {
+              try {
+                const response = await apiClient.deleteFile(parseInt(idStr, 10));
+                if (response && typeof response === 'object' && response.success === false) {
+                  pendingMoveToTrashIdsRef.current.delete(idStr);
+                  await waitForLoadSlot();
+                  await loadDocuments(true, 1, false);
+                  Alert.alert('Error', response.message || 'Could not move to trash');
+                  return;
+                }
+                await waitForLoadSlot();
+                await loadDocuments(true, 1, false);
+                pendingMoveToTrashIdsRef.current.delete(idStr);
+              } catch (error: any) {
+                pendingMoveToTrashIdsRef.current.delete(idStr);
+                await waitForLoadSlot();
+                await loadDocuments(true, 1, false);
+                Alert.alert('Error', toAlertMessage(error?.message, 'Could not move to trash'));
+              }
+            })();
           },
         },
       ]
@@ -2505,8 +2646,223 @@ export default function QuickFilesScreen() {
     return StyleSheet.create(scaledStyles);
   }, [colors, colors.scale]);
 
+  const filterTabOptions = useMemo(() => {
+    const labels: Record<FilterOption, string> = {
+      all: 'All',
+      documents: 'Documents',
+      receipts: 'Receipts',
+      invoice: 'Invoices',
+      forms: 'Forms',
+      transcripts: 'Transcripts',
+      meeting_notes: 'Meeting Notes',
+      meeting_chat: 'Meeting Chat',
+      meeting_summary: 'AI Summary',
+      draft: 'Draft',
+      spreadsheet: 'Spreadsheets',
+      picture: 'Pictures',
+      pending: 'Pending',
+      unknown: 'Unknown',
+      deleted: 'Deleted',
+    };
+    const base = availableCategories.filter((c) => c !== 'deleted');
+    const ordered: FilterOption[] = user ? [...base, 'deleted'] : base;
+    return ordered.map((category) => ({
+      option: category,
+      label: labels[category] || category,
+    }));
+  }, [availableCategories, user]);
+
+  const MAX_RESTORE_POLL_ATTEMPTS = 150;
+
+  const runRestorePollTick = useCallback(async () => {
+    const poll = restorePollRef.current;
+    if (poll.pendingIds.size === 0) {
+      if (poll.intervalId) {
+        clearInterval(poll.intervalId);
+        poll.intervalId = null;
+      }
+      poll.attempts = 0;
+      return;
+    }
+    poll.attempts += 1;
+    if (poll.attempts > MAX_RESTORE_POLL_ATTEMPTS) {
+      if (poll.intervalId) {
+        clearInterval(poll.intervalId);
+        poll.intervalId = null;
+      }
+      poll.pendingIds.clear();
+      poll.attempts = 0;
+      Alert.alert(
+        'Restore',
+        'Restoring is taking longer than expected. Pull to refresh to check status.'
+      );
+      return;
+    }
+    try {
+      const list = await loadDeletedFiles({ silent: true });
+      for (const id of [...poll.pendingIds]) {
+        if (!list.some((f) => f.id === id)) {
+          poll.pendingIds.delete(id);
+        }
+      }
+      if (poll.pendingIds.size === 0) {
+        if (poll.intervalId) {
+          clearInterval(poll.intervalId);
+          poll.intervalId = null;
+        }
+        poll.attempts = 0;
+        await loadDocuments(true, 1, false);
+      }
+    } catch {
+      // transient errors — next tick retries
+    }
+  }, [loadDeletedFiles, loadDocuments]);
+
+  const performRestoreDeleted = useCallback(
+    async (fileId: number) => {
+      setDeletedActionId(fileId);
+      try {
+        const r = await apiClient.restoreFileFromTrash(fileId);
+        if ((r as { success?: boolean })?.success === false) {
+          Alert.alert('Error', (r as { message?: string })?.message || 'Restore failed');
+          return;
+        }
+        setDeletedFiles((prev) =>
+          prev.map((x) =>
+            x.id === fileId ? { ...x, restoring: true, lifecycle_state: 'restoring' } : x
+          )
+        );
+        const poll = restorePollRef.current;
+        poll.pendingIds.add(fileId);
+        if (!poll.intervalId) {
+          poll.attempts = 0;
+          poll.intervalId = setInterval(() => {
+            void runRestorePollTick();
+          }, 2000);
+          void runRestorePollTick();
+        } else {
+          void runRestorePollTick();
+        }
+      } catch (e: any) {
+        Alert.alert('Error', toAlertMessage(e?.message, 'Restore failed'));
+      } finally {
+        setDeletedActionId(null);
+      }
+    },
+    [runRestorePollTick]
+  );
+
+  const confirmRestoreDeleted = useCallback(
+    (fileId: number, displayName?: string) => {
+      const raw = (displayName || 'File').trim();
+      const label = raw.length > 80 ? `${raw.slice(0, 77)}…` : raw;
+      Alert.alert(
+        'Restore this file?',
+        `“${label}” will be added back to your library. This might take a few minutes to complete — you can leave this page.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Restore', onPress: () => void performRestoreDeleted(fileId) },
+        ]
+      );
+    },
+    [performRestoreDeleted]
+  );
+
+  useEffect(() => {
+    return () => {
+      const poll = restorePollRef.current;
+      if (poll.intervalId) {
+        clearInterval(poll.intervalId);
+        poll.intervalId = null;
+      }
+      poll.pendingIds.clear();
+    };
+  }, []);
+
+  const handlePermanentDeleteDeleted = useCallback((row: { id: number; original_filename?: string }) => {
+    Alert.alert(
+      'Delete forever',
+      `Permanently delete "${row.original_filename || 'this file'}"? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete forever',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletedActionId(row.id);
+            try {
+              const r = await apiClient.permanentlyDeleteTrashedFile(row.id);
+              if ((r as { success?: boolean })?.success !== false) {
+                setDeletedFiles((prev) => prev.filter((x) => x.id !== row.id));
+              } else {
+                Alert.alert('Error', (r as { message?: string })?.message || 'Delete failed');
+              }
+            } catch (e: any) {
+              Alert.alert('Error', toAlertMessage(e?.message, 'Delete failed'));
+            } finally {
+              setDeletedActionId(null);
+            }
+          },
+        },
+      ]
+    );
+  }, []);
+
+  const handleCloseDeletedKebabMenu = useCallback(() => {
+    setShowDeletedKebabMenu(false);
+    setSelectedDeletedFileForMenu(null);
+  }, []);
+
+  const handleDeletedKebabOpen = useCallback((item: DeletedFileRow) => {
+    setSelectedDeletedFileForMenu(item);
+    setShowDeletedKebabMenu(true);
+  }, []);
+
+  const renderDeletedFile = ({ item }: { item: DeletedFileRow }) => {
+    const isRestoring =
+      item.restoring === true ||
+      (item.lifecycle_state || '').toLowerCase() === 'restoring';
+    const showBusy = isRestoring || deletedActionId === item.id;
+    return (
+      <View style={dynamicStyles.documentItem}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {showBusy ? (
+            <View style={[dynamicStyles.documentIcon, { justifyContent: 'center' }]}>
+              <ActivityIndicator size="small" color="#007AFF" />
+            </View>
+          ) : null}
+          <View style={[dynamicStyles.documentInfo, { flex: 1 }]}>
+            <Text style={dynamicStyles.documentName} numberOfLines={2}>
+              {item.original_filename || 'File'}
+            </Text>
+            <Text style={dynamicStyles.documentMeta}>
+              {isRestoring
+                ? 'Restoring…'
+                : [
+                    item.file_kind || item.file_type || '—',
+                    item.deleted_at ? ` · ${new Date(item.deleted_at).toLocaleString()}` : '',
+                    item.days_remaining != null ? ` · ${item.days_remaining} days left` : '',
+                  ]
+                    .filter(Boolean)
+                    .join('')}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[dynamicStyles.kebabButton, showBusy && { opacity: 0.4 }]}
+            onPress={() => handleDeletedKebabOpen(item)}
+            disabled={showBusy}
+            accessibilityLabel="Deleted file actions"
+            accessibilityRole="button"
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color="#666" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   // Loading state with bouncing dots
-  if (loading && documents.length === 0) {
+  if (loading && documents.length === 0 && filterBy !== 'deleted') {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <TapToToggleHeaderView style={dynamicStyles.container}>
@@ -2638,25 +2994,7 @@ export default function QuickFilesScreen() {
           horizontal
           showsHorizontalScrollIndicator={false}
           {...scrollRestoresHeaderProps}
-          data={availableCategories.map(category => {
-            const labels: Record<FilterOption, string> = {
-              'all': 'All',
-              'documents': 'Documents',
-              'receipts': 'Receipts',
-              'invoice': 'Invoices',
-              'forms': 'Forms',
-              'transcripts': 'Transcripts',
-              'meeting_notes': 'Meeting Notes',
-              'meeting_chat': 'Meeting Chat',
-              'meeting_summary': 'AI Summary',
-              'draft': 'Draft',
-              'spreadsheet': 'Spreadsheets',
-              'picture': 'Pictures',
-              'pending': 'Pending',
-              'unknown': 'Unknown',
-            };
-            return { option: category, label: labels[category] || category };
-          })}
+          data={filterTabOptions}
           renderItem={({ item }) => (
             <FilterButton option={item.option} label={item.label} />
           )}
@@ -2665,7 +3003,8 @@ export default function QuickFilesScreen() {
         />
       </View>
 
-      {/* Sort Options */}
+      {/* Sort Options — hidden for Deleted (trash) tab */}
+      {filterBy !== 'deleted' && (
       <View style={dynamicStyles.sortContainer}>
         <Text style={dynamicStyles.sortLabel}>Sort by:</Text>
         <TouchableOpacity
@@ -2688,29 +3027,60 @@ export default function QuickFilesScreen() {
           <Ionicons name="chevron-down" size={16} color="#666" />
         </TouchableOpacity>
       </View>
+      )}
 
       {/* Files List */}
       <FlatList
-        data={documentsWithPending}
-        renderItem={renderDocument}
-        keyExtractor={(item) => (item as Document).id}
+        data={filterBy === 'deleted' ? filteredDeletedFiles : documentsWithPending}
+        renderItem={filterBy === 'deleted' ? renderDeletedFile : renderDocument}
+        keyExtractor={(item) =>
+          filterBy === 'deleted' ? String((item as DeletedFileRow).id) : (item as Document).id
+        }
+        extraData={
+          filterBy === 'deleted'
+            ? `${filterBy}-${showDeletedKebabMenu}-${selectedDeletedFileForMenu?.id ?? ''}-${deletedActionId ?? ''}-${deletedFiles.map((f) => `${f.id}:${f.restoring ? 1 : 0}`).join(',')}`
+            : filterBy
+        }
         style={dynamicStyles.documentsList}
         {...scrollRestoresHeaderProps}
         accessibilityRole="list"
-        accessibilityLabel="Documents"
+        accessibilityLabel={filterBy === 'deleted' ? 'Deleted files' : 'Documents'}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
-        onEndReached={onEndReached}
+        onEndReached={filterBy === 'deleted' ? undefined : onEndReached}
         onEndReachedThreshold={0.4}
         onMomentumScrollBegin={() => {
           onEndReachedCalledDuringMomentumRef.current = false;
         }}
-        ListFooterComponent={loadingMore ? (
-          <View style={{ paddingVertical: 16 }}>
-            <ActivityIndicator size="small" color="#007AFF" />
-          </View>
-        ) : null}
+        ListFooterComponent={
+          filterBy === 'deleted'
+            ? null
+            : loadingMore
+              ? (
+                  <View style={{ paddingVertical: 16 }}>
+                    <ActivityIndicator size="small" color="#007AFF" />
+                  </View>
+                )
+              : null
+        }
         ListEmptyComponent={
+          filterBy === 'deleted' ? (
+            deletedLoading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#007AFF" />
+              </View>
+            ) : (
+              <View style={dynamicStyles.emptyContainer}>
+                <Ionicons name="trash-outline" size={64} color="#ccc" />
+                <Text style={dynamicStyles.emptyText}>
+                  {searchQuery.trim() ? 'No deleted files match your search' : 'No deleted files'}
+                </Text>
+                <Text style={dynamicStyles.emptySubtext}>
+                  Files you move to trash appear here. You can restore them or delete forever.
+                </Text>
+              </View>
+            )
+          ) : (
           <View style={dynamicStyles.emptyContainer}>
             <Ionicons name="folder-open-outline" size={64} color="#ccc" />
             <Text style={dynamicStyles.emptyText}>
@@ -2732,6 +3102,7 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             )}
           </View>
+          )
         }
       />
 
@@ -2772,6 +3143,56 @@ export default function QuickFilesScreen() {
         onImportSuccess={handleImportSuccess}
       />
 
+      {/* Deleted tab: kebab menu (restore / delete forever) */}
+      <Modal
+        visible={showDeletedKebabMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCloseDeletedKebabMenu}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={handleCloseDeletedKebabMenu}
+        >
+          <View style={dynamicStyles.kebabMenuContainer}>
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={() => {
+                const row = selectedDeletedFileForMenu;
+                handleCloseDeletedKebabMenu();
+                if (row) confirmRestoreDeleted(row.id, row.original_filename);
+              }}
+              disabled={
+                !!selectedDeletedFileForMenu &&
+                (deletedActionId === selectedDeletedFileForMenu.id ||
+                  selectedDeletedFileForMenu.restoring === true ||
+                  (selectedDeletedFileForMenu.lifecycle_state || '').toLowerCase() === 'restoring')
+              }
+            >
+              <Ionicons name="arrow-undo-outline" size={20} color="#007AFF" />
+              <Text style={dynamicStyles.kebabMenuText}>Restore</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={dynamicStyles.kebabMenuItem}
+              onPress={() => {
+                const row = selectedDeletedFileForMenu;
+                handleCloseDeletedKebabMenu();
+                if (row) handlePermanentDeleteDeleted(row);
+              }}
+              disabled={
+                !!selectedDeletedFileForMenu &&
+                (deletedActionId === selectedDeletedFileForMenu.id ||
+                  selectedDeletedFileForMenu.restoring === true ||
+                  (selectedDeletedFileForMenu.lifecycle_state || '').toLowerCase() === 'restoring')
+              }
+            >
+              <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete forever</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Kebab Menu Modal */}
       <Modal

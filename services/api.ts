@@ -70,6 +70,17 @@ interface AuthResponse {
   };
 }
 
+/** Same JSON body as web `analysis.tsx` → POST /api/v1/web/analysis/{receipts|invoices}/download-report */
+export interface WebAnalysisDownloadReportBody {
+  category: string;
+  days: number | null;
+  date_from: string | null;
+  date_to: string | null;
+  search: string | null;
+  amount_min: number | null;
+  amount_max: number | null;
+}
+
 // Mobile API endpoints with v1/mobile prefix
 const MOBILE_ENDPOINTS = {
   // Authentication
@@ -910,7 +921,15 @@ class ApiService {
   async deleteFile(id: number): Promise<ApiResponse> {
     try {
       const response = await this.client.delete(MOBILE_ENDPOINTS.FILE_DELETE(id));
-      return response.data;
+      const raw = response.data as ApiResponse | null | undefined;
+      // Many DELETE handlers return 204/empty body or JSON without `success`; treat 2xx as OK unless explicitly false.
+      if (raw == null || raw === '' || (typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw as object).length === 0)) {
+        return { success: true };
+      }
+      if (typeof raw === 'object' && raw !== null && !('success' in raw)) {
+        return { success: true, ...raw };
+      }
+      return raw as ApiResponse;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Delete failed');
     }
@@ -972,11 +991,67 @@ class ApiService {
   }
 
   /**
-   * Delete draft. DELETE /api/v1/web/files/:id?confirmed=true.
+   * Move draft to trash (soft delete). Uses the mobile file endpoint so JWT auth matches
+   * the rest of the app; web-only session is not required (see mobile_delete_file → perform_soft_delete).
    */
   async deleteDraft(draftId: number): Promise<ApiResponse> {
-    const response = await this.client.delete(`/api/v1/web/files/${draftId}?confirmed=true`);
-    return response.data;
+    return this.deleteFile(draftId);
+  }
+
+  /** Soft-deleted files (trash). GET /api/v1/web/files/deleted */
+  async getDeletedFiles(
+    page = 1,
+    perPage = 100
+  ): Promise<
+    ApiResponse & {
+      files?: Array<{
+        id: number;
+        original_filename?: string;
+        filename?: string;
+        file_kind?: string;
+        file_type?: string;
+        file_size?: number;
+        deleted_at?: string | null;
+        purge_at?: string | null;
+        days_remaining?: number | null;
+        lifecycle_state?: string;
+      }>;
+      pagination?: { page: number; per_page: number; total: number; has_more: boolean };
+      retention_days?: number;
+    }
+  > {
+    try {
+      const response = await this.client.get('/api/v1/web/files/deleted', {
+        params: { page, per_page: perPage },
+      });
+      return response.data;
+    } catch (error: any) {
+      return {
+        success: false,
+        files: [],
+        message: error.response?.data?.message || 'Failed to load deleted files',
+      };
+    }
+  }
+
+  /** Restore from trash. POST /api/v1/web/files/:id/trash-restore (may return 202) */
+  async restoreFileFromTrash(fileId: number): Promise<ApiResponse & { status?: string }> {
+    try {
+      const response = await this.client.post(`/api/v1/web/files/${fileId}/trash-restore`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to restore file');
+    }
+  }
+
+  /** Permanent delete while in trash. DELETE /api/v1/web/files/:id/permanent?confirmed=true */
+  async permanentlyDeleteTrashedFile(fileId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(`/api/v1/web/files/${fileId}/permanent?confirmed=true`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to permanently delete file');
+    }
   }
 
   /**
@@ -3339,15 +3414,15 @@ class ApiService {
     }
   }
 
-  async downloadReceiptReport(days = 30, category?: string): Promise<ApiResponse> {
-    try {
-      const params: any = { days };
-      if (category) params.category = category;
-      const response = await this.client.post('/api/v1/web/analysis/receipts/download-report', null, { params });
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to download receipt report');
-    }
+  /**
+   * POST /api/v1/web/analysis/receipts/download-report — Word .docx (same as web).
+   * Binary response; use postWebAnalysisDownloadReport or downloadReceiptReport.
+   */
+  async downloadReceiptReport(body: WebAnalysisDownloadReportBody): Promise<{
+    arrayBuffer: ArrayBuffer;
+    filename?: string;
+  }> {
+    return this.postWebAnalysisDownloadReport('receipts', body);
   }
 
   async autoCategorizeAllReceipts(): Promise<ApiResponse> {
@@ -3502,15 +3577,73 @@ class ApiService {
     }
   }
 
-  async downloadInvoiceReport(days = 30, category?: string): Promise<ApiResponse> {
+  /**
+   * POST /api/v1/web/analysis/invoices/download-report — Word .docx (same as web).
+   */
+  async downloadInvoiceReport(body: WebAnalysisDownloadReportBody): Promise<{
+    arrayBuffer: ArrayBuffer;
+    filename?: string;
+  }> {
+    return this.postWebAnalysisDownloadReport('invoices', body);
+  }
+
+  /**
+   * Web analysis DOCX download — POST + JSON, session auth via axios client (same as other /api/v1/web routes).
+   */
+  async postWebAnalysisDownloadReport(
+    segment: 'receipts' | 'invoices',
+    body: WebAnalysisDownloadReportBody
+  ): Promise<{ arrayBuffer: ArrayBuffer; filename?: string }> {
+    const url = `/api/v1/web/analysis/${segment}/download-report`;
     try {
-      const params: any = { days };
-      if (category) params.category = category;
-      const response = await this.client.post('/api/v1/web/analysis/invoices/download-report', null, { params });
-      return response.data;
+      const response = await this.client.post<ArrayBuffer>(url, body, {
+        responseType: 'arraybuffer',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const cd =
+        (response.headers['content-disposition'] as string | undefined) ||
+        (response.headers['Content-Disposition'] as string | undefined);
+      let filename: string | undefined;
+      if (cd) {
+        const star = cd.match(/filename\*=UTF-8''([^;\s]+)/i);
+        if (star?.[1]) {
+          try {
+            filename = decodeURIComponent(star[1].replace(/"/g, ''));
+          } catch {
+            filename = star[1];
+          }
+        } else {
+          const m = cd.match(/filename="([^"]+)"/i) || cd.match(/filename=([^;\s]+)/i);
+          if (m?.[1]) filename = m[1].replace(/^["']|["']$/g, '');
+        }
+      }
+      return { arrayBuffer: response.data, filename };
     } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Failed to download invoice report');
+      const message = this.messageFromWebBinaryError(error);
+      throw new Error(message || 'Failed to download report');
     }
+  }
+
+  private messageFromWebBinaryError(error: any): string | undefined {
+    const data = error.response?.data;
+    if (data instanceof ArrayBuffer) {
+      try {
+        const text = new TextDecoder().decode(data);
+        const j = JSON.parse(text);
+        return j.message || j.error || j.detail;
+      } catch {
+        return undefined;
+      }
+    }
+    if (typeof data === 'string') {
+      try {
+        const j = JSON.parse(data);
+        return j.message || j.error;
+      } catch {
+        return data;
+      }
+    }
+    return error.response?.data?.message || error.message;
   }
 
   async linkReceiptToInvoice(invoiceId: number, receiptId: number): Promise<ApiResponse> {
