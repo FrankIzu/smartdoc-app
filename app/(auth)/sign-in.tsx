@@ -36,12 +36,13 @@ export default function SignInScreen() {
   const [needsOtp, setNeedsOtp] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const insets = useSafeAreaInsets();
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
   // Note: We use local isSubmitting for the button so the screen doesn't unmount on login (auth loading would hide entire app)
   const { signIn, loading: authLoading, setUserFromExternal } = useAuth();
-  const loading = authLoading || isSubmitting;
+  const loading = authLoading || isSubmitting || googleLoading;
   const { loginWithBiometric } = useEnhanced2FAAuth();
 
   // Check biometric availability on component mount
@@ -317,11 +318,68 @@ export default function SignInScreen() {
   const handleGoogleSignIn = async () => {
     try {
       setError('');
-      await googleAuthService.signInWithGoogle();
-      // Navigation handled by auth context
+      setGoogleLoading(true);
+
+      const googleResult = await googleAuthService.signInWithGoogle();
+
+      // Native: OAuth continues in the browser; session is completed via grabdocs://login-success (AuthContext).
+      if (googleResult.completedViaDeepLink) {
+        return;
+      }
+
+      if (!googleResult.success || !googleResult.user || !googleResult.accessToken) {
+        const err = googleResult.error || '';
+        if (err === 'User cancelled' || /cancel/i.test(err)) {
+          return;
+        }
+        setError(err || 'Google sign-in failed');
+        return;
+      }
+
+      const backendResult = await googleAuthService.loginWithGoogleToBackend(
+        googleResult.user,
+        googleResult.accessToken
+      );
+
+      if (backendResult.requires2FA) {
+        setError(backendResult.message || 'Additional verification required');
+        return;
+      }
+
+      if (!backendResult.success || !backendResult.user) {
+        setError(backendResult.message || 'Google sign-in failed');
+        return;
+      }
+
+      const backendUser = backendResult.user;
+      const fullName =
+        backendUser.first_name || backendUser.firstName
+          ? `${backendUser.first_name || backendUser.firstName || ''} ${backendUser.last_name || backendUser.lastName || ''}`.trim()
+          : '';
+      const displayName =
+        fullName || backendUser.name || backendUser.username || backendUser.email || 'Google User';
+
+      const userData = {
+        id: (backendUser.id || backendUser.user_id || '').toString(),
+        email: backendUser.email || backendUser.username || '',
+        name: displayName,
+        first_name: backendUser.first_name ?? backendUser.firstName,
+        last_name: backendUser.last_name ?? backendUser.lastName,
+        username: backendUser.username,
+      };
+
+      if (!userData.id) {
+        setError('Failed to retrieve user information. Please try again.');
+        return;
+      }
+
+      await setUserFromExternal(userData, backendResult.token);
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Google sign-in error:', error);
       setError(error.message || 'Google sign-in failed');
+    } finally {
+      setGoogleLoading(false);
     }
   };
 

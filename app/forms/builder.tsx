@@ -225,7 +225,7 @@ export default function FormBuilderScreen() {
           setFormId(id);
           // Publish new form so share link works
           try {
-            await apiService.updateForm(id, { is_published: true });
+            await apiService.setFormPublished(id, true);
             setIsPublished(true);
           } catch {
             // Non-blocking; user can publish from builder
@@ -303,7 +303,7 @@ export default function FormBuilderScreen() {
                     const id = typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId);
                     setFormId(id);
                     try {
-                      await apiService.updateForm(id, { is_published: true });
+                      await apiService.setFormPublished(id, true);
                       setIsPublished(true);
                     } catch {
                       // Non-blocking
@@ -343,7 +343,7 @@ export default function FormBuilderScreen() {
     if (!id || !Number.isFinite(id)) return;
     try {
       setPublishing(true);
-      await apiService.updateForm(id, { is_published: true });
+      await apiService.setFormPublished(id, true);
       setIsPublished(true);
       Alert.alert('Success', 'Form is now published. Your share link will work for respondents.');
     } catch (err: any) {
@@ -367,7 +367,7 @@ export default function FormBuilderScreen() {
           onPress: async () => {
             try {
               setPublishing(true);
-              await apiService.updateForm(id, { is_published: false });
+              await apiService.setFormPublished(id, false);
               setIsPublished(false);
               Alert.alert('Done', 'Form is unpublished. Share link will no longer accept responses.');
             } catch (err: any) {
@@ -590,7 +590,7 @@ export default function FormBuilderScreen() {
         // Fallback to text sharing
         await Share.share({
           message: csvContent,
-          title: 'Form Responses CSV',
+          title: 'Form Responses',
         });
       }
       
@@ -609,7 +609,7 @@ export default function FormBuilderScreen() {
       
     } catch (error: any) {
       console.error('Error downloading CSV:', error);
-      Alert.alert('Error', error.message || 'Failed to download CSV file');
+      Alert.alert('Error', error.message || 'Failed to download file');
     }
   };
 
@@ -699,7 +699,7 @@ export default function FormBuilderScreen() {
   const copyToClipboard = async (text: string) => {
     try {
       // In a real implementation, you'd use expo-clipboard
-      Alert.alert('Copied', 'CSV content copied to clipboard');
+      Alert.alert('Copied', 'Content copied to clipboard');
     } catch (error) {
       Alert.alert('Error', 'Failed to copy to clipboard');
     }
@@ -772,13 +772,12 @@ export default function FormBuilderScreen() {
 
   const shareAsCSV = () => {
     const csvContent = generateCSVContent(responses);
-    const shareText = `Form Responses CSV\n\n${csvContent}`;
-    
+
     Alert.alert(
-      'Share CSV',
-      'CSV content ready to share',
+      'Share',
+      'Responses ready to share',
       [
-        { text: 'Copy CSV', onPress: () => copyToClipboard(csvContent) },
+        { text: 'Copy', onPress: () => copyToClipboard(csvContent) },
         { text: 'OK', style: 'default' }
       ]
     );
@@ -988,7 +987,7 @@ export default function FormBuilderScreen() {
             disabled={loadingResponses}
           >
             <Ionicons name="refresh" size={20} color="#007AFF" />
-            <Text style={styles.responsesActionButtonText}>
+            <Text style={[styles.responsesActionButtonText, styles.responsesActionButtonTextAfterIcon]}>
               {loadingResponses ? 'Loading...' : 'Refresh'}
             </Text>
           </TouchableOpacity>
@@ -998,9 +997,8 @@ export default function FormBuilderScreen() {
             onPress={downloadCSV}
             disabled={responses.length === 0}
           >
-            <Ionicons name="download" size={20} color={responses.length === 0 ? "#ccc" : "#007AFF"} />
             <Text style={[styles.responsesActionButtonText, responses.length === 0 && styles.disabledButtonText]}>
-              Download CSV
+              Download
             </Text>
           </TouchableOpacity>
           
@@ -1009,7 +1007,6 @@ export default function FormBuilderScreen() {
             onPress={shareResponses}
             disabled={responses.length === 0}
           >
-            <Ionicons name="share" size={20} color={responses.length === 0 ? "#ccc" : "#10B981"} />
             <Text style={[styles.responsesActionButtonText, responses.length === 0 && styles.disabledButtonText]}>
               Share
             </Text>
@@ -1051,9 +1048,7 @@ export default function FormBuilderScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Form Builder</Text>
-        <TouchableOpacity onPress={shareForm}>
-          <Ionicons name="share" size={24} color={colors.primary || '#007AFF'} />
-        </TouchableOpacity>
+        <View style={{ width: 40 }} />
       </View>
 
       {/* Tab Selector */}
@@ -1103,10 +1098,7 @@ export default function FormBuilderScreen() {
                 {saving ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <>
-                    <Ionicons name="save-outline" size={20} color="#fff" />
-                    <Text style={styles.saveButtonText}>Save</Text>
-                  </>
+                  <Text style={styles.saveButtonText}>Save</Text>
                 )}
               </TouchableOpacity>
               {!isPublished ? (
@@ -1118,10 +1110,7 @@ export default function FormBuilderScreen() {
                   {publishing ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <>
-                      <Ionicons name="globe-outline" size={20} color="#fff" />
-                      <Text style={styles.saveButtonText}>Publish</Text>
-                    </>
+                    <Text style={styles.saveButtonText}>Publish</Text>
                   )}
                 </TouchableOpacity>
               ) : (
@@ -1133,10 +1122,7 @@ export default function FormBuilderScreen() {
                   {publishing ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <>
-                      <Ionicons name="eye-off-outline" size={20} color="#fff" />
-                      <Text style={styles.saveButtonText}>Unpublish</Text>
-                    </>
+                    <Text style={styles.saveButtonText}>Unpublish</Text>
                   )}
                 </TouchableOpacity>
               )}
@@ -1144,7 +1130,6 @@ export default function FormBuilderScreen() {
                 style={[styles.footerButton, styles.shareButton]}
                 onPress={shareForm}
               >
-                <Ionicons name="share-outline" size={20} color="#fff" />
                 <Text style={styles.shareButtonText}>Share</Text>
               </TouchableOpacity>
             </View>
@@ -1485,25 +1470,21 @@ const styles = StyleSheet.create({
   footerButton: {
     flex: 1,
     borderRadius: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    minHeight: 48,
-    flexDirection: 'row',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
   },
   saveButton: {
     backgroundColor: '#007AFF',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 44,
     alignSelf: 'stretch',
     borderRadius: 8,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
   },
   saveButtonDisabled: {
     backgroundColor: '#ccc',
@@ -1712,7 +1693,7 @@ const styles = StyleSheet.create({
   },
   responsesActions: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     marginBottom: 24,
   },
   responsesActionButton: {
@@ -1722,8 +1703,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#f8f9fa',
     borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#e5e5e5',
   },
@@ -1731,6 +1712,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#333',
+    textAlign: 'center',
+  },
+  responsesActionButtonTextAfterIcon: {
     marginLeft: 8,
   },
   responsesList: {

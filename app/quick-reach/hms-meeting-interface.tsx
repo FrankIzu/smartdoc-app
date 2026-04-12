@@ -659,17 +659,41 @@ export default function HMSMeetingInterfaceScreen() {
 
       // Same as web: get token via join-by-id (one join path for both web and mobile)
       const displayUserName = resolveReachDisplayName(userName, user);
-      try {
-        const joinRes = await apiClient.client.post('/api/v1/video/room/join-by-id', {
+      const passcodePayload = passcodeToken
+        ? { passcode_token: passcodeToken }
+        : (passcode as string)?.trim()
+          ? { passcode: (passcode as string).trim() }
+          : {};
+
+      const joinById = async (forceJoin: boolean) => {
+        return apiClient.client.post('/api/v1/video/room/join-by-id', {
           meeting_id: (meetingId as string).trim(),
           participant_name: displayUserName,
           enable_audio: true,
           enable_video: false,
-          viewer_type: 'near-realtime',
-          ...(passcodeToken ? { passcode_token: passcodeToken } : ((passcode as string)?.trim() ? { passcode: (passcode as string).trim() } : {})),
+          viewer_type: user ? 'host' : 'guest',
+          ...(forceJoin ? { force_join: true } : {}),
+          ...passcodePayload,
         });
+      };
+
+      try {
+        let joinRes;
+        try {
+          joinRes = await joinById(false);
+        } catch (firstErr: any) {
+          const st = firstErr?.response?.status;
+          const code = firstErr?.response?.data?.error_code;
+          if (st === 409 && code === 'ALREADY_IN_MEETING') {
+            joinRes = await joinById(true);
+          } else {
+            throw firstErr;
+          }
+        }
+
         const raw = joinRes?.data || {};
-        const data = (raw && typeof (raw as any).data === 'object' && (raw as any).data != null) ? (raw as any).data : raw;
+        const data =
+          raw && typeof (raw as any).data === 'object' && (raw as any).data != null ? (raw as any).data : raw;
         const token = (data as any).token;
         if (!token || typeof token !== 'string' || token.trim().length === 0) {
           throw new Error('Join did not return a token');
@@ -696,7 +720,7 @@ export default function HMSMeetingInterfaceScreen() {
         const status = joinError?.response?.status;
         const errData = joinError?.response?.data || {};
         const errMsg = errData.message || errData.error || joinError?.message || 'Unknown error';
-        if (status === 409) {
+        if (status === 409 || errData.error_code === 'ALREADY_IN_MEETING') {
           setError('You are already in this meeting. Leave the other session and try again.');
         } else if (status === 403) {
           setError(errMsg || 'This meeting requires host approval to join.');

@@ -386,12 +386,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Bypasses checkAuth so a missing or cookie-only session cannot bounce the user back to login.
   const setUserFromExternal = async (userData: User, token?: string) => {
     try {
-      await secureStorage.setItem('user', JSON.stringify(userData));
+      // Write JWT before user so any concurrent checkAuth() sees Authorization immediately.
       if (token) {
         await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
       } else {
         await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
       }
+      await secureStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
       console.log('✅ setUserFromExternal: session established for', userData.email);
     } catch (error) {

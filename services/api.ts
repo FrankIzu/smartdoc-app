@@ -130,6 +130,8 @@ const MOBILE_ENDPOINTS = {
   // Forms
   FORMS: '/api/v1/mobile/forms',
   FORM_BY_ID: (id: number) => `/api/v1/mobile/forms/${id}`,
+  FORM_PUBLISH: (id: number) => `/api/v1/mobile/forms/${id}/publish`,
+  FORM_UNPUBLISH: (id: number) => `/api/v1/mobile/forms/${id}/unpublish`,
   FORM_RESPONSES: (id: number) => `/api/v1/mobile/forms/${id}/responses`,
   
   // Analysis
@@ -3151,6 +3153,22 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to update form');
+    }
+  }
+
+  /** Publish or unpublish a form (POST routes; avoids PUT issues and matches backend helpers). */
+  async setFormPublished(id: number, published: boolean): Promise<ApiResponse> {
+    try {
+      const path = published
+        ? MOBILE_ENDPOINTS.FORM_PUBLISH(id)
+        : MOBILE_ENDPOINTS.FORM_UNPUBLISH(id);
+      const response = await this.client.post(path);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.message ||
+          (published ? 'Failed to publish form' : 'Failed to unpublish form')
+      );
     }
   }
 

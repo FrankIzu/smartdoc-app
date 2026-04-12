@@ -989,87 +989,88 @@ export default function WorkspaceDetailsScreen() {
                 
                 try {
                   setCreatingMeeting(true);
-                  
-                  // Get all workspace member emails (excluding current user)
-                  const participantEmails = members
-                    .filter(member => member.user && member.user.email && member.user.email !== user?.email)
-                    .map(member => member.user.email)
-                    .filter((email): email is string => !!email);
-                  
-                  console.log(`📞 Adding ${participantEmails.length} workspace members as participants`);
-                  
-                  // Create a meeting with workspace context
+
+                  // Same body as web WorkspaceManager (persistent workspace meeting via video_api).
                   const meetingPayload = {
-                    roomName: `${workspace.name} Meeting`,
-                    title: `${workspace.name} Meeting`,
-                    description: `Meeting in ${workspace.name} workspace`,
-                    isPrivate: false,
-                    enableRecording: false,
-                    enableTranscription: false,
+                    room_name: `${workspace.name} Meeting`,
+                    description: `Meeting for ${workspace.name} workspace`,
+                    max_participants: 10,
+                    enable_recording: false,
+                    enable_transcription: false,
                     workspace_id: workspace.id,
-                    participants: participantEmails, // Add all workspace members as participants
-                    participant_count: participantEmails.length
                   };
 
                   const response = await apiService.client.post('/api/v1/video/room/create', meetingPayload);
-                  
+
                   console.log('📱 Create meeting response:', response.data);
-                  
+
                   if (response.data.success) {
-                    // Handle different response structures:
-                    // 1. Persistent meeting response: { success: true, room: { meeting_id: "...", ... }, is_existing: true }
-                    // 2. New meeting response: { success: true, data: { meetingId: "...", ... } }
                     const roomData = response.data.room;
                     const dataMeeting = response.data.data;
                     const directData = response.data;
-                    
-                    // Get meeting title from various possible locations
-                    const meetingTitle = 
-                      roomData?.name || 
-                      roomData?.title || 
-                      dataMeeting?.title || 
-                      dataMeeting?.name || 
-                      dataMeeting?.roomName || 
+                    const meetingIdStr = String(
+                      roomData?.meeting_id ||
+                        roomData?.meetingId ||
+                        dataMeeting?.meetingId ||
+                        dataMeeting?.meeting_id ||
+                        directData?.meeting_id ||
+                        ''
+                    ).trim();
+                    const meetingTitle =
+                      roomData?.name ||
+                      roomData?.title ||
+                      dataMeeting?.title ||
+                      dataMeeting?.name ||
+                      dataMeeting?.roomName ||
                       directData?.title ||
                       directData?.name ||
                       `${workspace.name} Meeting`;
-                    
-                    // Show success message - meeting will appear in the list
-                    // User can now join the meeting from the meeting list or send it to others
-                    Alert.alert('Success', `Meeting "${meetingTitle}" created successfully! You can join it from the meeting list or send it to others.`, [
-                      {
-                        text: 'OK',
-                        onPress: () => {
-                          // Optionally navigate to meeting list, or just stay on workspace
-                          // The meeting will appear in the meeting list when user navigates there
-                        }
-                      }
-                    ]);
+
+                    if (!meetingIdStr) {
+                      Alert.alert('Error', 'Meeting was created but no meeting ID was returned. Please try again.');
+                      return;
+                    }
+
+                    const q = new URLSearchParams({
+                      meetingId: meetingIdStr,
+                      title: meetingTitle,
+                      userName: getReachParticipantDisplayName(user),
+                    });
+                    router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
                   } else {
                     Alert.alert('Error', response.data.message || 'Failed to create meeting');
                   }
                 } catch (error: any) {
                   console.error('Failed to create meeting:', error);
-                  
-                  // Handle conflict - existing active meeting
+
+                  // Handle conflict - existing active meeting (API uses snake_case active_meeting)
                   if (error.response?.status === 409) {
-                    const activeMeeting = error.response?.data?.activeMeeting;
+                    const activeMeeting =
+                      error.response?.data?.active_meeting || error.response?.data?.activeMeeting;
+                    const conflictMeetingId = String(
+                      activeMeeting?.meeting_id || activeMeeting?.meetingId || activeMeeting?.id || ''
+                    ).trim();
+                    const conflictName = activeMeeting?.name || 'Unknown';
                     Alert.alert(
                       'Active Meeting Exists',
-                      `You already have an active meeting: "${activeMeeting?.name || 'Unknown'}". Would you like to join it?`,
+                      `You already have an active meeting: "${conflictName}". Open it now?`,
                       [
                         { text: 'Cancel', style: 'cancel' },
-                        { 
-                          text: 'Join Meeting', 
+                        {
+                          text: 'Join Meeting',
                           onPress: () => {
+                            if (!conflictMeetingId) {
+                              Alert.alert('Error', 'Could not read the active meeting ID. Try again from the meeting list.');
+                              return;
+                            }
                             const q = new URLSearchParams({
-                              meetingId: String(activeMeeting?.meetingId || activeMeeting?.id || ''),
-                              title: String(activeMeeting?.name || 'Active Meeting'),
-                              userName: getReachParticipantDisplayName(user)
+                              meetingId: conflictMeetingId,
+                              title: String(conflictName),
+                              userName: getReachParticipantDisplayName(user),
                             });
                             router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
-                          }
-                        }
+                          },
+                        },
                       ]
                     );
                   } else {

@@ -52,7 +52,7 @@ interface Enhanced2FAContextType {
   // Authentication methods
   login: (credentials: LoginCredentials) => Promise<{ success: boolean; requires2FA?: boolean; authMethod?: string; message?: string }>;
   loginWithBiometric: () => Promise<{ success: boolean; message?: string }>;
-  signInWithGoogle: () => Promise<{ success: boolean; requires2FA?: boolean; authMethod?: string; message?: string }>;
+  signInWithGoogle: () => Promise<{ success: boolean; requires2FA?: boolean; authMethod?: string; message?: string; completedViaDeepLink?: boolean }>;
   signup: (data: { username: string; email: string; password: string; firstName?: string; lastName?: string }) => Promise<{ success: boolean; message?: string }>;
   logout: () => Promise<void>;
   
@@ -487,6 +487,16 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       setAuthState(prev => ({ ...prev, isLoading: true }));
 
       const result = await googleAuthService.signInWithGoogleEnhanced();
+
+      // Native: OAuth finishes via grabdocs://login-success; no user object here.
+      if (result.success && result.completedViaDeepLink) {
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return {
+          success: true,
+          message: result.message || 'Complete sign-in in the browser.',
+          completedViaDeepLink: true,
+        };
+      }
 
       if (result.success && result.user) {
         // Store authentication token and user data

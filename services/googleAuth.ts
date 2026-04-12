@@ -35,6 +35,7 @@ interface MobileGoogleLoginResponse {
   success: boolean;
   message: string;
   user?: any;
+  token?: string;
   requires2FA?: boolean;
   deviceTrusted?: boolean;
   deviceName?: string;
