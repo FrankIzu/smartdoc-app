@@ -54,6 +54,7 @@ async function playJoinSound(): Promise<void> {
 
 interface MeetingJoinSoundProps {
   enabled: boolean;
+  onPeerJoined?: (peerName: string) => void;
 }
 
 /**
@@ -61,11 +62,11 @@ interface MeetingJoinSoundProps {
  * Must be used when in a meeting (HMSPrebuilt is rendered).
  * Only mount when HMS is available (not Expo Go).
  */
-export function MeetingJoinSound({ enabled }: MeetingJoinSoundProps): null {
+export function MeetingJoinSound({ enabled, onPeerJoined }: MeetingJoinSoundProps): null {
   const hasPlayedForSessionRef = useRef<Set<string>>(new Set());
 
   const handlePeerUpdate = useCallback(
-    (data: { peer: { peerID?: string }; type: string }) => {
+    (data: { peer: { peerID?: string; name?: string }; type: string }) => {
       if (!enabled) return;
       // PEER_JOINED = someone else joined (not our own join)
       if (data.type === 'PEER_JOINED') {
@@ -74,6 +75,7 @@ export function MeetingJoinSound({ enabled }: MeetingJoinSoundProps): null {
         if (!hasPlayedForSessionRef.current.has(peerId)) {
           hasPlayedForSessionRef.current.add(peerId);
           playJoinSound();
+          onPeerJoined?.(data.peer?.name || 'Someone');
           // Clear after 2s to allow re-join scenarios
           setTimeout(() => {
             hasPlayedForSessionRef.current.delete(peerId);
@@ -81,7 +83,7 @@ export function MeetingJoinSound({ enabled }: MeetingJoinSoundProps): null {
         }
       }
     },
-    [enabled]
+    [enabled, onPeerJoined]
   );
 
   // useHMSPeerUpdates must be called unconditionally (hooks rule)

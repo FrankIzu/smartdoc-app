@@ -483,9 +483,13 @@ class ApiService {
     }
   }
 
-  async logout(): Promise<ApiResponse> {
+  async logout(expoPushToken?: string | null): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(MOBILE_ENDPOINTS.LOGOUT);
+      // Pass the current device's Expo push token so the backend can unregister
+      // ONLY this device (and not the user's other devices). Without this, the
+      // backend falls back to clearing all of this user's tokens.
+      const body = expoPushToken ? { token: expoPushToken } : undefined;
+      const response = await this.client.post(MOBILE_ENDPOINTS.LOGOUT, body);
       await this.clearAuthData();
       return response.data;
     } catch (error: any) {
@@ -2206,8 +2210,13 @@ class ApiService {
                     onChunk('status', data);
                   } else if (data.type === 'instant_preview') {
                     onChunk('instant_preview', data);
-                  } else if (data.type === 'main_search_pending') {
-                    onChunk('main_search_pending', data);
+                  } else if (data.type === 'result_superseded' || data.type === 'main_search_pending') {
+                    console.info(
+                      data.type === 'result_superseded'
+                        ? '[SSE] result_superseded — analytics won; replacing preview with main answer'
+                        : '[SSE] main_search_pending — showing refining dots until main search + refinement'
+                    );
+                    onChunk(data.type, data);
                   } else if (data.type === 'preview_complete') {
                     onChunk('preview_complete', data);
                   } else if (data.type === 'preview_chunk' || data.type === 'chunk') {
@@ -2276,8 +2285,13 @@ class ApiService {
               
               if (data.type === 'instant_preview') {
                 onChunk('instant_preview', data);
-              } else if (data.type === 'main_search_pending') {
-                onChunk('main_search_pending', data);
+              } else if (data.type === 'result_superseded' || data.type === 'main_search_pending') {
+                console.info(
+                  data.type === 'result_superseded'
+                    ? '[SSE fallback] result_superseded — analytics won; replacing preview with main answer'
+                    : '[SSE fallback] main_search_pending — showing refining dots until main search + refinement'
+                );
+                onChunk(data.type, data);
               } else if (data.type === 'preview_chunk' || data.type === 'chunk') {
                 onChunk('preview_chunk', {
                   content: data.content || data.response || '',

@@ -323,10 +323,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       console.log('🔄 Starting sign out process...');
       
+      // Grab the current device's Expo push token (if any) so the backend can
+      // unregister ONLY this device. Without this, notifications intended for
+      // the now-logged-out user would keep arriving on this device after
+      // someone else logs in (cross-account push leak).
+      let currentPushToken: string | null = null;
+      try {
+        const { pushNotificationService } = await import('../services/pushNotifications');
+        currentPushToken = pushNotificationService.getPushToken();
+      } catch (tokenErr) {
+        console.warn('⚠️ Could not read current push token before logout:', tokenErr);
+      }
+
       // Call backend logout API
       try {
         console.log('📡 Calling backend logout API...');
-        await apiService.logout();
+        await apiService.logout(currentPushToken);
         console.log('✅ Successfully logged out from backend');
       } catch (apiError) {
         console.warn('⚠️ Backend logout failed, continuing with local logout:', apiError);

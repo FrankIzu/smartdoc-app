@@ -155,6 +155,32 @@ export default function HMSMeetingInterfaceScreen() {
   const reconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bannerAnim = useRef(new Animated.Value(0)).current;
 
+  // In-meeting dismissable banners (recording started, peer joined)
+  const [bannerQueue, setBannerQueue] = useState<Array<{ message: string; type: 'recording' | 'joined' }>>([]);
+  const dismissBanner = useCallback(() => setBannerQueue(prev => prev.slice(1)), []);
+
+  // Collect peer names over a 2s window, then collapse into one banner
+  const pendingJoinNamesRef = useRef<string[]>([]);
+  const joinGroupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handlePeerJoined = useCallback((peerName: string) => {
+    pendingJoinNamesRef.current.push(peerName);
+    if (joinGroupTimerRef.current) clearTimeout(joinGroupTimerRef.current);
+    joinGroupTimerRef.current = setTimeout(() => {
+      const names = pendingJoinNamesRef.current;
+      pendingJoinNamesRef.current = [];
+      joinGroupTimerRef.current = null;
+      let message: string;
+      if (names.length === 1) {
+        message = `${names[0]} joined the meeting`;
+      } else if (names.length === 2) {
+        message = `${names[0]} and ${names[1]} joined the meeting`;
+      } else {
+        message = `${names[0]} and ${names.length - 1} others joined the meeting`;
+      }
+      setBannerQueue(prev => [...prev, { message, type: 'joined' }]);
+    }, 2000);
+  }, []);
+
   // Delay mounting MeetingJoinSound until after HMSPrebuilt has joined (useHMSPeerUpdates can crash without room context)
   useEffect(() => {
     if (!joinConfig || Platform.OS === 'web') return;
@@ -440,11 +466,7 @@ export default function HMSMeetingInterfaceScreen() {
         if (response.data?.is_recording && !recordingNotificationShownRef.current) {
           recordingNotificationShownRef.current = true;
           const roomName = response.data?.room_name || 'This meeting';
-          Alert.alert(
-            'Recording Started',
-            `${roomName} is now being recorded. By staying, you consent to being recorded.`,
-            [{ text: 'OK' }]
-          );
+          setBannerQueue(prev => [...prev, { message: `${roomName} is being recorded. By staying, you consent to being recorded.`, type: 'recording' }]);
         }
       } catch {
         // Silently fail - recording status is non-critical
@@ -474,6 +496,12 @@ export default function HMSMeetingInterfaceScreen() {
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;
+      }
+
+      // Clear pending join group timer
+      if (joinGroupTimerRef.current) {
+        clearTimeout(joinGroupTimerRef.current);
+        joinGroupTimerRef.current = null;
       }
 
       // Dismiss meeting notification on unmount
@@ -1022,8 +1050,29 @@ export default function HMSMeetingInterfaceScreen() {
         <>
           {/* Mount join sound only after room is likely joined (useHMSPeerUpdates can crash without room context) */}
           {HMSPrebuilt && joinSoundReady && (
-            <MeetingJoinSound enabled={!!authToken && !!meetingId} />
+            <MeetingJoinSound enabled={!!authToken && !!meetingId} onPeerJoined={handlePeerJoined} />
           )}
+
+          {/* In-meeting event banners (recording started, peer joined) — must be dismissed by tapping OK */}
+          <Modal
+            visible={bannerQueue.length > 0 && !!joinConfig && !hmsError && !hmsInitTimeout}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={dismissBanner}
+          >
+            <View style={styles.networkOverlay} pointerEvents="box-none">
+              {bannerQueue.length > 0 && (
+                <View style={styles.networkBanner}>
+                  <View style={[styles.networkDot, { backgroundColor: bannerQueue[0].type === 'recording' ? '#FF3B30' : '#007AFF' }]} />
+                  <Text style={[styles.networkBannerTitle, { flex: 1 }]}>{bannerQueue[0].message}</Text>
+                  <TouchableOpacity style={styles.networkLeaveButton} onPress={dismissBanner}>
+                    <Text style={styles.networkLeaveButtonText}>OK</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </Modal>
 
           {/* Network status overlay — rendered as a Modal so it appears above the HMS native UI.
               Shows a friendly banner instead of the raw "code: 1003" HMS error. */}

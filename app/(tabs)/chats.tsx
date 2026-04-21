@@ -4266,7 +4266,13 @@ export default function ChatsScreen() {
           break;
         }
 
+        case 'result_superseded':
         case 'main_search_pending': {
+          console.info(
+            type === 'result_superseded'
+              ? '[SSE] result_superseded — analytics won; replacing preview with main answer'
+              : '[SSE] main_search_pending — showing refining dots until main search + refinement'
+          );
           const idx = pollingAssistantIndexRef.current;
           const bufLen = contentBufferRef.current.length;
           if (bufLen > 0 && displayedCharsRef.current < bufLen) {
