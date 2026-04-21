@@ -382,6 +382,14 @@ export default function ChatsScreen() {
   const streamingIntervalRef = useRef<number | null>(null);
   const contentBufferRef = useRef<string>('');
   const displayedCharsRef = useRef<number>(0);
+  /**
+   * Deferred "stop+dump" action waiting for typewriter to catch up.
+   * Set by main_search_pending / result_superseded / preview_complete handlers
+   * when displayedChars < contentBuffer.length, fired by the typewriter tick once
+   * the cursor reaches the end of the buffer. Prevents the visible jump from a
+   * mid-stream UI flip (e.g. instant dots) replacing partially-typed preview text.
+   */
+  const pendingFinalActionRef = useRef<(() => void) | null>(null);
   const isPreviewPhaseRef = useRef<boolean>(true);
   const isStreamingRef = useRef<boolean>(false);
   const isFakeStreamingRef = useRef<boolean>(false); // Track if we're in fake streaming mode
@@ -1042,6 +1050,7 @@ export default function ChatsScreen() {
     isStreamCompleteRef.current = false;
     contentBufferRef.current = '';
     displayedCharsRef.current = 0;
+    pendingFinalActionRef.current = null;
     
     // Remove any incomplete assistant message
     if (streamingMessageIndex !== null) {
@@ -3743,6 +3752,15 @@ export default function ChatsScreen() {
     streamingIntervalRef.current = setInterval(() => {
       // Check if we have more content to display
       if (displayedCharsRef.current >= contentBufferRef.current.length) {
+        // Caught up: fire any deferred "stop+dump" action (Option A) before
+        // checking stream-complete, so refining dots / preview_complete flips
+        // wait for the typewriter instead of yanking text mid-stream.
+        if (pendingFinalActionRef.current) {
+          const action = pendingFinalActionRef.current;
+          pendingFinalActionRef.current = null;
+          action();
+          return;
+        }
         // All current content is displayed
         if (isStreamCompleteRef.current) {
           // Stream is complete and all content is displayed - stop streaming
@@ -3754,8 +3772,10 @@ export default function ChatsScreen() {
         return;
       }
       
-      // MATCH WEB: Display next 2-3 characters for smooth flow (upload.tsx line 4407)
-      const charsToAdd = Math.min(3, contentBufferRef.current.length - displayedCharsRef.current);
+      // MATCH WEB: 2-3 chars/tick normally; speed up to ~7 when a final action is
+      // pending so the user doesn't wait too long for the dots/cutover.
+      const perTick = pendingFinalActionRef.current ? 7 : 3;
+      const charsToAdd = Math.min(perTick, contentBufferRef.current.length - displayedCharsRef.current);
       displayedCharsRef.current = displayedCharsRef.current + charsToAdd;
       
       // CRITICAL: Stop fake streaming AFTER we've incremented displayedCharsRef and are about to update the message
@@ -3952,6 +3972,7 @@ export default function ChatsScreen() {
       }
       contentBufferRef.current = '';
       displayedCharsRef.current = 0;
+      pendingFinalActionRef.current = null;
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = false;
       isStreamCompleteRef.current = false;
@@ -4065,6 +4086,7 @@ export default function ChatsScreen() {
       }
       contentBufferRef.current = '';
       displayedCharsRef.current = 0;
+      pendingFinalActionRef.current = null;
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = false;
       isStreamCompleteRef.current = false;
@@ -4149,6 +4171,23 @@ export default function ChatsScreen() {
       });
       setSendingMessage(false);
       stopBounceAnimation();
+    }
+  };
+
+  /**
+   * Defer a "stop+dump" UI flip until the typewriter has caught up to the buffer
+   * (Option A: prevents jumpy partial preview → full preview → dots transitions).
+   * If no typewriter is running, or it's already at the end, fires immediately.
+   * Latest pending action wins — earlier deferred actions are discarded.
+   */
+  const runWhenTyped = (action: () => void) => {
+    if (
+      !streamingIntervalRef.current ||
+      displayedCharsRef.current >= contentBufferRef.current.length
+    ) {
+      action();
+    } else {
+      pendingFinalActionRef.current = action;
     }
   };
 
@@ -4274,26 +4313,31 @@ export default function ChatsScreen() {
               : '[SSE] main_search_pending — showing refining dots until main search + refinement'
           );
           const idx = pollingAssistantIndexRef.current;
-          const bufLen = contentBufferRef.current.length;
-          if (bufLen > 0 && displayedCharsRef.current < bufLen) {
-            displayedCharsRef.current = bufLen;
-          }
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            const rowId = streamingAssistantRowIdRef.current;
-            let i = rowId != null ? newMessages.findIndex((m) => m.id === rowId) : -1;
-            if (i < 0) i = idx;
-            if (i >= 0 && newMessages[i] && !newMessages[i].is_own_message) {
-              newMessages[i] = {
-                ...newMessages[i],
-                content:
-                  bufLen > 0 ? contentBufferRef.current : newMessages[i].content,
-                refining_answer_pending: true,
-                main_search_pending: true,
-                is_preview: isPreviewPhaseRef.current,
-              };
+          // Defer the "snap+show dots" flip until the typewriter has displayed
+          // the full preview buffer; otherwise mid-stream we'd jump from e.g.
+          // 200/1000 chars straight to "full text + Searching dots".
+          runWhenTyped(() => {
+            const bufLen = contentBufferRef.current.length;
+            if (bufLen > 0 && displayedCharsRef.current < bufLen) {
+              displayedCharsRef.current = bufLen;
             }
-            return newMessages;
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const rowId = streamingAssistantRowIdRef.current;
+              let i = rowId != null ? newMessages.findIndex((m) => m.id === rowId) : -1;
+              if (i < 0) i = idx;
+              if (i >= 0 && newMessages[i] && !newMessages[i].is_own_message) {
+                newMessages[i] = {
+                  ...newMessages[i],
+                  content:
+                    bufLen > 0 ? contentBufferRef.current : newMessages[i].content,
+                  refining_answer_pending: true,
+                  main_search_pending: true,
+                  is_preview: isPreviewPhaseRef.current,
+                };
+              }
+              return newMessages;
+            });
           });
           break;
         }
@@ -4301,20 +4345,24 @@ export default function ChatsScreen() {
         case 'preview_complete':
           console.log('✅ Preview complete - phase transition detected');
           console.log('📊 Preview content length:', data.preview_length || contentBufferRef.current.length);
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            const rowId = streamingAssistantRowIdRef.current;
-            let i = rowId != null ? newMessages.findIndex((m) => m.id === rowId) : -1;
-            if (i < 0) i = pollingAssistantIndexRef.current;
-            if (i >= 0 && newMessages[i] && !newMessages[i].is_own_message) {
-              newMessages[i] = {
-                ...newMessages[i],
-                refining_answer_pending: true,
-                main_search_pending: false,
-                is_preview: isPreviewPhaseRef.current,
-              };
-            }
-            return newMessages;
+          // Defer the refining-indicator flip until the typewriter finishes the
+          // preview text, so the dots never appear over still-typing characters.
+          runWhenTyped(() => {
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const rowId = streamingAssistantRowIdRef.current;
+              let i = rowId != null ? newMessages.findIndex((m) => m.id === rowId) : -1;
+              if (i < 0) i = pollingAssistantIndexRef.current;
+              if (i >= 0 && newMessages[i] && !newMessages[i].is_own_message) {
+                newMessages[i] = {
+                  ...newMessages[i],
+                  refining_answer_pending: true,
+                  main_search_pending: false,
+                  is_preview: isPreviewPhaseRef.current,
+                };
+              }
+              return newMessages;
+            });
           });
           break;
 
@@ -4348,6 +4396,12 @@ export default function ChatsScreen() {
             fake_streaming_active: isFakeStreamingRef.current
           });
           if (isFirstRefinement) {
+            // Discard any deferred main_search_pending / preview_complete /
+            // result_superseded action queued by runWhenTyped — once we cut
+            // over, those would otherwise re-flip the row to a stale preview
+            // state (showing "Searching your library" dots over refinement text)
+            // when the typewriter eventually catches up to the new buffer.
+            pendingFinalActionRef.current = null;
             if (previewWasSkipped) {
               console.log('🔄 First refinement chunk - backend skipped preview, transitioning directly from fake streaming');
             } else {
@@ -4610,6 +4664,7 @@ export default function ChatsScreen() {
       // Reset streaming state completely to prevent leftover content
       contentBufferRef.current = '';
       displayedCharsRef.current = 0;
+      pendingFinalActionRef.current = null;
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = false;
       isStreamCompleteRef.current = false;
