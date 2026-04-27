@@ -728,11 +728,18 @@ export default function DraftEditScreen() {
     }
   }, [draftId]);
 
-  // Sync pending operations when app comes to foreground
+  // Sync pending operations when app comes to foreground; also pull latest content from server
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         flushPendingOpsForDraft();
+        // Pull latest content from server if there are no local unsaved changes
+        if (!hasUnsavedRef.current) {
+          refetchDraftContentRef.current?.(
+            lastKnownVersionRef.current ?? 0,
+            lastKnownUpdatedAtRef.current ?? ''
+          );
+        }
       }
     });
     return () => sub.remove();
