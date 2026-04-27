@@ -877,6 +877,35 @@ export default function MeetingCallScreen() {
     }
   };
 
+  const stripClipboardEmojis = (text: string) => {
+    const ranges: Array<[number, number]> = [
+      [0x1f600, 0x1f64f],
+      [0x1f300, 0x1f5ff],
+      [0x1f680, 0x1f6ff],
+      [0x1f1e0, 0x1f1ff],
+      [0x2700, 0x27bf],
+      [0x2600, 0x26ff],
+      [0x1f900, 0x1f9ff],
+      [0x1fa00, 0x1fa6f],
+      [0x1fa70, 0x1faff]
+    ];
+    let out = '';
+    for (const ch of text) {
+      const cp = ch.codePointAt(0)!;
+      if (cp === 0xfe0f || cp === 0x200d) continue;
+      let skip = false;
+      for (let i = 0; i < ranges.length; i++) {
+        const [lo, hi] = ranges[i];
+        if (cp >= lo && cp <= hi) {
+          skip = true;
+          break;
+        }
+      }
+      if (!skip) out += ch;
+    }
+    return out.replace(/ {2,}/g, ' ').trim();
+  };
+
   const copyMeetingDetails = async (meeting: Meeting) => {
     try {
       // Use the same backend endpoint as web to get the properly formatted invitation text
@@ -884,11 +913,11 @@ export default function MeetingCallScreen() {
       
       if (response.success && response.data?.invite_message) {
         // Use the invitation message from backend (same format as web)
-        await Clipboard.setStringAsync(response.data.invite_message);
+        await Clipboard.setStringAsync(stripClipboardEmojis(response.data.invite_message));
         Alert.alert('Copied', 'Meeting invitation copied to clipboard');
       } else {
         // Fallback to basic details if backend doesn't return invite_message
-        let details = `Meeting: ${meeting.title}\n`;
+        let details = `Meeting: ${stripClipboardEmojis(meeting.title)}\n`;
         details += `Meeting ID: ${meeting.meetingId}\n`;
         if (meeting.passcode) {
           details += `Passcode: ${meeting.passcode}\n`;

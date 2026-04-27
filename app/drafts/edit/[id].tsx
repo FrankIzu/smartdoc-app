@@ -108,6 +108,7 @@ function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: b
       setTimeout(function(){
         el.addEventListener('input',send);
         el.addEventListener('blur',send);
+        el.addEventListener('paste',function(){ setTimeout(send,0); });
       },0);
       var lastTap=0;
       el.addEventListener('touchend',function(e){

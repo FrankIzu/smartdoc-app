@@ -17,6 +17,7 @@ import {
     type FormattedBlock,
     type NestedListItem,
 } from '../utils/chatFormatting';
+import { formatDocumentOpenLinkLabel } from '../utils/chatLinkLabels';
 import { validateAndSanitizeUrl } from '../utils/linkSecurity';
 import type { SermonCitationType } from '../utils/sermonParagraphLinks';
 import {
@@ -172,6 +173,7 @@ function renderFormattedText(
           if (part.type === 'link' && part.url) {
             const result = validateAndSanitizeUrl(part.url);
             if (result.valid && result.url) {
+              const linkLabel = formatDocumentOpenLinkLabel(part.content, result.url);
               return (
                 <Text
                   key={j}
@@ -181,7 +183,7 @@ function renderFormattedText(
                     else Linking.openURL(result.url!);
                   }}
                 >
-                  {part.content}
+                  {linkLabel}
                 </Text>
               );
             }
