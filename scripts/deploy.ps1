@@ -15,8 +15,8 @@
 #
 #   In production, UpdateReason is prompted (1=security, 2=breaking, 3=feature) or use -UpdateReason param.
 #
-#   In interactive mode you can choose: (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions.
-#   Option 3 commits version/build and pushes; iOS runs on push to main, Android runs on push to main or tag.
+#   Interactive builds default to GitHub Actions (commit/push already done by the script). Use -Local for EAS on this machine.
+#   For EAS cloud builds, run eas directly (e.g. eas build --profile production --platform android).
 #
 #   iOS dSYM: GitHub Actions uploads ios-dsym artifact when the iOS workflow runs. Download from the workflow run (Actions -> run -> Artifacts); use GrabDocs.app.dSYM for symbolication.
 
@@ -687,6 +687,10 @@ try {
     Write-Host "   Profile: $profile" -ForegroundColor White
     if ($Local) {
         Write-Host "   Build: Local (--local)" -ForegroundColor White
+    } elseif (-not $PSBoundParameters.ContainsKey('Local')) {
+        Write-Host "   Build: GitHub Actions (default)" -ForegroundColor White
+    } else {
+        Write-Host "   Build: EAS cloud" -ForegroundColor White
     }
     if ($normalizedEnv -eq "production") {
         Write-Host "   Version name: $Version" -ForegroundColor White
@@ -712,14 +716,8 @@ try {
         }
     }
 
-    # If -Local was not passed, prompt: local / cloud / GitHub Actions
-    $useGitHubActions = $false
-    if (-not $PSBoundParameters.ContainsKey('Local')) {
-        $where = Prompt-WithValidation "Where to build? (1) This machine [EAS local], (2) EAS cloud, (3) GitHub Actions" @("1", "2", "3") "2"
-        if ($where -eq "1") { $Local = $true }
-        elseif ($where -eq "3") { $useGitHubActions = $true }
-        else { $Local = $false }
-    }
+    # Default to GitHub Actions unless -Local (EAS on this machine). EAS cloud: use eas CLI directly.
+    $useGitHubActions = -not $PSBoundParameters.ContainsKey('Local')
 
     # GitHub Actions: trigger workflow (branch already pushed earlier)
     if ($useGitHubActions) {
@@ -922,7 +920,7 @@ try {
         Write-Host "❌ EAS local build for Android is not supported on Windows (Expo requires macOS or Linux)." -ForegroundColor Red
         Write-Host "   Options:" -ForegroundColor Yellow
         Write-Host "   1. Use GitHub Actions: push to main or run 'gh workflow run build-android.yml' (builds on Linux)." -ForegroundColor White
-        Write-Host "   2. Use EAS cloud (this script without -Local): run again and choose 'n' for build locally." -ForegroundColor White
+        Write-Host "   2. Use EAS cloud: eas build --profile <profile> --platform android (from repo root)." -ForegroundColor White
         Write-Host "   3. Use WSL: run this script from inside WSL (Linux) on your PC." -ForegroundColor White
         exit 1
     }
