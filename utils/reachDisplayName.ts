@@ -34,12 +34,48 @@ export function getReachParticipantDisplayName(
   );
 }
 
+/** Trim, bound length, strip control chars, collapse whitespace — empty means unusable. */
+export function sanitizeReachDisplayName(raw: string): string {
+  return raw
+    .trim()
+    .slice(0, 100)
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Prefer name from navigation params; otherwise derive from auth user. */
 export function resolveReachDisplayName(
   paramUserName: string | string[] | undefined,
   user: ReachParticipantLike | null | undefined
 ): string {
   const raw = Array.isArray(paramUserName) ? paramUserName[0] : paramUserName;
-  const fromParam = typeof raw === 'string' && raw.trim() ? raw.trim() : '';
+  const fromParam =
+    typeof raw === 'string' ? sanitizeReachDisplayName(raw) : '';
+  return fromParam || getReachParticipantDisplayName(user);
+}
+
+const warnedHmsMissingUserName = new Set<string>();
+
+/**
+ * HMS / join-by-id: sanitized param first, then auth-derived label.
+ * In __DEV__, logs once per meetingId when the route param did not yield a usable name (navigator gap).
+ */
+export function getHmsDisplayUserName(
+  paramUserName: string | string[] | undefined,
+  user: ReachParticipantLike | null | undefined,
+  meetingId?: string | number
+): string {
+  const raw = Array.isArray(paramUserName) ? paramUserName[0] : paramUserName;
+  const fromParam = typeof raw === 'string' ? sanitizeReachDisplayName(raw) : '';
+  if (typeof __DEV__ !== 'undefined' && __DEV__ && !fromParam && meetingId != null) {
+    const key = String(meetingId).trim();
+    if (key && !warnedHmsMissingUserName.has(key)) {
+      warnedHmsMissingUserName.add(key);
+      console.warn(
+        `HMS: fallback display name used (missing userName param) for meetingId=${key}`
+      );
+    }
+  }
   return fromParam || getReachParticipantDisplayName(user);
 }

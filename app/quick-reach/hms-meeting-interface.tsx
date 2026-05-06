@@ -25,7 +25,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { API_BASE_URL, HMS_IOS_SCREENSHARE } from '../../constants/Config';
 import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
 import { apiClient } from '../../services/api';
-import { resolveReachDisplayName } from '../../utils/reachDisplayName';
+import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { errorLogger } from '../../services/errorLogger';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
@@ -115,6 +115,8 @@ export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { meetingId, title, userName, passcode, passcode_token: passcodeToken } = params;
+  const meetingIdForDisplay =
+    meetingId == null ? undefined : Array.isArray(meetingId) ? meetingId[0] : meetingId;
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
@@ -686,7 +688,7 @@ export default function HMSMeetingInterfaceScreen() {
       }
 
       // Same as web: get token via join-by-id (one join path for both web and mobile)
-      const displayUserName = resolveReachDisplayName(userName, user);
+      const displayUserName = getHmsDisplayUserName(userName, user, meetingIdForDisplay);
       const passcodePayload = passcodeToken
         ? { passcode_token: passcodeToken }
         : (passcode as string)?.trim()
@@ -889,7 +891,7 @@ export default function HMSMeetingInterfaceScreen() {
   if (HMSPrebuilt && authToken && meetingId) {
     const roomCode = meetingId as string;
     const token = authToken;
-    const displayUserName = resolveReachDisplayName(userName, user);
+    const displayUserName = getHmsDisplayUserName(userName, user, meetingIdForDisplay);
     
     if (!roomCode || !token) {
       return (
@@ -1311,7 +1313,7 @@ export default function HMSMeetingInterfaceScreen() {
           <Text style={styles.meetingInfoValue}>{title || 'Meeting'}</Text>
           
           <Text style={styles.meetingInfoLabel}>User:</Text>
-          <Text style={styles.meetingInfoValue}>{resolveReachDisplayName(userName, user)}</Text>
+          <Text style={styles.meetingInfoValue}>{getHmsDisplayUserName(userName, user, meetingIdForDisplay)}</Text>
         </View>
 
         <View style={styles.developmentMessage}>

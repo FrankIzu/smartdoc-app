@@ -21,10 +21,12 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Toast from 'react-native-toast-message';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
-import { getReachParticipantDisplayName } from '../../utils/reachDisplayName';
+import { getReachParticipantDisplayName, sanitizeReachDisplayName } from '../../utils/reachDisplayName';
 import { formatMeetingTimeToLocal } from '../../utils/timeFormatting';
 import { useAuth } from '../context/auth';
 import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
+
+type MeetingSource = 'own' | 'invited';
 
 interface Meeting {
   id: string;
@@ -40,6 +42,8 @@ interface Meeting {
   description?: string;
   duration?: number;
   createdAt?: string;
+  /** Present when row came from own vs invited-meetings merge */
+  source?: MeetingSource;
 }
 
 /** Keys `id:<meetingId>` / `title:<normalized>` for meetings that have ≥1 asset (from getMeetingAssets). */
@@ -95,6 +99,136 @@ function meetingHasKnownAssets(m: Meeting, presence: Record<string, boolean>): b
   return false;
 }
 
+function normalizeMeetingIdForMerge(id: unknown): string {
+  return String(id ?? '').trim().toLowerCase();
+}
+
+function toMillis(t: unknown): number {
+  if (t == null || t === '') return 0;
+  if (typeof t === 'string') {
+    const parsed = new Date(t).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (typeof t === 'number') {
+    if (!Number.isFinite(t)) return 0;
+    return t < 1e12 ? t * 1000 : t;
+  }
+  return 0;
+}
+
+type MeetingListRow = Meeting & {
+  source: MeetingSource;
+  sortTime: number;
+  createdFallbackMs: number;
+};
+
+function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow | null {
+  const meetingId = String(m.meetingId || m.meeting_id || m.id || '').trim();
+  if (!meetingId) return null;
+
+  const titleRaw = m.title || m.name || m.roomName || m.room_name;
+  const title =
+    typeof titleRaw === 'string' && titleRaw.trim()
+      ? titleRaw.trim()
+      : 'Untitled Meeting';
+
+  const startTime =
+    m.startTime ||
+    m.start_time ||
+    m.start_at ||
+    m.scheduled_time ||
+    m.scheduled_at ||
+    '';
+  const scheduledStart = m.scheduled_start_time || m.scheduled_at;
+  const createdRaw = m.createdAt || m.created_at || m.created;
+  const createdAt =
+    typeof createdRaw === 'string'
+      ? createdRaw
+      : createdRaw != null
+        ? String(createdRaw)
+        : '';
+
+  const statusRaw = m.status || m.meeting_status || 'created';
+
+  const sortTime =
+    toMillis(startTime) ||
+    toMillis(scheduledStart) ||
+    toMillis(createdAt) ||
+    toMillis(m.endTime || m.end_time || m.end_at) ||
+    toMillis(m.started_at) ||
+    0;
+  const createdFallbackMs =
+    toMillis(createdAt) ||
+    toMillis(m.started_at) ||
+    toMillis(startTime) ||
+    0;
+
+  return {
+    id: String(m.id || m.meeting_id || m.meetingId || meetingId),
+    title,
+    meetingId,
+    host: m.host || m.host_name || m.hostName || 'Unknown',
+    participants: m.participants || m.participant_count || 0,
+    startTime: typeof startTime === 'string' ? startTime : String(startTime || ''),
+    endTime: m.endTime || m.end_time || m.end_at || '',
+    status: statusRaw as Meeting['status'],
+    passcode: m.passcode || undefined,
+    roomUrl: m.roomUrl || m.room_url || m.url || undefined,
+    description: m.description || undefined,
+    duration: m.duration || m.meeting_duration_minutes || undefined,
+    createdAt: createdAt || undefined,
+    source,
+    sortTime,
+    createdFallbackMs,
+  };
+}
+
+function stripMeetingListInternals(row: MeetingListRow): Meeting {
+  const { sortTime: _st, createdFallbackMs: _cf, ...rest } = row;
+  return rest;
+}
+
+function mergeMeetingRowsById(ownRows: MeetingListRow[], invitedRows: MeetingListRow[]): MeetingListRow[] {
+  const mergedMap = new Map<string, MeetingListRow>();
+  for (const row of ownRows) {
+    const key = normalizeMeetingIdForMerge(row.meetingId);
+    if (!key) continue;
+    const existing = mergedMap.get(key);
+    if (!existing || existing.source === 'invited') {
+      mergedMap.set(key, row);
+    }
+  }
+  for (const row of invitedRows) {
+    const key = normalizeMeetingIdForMerge(row.meetingId);
+    if (!key) continue;
+    const existing = mergedMap.get(key);
+    if (!existing || existing.source === 'invited') {
+      mergedMap.set(key, row);
+    }
+  }
+  const merged = Array.from(mergedMap.values());
+  merged.sort((a, b) => {
+    if (b.sortTime !== a.sortTime) return b.sortTime - a.sortTime;
+    if ((b.createdFallbackMs ?? 0) !== (a.createdFallbackMs ?? 0)) {
+      return (b.createdFallbackMs ?? 0) - (a.createdFallbackMs ?? 0);
+    }
+    return String(a.meetingId).localeCompare(String(b.meetingId));
+  });
+  return merged;
+}
+
+function parseMeetingsArrayFromMobileResponse(meetingsResponse: any): any[] {
+  if (Array.isArray(meetingsResponse)) return meetingsResponse;
+  if (meetingsResponse?.data) {
+    if (Array.isArray(meetingsResponse.data)) return meetingsResponse.data;
+    return meetingsResponse.data.meetings || [];
+  }
+  if (meetingsResponse?.meetings && Array.isArray(meetingsResponse.meetings)) {
+    return meetingsResponse.meetings;
+  }
+  return [];
+}
+
 export default function MeetingCallScreen() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -126,6 +260,8 @@ export default function MeetingCallScreen() {
   const [featuresExpanded, setFeaturesExpanded] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isJoining, setIsJoining] = useState(false);
+  /** True when GET /api/v1/video/invited-meetings fails (own list may still show). */
+  const [invitedLoadFailed, setInvitedLoadFailed] = useState(false);
 
   // Use keyboard height for padding so join modal stays above keyboard on both Android and iOS
   useEffect(() => {
@@ -141,6 +277,12 @@ export default function MeetingCallScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__ && invitedLoadFailed) {
+      console.warn('📱 Invited meetings could not be loaded; list may be incomplete. Pull to refresh.');
+    }
+  }, [invitedLoadFailed]);
+
   const loadMeetings = useCallback(async () => {
     if (!isAuthenticated) {
       console.log('📱 User not authenticated, skipping meetings load');
@@ -152,173 +294,124 @@ export default function MeetingCallScreen() {
 
     try {
       setLoading(true);
-      
-      // One getMeetingAssets() populates folder icons (cached for meeting-details — not N per row).
-      const startTime = Date.now();
-      const meetingsResponse = await apiClient.getMeetings(10, 0);
-      const loadTime = Date.now() - startTime;
-      console.log(`📱 Meetings loaded in ${loadTime}ms`);
 
-      // Handle meetings response (critical path)
-      // Support multiple response formats:
-      // 1. { success: true, data: { meetings: [] } }
-      // 2. { success: true, data: [] } (data is array)
-      // 3. { success: true, meetings: [] }
-      // 4. { meetings: [] }
-      // 5. Array directly
-      let allMeetings: any[] = [];
-      if (Array.isArray(meetingsResponse)) {
-        allMeetings = meetingsResponse;
-      } else if (meetingsResponse?.data) {
-        if (Array.isArray(meetingsResponse.data)) {
-          allMeetings = meetingsResponse.data;
-        } else {
-          allMeetings = meetingsResponse.data.meetings || [];
-        }
-      } else if ((meetingsResponse as any)?.meetings) {
-        allMeetings = Array.isArray((meetingsResponse as any).meetings) ? (meetingsResponse as any).meetings : [];
+      const startTime = Date.now();
+      const [ownRes, invitedAxiosRes] = await Promise.all([
+        apiClient.getMeetings(10, 0).catch((e) => {
+          console.warn('📱 getMeetings failed:', e);
+          return null;
+        }),
+        apiClient.client.get('/api/v1/video/invited-meetings').catch((e) => {
+          console.warn('📱 invited-meetings failed:', e);
+          return null;
+        }),
+      ]);
+      const loadTime = Date.now() - startTime;
+
+      let invitedRequestFailed = false;
+      let invitedPayload: any = null;
+      if (invitedAxiosRes === null) {
+        invitedRequestFailed = true;
       } else {
-        allMeetings = [];
+        const d = invitedAxiosRes.data;
+        if (d && d.success === false) {
+          invitedRequestFailed = true;
+        } else {
+          invitedPayload = d;
+        }
       }
-      
-      // Process meetings if we have any or if there's a response
-      if (allMeetings.length > 0 || meetingsResponse) {
-        
-        console.log(`📱 Processing ${allMeetings.length} meetings from backend`);
-        console.log('📱 Raw meetings response structure:', {
-          hasData: !!meetingsResponse?.data,
-          hasMeetingsInData: !!meetingsResponse?.data?.meetings,
-          hasMeetingsAtRoot: !!(meetingsResponse as any)?.meetings,
-          meetingsCount: allMeetings.length,
-          firstMeetingSample: allMeetings[0] ? Object.keys(allMeetings[0]) : []
-        });
-        
-        // Normalize meeting data to handle different backend field names
-        const normalizedMeetings = allMeetings.map((m: any) => {
-          // Map different field names to our Meeting interface
-          return {
-            id: m.id || m.meeting_id || m.meetingId || '',
-            title: m.title || m.name || m.roomName || m.room_name || 'Untitled Meeting',
-            meetingId: m.meetingId || m.meeting_id || m.id || '',
-            host: m.host || m.host_name || m.hostName || 'Unknown',
-            participants: m.participants || m.participant_count || 0,
-            startTime: m.startTime || m.start_time || m.start_at || m.scheduled_time || m.scheduled_at || '',
-            endTime: m.endTime || m.end_time || m.end_at || '',
-            status: m.status || m.meeting_status || 'created',
-            passcode: m.passcode || undefined,
-            roomUrl: m.roomUrl || m.room_url || m.url || undefined,
-            description: m.description || undefined,
-            duration: m.duration || m.meeting_duration_minutes || undefined,
-            createdAt: m.createdAt || m.created_at || m.created || undefined
-          } as Meeting;
-        });
-        
-        // Sort meetings by date (most recent first) BEFORE deduplication
-        const sortedMeetings = normalizedMeetings.sort((a: Meeting, b: Meeting) => {
-          const dateA = new Date(a.startTime || a.createdAt || 0).getTime();
-          const dateB = new Date(b.startTime || b.createdAt || 0).getTime();
-          return dateB - dateA;
-        });
-        
-        // Deduplicate meetings by title - keep only the most recent occurrence of each unique meeting name
-        const uniqueMeetingsMap = new Map<string, Meeting>();
-        const duplicatesFound: string[] = [];
-        
-        sortedMeetings.forEach((meeting: Meeting, index: number) => {
-          const normalizedTitle = (meeting.title || '').toLowerCase().trim();
-          
-          if (!normalizedTitle || normalizedTitle === 'untitled meeting') {
-            console.warn(`📱 Meeting at index ${index} has no valid title, skipping`);
-            return;
-          }
-          
-          // Only keep the first occurrence (most recent due to prior sorting)
-          if (!uniqueMeetingsMap.has(normalizedTitle)) {
-            uniqueMeetingsMap.set(normalizedTitle, meeting);
-            if (index < 5) {
-              console.log(`📱 Adding unique meeting "${meeting.title}" (${meeting.startTime || meeting.createdAt})`);
-            }
-          } else {
-            duplicatesFound.push(`"${meeting.title}" (${meeting.startTime || meeting.createdAt})`);
-            if (duplicatesFound.length <= 5) {
-              console.log(`📱 Skipping duplicate: "${meeting.title}" (${meeting.startTime || meeting.createdAt})`);
-            }
-          }
-        });
-        
-        const uniqueMeetings = Array.from(uniqueMeetingsMap.values());
-        console.log(`📱 Deduplicated ${duplicatesFound.length} duplicate meetings`);
-        console.log(`📱 Showing ${uniqueMeetings.length} unique meetings (deduplicated from ${allMeetings.length} total)`);
-        
-        setMeetings(uniqueMeetings);
-        
-        // Filter meetings by status and time
-        // Upcoming: Scheduled meetings with a future startTime OR newly created meetings (status="created" or without start_at/end_at)
-        // Recent: Ended meetings OR created/scheduled meetings without startTime (immediate meetings)
-        const now = new Date();
-        const upcoming = uniqueMeetings.filter((m: Meeting) => {
-          // Check if meeting has no start_at/end_at (no startTime or empty startTime)
-          const hasNoStartTime = !m.startTime || 
-                                 (typeof m.startTime === 'string' && m.startTime.trim() === '') ||
-                                 m.startTime === null ||
-                                 m.startTime === undefined;
-          
-          // Rule 1: Include meetings with status="created" - these are newly created meetings
-          // Even if they have a startTime (which might be the creation timestamp), they should be in upcoming
-          // This is the primary requirement: "if a meeting is newly created and has not start_at or end_at date, then show it in upcoming meeting"
-          if (m.status === 'created') {
-            console.log(`✅ Meeting "${m.title}" included in upcoming: newly created meeting (status="created")`);
-            return true;
-          }
-          
-          // Rule 2: Include newly created meetings without start_at/end_at (regardless of status, except ended)
-          if (hasNoStartTime && m.status !== 'ended') {
-            console.log(`✅ Meeting "${m.title}" included in upcoming: newly created without start_at/end_at (status="${m.status}")`);
-            return true;
-          }
-          
-          // Rule 3: Include scheduled meetings with a startTime in the future
-          if (m.status === 'scheduled' && !hasNoStartTime) {
-            try {
-              const startTime = new Date(m.startTime);
-              if (isNaN(startTime.getTime())) {
-                // Invalid date, treat as no startTime
-                console.log(`✅ Meeting "${m.title}" included in upcoming: scheduled but invalid startTime, treating as newly created`);
-                return true;
-              }
-              const isFuture = startTime > now;
-              if (isFuture) {
-                console.log(`✅ Meeting "${m.title}" included in upcoming: scheduled with future startTime (${m.startTime})`);
-                return true;
-              } else {
-                console.log(`❌ Meeting "${m.title}" excluded from upcoming: scheduled but startTime in past (${m.startTime})`);
-                return false;
-              }
-            } catch (e) {
-              console.warn(`⚠️ Meeting "${m.title}" has invalid startTime format: ${m.startTime}, treating as newly created`);
-              // If startTime is invalid, treat as no startTime (newly created)
+      setInvitedLoadFailed(invitedRequestFailed);
+
+      const allMeetings = parseMeetingsArrayFromMobileResponse(ownRes);
+      const ownRows = allMeetings
+        .map((m) => mapRawToMeetingListRow(m, 'own'))
+        .filter((r): r is MeetingListRow => r != null);
+
+      let invitedRows: MeetingListRow[] = [];
+      if (!invitedRequestFailed && invitedPayload) {
+        const recent = Array.isArray(invitedPayload.recent_meetings)
+          ? invitedPayload.recent_meetings
+          : [];
+        const scheduled = Array.isArray(invitedPayload.scheduled_meetings)
+          ? invitedPayload.scheduled_meetings
+          : [];
+        invitedRows = [...recent, ...scheduled]
+          .map((m) => mapRawToMeetingListRow(m, 'invited'))
+          .filter((r): r is MeetingListRow => r != null);
+      }
+
+      const mergedRows = mergeMeetingRowsById(ownRows, invitedRows);
+      const uniqueMeetings = mergedRows.map(stripMeetingListInternals);
+
+      console.log(`📱 Meetings loaded in ${loadTime}ms`, {
+        ownRawCount: allMeetings.length,
+        ownRows: ownRows.length,
+        invitedRows: invitedRows.length,
+        merged: uniqueMeetings.length,
+        invitedRequestFailed,
+      });
+
+      setMeetings(uniqueMeetings);
+
+      const now = new Date();
+      const upcoming = uniqueMeetings.filter((m: Meeting) => {
+        const hasNoStartTime =
+          !m.startTime ||
+          (typeof m.startTime === 'string' && m.startTime.trim() === '') ||
+          m.startTime === null ||
+          m.startTime === undefined;
+
+        if (m.status === 'created') {
+          console.log(`✅ Meeting "${m.title}" included in upcoming: newly created meeting (status="created")`);
+          return true;
+        }
+
+        if (hasNoStartTime && m.status !== 'ended') {
+          console.log(`✅ Meeting "${m.title}" included in upcoming: newly created without start_at/end_at (status="${m.status}")`);
+          return true;
+        }
+
+        if (m.status === 'scheduled' && !hasNoStartTime) {
+          try {
+            const startTime = new Date(m.startTime);
+            if (isNaN(startTime.getTime())) {
+              console.log(`✅ Meeting "${m.title}" included in upcoming: scheduled but invalid startTime, treating as newly created`);
               return true;
             }
-          }
-          
-          // Exclude all other meetings from upcoming
-          console.log(`❌ Meeting "${m.title}" excluded from upcoming: status="${m.status}", hasNoStartTime=${hasNoStartTime}, startTime="${m.startTime}"`);
-          return false;
-        });
-        
-        let ongoing = uniqueMeetings.filter((m: Meeting) => 
-          m.status === 'active'
-        );
-        // If user is in a meeting (local key set), that meeting MUST appear in active section
-        const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
-        if (currentId && currentId.trim() !== '') {
-          const inOngoing = ongoing.some((m: Meeting) => (m.meetingId || m.id) === currentId.trim());
-          if (!inOngoing) {
-            const fromList = uniqueMeetings.find((m: Meeting) => (m.meetingId || m.id) === currentId.trim());
-            if (fromList) {
-              ongoing = [{ ...fromList, status: 'active' as const }, ...ongoing];
+            const isFuture = startTime > now;
+            if (isFuture) {
+              console.log(`✅ Meeting "${m.title}" included in upcoming: scheduled with future startTime (${m.startTime})`);
+              return true;
             } else {
-              ongoing = [{
+              console.log(`❌ Meeting "${m.title}" excluded from upcoming: scheduled but startTime in past (${m.startTime})`);
+              return false;
+            }
+          } catch (e) {
+            console.warn(`⚠️ Meeting "${m.title}" has invalid startTime format: ${m.startTime}, treating as newly created`);
+            return true;
+          }
+        }
+
+        console.log(`❌ Meeting "${m.title}" excluded from upcoming: status="${m.status}", hasNoStartTime=${hasNoStartTime}, startTime="${m.startTime}"`);
+        return false;
+      });
+
+      let ongoing = uniqueMeetings.filter((m: Meeting) => m.status === 'active');
+      const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+      if (currentId && currentId.trim() !== '') {
+        const curNorm = normalizeMeetingIdForMerge(currentId);
+        const inOngoing = ongoing.some(
+          (m: Meeting) => normalizeMeetingIdForMerge(m.meetingId || m.id) === curNorm
+        );
+        if (!inOngoing) {
+          const fromList = uniqueMeetings.find(
+            (m: Meeting) => normalizeMeetingIdForMerge(m.meetingId || m.id) === curNorm
+          );
+          if (fromList) {
+            ongoing = [{ ...fromList, status: 'active' as const }, ...ongoing];
+          } else {
+            ongoing = [
+              {
                 id: currentId.trim(),
                 meetingId: currentId.trim(),
                 title: 'Active meeting',
@@ -326,48 +419,51 @@ export default function MeetingCallScreen() {
                 participants: 0,
                 startTime: '',
                 status: 'active',
-              }, ...ongoing];
-            }
-            console.log('📱 Included current meeting in active section:', currentId.trim());
+              },
+              ...ongoing,
+            ];
           }
+          console.log('📱 Included current meeting in active section:', currentId.trim());
         }
-        
-        setUpcomingMeetings(upcoming);
-        setOngoingMeetings(ongoing);
+      }
 
-        try {
-          const ar = await apiClient.getMeetingAssets();
-          if (ar?.success && ar.data) {
-            setAssetPresenceMap(buildMeetingsWithAssetsMap(ar.data));
-          } else {
-            setAssetPresenceMap({});
-          }
-        } catch (assetErr) {
-          console.warn('📱 Could not load asset presence for meeting list:', assetErr);
+      setUpcomingMeetings(upcoming);
+      setOngoingMeetings(ongoing);
+
+      try {
+        const ar = await apiClient.getMeetingAssets();
+        if (ar?.success && ar.data) {
+          setAssetPresenceMap(buildMeetingsWithAssetsMap(ar.data));
+        } else {
           setAssetPresenceMap({});
         }
-        
-        // Calculate recent meetings count (for logging)
-        const recentCount = uniqueMeetings.filter(m => {
-          if (m.status === 'ended') return true;
-          if ((m.status === 'created' || m.status === 'scheduled') && !m.startTime) return true;
-          return false;
-        }).length;
-        
-        console.log(`📱 Loaded ${uniqueMeetings.length} unique meetings in ${loadTime}ms:`, {
-          total: uniqueMeetings.length,
-          upcoming: upcoming.length,
-          ongoing: ongoing.length,
-          recent: recentCount,
-          duplicatesRemoved: allMeetings.length - uniqueMeetings.length
-        });
-        
-        // Debug: Log the actual status values from backend and upcoming filter results
-        console.log('📱 Meeting statuses from backend:', uniqueMeetings.map((m: Meeting) => {
-          const hasNoStartTime = !m.startTime || 
-                                 (typeof m.startTime === 'string' && m.startTime.trim() === '') ||
-                                 m.startTime === null ||
-                                 m.startTime === undefined;
+      } catch (assetErr) {
+        console.warn('📱 Could not load asset presence for meeting list:', assetErr);
+        setAssetPresenceMap({});
+      }
+
+      const recentCount = uniqueMeetings.filter((m) => {
+        if (m.status === 'ended') return true;
+        if ((m.status === 'created' || m.status === 'scheduled') && !m.startTime) return true;
+        return false;
+      }).length;
+
+      console.log(`📱 Loaded ${uniqueMeetings.length} meetings in ${loadTime}ms:`, {
+        total: uniqueMeetings.length,
+        upcoming: upcoming.length,
+        ongoing: ongoing.length,
+        recent: recentCount,
+        invitedLoadFailed: invitedRequestFailed,
+      });
+
+      console.log(
+        '📱 Meeting statuses from backend:',
+        uniqueMeetings.map((m: Meeting) => {
+          const hasNoStartTime =
+            !m.startTime ||
+            (typeof m.startTime === 'string' && m.startTime.trim() === '') ||
+            m.startTime === null ||
+            m.startTime === undefined;
           const isInUpcoming = upcoming.includes(m);
           return {
             title: m.title,
@@ -376,34 +472,19 @@ export default function MeetingCallScreen() {
             hasStartTime: !!m.startTime && !hasNoStartTime,
             hasNoStartTime: hasNoStartTime,
             isInUpcoming: isInUpcoming,
-            category: m.status === 'ended' ? 'recent' : 
-                      (m.status === 'scheduled' && !hasNoStartTime ? 'upcoming' : 
-                       (m.status === 'active' ? 'ongoing' : 
-                        (hasNoStartTime ? 'upcoming (newly created)' : 'other')))
+            category:
+              m.status === 'ended'
+                ? 'recent'
+                : m.status === 'scheduled' && !hasNoStartTime
+                  ? 'upcoming'
+                  : m.status === 'active'
+                    ? 'ongoing'
+                    : hasNoStartTime
+                      ? 'upcoming (newly created)'
+                      : 'other',
           };
-        }));
-      } else {
-        // No meetings found or failed to load - show empty state (unless user has current meeting)
-        console.log('📱 No meetings found or failed to load');
-        setAssetPresenceMap({});
-        setMeetings([]);
-        setUpcomingMeetings([]);
-        const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
-        if (currentId && currentId.trim() !== '') {
-          setOngoingMeetings([{
-            id: currentId.trim(),
-            meetingId: currentId.trim(),
-            title: 'Active meeting',
-            host: 'You',
-            participants: 0,
-            startTime: '',
-            status: 'active',
-          }]);
-          console.log('📱 Showing current meeting in active section (no list from API):', currentId.trim());
-        } else {
-          setOngoingMeetings([]);
-        }
-      }
+        })
+      );
     } catch (error: any) {
       // This catch block should rarely be hit now since we use allSettled
       // But keep it as a safety net
@@ -450,6 +531,7 @@ export default function MeetingCallScreen() {
 
   const handleRefresh = useCallback(() => {
     console.log('📱 Manual refresh triggered');
+    setInvitedLoadFailed(false);
     setRefreshing(true);
     loadMeetings();
   }, [loadMeetings]);
@@ -466,8 +548,9 @@ export default function MeetingCallScreen() {
     const q = new URLSearchParams({
       meetingId: params.meetingId,
       title: params.title,
-      userName: params.userName || getReachParticipantDisplayName(user)
     });
+    const cleaned = sanitizeReachDisplayName(params.userName || getReachParticipantDisplayName(user));
+    if (cleaned) q.set('userName', cleaned);
     if (params.passcode) q.set('passcode', params.passcode);
     router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
   };
@@ -1388,8 +1471,9 @@ export default function MeetingCallScreen() {
           const q = new URLSearchParams({
             meetingId: String(item.meetingId ?? ''),
             title: String(item.title ?? ''),
-            userName: getReachParticipantDisplayName(user)
           });
+          const un = sanitizeReachDisplayName(getReachParticipantDisplayName(user));
+          if (un) q.set('userName', un);
           if (item.passcode) q.set('passcode', String(item.passcode));
           router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
         } else {

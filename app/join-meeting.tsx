@@ -18,13 +18,18 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  getReachParticipantDisplayName,
+  sanitizeReachDisplayName,
+} from '../utils/reachDisplayName';
 import { apiClient } from '../services/api';
+import { useAuth } from './context/auth';
 
 const JOIN_APPROVAL_WAITING_KEY = 'join_approval_waiting';
 const POLL_INTERVAL_MS = 3000;
 const WAITING_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
-type CheckState = 'idle' | 'loading' | 'form' | 'submitting' | 'waiting' | 'timeout' | 'rejected' | 'error' | 'ready';
+type CheckState = 'idle' | 'loading' | 'form' | 'waiting' | 'timeout' | 'rejected' | 'error' | 'ready';
 
 interface MeetingRequirements {
   passcode_required: boolean;
@@ -33,11 +38,21 @@ interface MeetingRequirements {
   room_id?: number;
 }
 
+/** Only set userName when sanitization yields a non-empty string (omit key otherwise). */
+function appendSanitizedUserName(
+  q: URLSearchParams,
+  rawLabel: string
+) {
+  const cleaned = sanitizeReachDisplayName(rawLabel);
+  if (cleaned) q.set('userName', cleaned);
+}
+
 export default function JoinMeetingScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ meeting_id?: string; passcode?: string; passcode_token?: string }>();
   const meetingId = params.meeting_id?.trim() || '';
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
 
   const [checkState, setCheckState] = useState<CheckState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -48,6 +63,7 @@ export default function JoinMeetingScreen() {
   const [joinRequestId, setJoinRequestId] = useState<number | null>(null);
   const [approvalStatus, setApprovalStatus] = useState<'pending' | 'approved' | 'rejected' | null>(null);
   const [rejectionMessage, setRejectionMessage] = useState<string>('');
+  const [joinRequestSubmitting, setJoinRequestSubmitting] = useState(false);
 
   const isMountedRef = useRef(true);
   const hasNavigatedRef = useRef(false);
@@ -197,6 +213,7 @@ export default function JoinMeetingScreen() {
         setCheckState('ready');
         const q = new URLSearchParams({ meetingId: meetingId.trim() });
         if (params.passcode_token) q.set('passcode_token', params.passcode_token);
+        appendSanitizedUserName(q, getReachParticipantDisplayName(user));
         router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
       } catch (err: any) {
         const msg = err?.response?.data?.error || err?.message || 'Could not load meeting.';
@@ -206,7 +223,7 @@ export default function JoinMeetingScreen() {
     };
 
     runPreCheck();
-  }, [meetingId, params.passcode_token, router, checkState, restoreDone]);
+  }, [meetingId, params.passcode_token, router, checkState, restoreDone, user]);
 
   const navigateToMeeting = useCallback(() => {
     if (hasNavigatedRef.current || !isMountedRef.current) return;
@@ -215,8 +232,9 @@ export default function JoinMeetingScreen() {
     const q = new URLSearchParams({ meetingId: meetingId.trim() });
     if (params.passcode_token) q.set('passcode_token', params.passcode_token);
     else if (passcode) q.set('passcode', passcode);
+    appendSanitizedUserName(q, getReachParticipantDisplayName(user));
     router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
-  }, [meetingId, passcode, params.passcode_token, router, clearPersistedWaiting]);
+  }, [meetingId, passcode, params.passcode_token, router, clearPersistedWaiting, user]);
 
   const submitJoinRequest = useCallback(async () => {
     const name = participantName.trim() || 'Participant';
@@ -226,7 +244,7 @@ export default function JoinMeetingScreen() {
       return;
     }
 
-    setCheckState('submitting');
+    setJoinRequestSubmitting(true);
     setErrorMessage('');
 
     try {
@@ -247,10 +265,15 @@ export default function JoinMeetingScreen() {
         const q = new URLSearchParams({ meetingId: meetingId.trim() });
         if (params.passcode_token) q.set('passcode_token', params.passcode_token);
         else if (pc) q.set('passcode', pc);
+        appendSanitizedUserName(q, name);
         router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
         return;
       }
+      setErrorMessage('Could not complete join. Please try again.');
+      setCheckState('form');
+      setJoinRequestSubmitting(false);
     } catch (err: any) {
+      setJoinRequestSubmitting(false);
       const status = err?.response?.status;
       const errData = err?.response?.data || {};
       const joinRequestIdFromResponse = errData.join_request_id ?? errData.joinRequestId;
@@ -389,8 +412,8 @@ export default function JoinMeetingScreen() {
     const canSubmit =
       (participantName.trim().length > 0) &&
       (!requirements?.passcode_required || passcode.trim().length > 0) &&
-      checkState !== 'submitting';
-    const isSubmitting = checkState === 'submitting';
+      !joinRequestSubmitting;
+    const isSubmitting = joinRequestSubmitting;
 
     return (
       <KeyboardAvoidingView
