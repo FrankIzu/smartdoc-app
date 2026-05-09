@@ -4811,6 +4811,23 @@ class ApiService {
     }
   }
 
+  /** Remove meeting from the current user's invited/recent list without deleting the room (non-owners). */
+  async dismissMeetingFromList(roomId: string): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(
+        `/api/v1/video/room/${roomId}/dismiss-from-list`,
+        {}
+      );
+      return response.data;
+    } catch (error: any) {
+      const msg =
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        'Failed to remove meeting from your list';
+      throw new Error(msg);
+    }
+  }
+
   async sendMeetingInvite(meetingId: string, data: { emails: string[]; message?: string }): Promise<ApiResponse> {
     try {
       const response = await this.client.post(`/api/v1/mobile/meetings/${meetingId}/invite`, data);

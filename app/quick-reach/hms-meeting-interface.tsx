@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL, HMS_IOS_SCREENSHARE } from '../../constants/Config';
-import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
+import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../constants/reachMeeting';
 import { apiClient } from '../../services/api';
 import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { errorLogger } from '../../services/errorLogger';
@@ -149,6 +149,8 @@ export default function HMSMeetingInterfaceScreen() {
   const notificationDisplayedRef = useRef(false);
   const pipFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [joinSoundReady, setJoinSoundReady] = useState(false);
+  /** Canonical GrabDocs meeting id from join response (preferred for list/storage merge). */
+  const [resolvedStorageMeetingId, setResolvedStorageMeetingId] = useState<string | null>(null);
 
   // Network connectivity monitoring — shown as a friendly overlay instead of the raw HMS error
   const [isNetworkDown, setIsNetworkDown] = useState(false);
@@ -234,13 +236,13 @@ export default function HMSMeetingInterfaceScreen() {
     };
   }, [joinConfig]);
 
-  // Configure 100ms room-kit join behavior: skip preview and join with camera off to avoid
-  // camera orientation bug (shows landscape for ~30s before correcting to portrait). User can
-  // enable camera after joining; the delay patch gives orientation time to stabilize.
+  // Configure 100ms room-kit join behavior: skip preview and join with mic muted + camera off
+  // (same default as web Prebuilt preview localStorage: isAudioMuted / isVideoMuted).
+  // Camera stays off here to avoid portrait orientation glitches until the user opts in.
   useEffect(() => {
     if (Platform.OS !== 'web' && typeof global !== 'undefined') {
       (global as any).joinConfig = {
-        mutedAudio: false,
+        mutedAudio: true,
         mutedVideo: true,
         skipPreview: true,
       };
@@ -663,10 +665,13 @@ export default function HMSMeetingInterfaceScreen() {
   // Track current meeting for "one meeting at a time" and return-via-active-card
   useEffect(() => {
     if (authToken && meetingId) {
-      AsyncStorage.setItem(REACH_CURRENT_MEETING_KEY, String(meetingId)).catch(() => {});
+      const id =
+        resolvedStorageMeetingId ??
+        canonicalizeReachMeetingId(String(meetingId));
+      AsyncStorage.setItem(REACH_CURRENT_MEETING_KEY, id).catch(() => {});
     }
     return () => {};
-  }, [authToken, meetingId]);
+  }, [authToken, meetingId, resolvedStorageMeetingId]);
 
   const initializePrebuiltInterface = async () => {
     try {
@@ -699,7 +704,7 @@ export default function HMSMeetingInterfaceScreen() {
         return apiClient.client.post('/api/v1/video/room/join-by-id', {
           meeting_id: (meetingId as string).trim(),
           participant_name: displayUserName,
-          enable_audio: true,
+          enable_audio: false,
           enable_video: false,
           viewer_type: user ? 'host' : 'guest',
           ...(forceJoin ? { force_join: true } : {}),
@@ -728,6 +733,16 @@ export default function HMSMeetingInterfaceScreen() {
         if (!token || typeof token !== 'string' || token.trim().length === 0) {
           throw new Error('Join did not return a token');
         }
+        const apiMeetingId =
+          (data as any).meeting_id ??
+          (data as any).meetingId ??
+          (data as any).scheduled_meeting_id;
+        const forStorage = canonicalizeReachMeetingId(
+          apiMeetingId != null && String(apiMeetingId).trim() !== ''
+            ? String(apiMeetingId)
+            : String(meetingId)
+        );
+        setResolvedStorageMeetingId(forStorage);
         const tokenParts = token.split('.');
         setAuthToken(token);
         const joinConfigData = {
@@ -1000,6 +1015,16 @@ export default function HMSMeetingInterfaceScreen() {
           </View>
       </SafeAreaView>
     );
+    }
+
+    // Native room-kit reads global.joinConfig when joining — set again here so mute/camera defaults
+    // apply even if globals were touched earlier (matches web defaults: mic off, camera off).
+    if (Platform.OS !== 'web' && typeof global !== 'undefined') {
+      (global as any).joinConfig = {
+        mutedAudio: true,
+        mutedVideo: true,
+        skipPreview: true,
+      };
     }
 
     try {

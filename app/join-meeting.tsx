@@ -251,7 +251,7 @@ export default function JoinMeetingScreen() {
       const res = await apiClient.client.post('/api/v1/video/room/join-by-id', {
         meeting_id: meetingId.trim(),
         participant_name: name,
-        enable_audio: true,
+        enable_audio: false,
         enable_video: false,
         viewer_type: 'near-realtime',
         ...(params.passcode_token ? { passcode_token: params.passcode_token } : (pc ? { passcode: pc } : {})),

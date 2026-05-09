@@ -24,7 +24,7 @@ import { apiClient } from '../../services/api';
 import { getReachParticipantDisplayName, sanitizeReachDisplayName } from '../../utils/reachDisplayName';
 import { formatMeetingTimeToLocal } from '../../utils/timeFormatting';
 import { useAuth } from '../context/auth';
-import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
+import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../constants/reachMeeting';
 
 type MeetingSource = 'own' | 'invited';
 
@@ -42,8 +42,16 @@ interface Meeting {
   description?: string;
   duration?: number;
   createdAt?: string;
+  /** Video_calls.creator user id — used with current user for owner vs participant actions */
+  creatorId?: number | string;
   /** Present when row came from own vs invited-meetings merge */
   source?: MeetingSource;
+}
+
+function isReachMeetingOwner(meeting: Meeting, userId: string | undefined): boolean {
+  if (!userId) return false;
+  if (meeting.creatorId != null && String(meeting.creatorId) === String(userId)) return true;
+  return meeting.source === 'own';
 }
 
 /** Keys `id:<meetingId>` / `title:<normalized>` for meetings that have ≥1 asset (from getMeetingAssets). */
@@ -100,7 +108,7 @@ function meetingHasKnownAssets(m: Meeting, presence: Record<string, boolean>): b
 }
 
 function normalizeMeetingIdForMerge(id: unknown): string {
-  return String(id ?? '').trim().toLowerCase();
+  return canonicalizeReachMeetingId(id).toLowerCase();
 }
 
 function toMillis(t: unknown): number {
@@ -123,7 +131,9 @@ type MeetingListRow = Meeting & {
 };
 
 function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow | null {
-  const meetingId = String(m.meetingId || m.meeting_id || m.id || '').trim();
+  const meetingId = canonicalizeReachMeetingId(
+    String(m.meetingId || m.meeting_id || m.id || '').trim()
+  );
   if (!meetingId) return null;
 
   const titleRaw = m.title || m.name || m.roomName || m.room_name;
@@ -177,6 +187,7 @@ function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow |
     description: m.description || undefined,
     duration: m.duration || m.meeting_duration_minutes || undefined,
     createdAt: createdAt || undefined,
+    creatorId: m.creator_id ?? m.creatorId ?? undefined,
     source,
     sortTime,
     createdFallbackMs,
@@ -283,7 +294,7 @@ export default function MeetingCallScreen() {
     }
   }, [invitedLoadFailed]);
 
-  const loadMeetings = useCallback(async () => {
+  const loadMeetings = useCallback(async (opts?: { silent?: boolean }) => {
     if (!isAuthenticated) {
       console.log('📱 User not authenticated, skipping meetings load');
       setAssetPresenceMap({});
@@ -293,7 +304,9 @@ export default function MeetingCallScreen() {
     }
 
     try {
-      setLoading(true);
+      if (!opts?.silent) {
+        setLoading(true);
+      }
 
       const startTime = Date.now();
       const [ownRes, invitedAxiosRes] = await Promise.all([
@@ -355,6 +368,10 @@ export default function MeetingCallScreen() {
 
       const now = new Date();
       const upcoming = uniqueMeetings.filter((m: Meeting) => {
+        if (m.status === 'active') {
+          return false;
+        }
+
         const hasNoStartTime =
           !m.startTime ||
           (typeof m.startTime === 'string' && m.startTime.trim() === '') ||
@@ -397,8 +414,9 @@ export default function MeetingCallScreen() {
       });
 
       let ongoing = uniqueMeetings.filter((m: Meeting) => m.status === 'active');
-      const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
-      if (currentId && currentId.trim() !== '') {
+      const currentIdRaw = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+      const currentId = currentIdRaw ? canonicalizeReachMeetingId(currentIdRaw.trim()) : '';
+      if (currentId) {
         const curNorm = normalizeMeetingIdForMerge(currentId);
         const inOngoing = ongoing.some(
           (m: Meeting) => normalizeMeetingIdForMerge(m.meetingId || m.id) === curNorm
@@ -412,8 +430,8 @@ export default function MeetingCallScreen() {
           } else {
             ongoing = [
               {
-                id: currentId.trim(),
-                meetingId: currentId.trim(),
+                id: currentId,
+                meetingId: currentId,
                 title: 'Active meeting',
                 host: 'You',
                 participants: 0,
@@ -423,7 +441,7 @@ export default function MeetingCallScreen() {
               ...ongoing,
             ];
           }
-          console.log('📱 Included current meeting in active section:', currentId.trim());
+          console.log('📱 Included current meeting in active section:', currentId);
         }
       }
 
@@ -560,8 +578,10 @@ export default function MeetingCallScreen() {
     // One meeting at a time: block joining another meeting if already in one
     if (!forceJoin) {
       try {
-        const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
-        if (currentId && currentId.trim() !== '' && currentId !== meeting.meetingId) {
+        const currentRaw = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+        const currentCanon = currentRaw ? canonicalizeReachMeetingId(currentRaw.trim()) : '';
+        const meetingCanon = canonicalizeReachMeetingId(meeting.meetingId);
+        if (currentCanon && meetingCanon && currentCanon !== meetingCanon) {
           Alert.alert(
             'Already in a meeting',
             'You can only be in one meeting at a time. Please leave the current meeting first, then join this one.',
@@ -689,8 +709,10 @@ export default function MeetingCallScreen() {
     const savedMeetingId = meetingId.trim();
     // One meeting at a time
     try {
-      const currentId = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
-      if (currentId && currentId.trim() !== '' && currentId !== savedMeetingId) {
+      const currentRaw = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
+      const currentCanon = currentRaw ? canonicalizeReachMeetingId(currentRaw.trim()) : '';
+      const targetCanon = canonicalizeReachMeetingId(savedMeetingId);
+      if (currentCanon && targetCanon && currentCanon !== targetCanon) {
         Alert.alert(
           'Already in a meeting',
           'You can only be in one meeting at a time. Please leave the current meeting first, then join this one.',
@@ -910,6 +932,32 @@ export default function MeetingCallScreen() {
             }
           }
         }
+      ]
+    );
+  };
+
+  const removeMeetingFromList = async (meeting: Meeting) => {
+    Alert.alert(
+      'Remove from your list?',
+      'This removes the meeting from your list only. The host and other participants are not affected.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          onPress: async () => {
+            try {
+              const res = await apiClient.dismissMeetingFromList(meeting.id);
+              if (res.success) {
+                Toast.show({ type: 'success', text1: 'Meeting removed from your list' });
+                await loadMeetings({ silent: true });
+              } else {
+                Alert.alert('Error', res.message || 'Could not remove meeting');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error?.message || 'Could not remove meeting');
+            }
+          },
+        },
       ]
     );
   };
@@ -1483,18 +1531,21 @@ export default function MeetingCallScreen() {
       onLongPress={() => {
         if (isJoining) return;
         const isLive = item.status === 'active';
+        const owner = isReachMeetingOwner(item, user?.id);
         const buttons = [
           { text: 'Cancel', style: 'cancel' as const },
           { text: 'Join Meeting', onPress: () => { if (!isJoining) joinMeeting(item); } },
           { text: 'View Assets', onPress: () => viewMeetingAssets(item) },
           ...(isLive ? [{ text: 'End Meeting', style: 'destructive' as const, onPress: () => endMeeting(item) }] : []),
-          { text: 'Delete', style: 'destructive' as const, onPress: () => deleteMeeting(item) },
+          ...(owner
+            ? [{ text: 'Delete', style: 'destructive' as const, onPress: () => deleteMeeting(item) }]
+            : [{ text: 'Remove from my list', onPress: () => removeMeetingFromList(item) }]),
           { text: 'Invite', onPress: () => {
             setSelectedMeeting(item);
             setShowInviteModal(true);
           }}
         ];
-        
+
         Alert.alert(
           'Meeting Options',
           `Host: ${item.host}\nParticipants: ${item.participants}\nStart Time: ${formatMeetingTimeToLocal(item.startTime)}`,
@@ -1597,15 +1648,29 @@ export default function MeetingCallScreen() {
           <Ionicons name="person-add" size={16} color="#34C759" />
         </TouchableOpacity>
         
-        <TouchableOpacity
-          style={dynamicStyles.actionIcon}
-          onPress={(e) => {
-            e.stopPropagation();
-            deleteMeeting(item);
-          }}
-        >
-          <Ionicons name="trash" size={16} color="#FF3B30" />
-        </TouchableOpacity>
+        {isReachMeetingOwner(item, user?.id) ? (
+          <TouchableOpacity
+            style={dynamicStyles.actionIcon}
+            accessibilityLabel="Delete meeting"
+            onPress={(e) => {
+              e.stopPropagation();
+              deleteMeeting(item);
+            }}
+          >
+            <Ionicons name="trash-outline" size={16} color="#FF3B30" />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={dynamicStyles.actionIcon}
+            accessibilityLabel="Remove from my list"
+            onPress={(e) => {
+              e.stopPropagation();
+              removeMeetingFromList(item);
+            }}
+          >
+            <Ionicons name="close-circle-outline" size={18} color={colors.textSecondary || '#8E8E93'} />
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
