@@ -1,5 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -9,7 +9,6 @@ import {
     KeyboardAvoidingView,
     Modal,
     Platform,
-    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -27,6 +26,7 @@ import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
 import { screenCache } from '../../utils/screenCache';
 import { NotificationsInboxContent } from '../components/NotificationsInboxContent';
+import { UploadOptionsModal } from '../components/UploadOptionsModal';
 import { useAuth } from '../context/auth';
 import { pushNotificationService } from '../services/pushNotifications';
 
@@ -40,15 +40,6 @@ interface DashboardStats {
   processingFiles: number;
   unreadNotifications?: number;
   recentAnalytics?: number;
-}
-
-interface RecentActivity {
-  id: string;
-  type: 'upload' | 'chat' | 'scan' | 'process' | 'form' | 'analytics' | 'share';
-  title: string;
-  subtitle: string;
-  timestamp: Date | undefined;
-  icon: string;
 }
 
 function ReachLiveMeetingDot() {
@@ -103,7 +94,6 @@ function DashboardScreen() {
     unreadNotifications: 0,
     recentAnalytics: 0,
   });
-  const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<{ success: boolean; message: string } | null>(null);
@@ -214,13 +204,12 @@ function DashboardScreen() {
 
     // Serve cached data immediately (skip spinner on tab re-focus)
     if (!forceRefresh) {
-      const cached = screenCache.get<{ stats: typeof stats; activities: RecentActivity[] }>(
+      const cached = screenCache.get<{ stats: typeof stats }>(
         DASHBOARD_CACHE_KEY,
         DASHBOARD_CACHE_MS
       );
       if (cached) {
         setStats(cached.stats);
-        setRecentActivities(cached.activities);
         setLoading(false);
         return;
       }
@@ -240,8 +229,7 @@ function DashboardScreen() {
         unreadNotifications: 0,
         recentAnalytics: 0,
       };
-      const defaultActivities: RecentActivity[] = [];
-      
+
       // First test backend connectivity
       // console.log('🔍 Testing backend connectivity before loading dashboard...');
       let connectivityTest;
@@ -270,33 +258,12 @@ function DashboardScreen() {
           unreadNotifications: 0,
           recentAnalytics: 8,
         });
-        setRecentActivities([
-          {
-            id: '1',
-            type: 'upload',
-            title: 'File uploaded',
-            subtitle: 'sample.pdf',
-            timestamp: new Date(Date.now() - 1000 * 60 * 30), // 30 minutes ago
-            icon: 'document-outline'
-          },
-          {
-            id: '2',
-            type: 'chat',
-            title: 'Chat session',
-            subtitle: 'AI analysis',
-            timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 hours ago
-            icon: 'chatbubble-outline'
-          }
-        ]);
         return; // Exit early with fallback data
       }
       
       // console.log('✅ Backend connectivity OK, loading dashboard data...');
       
-      // Load dashboard stats and recent activities in parallel for better performance
-      const startTime = Date.now();
-      
-      // Start both requests in parallel
+      // Load dashboard stats in parallel with notifications
       const statsPromise = (async () => {
         try {
           // console.log('📊 Attempting to load dashboard stats...');
@@ -350,126 +317,7 @@ function DashboardScreen() {
           }
         }
       })();
-      
-      // Load recent activities in parallel
-      const activitiesPromise = (async () => {
-        try {
-          // Try to use the recent activities API endpoint first
-          let activitiesFromAPI: RecentActivity[] = [];
-          try {
-            const activitiesResponse = await apiClient.getRecentActivities(7, 10);
-          if (activitiesResponse && activitiesResponse.success && activitiesResponse.data) {
-            const activities = Array.isArray(activitiesResponse.data) ? activitiesResponse.data : [];
-            activitiesFromAPI = activities.map((activity: any) => {
-              const timestamp = activity.timestamp || activity.created_at || activity.date;
-              return {
-                id: activity.id?.toString() || `activity-${Date.now()}-${Math.random()}`,
-                type: (activity.type || 'upload') as RecentActivity['type'],
-                title: activity.title || activity.action || 'Activity',
-                subtitle: activity.subtitle || activity.description || activity.file_name || '',
-                timestamp: timestamp ? new Date(timestamp) : new Date(),
-                icon: activity.icon || 'document-outline'
-              };
-            });
-          }
-        } catch {
-          // Recent activities API not available, fallback to files below
-        }
-
-        // Only fetch files when the activities API returned fewer than 10 items — avoids
-        // loading 50 full file records on every refresh when we already have enough data.
-        if (activitiesFromAPI.length >= 10) {
-          if (activitiesFromAPI.length > 0) setRecentActivities(activitiesFromAPI.slice(0, 10));
-          return activitiesFromAPI.slice(0, 10);
-        }
-
-        // Also load recent files to include uploads and workspace shares
-        const filesResponse = await apiClient.getFiles(1, 10);
-        
-        // Handle both response formats: { files: [...] } or { data: { files: [...] } }
-        let files: any[] = [];
-        if (filesResponse && filesResponse.success) {
-          if (filesResponse.files && Array.isArray(filesResponse.files)) {
-            files = filesResponse.files;
-          } else if (filesResponse.data) {
-            if (Array.isArray(filesResponse.data)) {
-              files = filesResponse.data;
-            } else if (filesResponse.data.files && Array.isArray(filesResponse.data.files)) {
-              files = filesResponse.data.files;
-            }
-          }
-        }
-        
-        // Create activities from files
-        const fileActivities: RecentActivity[] = files
-          .map((file: any, index: number) => {
-            try {
-              let timestamp: Date;
-              try {
-                // Use updated_at for workspace shares (when file was shared), created_at for uploads
-                const dateStr = file.updated_at || file.created_at || file.uploaded_at;
-                if (dateStr) {
-                  timestamp = new Date(dateStr);
-                  if (isNaN(timestamp.getTime())) {
-                    timestamp = new Date();
-                  }
-                } else {
-                  timestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
-                }
-              } catch {
-                timestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
-              }
-
-              const fileName = file.original_filename || file.filename || file.name || `Document ${index + 1}`;
-              
-              // Check if file is shared to a workspace
-              const isWorkspaceShare = file.workspace_id || file.shared_to_workspace || file.workspace_name;
-              const workspaceName = file.workspace_name || (file.workspace_id ? `Workspace ${file.workspace_id}` : null);
-
-              return {
-                id: file.id?.toString() || `file-${index}-${Date.now()}`,
-                type: isWorkspaceShare ? 'share' as const : 'upload' as const,
-                title: isWorkspaceShare ? 'File shared to workspace' : 'File uploaded',
-                subtitle: isWorkspaceShare && workspaceName 
-                  ? `${fileName} → ${workspaceName}`
-                  : fileName,
-                timestamp,
-                icon: isWorkspaceShare ? 'share-outline' : 'document-outline'
-              };
-            } catch (fileError) {
-              return null;
-            }
-          })
-          .filter((activity): activity is RecentActivity => activity !== null);
-
-        // Combine API activities and file activities, remove duplicates, sort by timestamp
-        const allActivities = [...activitiesFromAPI, ...fileActivities];
-        const uniqueActivities = Array.from(
-          new Map(allActivities.map(activity => [activity.id, activity])).values()
-        );
-        
-        const sortedActivities = uniqueActivities
-          .sort((a, b) => {
-            const timeA = a.timestamp?.getTime() || 0;
-            const timeB = b.timestamp?.getTime() || 0;
-            return timeB - timeA; // Most recent first
-          })
-          .slice(0, 10); // Limit to 10 most recent
-        
-        if (sortedActivities.length > 0) {
-          setRecentActivities(sortedActivities);
-        } else {
-          setRecentActivities(defaultActivities);
-        }
-        return sortedActivities;
-      } catch (error) {
-        console.warn('📈 Recent activities failed, using empty array:', error);
-        setRecentActivities(defaultActivities);
-        return defaultActivities;
-      }
-    })();
     
-    // Load notifications concurrently with stats + activities instead of sequentially
     const notifPromise = (async () => {
       try {
         const notifRes = await apiClient.getNotifications();
@@ -483,17 +331,11 @@ function DashboardScreen() {
       }
     })();
 
-    const [resolvedStats] = await Promise.all([statsPromise, activitiesPromise, notifPromise]);
-    const loadTime = Date.now() - startTime;
+    const [resolvedStats] = await Promise.all([statsPromise, notifPromise]);
 
-    // Cache the freshly loaded data so subsequent tab-focuses are instant
-    setStats(prev => {
-      setRecentActivities(acts => {
-        screenCache.set(DASHBOARD_CACHE_KEY, { stats: prev, activities: acts });
-        return acts;
-      });
-      return prev;
-    });
+    if (resolvedStats) {
+      screenCache.set(DASHBOARD_CACHE_KEY, { stats: resolvedStats });
+    }
       
     } catch (error) {
       // console.error('🏠 Unexpected error in dashboard data loading:', error);
@@ -508,7 +350,6 @@ function DashboardScreen() {
         unreadNotifications: 0,
         recentAnalytics: 0,
       });
-      setRecentActivities([]);
     } finally {
       setLoading(false);
       // console.log('🏠 Dashboard data loading completed');
@@ -591,50 +432,40 @@ function DashboardScreen() {
     };
   }, [uploadTimeout]);
 
-  const formatTimeAgo = (date: Date | undefined | null) => {
-    // Handle undefined, null, or invalid dates
-    if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
-      return 'Unknown';
-    }
-    
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const minutes = Math.floor(diff / (1000 * 60));
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
-  };
-
-  const StatCard = ({ title, value, icon, color, onPress, badge }: {
+  const StatCard = ({
+    title,
+    icon,
+    color,
+    onPress,
+    badge,
+    subtitle,
+  }: {
     title: string;
-    value: number;
     icon: string;
     color: string;
     onPress?: () => void;
     badge?: number;
+    subtitle?: string;
   }) => (
     <TouchableOpacity
       style={[dynamicStyles.statCard, { borderLeftColor: color }]}
       onPress={onPress}
-      accessibilityLabel={`${title}: ${value}`}
+      accessibilityLabel={subtitle ? `${title}. ${subtitle}` : title}
       accessibilityRole="button"
     >
-      <View style={dynamicStyles.statContent}>
-        <View style={dynamicStyles.statHeader}>
-          <View style={{ position: 'relative' }}>
-            <Ionicons name={icon as any} size={26} color={color} />
-            {badge != null && badge > 0 ? (
-              <View style={dynamicStyles.badge}>
-                <Text style={dynamicStyles.badgeText}>{badge > 99 ? '99+' : String(badge)}</Text>
-              </View>
-            ) : null}
-          </View>
+      <View style={dynamicStyles.statCardRow}>
+        <View style={{ position: 'relative' }}>
+          <Ionicons name={icon as any} size={26} color={color} />
+          {badge != null && badge > 0 ? (
+            <View style={dynamicStyles.badge}>
+              <Text style={dynamicStyles.badgeText}>{badge > 99 ? '99+' : String(badge)}</Text>
+            </View>
+          ) : null}
         </View>
-        <Text style={dynamicStyles.statTitle}>{title}</Text>
+        <View style={dynamicStyles.statTextBlock}>
+          <Text style={dynamicStyles.statTitle}>{title}</Text>
+          {subtitle ? <Text style={dynamicStyles.statSubtitle}>{subtitle}</Text> : null}
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -668,36 +499,6 @@ function DashboardScreen() {
       <Ionicons name="chevron-forward" size={16} color="#ccc" />
     </TouchableOpacity>
   );
-
-  const ActivityItem = ({ activity, onPress }: { activity: RecentActivity; onPress?: () => void }) => (
-    <TouchableOpacity
-      style={dynamicStyles.activityItem}
-      onPress={onPress}
-      accessibilityLabel={`${activity.title}: ${activity.subtitle}`}
-      accessibilityRole="button"
-    >
-      <View style={[dynamicStyles.activityIcon, { backgroundColor: getActivityColor(activity.type) }]}>
-        <Ionicons name={activity.icon as any} size={18} color="#fff" />
-      </View>
-      <View style={dynamicStyles.activityContent}>
-        <Text style={dynamicStyles.activityTitle}>{activity.title}</Text>
-        <Text style={dynamicStyles.activitySubtitle}>{activity.subtitle}</Text>
-      </View>
-      <Text style={dynamicStyles.activityTime}>{formatTimeAgo(activity.timestamp)}</Text>
-    </TouchableOpacity>
-  );
-
-  const getActivityColor = (type: string) => {
-    switch (type) {
-      case 'upload': return '#007AFF';
-      case 'chat': return '#34C759';
-      case 'scan': return '#FF9500';
-      case 'process': return '#AF52DE';
-      case 'form': return '#FF3B30';
-      case 'analytics': return '#5856D6';
-      default: return '#8E8E93';
-    }
-  };
 
   const handleUploadFromFiles = async () => {
     if (isUploading) {
@@ -812,29 +613,14 @@ function DashboardScreen() {
       case 'meeting-call':
         router.push('/quick-reach/meeting-call');
         break;
+      case 'calendar':
+        router.push('/calendar' as any);
+        break;
       case 'bookmarks':
         router.push('/bookmarks/manage');
         break;
       case 'fillable-file':
         router.push('/fillable-file');
-        break;
-      default:
-        break;
-    }
-  };
-
-  const handleActivityPress = (activity: RecentActivity) => {
-    switch (activity.type) {
-      case 'upload':
-      case 'scan':
-        router.push('/(tabs)/documents');
-        break;
-      case 'chat':
-        router.push('/(tabs)/chats?openStartNew=1');
-        break;
-      case 'form':
-      case 'analytics':
-        router.push('/(tabs)/settings');
         break;
       default:
         break;
@@ -941,44 +727,34 @@ function DashboardScreen() {
     shadowRadius: 2,
     elevation: 2,
   },
-  statContent: {
-    flex: 1,
-  },
-  statHeader: {
+  statCardRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
+    alignItems: 'flex-start',
   },
-  statValue: {
-    fontSize: 20,
-    fontWeight: '700',
-      color: colors.text,
+  statTextBlock: {
+    flex: 1,
+    marginLeft: 10,
+    minWidth: 0,
   },
   statTitle: {
-    fontSize: 12,
-      color: colors.textSecondary,
-    textTransform: 'uppercase',
+    fontSize: 13,
     fontWeight: '600',
+      color: colors.text,
+    textTransform: 'uppercase',
+  },
+  statSubtitle: {
+    fontSize: 11,
+      color: colors.textSecondary,
+    marginTop: 3,
+    lineHeight: 15,
   },
   section: {
     padding: 14,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
       color: colors.text,
-  },
-  seeAllText: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
   },
   quickActionsContainer: {
     gap: 6,
@@ -1015,95 +791,6 @@ function DashboardScreen() {
   },
   quickActionSubtitle: {
     fontSize: 12,
-      color: colors.textSecondary,
-  },
-  activityContainer: {
-      backgroundColor: colors.card,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  activityItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-  },
-  activityIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  activityContent: {
-    flex: 1,
-  },
-  activityTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-      color: colors.text,
-    marginBottom: 2,
-  },
-  activitySubtitle: {
-    fontSize: 12,
-      color: colors.textSecondary,
-  },
-  activityTime: {
-    fontSize: 11,
-      color: colors.textLight,
-  },
-  insightCard: {
-    flexDirection: 'row',
-      backgroundColor: colors.card,
-    padding: 12,
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  insightContent: {
-    flex: 1,
-    marginLeft: 10,
-  },
-  insightTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-      color: colors.text,
-    marginBottom: 3,
-  },
-  insightText: {
-    fontSize: 13,
-      color: colors.textSecondary,
-    lineHeight: 19,
-  },
-  insightsContainer: {
-    gap: 8,
-  },
-  insightIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  emptyStateText: {
-    fontSize: 17,
-    fontWeight: '600',
-      color: colors.text,
-    marginBottom: 7,
-  },
-  emptyStateSubtext: {
-    fontSize: 13,
       color: colors.textSecondary,
   },
   headerActions: {
@@ -1201,79 +888,12 @@ function DashboardScreen() {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  connectionBannerText: {
+        connectionBannerText: {
     color: '#92400e',
     fontSize: 14,
     fontWeight: '500',
     marginLeft: 8,
     flex: 1,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  uploadOptionsContainer: {
-      backgroundColor: colors.card,
-    borderRadius: 20,
-    width: '90%',
-    maxWidth: 400,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  uploadOptionsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-  },
-  uploadOptionsTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-      color: colors.text,
-  },
-  uploadOptionsContent: {
-    padding: 16,
-  },
-  uploadOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-  },
-  uploadOptionDisabled: {
-    opacity: 0.5,
-  },
-  uploadOptionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  uploadOptionText: {
-    flex: 1,
-    marginRight: 10,
-  },
-  uploadOptionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-      color: colors.text,
-  },
-  uploadOptionSubtitle: {
-    fontSize: 12,
-      color: colors.textSecondary,
-    marginTop: 2,
   },
   }), [colors]);
 
@@ -1368,17 +988,17 @@ function DashboardScreen() {
             <StatCard
               key="stat-files"
               title="Files"
-              value={stats.totalDocuments}
               icon="folder"
               color="#007AFF"
+              subtitle="View all files"
               onPress={() => router.push('/(tabs)/documents')}
             />
             <StatCard
               key="stat-draft"
               title="Draft"
-              value={stats.totalDrafts}
               icon="create-outline"
               color="#5AC8FA"
+              subtitle="Create notes"
               onPress={() => router.push('/drafts')}
             />
           </View>
@@ -1386,17 +1006,17 @@ function DashboardScreen() {
             <StatCard
               key="stat-analytics"
               title="Financials"
-              value={stats.recentAnalytics || 0}
               icon="analytics"
               color="#FF9500"
+              subtitle="Manage expenses"
               onPress={() => router.push('/analytics/dashboard')}
             />
             <StatCard
               key="stat-chats"
               title="ChatGD"
-              value={stats.chatSessions}
               icon="chatbubbles"
               color="#AF52DE"
+              subtitle="Ask a question"
               onPress={() => router.push('/(tabs)/chats?openStartNew=1')}
             />
           </View>
@@ -1415,14 +1035,6 @@ function DashboardScreen() {
               onPress={() => handleQuickAction('upload')}
             />
             <QuickActionCard
-              key="action-chat"
-              title="Chat with someone"
-              subtitle="Message your team members"
-              icon="chatbubbles"
-              color="#FF2D55"
-              onPress={() => handleQuickAction('chat')}
-            />
-            <QuickActionCard
               key="action-meeting-call"
               title="Reach"
               subtitle="Join or start a meeting"
@@ -1431,6 +1043,15 @@ function DashboardScreen() {
               onPress={() => handleQuickAction('meeting-call')}
               isNew={true}
               showLiveMeetingIndicator={reachInMeeting}
+            />
+            <QuickActionCard
+              key="action-calendar"
+              title="Calendar"
+              subtitle="Events, invites, and external calendars"
+              icon="calendar-outline"
+              color="#5856D6"
+              onPress={() => handleQuickAction('calendar')}
+              isNew={true}
             />
             <QuickActionCard
               key="action-upload-links"
@@ -1464,72 +1085,15 @@ function DashboardScreen() {
               color="#34C759"
               onPress={() => handleQuickAction('form')}
             />
+            <QuickActionCard
+              key="action-chat"
+              title="Chat with someone"
+              subtitle="Message your team members"
+              icon="chatbubbles"
+              color="#FF2D55"
+              onPress={() => handleQuickAction('chat')}
+            />
             {/* Fillable File hidden from quick actions for now */}
-          </View>
-        </View>
-
-        {/* Recent Activity */}
-        <View style={dynamicStyles.section}>
-          <View style={dynamicStyles.sectionHeader}>
-            <Text style={dynamicStyles.sectionTitle}>Recent Activity</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/documents')}>
-              <Text style={dynamicStyles.seeAllText}>View All</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={dynamicStyles.activityContainer}>
-            {recentActivities.length > 0 ? (
-              recentActivities.slice(0, 5).map((activity, index) => (
-                <ActivityItem 
-                  key={`activity-${activity.id ?? index}`} 
-                  activity={activity} 
-                  onPress={() => handleActivityPress(activity)}
-                />
-              ))
-            ) : (
-              <View style={dynamicStyles.emptyState}>
-                <Ionicons name="document-text-outline" size={52} color="#ccc" />
-                <Text style={dynamicStyles.emptyStateText}>No recent activity</Text>
-                <Text style={dynamicStyles.emptyStateSubtext}>Start by uploading documents</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* AI Insights */}
-        <View style={dynamicStyles.section}>
-          <Text style={dynamicStyles.sectionTitle}>AI Insights</Text>
-          <View style={dynamicStyles.insightsContainer}>
-            <TouchableOpacity key="insight-suggestions" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats?openStartNew=1')}>
-              <View style={dynamicStyles.insightIcon}>
-                <Ionicons name="bulb" size={26} color="#FF9500" />
-              </View>
-              <View style={dynamicStyles.insightContent}>
-                <Text style={dynamicStyles.insightTitle}>Smart Suggestions</Text>
-                <Text style={dynamicStyles.insightText}>
-                  {stats.totalDocuments > 0 
-                    ? "Consider organizing your documents by categories for better search results."
-                    : "Upload your first document to get started with AI-powered insights."
-                  }
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="#ccc" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity key="insight-trends" style={dynamicStyles.insightCard} onPress={() => router.push('/(tabs)/chats?openStartNew=1')}>
-              <View style={dynamicStyles.insightIcon}>
-                <Ionicons name="trending-up" size={26} color="#34C759" />
-              </View>
-              <View style={dynamicStyles.insightContent}>
-                <Text style={dynamicStyles.insightTitle}>Usage Trends</Text>
-                <Text style={dynamicStyles.insightText}>
-                  {stats.chatSessions > 0
-                    ? `You've had ${stats.chatSessions} AI conversations. Keep exploring your documents!`
-                    : "Start a chat session to ask questions about your documents."
-                  }
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="#ccc" />
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -1566,120 +1130,20 @@ function DashboardScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Upload Options Modal */}
-      <Modal
+      <UploadOptionsModal
         visible={showUploadOptions}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => {
+        isUploading={isUploading}
+        onDismiss={() => {
           setShowUploadOptions(false);
-          // Only reset upload state if not in the middle of opening a picker
           if (isUploading && !isOpeningPicker) {
-            // console.log('🔄 Modal closed, resetting upload state');
             setUploadStateWithTimeout(false);
-          } else if (isOpeningPicker) {
-            // console.log('🔄 Modal closed while opening picker, keeping upload state active');
           }
         }}
-      >
-        <TouchableOpacity
-          style={dynamicStyles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setShowUploadOptions(false);
-            // Only reset upload state if not in the middle of opening a picker
-            if (isUploading && !isOpeningPicker) {
-              // console.log('🔄 Modal overlay pressed, resetting upload state');
-              setUploadStateWithTimeout(false);
-            } else if (isOpeningPicker) {
-              // console.log('🔄 Modal overlay pressed while opening picker, keeping upload state active');
-            }
-          }}
-        >
-          <TouchableOpacity
-            style={dynamicStyles.uploadOptionsContainer}
-            activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={dynamicStyles.uploadOptionsHeader}>
-              <Text style={dynamicStyles.uploadOptionsTitle}>Upload</Text>
-              <TouchableOpacity
-                onPress={() => setShowUploadOptions(false)}
-                accessibilityLabel="Close upload options"
-                accessibilityRole="button"
-              >
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={dynamicStyles.uploadOptionsContent}>
-              <TouchableOpacity
-                style={[dynamicStyles.uploadOption, isUploading && dynamicStyles.uploadOptionDisabled]}
-                onPress={() => {
-                  // console.log('📁 Files button pressed in modal');
-                  handleUploadFromFiles();
-                }}
-                disabled={isUploading}
-              >
-                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#007AFF' }]}>
-                  <Ionicons name="document" size={24} color="#fff" />
-                </View>
-                <View style={dynamicStyles.uploadOptionText}>
-                  <Text style={dynamicStyles.uploadOptionTitle}>Files</Text>
-                  <Text style={dynamicStyles.uploadOptionSubtitle}>Upload from your device</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={dynamicStyles.uploadOption}
-                onPress={handleUploadFromCamera}
-              >
-                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#FF9500' }]}>
-                  <Ionicons name="camera" size={24} color="#fff" />
-                </View>
-                <View style={dynamicStyles.uploadOptionText}>
-                  <Text style={dynamicStyles.uploadOptionTitle}>Camera</Text>
-                  <Text style={dynamicStyles.uploadOptionSubtitle}>Take a photo or scan document</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[dynamicStyles.uploadOption, isUploading && dynamicStyles.uploadOptionDisabled]}
-                onPress={() => {
-                  // console.log('🖼️ Gallery button pressed in modal');
-                  handleUploadFromGallery();
-                }}
-                disabled={isUploading}
-              >
-                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#5856D6' }]}>
-                  <Ionicons name="images" size={24} color="#fff" />
-                </View>
-                <View style={dynamicStyles.uploadOptionText}>
-                  <Text style={dynamicStyles.uploadOptionTitle}>Images Gallery</Text>
-                  <Text style={dynamicStyles.uploadOptionSubtitle}>Upload from your photo gallery</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={dynamicStyles.uploadOption}
-                onPress={handleUploadByLink}
-              >
-                <View style={[dynamicStyles.uploadOptionIcon, { backgroundColor: '#34C759' }]}>
-                  <Ionicons name="link" size={24} color="#fff" />
-                </View>
-                <View style={dynamicStyles.uploadOptionText}>
-                  <Text style={dynamicStyles.uploadOptionTitle}>Upload by Link</Text>
-                  <Text style={dynamicStyles.uploadOptionSubtitle}>Upload using an upload code</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#ccc" />
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        onFiles={handleUploadFromFiles}
+        onCamera={handleUploadFromCamera}
+        onGallery={handleUploadFromGallery}
+        onLink={handleUploadByLink}
+      />
 
       <Modal
         visible={notificationsModalOpen}

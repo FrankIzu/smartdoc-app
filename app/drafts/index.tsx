@@ -66,6 +66,9 @@ const SECTION_LABELS: Record<SectionKey, string> = {
 
 const SECTION_ORDER: SectionKey[] = ['today', 'yesterday', 'last30', 'older'];
 
+/** ChatGD composer hint when opening from Drafts list. */
+const CHATGD_PLACEHOLDER_FROM_DRAFTS = 'Ask about your drafts and notes';
+
 export default function DraftsListScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -467,6 +470,18 @@ export default function DraftsListScreen() {
             <Text style={dynamicStyles.headerTitle}>Drafts</Text>
             <Text style={dynamicStyles.headerSubtitle}>Notes | Invite others</Text>
           </View>
+          <TouchableOpacity
+            style={dynamicStyles.headerBtn}
+            onPress={() =>
+              router.push(
+                `/(tabs)/chats?openStartNew=1&chatPlaceholder=${encodeURIComponent(CHATGD_PLACEHOLDER_FROM_DRAFTS)}` as any
+              )
+            }
+            accessibilityLabel="Open ChatGD about your drafts"
+            accessibilityRole="button"
+          >
+            <Ionicons name="chatbubbles-outline" size={26} color={colors.text} />
+          </TouchableOpacity>
           <TouchableOpacity
             style={dynamicStyles.headerBtn}
             onPress={() => router.push('/drafts/recent')}

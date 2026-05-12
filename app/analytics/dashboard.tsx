@@ -23,9 +23,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import DocumentViewer from '../../components/DocumentViewer';
-import { useAuth } from '../context/auth';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient, type WebAnalysisDownloadReportBody } from '../../services/api';
+import { useFileStore } from '../../stores/fileStore';
+import { UploadOptionsModal } from '../components/UploadOptionsModal';
+import { useAuth } from '../context/auth';
 
 /** Rows shown initially in Recent Receipts / Recent Invoices; full lists stay in state for charts & summaries. */
 const FINANCIALS_LIST_PAGE_SIZE = 10;
@@ -369,6 +371,12 @@ export default function AnalyticsDashboard() {
   const [receiptListDisplayLimit, setReceiptListDisplayLimit] = useState(FINANCIALS_LIST_PAGE_SIZE);
   const [invoiceListDisplayLimit, setInvoiceListDisplayLimit] = useState(FINANCIALS_LIST_PAGE_SIZE);
   const lastAutoLoadAtRef = useRef(0);
+
+  const { uploadFromGallery, uploadFromDocuments } = useFileStore();
+  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
+  const [isOpeningPicker, setIsOpeningPicker] = useState(false);
   
   // Advanced filter states
   const [showAdvancedFilterModal, setShowAdvancedFilterModal] = useState(false);
@@ -666,7 +674,7 @@ export default function AnalyticsDashboard() {
   const [showEditDatePicker, setShowEditDatePicker] = useState(false);
   const [editDatePickerValue, setEditDatePickerValue] = useState<Date>(() => new Date());
 
-  // Document viewer (row tap opens file; edit icon opens edit modal)
+  // Document viewer (View opens file; row tap opens edit modal)
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
   const [selectedFileForView, setSelectedFileForView] = useState<{
     fileId: string;
@@ -1296,6 +1304,83 @@ export default function AnalyticsDashboard() {
     await loadAnalytics();
     setRefreshing(false);
   };
+
+  const setUploadStateWithTimeout = useCallback(
+    (uploading: boolean) => {
+      setIsUploading(uploading);
+      if (uploading) {
+        if (uploadTimeout !== null) clearTimeout(uploadTimeout);
+        const timeout = setTimeout(() => {
+          setIsUploading(false);
+          setUploadTimeout(null);
+        }, 30000);
+        setUploadTimeout(timeout);
+      } else if (uploadTimeout !== null) {
+        clearTimeout(uploadTimeout);
+        setUploadTimeout(null);
+      }
+    },
+    [uploadTimeout]
+  );
+
+  const dismissUploadModal = useCallback(() => {
+    setShowUploadOptions(false);
+    if (isUploading && !isOpeningPicker) {
+      setUploadStateWithTimeout(false);
+    }
+  }, [isUploading, isOpeningPicker, setUploadStateWithTimeout]);
+
+  const handleFinancialsUploadFromFiles = useCallback(async () => {
+    if (isUploading) return;
+    setUploadStateWithTimeout(true);
+    setIsOpeningPicker(true);
+    setShowUploadOptions(false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      const success = await uploadFromDocuments();
+      if (success) {
+        Alert.alert('Success', 'Files uploaded successfully!');
+        await loadAnalytics();
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to upload files. Please try again.');
+    } finally {
+      setUploadStateWithTimeout(false);
+      setIsOpeningPicker(false);
+    }
+  }, [isUploading, uploadFromDocuments, loadAnalytics, setUploadStateWithTimeout]);
+
+  const handleFinancialsUploadFromCamera = useCallback(() => {
+    setShowUploadOptions(false);
+    router.push('/scanner');
+  }, [router]);
+
+  const handleFinancialsUploadByLink = useCallback(() => {
+    setShowUploadOptions(false);
+    router.push('/upload-by-link-code');
+  }, [router]);
+
+  const handleFinancialsUploadFromGallery = useCallback(async () => {
+    if (isUploading) return;
+    setUploadStateWithTimeout(true);
+    setIsOpeningPicker(true);
+    setShowUploadOptions(false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      const success = await uploadFromGallery();
+      if (success) {
+        Alert.alert('Success', 'Photos uploaded successfully!');
+        await loadAnalytics();
+      } else {
+        Alert.alert('Upload Failed', 'Failed to upload photos. Please try again.');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error?.message || 'Failed to upload photos. Please try again.');
+    } finally {
+      setUploadStateWithTimeout(false);
+      setIsOpeningPicker(false);
+    }
+  }, [isUploading, uploadFromGallery, loadAnalytics, setUploadStateWithTimeout]);
 
   const handleFinancialsScroll = useCallback((event: any) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent || {};
@@ -2013,6 +2098,14 @@ export default function AnalyticsDashboard() {
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => setShowUploadOptions(true)}
+            accessibilityLabel="Upload document"
+            accessibilityRole="button"
+          >
+            <Ionicons name="cloud-upload-outline" size={28} color={colors.primary || '#007AFF'} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={handleShareReport} style={styles.shareButton}>
             <Ionicons name="share-outline" size={28} color="#10B981" />
           </TouchableOpacity>
@@ -2441,7 +2534,7 @@ export default function AnalyticsDashboard() {
                             key={`receipt-${index}-${getFileId(receipt) ?? index}`}
                             style={styles.receiptItemContainer}
                             activeOpacity={0.7}
-                            onPress={() => openFileInViewer(receipt)}
+                            onPress={() => handleOpenEdit(receipt, 'receipt')}
                           >
                             <View style={[styles.compactListItem, themeStyles.compactListItem]}>
                             <View style={styles.compactListInfo}>
@@ -2458,8 +2551,18 @@ export default function AnalyticsDashboard() {
                               <View style={styles.receiptActions}>
                             <Text style={[styles.compactListAmount, themeStyles.compactListAmount]}>{formatCurrency(numericAmount)}</Text>
                                 <TouchableOpacity
+                                  style={styles.viewButton}
+                                  onPress={() => openFileInViewer(receipt)}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="View receipt"
+                                >
+                                  <Text style={styles.viewButtonText}>View</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
                                   style={styles.editButton}
-                                  onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(receipt, 'receipt'); }}
+                                  onPress={() => handleOpenEdit(receipt, 'receipt')}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Edit receipt"
                                 >
                                   <Text style={styles.editButtonText}>Edit</Text>
                                 </TouchableOpacity>
@@ -2644,7 +2747,7 @@ export default function AnalyticsDashboard() {
                           key={`invoice-${index}-${getFileId(invoice) ?? index}`}
                           style={styles.receiptItemContainer}
                           activeOpacity={0.7}
-                          onPress={() => openFileInViewer(invoice)}
+                          onPress={() => handleOpenEdit(invoice, 'invoice')}
                         >
                           <View style={[styles.compactListItem, themeStyles.compactListItem]}>
                           <View style={styles.compactListInfo}>
@@ -2656,14 +2759,26 @@ export default function AnalyticsDashboard() {
                             <View style={styles.receiptActions}>
                           <Text style={[styles.compactListAmount, themeStyles.compactListAmount]}>{formatCurrency(numericAmount)}</Text>
                               <TouchableOpacity
+                                style={styles.viewButton}
+                                onPress={() => openFileInViewer(invoice)}
+                                accessibilityRole="button"
+                                accessibilityLabel="View invoice"
+                              >
+                                <Text style={styles.viewButtonText}>View</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
                                 style={styles.editButton}
-                                onPress={(e) => { e?.stopPropagation?.(); handleOpenEdit(invoice, 'invoice'); }}
+                                onPress={() => handleOpenEdit(invoice, 'invoice')}
+                                accessibilityRole="button"
+                                accessibilityLabel="Edit invoice"
                               >
                                 <Text style={styles.editButtonText}>Edit</Text>
                               </TouchableOpacity>
                               <TouchableOpacity
                                 style={styles.categorizeButton}
-                                onPress={(e) => { e?.stopPropagation?.(); handleUpdatePaymentStatus(invoice); }}
+                                onPress={() => handleUpdatePaymentStatus(invoice)}
+                                accessibilityRole="button"
+                                accessibilityLabel="Update payment status"
                               >
                                 <Ionicons name="card-outline" size={18} color="#007AFF" />
                               </TouchableOpacity>
@@ -2706,7 +2821,7 @@ export default function AnalyticsDashboard() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Document Viewer - opened when receipt/invoice row is tapped */}
+      {/* Document Viewer - opened from View on receipt/invoice rows */}
       {showDocumentViewer && selectedFileForView && (
         <DocumentViewer
           fileId={selectedFileForView.fileId}
@@ -3409,6 +3524,15 @@ export default function AnalyticsDashboard() {
           maximumDate={filterDateMax}
         />
       )}
+      <UploadOptionsModal
+        visible={showUploadOptions}
+        isUploading={isUploading}
+        onDismiss={dismissUploadModal}
+        onFiles={handleFinancialsUploadFromFiles}
+        onCamera={handleFinancialsUploadFromCamera}
+        onGallery={handleFinancialsUploadFromGallery}
+        onLink={handleFinancialsUploadByLink}
+      />
     </SafeAreaView>
   );
 }
@@ -4195,6 +4319,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  viewButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  viewButtonText: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
   },
   editButton: {
     paddingVertical: 4,

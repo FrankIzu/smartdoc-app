@@ -218,6 +218,7 @@ function RootLayoutNav() {
           <Stack.Screen name="drafts" options={{ headerShown: false }} />
           {/* Documents tab lives under (tabs)/documents — no root app/documents */}
           <Stack.Screen name="forms" options={{ headerShown: false }} />
+          <Stack.Screen name="calendar" options={{ headerShown: false }} />
           <Stack.Screen name="quick-reach" options={{ headerShown: false }} />
           <Stack.Screen name="join-meeting" options={{ headerShown: false }} />
           <Stack.Screen name="upload-links" options={{ headerShown: false }} />

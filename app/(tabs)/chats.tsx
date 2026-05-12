@@ -66,6 +66,9 @@ const CHATGD_MESSAGE_INPUT_MIN_HEIGHT = 40;
 /** Cap composer growth at two rows. */
 const CHATGD_MESSAGE_INPUT_MAX_HEIGHT = 64;
 
+/** Default ChatGD composer hint; overridden by entry route (calendar) or chat context (file / bookmark). */
+const CHATGD_DEFAULT_INPUT_PLACEHOLDER = 'Ask questions from your documents';
+
 /** Android EditText draws a default underline; without this it shows a line above/below the field inside rounded shells. */
 const ANDROID_TEXT_INPUT_PROPS =
   Platform.OS === 'android' ? { underlineColorAndroid: 'transparent' as const } : {};
@@ -364,6 +367,11 @@ export default function ChatsScreen() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [isGoingBack, setIsGoingBack] = useState(false); // Track if user is going back to chat list
+
+  /** True after navigating from Calendar → ChatGD (`chatSource=calendar`); cleared when leaving default assistant. */
+  const [calendarEntryPlaceholder, setCalendarEntryPlaceholder] = useState(false);
+  /** Optional composer hint from `?chatPlaceholder=` or `?inputPlaceholder=` (URL-encoded). */
+  const [routeInputPlaceholder, setRouteInputPlaceholder] = useState<string | null>(null);
 
   // True when the chat has no messages yet — used to center the input (ChatGPT-style empty state)
   const isEmptyChat = messages.length === 0 && !messagesLoading && !sendingMessage;
@@ -706,8 +714,22 @@ export default function ChatsScreen() {
     }
   }, [params.documentId, params.documentName, params.documentType, params.documentCategory]);
 
-  // When coming from home screen (ChatGD stat or insight cards): open Start New conversation directly; back goes to chat list
+  // When coming from home / calendar: openStartNew opens assistant; capture chatSource & placeholder params before clearing
   useEffect(() => {
+    const phRaw = params.chatPlaceholder ?? params.inputPlaceholder;
+    const ph = Array.isArray(phRaw) ? phRaw[0] : phRaw;
+    if (typeof ph === 'string' && ph.trim()) {
+      try {
+        setRouteInputPlaceholder(decodeURIComponent(ph.trim()));
+      } catch {
+        setRouteInputPlaceholder(ph.trim());
+      }
+    }
+
+    const csRaw = params.chatSource;
+    const chatSource = Array.isArray(csRaw) ? csRaw[0] : csRaw;
+    if (chatSource === 'calendar') setCalendarEntryPlaceholder(true);
+
     const v = params.openStartNew;
     const openStartNew =
       v === '1' ||
@@ -720,7 +742,14 @@ export default function ChatsScreen() {
     setIsGoingBack(false);
     loadMessages(-1, true);
     router.setParams({});
-  }, [params.openStartNew]);
+  }, [params.openStartNew, params.chatSource, params.chatPlaceholder, params.inputPlaceholder]);
+
+  useEffect(() => {
+    if (selectedChat != null && selectedChat.id !== -1) {
+      setCalendarEntryPlaceholder(false);
+      setRouteInputPlaceholder(null);
+    }
+  }, [selectedChat?.id]);
 
   // Handle fileId parameter from documents screen (fileName passed from Files to keep display name)
   useEffect(() => {
@@ -6100,6 +6129,26 @@ export default function ChatsScreen() {
     return nameWithoutExtension.substring(0, maxLength - 3) + '...';
   };
 
+  const messageInputPlaceholder = useMemo(() => {
+    const chat = selectedChat;
+    if (!chat) return CHATGD_DEFAULT_INPUT_PLACEHOLDER;
+    if (chat.type === 'document_focused') {
+      const n = chat.document_context?.name?.trim();
+      if (n)
+        return `Ask questions about "${truncateFilename(n, 38)}"`;
+      return 'Ask questions about this file';
+    }
+    if (chat.type === 'bookmark_focused') {
+      const n = chat.bookmark_context?.name?.trim();
+      if (n)
+        return `Ask questions about bookmark "${truncateFilename(n, 34)}"`;
+      return 'Ask questions about this bookmark';
+    }
+    if (chat.id === -1 && routeInputPlaceholder) return routeInputPlaceholder;
+    if (chat.id === -1 && calendarEntryPlaceholder) return 'Ask about your calendar and events';
+    return CHATGD_DEFAULT_INPUT_PLACEHOLDER;
+  }, [selectedChat, calendarEntryPlaceholder, routeInputPlaceholder]);
+
   const createQuickChat = (type: 'ai_assistant' | 'user_direct' | 'workspace' | 'document_focused' | 'bookmark_focused') => {
     setShowQuickChatTypes(false);
     
@@ -7369,7 +7418,7 @@ export default function ChatsScreen() {
               data={filteredChats}
               keyExtractor={(item, index) => item ? `history-${item.type}-${item.id}-${index}` : `history-${index}`}
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 24 }}
+              contentContainerStyle={{ paddingBottom: 88 }}
               onEndReached={() => {
                 if (!searchQuery.trim() && (hasMoreAiChats || hasMoreUserChats)) {
                   loadMoreChats();
@@ -7921,7 +7970,7 @@ export default function ChatsScreen() {
                 // update from handleMentionInput may not have flushed yet.
                 detectMention(newMessageRef.current, start);
               }}
-              placeholder="Ask questions from your documents"
+              placeholder={messageInputPlaceholder}
               placeholderTextColor={colors.textSecondary}
               multiline
               submitBehavior="submit"

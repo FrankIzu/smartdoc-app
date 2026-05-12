@@ -70,6 +70,7 @@ const baseExpo = {
   android: {
     package: "com.grabdocs.mobile",
     versionCode: versions.android?.versionCode ?? 55,
+    softwareKeyboardLayoutMode: "resize",
     adaptiveIcon: {
       foregroundImage:
         "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
@@ -113,6 +114,12 @@ const baseExpo = {
           { scheme: "https", host: "api.grabdocs.com", pathPrefix: "/meeting" },
           { scheme: "https", host: "app.grabdocs.com", pathPrefix: "/meeting" },
         ],
+        category: ["BROWSABLE", "DEFAULT"],
+      },
+      {
+        action: "VIEW",
+        autoVerify: true,
+        data: [{ scheme: "https", host: "app.grabdocs.com", pathPrefix: "/calendar" }],
         category: ["BROWSABLE", "DEFAULT"],
       },
     ],

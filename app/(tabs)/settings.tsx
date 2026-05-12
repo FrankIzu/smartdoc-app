@@ -972,7 +972,28 @@ export default function SettingsScreen() {
         </View>
       </AnimatedHeaderContainer>
 
-      <ScrollView style={dynamicStyles.scrollView} showsVerticalScrollIndicator={false} {...scrollRestoresHeaderProps}>
+      <ScrollView
+        style={dynamicStyles.scrollView}
+        contentContainerStyle={{ paddingBottom: 96 }}
+        showsVerticalScrollIndicator={false}
+        {...scrollRestoresHeaderProps}
+      >
+
+        <TouchableOpacity style={dynamicStyles.actionButton} onPress={() => router.push('/calendar' as any)}>
+          <View style={dynamicStyles.settingIcon}>
+            <Ionicons name="calendar-outline" size={20} color="#007AFF" />
+          </View>
+          <Text style={[dynamicStyles.actionButtonText, { flex: 1 }]}>Calendar</Text>
+          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={dynamicStyles.actionButton} onPress={() => router.push('/calendar/link-tester' as any)}>
+          <View style={dynamicStyles.settingIcon}>
+            <Ionicons name="flask-outline" size={20} color="#007AFF" />
+          </View>
+          <Text style={[dynamicStyles.actionButtonText, { flex: 1 }]}>Calendar links (QA)</Text>
+          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
 
         {/* Notifications Section - HIDDEN */}
         {/* {preferences && (

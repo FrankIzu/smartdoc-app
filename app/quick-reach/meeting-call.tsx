@@ -23,8 +23,8 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { getReachParticipantDisplayName, sanitizeReachDisplayName } from '../../utils/reachDisplayName';
 import { formatMeetingTimeToLocal } from '../../utils/timeFormatting';
-import { useAuth } from '../context/auth';
 import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../constants/reachMeeting';
+import { useAuth } from '../context/auth';
 
 type MeetingSource = 'own' | 'invited';
 
@@ -44,14 +44,75 @@ interface Meeting {
   createdAt?: string;
   /** Video_calls.creator user id — used with current user for owner vs participant actions */
   creatorId?: number | string;
+  /** From API current_host_id — may differ from creator after host transfer */
+  currentHostId?: number | string;
+  /** Normalized user ids from meeting_hosts (co-hosts) */
+  hostUserIds?: string[];
   /** Present when row came from own vs invited-meetings merge */
   source?: MeetingSource;
+}
+
+function meetingInfoStartLabel(meeting: Meeting, room: Record<string, any> | null | undefined): string {
+  const iso =
+    room?.started_at ||
+    room?.scheduled_at ||
+    meeting.startTime ||
+    '';
+  return iso ? formatMeetingTimeToLocal(iso) : '—';
+}
+
+function meetingInfoEndLabel(meeting: Meeting, room: Record<string, any> | null | undefined): string {
+  const raw = room?.ended_at || meeting.endTime;
+  return raw ? formatMeetingTimeToLocal(String(raw)) : '';
+}
+
+function meetingInfoDurationMinutes(
+  meeting: Meeting,
+  room: Record<string, any> | null | undefined
+): number | undefined {
+  const v = room?.duration_minutes ?? meeting.duration;
+  if (v == null || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function meetingInfoRoomUrl(meeting: Meeting, room: Record<string, any> | null | undefined): string | undefined {
+  const u = room?.room_url || meeting.roomUrl;
+  if (u == null || String(u).trim() === '') return undefined;
+  return String(u);
+}
+
+function extractReachHostUserIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (entry && typeof entry === 'object') {
+      const o = entry as Record<string, unknown>;
+      const id = o.user_id ?? o.userId ?? o.id;
+      if (id != null && String(id).trim() !== '') out.push(String(id));
+    }
+  }
+  return out;
 }
 
 function isReachMeetingOwner(meeting: Meeting, userId: string | undefined): boolean {
   if (!userId) return false;
   if (meeting.creatorId != null && String(meeting.creatorId) === String(userId)) return true;
   return meeting.source === 'own';
+}
+
+function isReachMeetingHost(meeting: Meeting, userId: string | undefined): boolean {
+  if (!userId) return false;
+  const uid = String(userId);
+  if (meeting.currentHostId != null && String(meeting.currentHostId) === uid) return true;
+  if (meeting.hostUserIds?.some((id) => String(id) === uid)) return true;
+  return false;
+}
+
+/** Trash / delete — hidden while the meeting is live for owners and hosts */
+function canDeleteReachMeetingFromList(meeting: Meeting, userId: string | undefined): boolean {
+  if (meeting.status === 'active') return false;
+  return isReachMeetingOwner(meeting, userId) || isReachMeetingHost(meeting, userId);
 }
 
 /** Keys `id:<meetingId>` / `title:<normalized>` for meetings that have ≥1 asset (from getMeetingAssets). */
@@ -124,6 +185,20 @@ function toMillis(t: unknown): number {
   return 0;
 }
 
+/** Latest-first sort: use the newest of created / scheduled start / end timestamps. */
+function meetingNewestFirstSortMs(m: Meeting): number {
+  const times = [toMillis(m.createdAt), toMillis(m.startTime), toMillis(m.endTime)].filter((n) => n > 0);
+  return times.length > 0 ? Math.max(...times) : 0;
+}
+
+function sortMeetingsNewestFirst(meetings: Meeting[]): Meeting[] {
+  return [...meetings].sort((a, b) => {
+    const diff = meetingNewestFirstSortMs(b) - meetingNewestFirstSortMs(a);
+    if (diff !== 0) return diff;
+    return String(b.meetingId || b.id).localeCompare(String(a.meetingId || a.id));
+  });
+}
+
 type MeetingListRow = Meeting & {
   source: MeetingSource;
   sortTime: number;
@@ -146,6 +221,8 @@ function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow |
     m.startTime ||
     m.start_time ||
     m.start_at ||
+    m.started_at ||
+    m.scheduled_start_time ||
     m.scheduled_time ||
     m.scheduled_at ||
     '';
@@ -182,12 +259,18 @@ function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow |
     startTime: typeof startTime === 'string' ? startTime : String(startTime || ''),
     endTime: m.endTime || m.end_time || m.end_at || '',
     status: statusRaw as Meeting['status'],
-    passcode: m.passcode || undefined,
+    passcode: m.passcode || m.password || undefined,
     roomUrl: m.roomUrl || m.room_url || m.url || undefined,
     description: m.description || undefined,
-    duration: m.duration || m.meeting_duration_minutes || undefined,
+    duration:
+      m.duration ??
+      m.meeting_duration_minutes ??
+      m.duration_minutes ??
+      undefined,
     createdAt: createdAt || undefined,
     creatorId: m.creator_id ?? m.creatorId ?? undefined,
+    currentHostId: m.current_host_id ?? m.currentHostId ?? undefined,
+    hostUserIds: extractReachHostUserIds(m.meeting_hosts ?? m.meetingHosts),
     source,
     sortTime,
     createdFallbackMs,
@@ -364,7 +447,7 @@ export default function MeetingCallScreen() {
         invitedRequestFailed,
       });
 
-      setMeetings(uniqueMeetings);
+      setMeetings(sortMeetingsNewestFirst(uniqueMeetings));
 
       const now = new Date();
       const upcoming = uniqueMeetings.filter((m: Meeting) => {
@@ -445,8 +528,8 @@ export default function MeetingCallScreen() {
         }
       }
 
-      setUpcomingMeetings(upcoming);
-      setOngoingMeetings(ongoing);
+      setUpcomingMeetings(sortMeetingsNewestFirst(upcoming));
+      setOngoingMeetings(sortMeetingsNewestFirst(ongoing));
 
       try {
         const ar = await apiClient.getMeetingAssets();
@@ -938,8 +1021,8 @@ export default function MeetingCallScreen() {
 
   const removeMeetingFromList = async (meeting: Meeting) => {
     Alert.alert(
-      'Remove from your list?',
-      'This removes the meeting from your list only. The host and other participants are not affected.',
+      '',
+      'This removes the meeting from your list',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -1514,32 +1597,25 @@ export default function MeetingCallScreen() {
     <TouchableOpacity
       style={dynamicStyles.meetingCard}
       onPress={() => {
-        // Active meeting: return to meeting. Use string href so path is not lost (avoids grabdocs:/// unmatched route).
-        if (item.status === 'active') {
-          const q = new URLSearchParams({
-            meetingId: String(item.meetingId ?? ''),
-            title: String(item.title ?? ''),
-          });
-          const un = sanitizeReachDisplayName(getReachParticipantDisplayName(user));
-          if (un) q.set('userName', un);
-          if (item.passcode) q.set('passcode', String(item.passcode));
-          router.push(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
-        } else {
-          viewMeetingAssets(item);
-        }
+        if (isJoining) return;
+        joinMeeting(item);
       }}
       onLongPress={() => {
         if (isJoining) return;
         const isLive = item.status === 'active';
         const owner = isReachMeetingOwner(item, user?.id);
+        const host = isReachMeetingHost(item, user?.id);
+        const canDelete = canDeleteReachMeetingFromList(item, user?.id);
         const buttons = [
           { text: 'Cancel', style: 'cancel' as const },
           { text: 'Join Meeting', onPress: () => { if (!isJoining) joinMeeting(item); } },
           { text: 'View Assets', onPress: () => viewMeetingAssets(item) },
           ...(isLive ? [{ text: 'End Meeting', style: 'destructive' as const, onPress: () => endMeeting(item) }] : []),
-          ...(owner
+          ...(canDelete
             ? [{ text: 'Delete', style: 'destructive' as const, onPress: () => deleteMeeting(item) }]
-            : [{ text: 'Remove from my list', onPress: () => removeMeetingFromList(item) }]),
+            : !owner && !host && !isLive
+              ? [{ text: 'Remove from my list', onPress: () => removeMeetingFromList(item) }]
+              : []),
           { text: 'Invite', onPress: () => {
             setSelectedMeeting(item);
             setShowInviteModal(true);
@@ -1648,7 +1724,7 @@ export default function MeetingCallScreen() {
           <Ionicons name="person-add" size={16} color="#34C759" />
         </TouchableOpacity>
         
-        {isReachMeetingOwner(item, user?.id) ? (
+        {canDeleteReachMeetingFromList(item, user?.id) ? (
           <TouchableOpacity
             style={dynamicStyles.actionIcon}
             accessibilityLabel="Delete meeting"
@@ -1659,7 +1735,9 @@ export default function MeetingCallScreen() {
           >
             <Ionicons name="trash-outline" size={16} color="#FF3B30" />
           </TouchableOpacity>
-        ) : (
+        ) : !isReachMeetingOwner(item, user?.id) &&
+          !isReachMeetingHost(item, user?.id) &&
+          item.status !== 'active' ? (
           <TouchableOpacity
             style={dynamicStyles.actionIcon}
             accessibilityLabel="Remove from my list"
@@ -1670,7 +1748,7 @@ export default function MeetingCallScreen() {
           >
             <Ionicons name="close-circle-outline" size={18} color={colors.textSecondary || '#8E8E93'} />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     </TouchableOpacity>
   );
@@ -1812,7 +1890,8 @@ export default function MeetingCallScreen() {
 
             {/* Recent Meetings */}
             {(() => {
-              const recentMeetings = meetings.filter(m => {
+              const recentMeetings = sortMeetingsNewestFirst(
+                meetings.filter((m) => {
                 // Include ended meetings
                 if (m.status === 'ended') return true;
                 
@@ -1822,12 +1901,8 @@ export default function MeetingCallScreen() {
                 }
                 
                 return false;
-              }).sort((a, b) => {
-                // Sort by date: most recent first
-                const dateA = new Date(a.createdAt || a.startTime || 0).getTime();
-                const dateB = new Date(b.createdAt || b.startTime || 0).getTime();
-                return dateB - dateA;
-              });
+              })
+              );
               
               return recentMeetings.length > 0 ? (
                 <View style={dynamicStyles.section}>
@@ -2049,14 +2124,18 @@ export default function MeetingCallScreen() {
                 <View style={dynamicStyles.infoRow}>
                   <View style={dynamicStyles.infoItem}>
                     <Text style={dynamicStyles.infoLabel}>Start Time</Text>
-                    <Text style={dynamicStyles.infoValue}>{formatMeetingTimeToLocal(infoMeeting.startTime)}</Text>
+                    <Text style={dynamicStyles.infoValue}>
+                      {meetingInfoStartLabel(infoMeeting, meetingInfoData)}
+                    </Text>
                   </View>
-                  {infoMeeting.endTime && (
+                  {meetingInfoEndLabel(infoMeeting, meetingInfoData) ? (
                     <View style={dynamicStyles.infoItem}>
                       <Text style={dynamicStyles.infoLabel}>End Time</Text>
-                      <Text style={dynamicStyles.infoValue}>{formatMeetingTimeToLocal(infoMeeting.endTime)}</Text>
+                      <Text style={dynamicStyles.infoValue}>
+                        {meetingInfoEndLabel(infoMeeting, meetingInfoData)}
+                      </Text>
                     </View>
-                  )}
+                  ) : null}
                 </View>
 
                 {/* Meeting Connect Info Section */}
@@ -2171,21 +2250,44 @@ export default function MeetingCallScreen() {
                   )}
                 </View>
 
-                {infoMeeting.duration && (
+                {meetingInfoDurationMinutes(infoMeeting, meetingInfoData) != null && (
                   <View style={dynamicStyles.infoRow}>
                     <View style={dynamicStyles.infoItem}>
                       <Text style={dynamicStyles.infoLabel}>Duration</Text>
-                      <Text style={dynamicStyles.infoValue}>{infoMeeting.duration} min</Text>
+                      <Text style={dynamicStyles.infoValue}>
+                        {meetingInfoDurationMinutes(infoMeeting, meetingInfoData)} min
+                      </Text>
                     </View>
                   </View>
                 )}
 
-                {infoMeeting.roomUrl && (
+                {meetingInfoRoomUrl(infoMeeting, meetingInfoData) ? (
                   <View style={dynamicStyles.infoSection}>
                     <Text style={dynamicStyles.infoLabel}>Room URL</Text>
-                    <Text style={dynamicStyles.infoValue} selectable numberOfLines={2}>{infoMeeting.roomUrl}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                      <Text style={[dynamicStyles.infoValue, { flex: 1 }]} selectable numberOfLines={4}>
+                        {meetingInfoRoomUrl(infoMeeting, meetingInfoData)}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          const url = meetingInfoRoomUrl(infoMeeting, meetingInfoData);
+                          if (!url) return;
+                          try {
+                            await Clipboard.setStringAsync(url);
+                            Alert.alert('Copied', 'Room URL copied to clipboard');
+                          } catch {
+                            Alert.alert('Error', 'Could not copy URL');
+                          }
+                        }}
+                        accessibilityLabel="Copy room URL"
+                        accessibilityRole="button"
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="copy-outline" size={22} color={colors.tint || '#007AFF'} />
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                )}
+                ) : null}
 
                 {infoMeeting.description && (
                   <View style={dynamicStyles.infoSection}>

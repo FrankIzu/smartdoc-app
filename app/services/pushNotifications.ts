@@ -420,8 +420,10 @@ export function getNotificationScreen(data: Record<string, any>): string {
       return '/(tabs)/documents';
     case 'draft_edited':
       return data?.file_id != null ? `/drafts/edit/${data.file_id}` : '/(tabs)/documents';
-    case 'calendar_invite':
-      return data?.event_id != null ? `/quick-reach/schedule-meeting?eventId=${data.event_id}` : '/quick-reach/schedule-meeting';
+    case 'calendar_invite': {
+      const eid = data?.event_id ?? data?.calendar_event_id ?? data?.eventId;
+      return eid != null ? `/calendar/${eid}` : '/calendar';
+    }
     case 'file_share_viewed':
       return '/(tabs)/documents';
     case 'join_request':

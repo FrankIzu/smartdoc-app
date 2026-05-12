@@ -3042,6 +3042,7 @@ export default function QuickFilesScreen() {
             : filterBy
         }
         style={dynamicStyles.documentsList}
+        contentContainerStyle={{ paddingBottom: 88 }}
         {...scrollRestoresHeaderProps}
         accessibilityRole="list"
         accessibilityLabel={filterBy === 'deleted' ? 'Deleted files' : 'Documents'}
