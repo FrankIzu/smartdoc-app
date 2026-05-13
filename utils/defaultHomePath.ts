@@ -132,6 +132,30 @@ export function extractDefaultHomePathFromUser(user: unknown): WebDefaultHomePat
   return p.path;
 }
 
+/**
+ * Read default-home hints from GET /api/v1/mobile/auth-check (preferred on native) or legacy web auth-check payloads.
+ */
+export function extractDefaultHomeFromAuthPayload(raw: unknown): ParsedDefaultHomeFromApi | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const data = o.data;
+  if (data && typeof data === 'object') {
+    const fromData = parseDefaultHomeFields(data as Record<string, unknown>);
+    if (fromData.kind !== 'absent') return fromData;
+  }
+  return parseDefaultHomeFields(o);
+}
+
+async function applyParsedDefaultHome(p: ParsedDefaultHomeFromApi | null): Promise<WebDefaultHomePath | null> {
+  if (!p || p.kind === 'absent') return null;
+  if (p.kind === 'none') {
+    await reconcilePersistenceWithServerNoDefault();
+    return null;
+  }
+  await persistDefaultHomeWebPath(p.path);
+  return p.path;
+}
+
 export async function clearPersistedDefaultHomeWebPath(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEYS.DEFAULT_HOME_WEB_PATH);
 }
@@ -164,50 +188,19 @@ export async function reconcilePersistenceWithServerNoDefault(): Promise<void> {
 
 export async function refreshDefaultHomePathFromWebAuthCheck(): Promise<WebDefaultHomePath | null> {
   try {
-    const data = await apiClient.getWebAuthCheck();
-    if (!data || typeof data !== 'object') return null;
-    const p = parseDefaultHomeFields(data as Record<string, unknown>);
-    if (p.kind === 'none') {
-      await reconcilePersistenceWithServerNoDefault();
-      return null;
-    }
-    if (p.kind === 'path') {
-      await persistDefaultHomeWebPath(p.path);
-      return p.path;
-    }
+    const raw = await apiClient.checkAuth();
+    return await applyParsedDefaultHome(extractDefaultHomeFromAuthPayload(raw));
   } catch {
     // unauthenticated / network — ignore
   }
   return null;
 }
 
-/** Full web user profile includes defaultHomePath. */
+/** Refresh from server using mobile auth-check (Bearer-aware). Avoids /api/v1/web/user which can 401 without a web session and trigger a global logout. */
 export async function refreshDefaultHomePathFromWebUser(): Promise<WebDefaultHomePath | null> {
   try {
-    const data = await apiClient.getWebUser();
-    if (!data || typeof data !== 'object') return null;
-    const root = data as Record<string, unknown>;
-    const user = root.user ?? data;
-    if (user && typeof user === 'object') {
-      const fromUser = extractDefaultHomePathFromUser(user);
-      if (fromUser !== undefined) {
-        if (fromUser === null) {
-          await reconcilePersistenceWithServerNoDefault();
-          return null;
-        }
-        await persistDefaultHomeWebPath(fromUser);
-        return fromUser;
-      }
-    }
-    const p = parseDefaultHomeFields(root);
-    if (p.kind === 'none') {
-      await reconcilePersistenceWithServerNoDefault();
-      return null;
-    }
-    if (p.kind === 'path') {
-      await persistDefaultHomeWebPath(p.path);
-      return p.path;
-    }
+    const raw = await apiClient.checkAuth();
+    return await applyParsedDefaultHome(extractDefaultHomeFromAuthPayload(raw));
   } catch {
     // ignore
   }
@@ -229,17 +222,15 @@ export async function resolveDefaultHomeWebPath(loginUser?: unknown): Promise<We
   }
 
   try {
-    const data = await apiClient.getWebAuthCheck();
-    if (data && typeof data === 'object') {
-      const p = parseDefaultHomeFields(data as Record<string, unknown>);
-      if (p.kind === 'none') {
-        await reconcilePersistenceWithServerNoDefault();
-        return MOBILE_MAIN_HOME_WEB_ALIAS;
-      }
-      if (p.kind === 'path') {
-        await persistDefaultHomeWebPath(p.path);
-        return p.path;
-      }
+    const raw = await apiClient.checkAuth();
+    const p = extractDefaultHomeFromAuthPayload(raw);
+    if (p?.kind === 'none') {
+      await reconcilePersistenceWithServerNoDefault();
+      return MOBILE_MAIN_HOME_WEB_ALIAS;
+    }
+    if (p?.kind === 'path') {
+      await persistDefaultHomeWebPath(p.path);
+      return p.path;
     }
   } catch {
     // fall through to cache

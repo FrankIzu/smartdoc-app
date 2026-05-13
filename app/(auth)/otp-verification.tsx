@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { API_BASE_URL } from '../../constants/Config';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 import { useAuth } from '../context/auth';
 
@@ -73,6 +74,7 @@ function buildUserDataFromAuthCheckData(
 
 export default function OtpVerificationScreen() {
   const router = useRouter();
+  const palette = useThemeColors();
   const params = useLocalSearchParams<OtpVerificationParams>();
   const { refreshSession } = useAuth(); // Get auth context to refresh session after login
   
@@ -560,8 +562,9 @@ export default function OtpVerificationScreen() {
           <Switch
             value={trustDevice}
             onValueChange={setTrustDevice}
-            trackColor={{ false: '#e0e0e0', true: Colors.primary }}
-            thumbColor={trustDevice ? '#fff' : '#f4f3f4'}
+            trackColor={{ false: palette.switchTrackOff, true: palette.switchTrackOn }}
+            thumbColor={palette.switchThumbAndroid(trustDevice)}
+            ios_backgroundColor={palette.switchTrackOff}
             style={styles.trustDeviceSwitch}
           />
           <Text style={styles.trustDeviceLabel}>

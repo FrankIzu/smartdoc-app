@@ -1,3 +1,9 @@
+import {
+  flushPendingCalendarCreates,
+  getPendingCalendarCreates,
+  pendingCreatesToEventRows,
+  type FlushResult
+} from '@/utils/calendarPendingCreates';
 import { Ionicons } from '@expo/vector-icons';
 import { addNetworkStateListener, useNetworkState } from 'expo-network';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -32,7 +38,6 @@ import {
   calendarSearchCompanyMembers,
   calendarSyncGoogleWithStaleConnectionRecovery,
 } from '../../services/calendarApi';
-import { addCalendarPeriod, formatCalendarTitle, type CalendarSubView } from '../../utils/calendarRange';
 import {
   buildCalendarListStorageKey,
   getCalendarListCache,
@@ -41,15 +46,10 @@ import {
   saveCalendarListCache,
 } from '../../utils/calendarCache';
 import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
-import {
-  flushPendingCalendarCreates,
-  getPendingCalendarCreates,
-  pendingCreatesToEventRows,
-  type FlushResult,
-  type PendingEventRow,
-} from '@/utils/calendarPendingCreates';
+import { addCalendarPeriod, formatCalendarTitle, type CalendarSubView } from '../../utils/calendarRange';
 import {
   calendarDisplayLocation,
+  calendarEventMatchesLocalSearch,
   defaultCalendarListWindow,
   eventHasReachMeeting,
   filterEventsByTab,
@@ -65,6 +65,13 @@ import { CalendarVisualPane } from './components/CalendarVisualPane';
 type EventRow = Record<string, any>;
 
 const CALENDAR_LIST_PAGE = 10;
+
+/** Axios / AbortController cancellations should not wedge loading or hydrate error paths. */
+function isCalendarFetchCancelled(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const o = err as { code?: string; name?: string };
+  return o.code === 'ERR_CANCELED' || o.name === 'AbortError' || o.name === 'CanceledError';
+}
 
 function isGoogleCalendarConnection(c: Record<string, unknown>): boolean {
   const p = String(c.provider ?? c.type ?? '').toLowerCase();
@@ -99,6 +106,12 @@ export default function CalendarHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [events, setEvents] = useState<EventRow[]>([]);
+  /** Last full-window fetch (no event search API param); feeds instant hybrid search while typing. */
+  const [eventsBaseline, setEventsBaseline] = useState<EventRow[]>([]);
+  const statsForDiskRef = useRef<Record<string, number>>({});
+  const calendarLoadGenerationRef = useRef(0);
+  const calendarListAbortRef = useRef<AbortController | null>(null);
+
   const [stats, setStats] = useState<Record<string, number>>({});
   const [tab, setTab] = useState<ListTabFilter>('upcoming');
   const [search, setSearch] = useState('');
@@ -157,20 +170,34 @@ export default function CalendarHomeScreen() {
   }, []);
 
   React.useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search.trim()), 350);
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 175);
     return () => clearTimeout(t);
   }, [search]);
 
   React.useEffect(() => {
-    if (!isAdmin || debouncedSearch.length < 1) {
+    if (!isAdmin) {
+      setMemberHits([]);
+      return;
+    }
+    const raw = debouncedSearch.trim();
+    if (!raw.startsWith('@')) {
+      setMemberHits([]);
+      return;
+    }
+    const memberQuery = raw.slice(1).trim();
+    if (memberQuery.length < 1) {
       setMemberHits([]);
       return;
     }
     const t = setTimeout(() => {
-      calendarSearchCompanyMembers(debouncedSearch, 8).then(setMemberHits).catch(() => setMemberHits([]));
+      calendarSearchCompanyMembers(memberQuery, 8).then(setMemberHits).catch(() => setMemberHits([]));
     }, 300);
     return () => clearTimeout(t);
   }, [debouncedSearch, isAdmin]);
+
+  React.useEffect(() => {
+    statsForDiskRef.current = stats;
+  }, [stats]);
 
   React.useEffect(() => {
     if (!isPersonalAccount) return;
@@ -201,13 +228,23 @@ export default function CalendarHomeScreen() {
   );
 
   const load = useCallback(async () => {
+    const debTrim = debouncedSearch.trim();
+    /** `@` prefixes member lookup; omit search param so the full window feeds local + member UI. */
+    const eventApiSearch = debTrim.startsWith('@') ? '' : debTrim;
+
+    calendarListAbortRef.current?.abort();
+    const controller = new AbortController();
+    calendarListAbortRef.current = controller;
+    const signal = controller.signal;
+    const gen = ++calendarLoadGenerationRef.current;
+
     /** Same window as web: past 30 days through next 90 days for events + stats. */
     const { start, end } = defaultCalendarListWindow();
     const params: Parameters<typeof calendarListEvents>[0] = {
       start_date: start.toISOString(),
       end_date: end.toISOString(),
     };
-    if (debouncedSearch) params.search = debouncedSearch;
+    if (eventApiSearch) params.search = eventApiSearch;
     params.include_cancelled = showCancelled;
     if (viewUserId != null && isAdmin) params.view_user_id = viewUserId;
 
@@ -220,6 +257,7 @@ export default function CalendarHomeScreen() {
         setEvents([]);
         setStats({});
         setMetaById({});
+        setEventsBaseline([]);
         return;
       }
     }
@@ -233,10 +271,37 @@ export default function CalendarHomeScreen() {
     if (viewUserId != null && isAdmin) statsParams.view_user_id = viewUserId;
     if (params.event_type) statsParams.event_type = params.event_type;
 
-    const [list, st] = await Promise.all([calendarListEvents(params), calendarGetStats(statsParams)]);
-    setEvents(list);
-    setStats(st);
-    if (listStorageKey) void saveCalendarListCache(listStorageKey, list, st);
+    const refreshStatsWithList = eventApiSearch.length === 0;
+
+    try {
+      let list: EventRow[];
+      let diskStats: Record<string, number>;
+
+      if (refreshStatsWithList) {
+        const [lst, st] = await Promise.all([
+          calendarListEvents(params, { signal }),
+          calendarGetStats(statsParams, { signal }),
+        ]);
+        if (signal.aborted || gen !== calendarLoadGenerationRef.current) return;
+        list = lst;
+        diskStats = st;
+        setEvents(list);
+        setStats(st);
+        setEventsBaseline(list);
+      } else {
+        list = await calendarListEvents(params, { signal });
+        if (signal.aborted || gen !== calendarLoadGenerationRef.current) return;
+        diskStats = statsForDiskRef.current;
+        setEvents(list);
+      }
+
+      if (signal.aborted || gen !== calendarLoadGenerationRef.current) return;
+
+      if (listStorageKey) void saveCalendarListCache(listStorageKey, list, diskStats);
+    } catch (e: unknown) {
+      if (isCalendarFetchCancelled(e) || gen !== calendarLoadGenerationRef.current) return;
+      throw e;
+    }
   }, [
     debouncedSearch,
     viewUserId,
@@ -261,7 +326,6 @@ export default function CalendarHomeScreen() {
         userId: uid,
         viewUserId,
         isAdmin,
-        debouncedSearch,
         showPersonal,
         showCompany,
         isPersonalAccount,
@@ -271,16 +335,43 @@ export default function CalendarHomeScreen() {
     profile?.id,
     viewUserId,
     isAdmin,
-    debouncedSearch,
     showPersonal,
     showCompany,
     isPersonalAccount,
   ]);
 
-  const displayEvents = useMemo(
-    () => sortCalendarEventsByStartAsc([...events, ...pendingEventRows]),
-    [events, pendingEventRows]
-  );
+  const localSearchForEvents = useMemo(() => {
+    const s = search.trim();
+    if (s.startsWith('@')) return '';
+    return s;
+  }, [search]);
+
+  const debouncedEventSearch = useMemo(() => {
+    const s = debouncedSearch.trim();
+    if (s.startsWith('@')) return '';
+    return s;
+  }, [debouncedSearch]);
+
+  const mergedServerRows = useMemo(() => {
+    const live = localSearchForEvents;
+    const db = debouncedEventSearch;
+
+    if (!live) return events;
+
+    if (live !== db && eventsBaseline.length > 0) {
+      return eventsBaseline.filter((e) =>
+        calendarEventMatchesLocalSearch(e as Record<string, unknown>, live)
+      );
+    }
+    return events;
+  }, [events, eventsBaseline, localSearchForEvents, debouncedEventSearch]);
+
+  const displayEvents = useMemo(() => {
+    const pendingFiltered = pendingEventRows.filter((e) =>
+      calendarEventMatchesLocalSearch(e as Record<string, unknown>, localSearchForEvents)
+    );
+    return sortCalendarEventsByStartAsc([...mergedServerRows, ...pendingFiltered]);
+  }, [mergedServerRows, pendingEventRows, localSearchForEvents]);
 
   const eventsSignature = useMemo(() => displayEvents.map((e) => String(e.id ?? '')).join(','), [displayEvents]);
 
@@ -303,16 +394,22 @@ export default function CalendarHomeScreen() {
       if (listStorageKey) {
         const cached = await getCalendarListCache(listStorageKey);
         if (!cancelled && cached) {
+          const keyHasEventSearch =
+            debouncedSearch.trim().length > 0 && !debouncedSearch.trim().startsWith('@');
           setEvents(cached.events);
           setStats(cached.stats);
+          if (!keyHasEventSearch) setEventsBaseline(cached.events as EventRow[]);
           setLoading(false);
           return true;
         }
       }
       const fallback = await getCalendarListFallback(profile?.id);
       if (!cancelled && fallback) {
+        const keyHasEventSearch =
+          debouncedSearch.trim().length > 0 && !debouncedSearch.trim().startsWith('@');
         setEvents(fallback.events);
         setStats(fallback.stats);
+        if (!keyHasEventSearch) setEventsBaseline(fallback.events as EventRow[]);
         setLoading(false);
         return true;
       }
@@ -327,6 +424,7 @@ export default function CalendarHomeScreen() {
         if (!hadDisk && !cancelled) {
           setEvents([]);
           setStats({});
+          setEventsBaseline([]);
           setLoading(false);
         }
         return;
@@ -352,7 +450,7 @@ export default function CalendarHomeScreen() {
     return () => {
       cancelled = true;
     };
-  }, [load, profileLoading, listStorageKey, profile?.id, deviceOffline]);
+  }, [load, profileLoading, listStorageKey, profile?.id, deviceOffline, debouncedSearch]);
 
   React.useEffect(() => {
     if (deviceOffline || profileLoading || profile?.id == null) return;
@@ -756,11 +854,13 @@ export default function CalendarHomeScreen() {
           flexShrink: 0,
         },
         switchShowCancelled: {
-          transform: [{ scaleX: 0.82 }, { scaleY: 0.82 }],
+          transform: [{ scaleX: 0.94 }, { scaleY: 0.94 }],
         },
         listCancelledLabel: {
-          fontSize: 11,
-          color: colors.textSecondary,
+          fontSize: 12,
+          fontWeight: '600',
+          color: colors.text,
+          maxWidth: 108,
         },
         card: {
           marginHorizontal: 16,
@@ -1305,6 +1405,9 @@ export default function CalendarHomeScreen() {
             }}
             accessibilityLabel="Show cancelled events"
             style={styles.switchShowCancelled}
+            trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+            thumbColor={colors.switchThumbAndroid(showCancelled)}
+            ios_backgroundColor={colors.switchTrackOff}
           />
         </View>
       </View>
@@ -1392,6 +1495,7 @@ export default function CalendarHomeScreen() {
                 onMonthSelectedDay={setMonthSelectedDay}
                 onCursorDateChange={setCalendarCursor}
                 visibleEvents={visibleEvents}
+                listTab={tab}
                 onDismissOverlays={dismissCalendarOverlays}
                 colors={{
                   background: colors.background,
@@ -1418,6 +1522,7 @@ export default function CalendarHomeScreen() {
                 onMonthSelectedDay={setMonthSelectedDay}
                 onCursorDateChange={setCalendarCursor}
                 visibleEvents={visibleEvents}
+                listTab={tab}
                 colors={{
                   background: colors.background,
                   surface: colors.surface,

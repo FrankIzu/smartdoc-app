@@ -47,8 +47,14 @@ export interface CalendarListParams {
   include_cancelled?: boolean;
 }
 
-export async function calendarListEvents(params: CalendarListParams): Promise<CalendarEvent[]> {
-  const { data } = await client().get<{ events?: CalendarEvent[] }>('/api/v1/calendar/events', { params });
+export async function calendarListEvents(
+  params: CalendarListParams,
+  axiosConfig?: { signal?: AbortSignal }
+): Promise<CalendarEvent[]> {
+  const { data } = await client().get<{ events?: CalendarEvent[] }>('/api/v1/calendar/events', {
+    params,
+    ...axiosConfig,
+  });
   return data?.events ?? [];
 }
 
@@ -58,9 +64,13 @@ export async function calendarGetStats(
     start_date?: string;
     end_date?: string;
     event_type?: 'personal' | 'company';
-  }
+  },
+  axiosConfig?: { signal?: AbortSignal }
 ): Promise<CalendarStats> {
-  const { data } = await client().get<{ stats?: CalendarStats }>('/api/v1/calendar/stats', { params });
+  const { data } = await client().get<{ stats?: CalendarStats }>('/api/v1/calendar/stats', {
+    params,
+    ...axiosConfig,
+  });
   return data?.stats ?? {};
 }
 

@@ -26,12 +26,12 @@ import { apiService as api } from '../../services/api';
 import deviceSecurityService from '../../services/deviceSecurity';
 import {
   DEFAULT_HOME_SCREEN_OPTIONS,
+  extractDefaultHomeFromAuthPayload,
   loadPersistedDefaultHomeWebPath,
   MOBILE_MAIN_HOME_WEB_ALIAS,
   MOBILE_NO_DEFAULT_SCREEN_STORAGE,
   NO_DEFAULT_SCREEN_LABEL,
   normalizeWebDefaultHomePath,
-  parseDefaultHomeFields,
   persistDefaultHomeWebPath,
   persistExplicitNoDefaultScreenPreference,
   reconcilePersistenceWithServerNoDefault,
@@ -256,7 +256,7 @@ export default function SettingsScreen() {
       const [profileResponse, fromPersist, chk] = await Promise.all([
         api.getUserProfile(),
         loadPersistedDefaultHomeWebPath(),
-        api.getWebAuthCheck().catch(() => null),
+        api.checkAuth().catch(() => null),
       ]);
 
       if (profileResponse.success && profileResponse.data) {
@@ -279,8 +279,10 @@ export default function SettingsScreen() {
 
       try {
         if (chk && typeof chk === 'object') {
-          const p = parseDefaultHomeFields(chk as Record<string, unknown>);
-          if (p.kind === 'none') {
+          const p = extractDefaultHomeFromAuthPayload(chk);
+          if (!p || p.kind === 'absent') {
+            /* no server default-home field */
+          } else if (p.kind === 'none') {
             serverSpecified = true;
             await reconcilePersistenceWithServerNoDefault();
             const after = await loadPersistedDefaultHomeWebPath();
@@ -625,8 +627,9 @@ export default function SettingsScreen() {
         value={value}
         onValueChange={onToggle}
           disabled={isDisabled}
-          trackColor={{ false: colors.border, true: '#34C759' }}
-          thumbColor={value ? '#fff' : '#fff'}
+          trackColor={{ false: colors.switchTrackOff, true: colors.success }}
+          thumbColor={colors.switchThumbAndroid(value)}
+          ios_backgroundColor={colors.switchTrackOff}
       />
     </View>
   );

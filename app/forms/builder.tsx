@@ -1275,6 +1275,9 @@ function FieldEditorModal({ field, visible, onSave, onCancel }: FieldEditorModal
                 <Switch
                   value={editingField.required || false}
                   onValueChange={(value) => setEditingField(prev => ({ ...prev, required: value }))}
+                  trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+                  thumbColor={colors.switchThumbAndroid(!!editingField.required)}
+                  ios_backgroundColor={colors.switchTrackOff}
                 />
               </View>
             </View>

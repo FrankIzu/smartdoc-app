@@ -22,10 +22,12 @@ import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { useAuth } from '../context/auth';
 
 export default function SignInScreen() {
   const router = useRouter();
+  const themeColorsHook = useThemeColors();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberDevice, setRememberDevice] = useState(false);
@@ -511,8 +513,9 @@ export default function SignInScreen() {
               <Switch
                 value={rememberDevice}
                 onValueChange={setRememberDevice}
-                trackColor={{ false: '#e0e0e0', true: '#007AFF' }}
-                thumbColor={rememberDevice ? '#fff' : '#f4f3f4'}
+                trackColor={{ false: themeColorsHook.switchTrackOff, true: themeColorsHook.switchTrackOn }}
+                thumbColor={themeColorsHook.switchThumbAndroid(rememberDevice)}
+                ios_backgroundColor={themeColorsHook.switchTrackOff}
                 style={styles.switch}
               />
               <Text style={styles.rememberMeLabel}>Remember me</Text>

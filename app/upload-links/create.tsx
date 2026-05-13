@@ -331,8 +331,9 @@ export default function CreateUploadLinkScreen() {
             <Switch
               value={hasExpiration}
               onValueChange={setHasExpiration}
-              trackColor={{ false: colors.border, true: '#007AFF' }}
-              thumbColor="#fff"
+              trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+              thumbColor={colors.switchThumbAndroid(hasExpiration)}
+              ios_backgroundColor={colors.switchTrackOff}
             />
           </View>
 
@@ -389,8 +390,9 @@ export default function CreateUploadLinkScreen() {
             <Switch
               value={hasUploadLimit}
               onValueChange={setHasUploadLimit}
-              trackColor={{ false: colors.border, true: '#007AFF' }}
-              thumbColor="#fff"
+              trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+              thumbColor={colors.switchThumbAndroid(hasUploadLimit)}
+              ios_backgroundColor={colors.switchTrackOff}
             />
           </View>
 

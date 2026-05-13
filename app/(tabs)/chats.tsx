@@ -7723,6 +7723,9 @@ export default function ChatsScreen() {
               if (hc?.workspace?.name) {
                 return hc.workspace.name;
               }
+              if (hc?.type === 'ai_assistant' && hc?.id === -1) {
+                return 'ChatGD';
+              }
               return hc?.title || 'Chat';
             })()}
           </Text>

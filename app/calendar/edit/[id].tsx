@@ -240,9 +240,13 @@ export default function CalendarEditScreen() {
           borderRadius: 16,
           backgroundColor: colors.surface,
           borderWidth: 1,
-          borderColor: colors.border,
+          borderColor: colors.isDark ? colors.border : '#b8bec4',
         },
-        chipOn: { borderColor: '#007AFF', backgroundColor: '#007AFF18' },
+        chipOn: {
+          borderWidth: 1,
+          borderColor: colors.tint,
+          backgroundColor: colors.isDark ? 'rgba(59,130,246,0.24)' : colors.primaryLight,
+        },
         additionalSection: {
           marginTop: 16,
           borderRadius: 12,
@@ -268,6 +272,8 @@ export default function CalendarEditScreen() {
       }),
     [colors]
   );
+
+  const iosPickerTheme = colors.isDark ? 'dark' : 'light';
 
   const toggleReminderMinute = useCallback((minutes: number) => {
     setReminderMinutes((prev) =>
@@ -499,7 +505,13 @@ export default function CalendarEditScreen() {
         {existingVideoCallId == null ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
             <Text style={{ flex: 1, color: colors.text, fontWeight: '600' }}>Add Reach meeting</Text>
-            <Switch value={useReach} onValueChange={setUseReach} />
+            <Switch
+              value={useReach}
+              onValueChange={setUseReach}
+              trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+              thumbColor={colors.switchThumbAndroid(useReach)}
+              ios_backgroundColor={colors.switchTrackOff}
+            />
           </View>
         ) : null}
 
@@ -557,7 +569,14 @@ export default function CalendarEditScreen() {
                     style={[styles.chip, reminderMinutes.includes(minutes) && styles.chipOn]}
                     onPress={() => toggleReminderMinute(minutes)}
                   >
-                    <Text style={{ color: colors.text, fontSize: 12 }} numberOfLines={1}>
+                    <Text
+                      style={{
+                        color: reminderMinutes.includes(minutes) ? colors.tint : colors.text,
+                        fontSize: 12,
+                        fontWeight: reminderMinutes.includes(minutes) ? '700' : '500',
+                      }}
+                      numberOfLines={1}
+                    >
                       {label}
                     </Text>
                   </TouchableOpacity>
@@ -604,6 +623,8 @@ export default function CalendarEditScreen() {
           value={getPickerValue()}
           mode={showPicker === 'startT' || showPicker === 'endT' ? 'time' : 'date'}
           display="default"
+          positiveButton={{ label: 'OK', textColor: colors.tint }}
+          negativeButton={{ label: 'Cancel', textColor: colors.textSecondary }}
           onChange={(e, d) => {
             if (e.type === 'dismissed') {
               setShowPicker(null);
@@ -623,11 +644,12 @@ export default function CalendarEditScreen() {
         <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
           <View style={{ flex: 1, justifyContent: 'flex-end' }}>
             <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
-            <View style={{ backgroundColor: colors.background, padding: 16 }}>
+            <View style={{ backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 14, borderTopRightRadius: 14 }}>
               <DateTimePicker
                 value={getPickerValue()}
                 mode={showPicker === 'startT' || showPicker === 'endT' ? 'time' : 'date'}
                 display="spinner"
+                themeVariant={iosPickerTheme}
                 onChange={(_, d) => {
                   if (!d) return;
                   if (showPicker === 'startD') setStartDate(toLocalDateString(d));

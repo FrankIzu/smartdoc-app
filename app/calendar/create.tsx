@@ -229,9 +229,13 @@ export default function CalendarCreateScreen() {
           borderRadius: 16,
           backgroundColor: colors.surface,
           borderWidth: 1,
-          borderColor: colors.border,
+          borderColor: colors.isDark ? colors.border : '#b8bec4',
         },
-        chipOn: { borderColor: '#007AFF', backgroundColor: '#007AFF18' },
+        chipOn: {
+          borderWidth: 1,
+          borderColor: colors.tint,
+          backgroundColor: colors.isDark ? 'rgba(59,130,246,0.24)' : colors.primaryLight,
+        },
         additionalSection: {
           marginTop: 16,
           borderRadius: 12,
@@ -253,7 +257,7 @@ export default function CalendarCreateScreen() {
           borderTopColor: colors.border,
         },
         btn: {
-          backgroundColor: '#007AFF',
+          backgroundColor: colors.tint,
           padding: 14,
           borderRadius: 10,
           marginTop: 20,
@@ -263,6 +267,8 @@ export default function CalendarCreateScreen() {
       }),
     [colors]
   );
+
+  const iosPickerTheme = colors.isDark ? 'dark' : 'light';
 
   const submit = useCallback(async () => {
     const t = title.trim();
@@ -490,10 +496,14 @@ export default function CalendarCreateScreen() {
             <Text style={styles.label}>Event type</Text>
             <View style={styles.chipRow}>
               <TouchableOpacity style={[styles.chip, eventType === 'personal' && styles.chipOn]} onPress={() => setEventType('personal')}>
-                <Text style={{ color: colors.text }}>Personal</Text>
+                <Text style={{ color: eventType === 'personal' ? colors.tint : colors.text, fontWeight: eventType === 'personal' ? '700' : '500' }}>
+                  Personal
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.chip, eventType === 'company' && styles.chipOn]} onPress={() => setEventType('company')}>
-                <Text style={{ color: colors.text }}>Company</Text>
+                <Text style={{ color: eventType === 'company' ? colors.tint : colors.text, fontWeight: eventType === 'company' ? '700' : '500' }}>
+                  Company
+                </Text>
               </TouchableOpacity>
             </View>
           </>
@@ -544,7 +554,13 @@ export default function CalendarCreateScreen() {
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
           <Text style={{ flex: 1, color: colors.text, fontWeight: '600' }}>Create Reach meeting</Text>
-          <Switch value={useReach} onValueChange={setUseReach} />
+          <Switch
+            value={useReach}
+            onValueChange={setUseReach}
+            trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+            thumbColor={colors.switchThumbAndroid(useReach)}
+            ios_backgroundColor={colors.switchTrackOff}
+          />
         </View>
 
         {!useReach ? (
@@ -601,7 +617,14 @@ export default function CalendarCreateScreen() {
                     style={[styles.chip, reminderMinutes.includes(minutes) && styles.chipOn]}
                     onPress={() => toggleReminderMinute(minutes)}
                   >
-                    <Text style={{ color: colors.text, fontSize: 12 }} numberOfLines={1}>
+                    <Text
+                      style={{
+                        color: reminderMinutes.includes(minutes) ? colors.tint : colors.text,
+                        fontSize: 12,
+                        fontWeight: reminderMinutes.includes(minutes) ? '700' : '500',
+                      }}
+                      numberOfLines={1}
+                    >
                       {label}
                     </Text>
                   </TouchableOpacity>
@@ -639,7 +662,13 @@ export default function CalendarCreateScreen() {
 
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
                 <Text style={{ flex: 1, color: colors.text, fontWeight: '600' }}>Recurring event</Text>
-                <Switch value={isRecurring} onValueChange={setIsRecurring} />
+                <Switch
+                  value={isRecurring}
+                  onValueChange={setIsRecurring}
+                  trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
+                  thumbColor={colors.switchThumbAndroid(isRecurring)}
+                  ios_backgroundColor={colors.switchTrackOff}
+                />
               </View>
               {isRecurring ? (
                 <>
@@ -647,7 +676,9 @@ export default function CalendarCreateScreen() {
                   <View style={styles.chipRow}>
                     {['DAILY', 'WEEKLY', 'MONTHLY'].map((f) => (
                       <TouchableOpacity key={f} style={[styles.chip, recurringFreq === f && styles.chipOn]} onPress={() => setRecurringFreq(f)}>
-                        <Text style={{ color: colors.text }}>{f}</Text>
+                        <Text style={{ color: recurringFreq === f ? colors.tint : colors.text, fontWeight: recurringFreq === f ? '700' : '500' }}>
+                          {f}
+                        </Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -674,17 +705,18 @@ export default function CalendarCreateScreen() {
         <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
           <View style={{ flex: 1, justifyContent: 'flex-end' }}>
             <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
-            <View style={{ backgroundColor: colors.background, padding: 16 }}>
+            <View style={{ backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 14, borderTopRightRadius: 14 }}>
               <DateTimePicker
                 value={getPickerDateTime(eventDate, eventTime)}
                 mode="date"
                 display="spinner"
+                themeVariant={iosPickerTheme}
                 onChange={(_, d) => {
                   if (d) setEventDate(toLocalDateString(d));
                 }}
               />
               <TouchableOpacity onPress={() => setShowPicker(null)}>
-                <Text style={{ color: '#007AFF', textAlign: 'center', padding: 12 }}>Done</Text>
+                <Text style={{ color: colors.tint, textAlign: 'center', padding: 12 }}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -695,17 +727,18 @@ export default function CalendarCreateScreen() {
         <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
           <View style={{ flex: 1, justifyContent: 'flex-end' }}>
             <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
-            <View style={{ backgroundColor: colors.background, padding: 16 }}>
+            <View style={{ backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 14, borderTopRightRadius: 14 }}>
               <DateTimePicker
                 value={getPickerDateTime(eventDate, eventTime)}
                 mode="time"
                 display="spinner"
+                themeVariant={iosPickerTheme}
                 onChange={(_, d) => {
                   if (d) setEventTime(formatLocalTime12h(d));
                 }}
               />
               <TouchableOpacity onPress={() => setShowPicker(null)}>
-                <Text style={{ color: '#007AFF', textAlign: 'center', padding: 12 }}>Done</Text>
+                <Text style={{ color: colors.tint, textAlign: 'center', padding: 12 }}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -750,13 +783,13 @@ export default function CalendarCreateScreen() {
                     }}
                   >
                     <Text style={{ fontSize: 16, color: colors.text, fontWeight: selected ? '700' : '400' }}>{p.label}</Text>
-                    {selected ? <Ionicons name="checkmark" size={22} color="#007AFF" /> : null}
+                    {selected ? <Ionicons name="checkmark" size={22} color={colors.tint} /> : null}
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
             <TouchableOpacity onPress={() => setDurationPickerOpen(false)} style={{ padding: 14 }}>
-              <Text style={{ color: '#007AFF', textAlign: 'center', fontSize: 17, fontWeight: '600' }}>Cancel</Text>
+              <Text style={{ color: colors.tint, textAlign: 'center', fontSize: 17, fontWeight: '600' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -769,6 +802,8 @@ export default function CalendarCreateScreen() {
               value={getPickerDateTime(eventDate, eventTime)}
               mode="date"
               display="default"
+              positiveButton={{ label: 'OK', textColor: colors.tint }}
+              negativeButton={{ label: 'Cancel', textColor: colors.textSecondary }}
               onChange={(e, d) => {
                 if (e.type === 'dismissed') {
                   setShowPicker(null);
@@ -786,6 +821,8 @@ export default function CalendarCreateScreen() {
               value={getPickerDateTime(eventDate, eventTime)}
               mode="time"
               display="default"
+              positiveButton={{ label: 'OK', textColor: colors.tint }}
+              negativeButton={{ label: 'Cancel', textColor: colors.textSecondary }}
               onChange={(e, d) => {
                 if (e.type === 'dismissed') {
                   setShowPicker(null);
@@ -837,7 +874,7 @@ export default function CalendarCreateScreen() {
               ))}
             </ScrollView>
             <TouchableOpacity onPress={() => setMemberModal(false)} style={{ marginTop: 8 }}>
-              <Text style={{ color: '#007AFF' }}>Close</Text>
+              <Text style={{ color: colors.tint }}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -881,7 +918,7 @@ export default function CalendarCreateScreen() {
               ))}
             </ScrollView>
             <TouchableOpacity onPress={() => { setCategoryId(null); setRecordId(null); setCategoryModal(false); }}>
-              <Text style={{ color: '#007AFF', marginTop: 8 }}>Clear link</Text>
+              <Text style={{ color: colors.tint, marginTop: 8 }}>Clear link</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setCategoryModal(false)} style={{ marginTop: 8 }}>
               <Text style={{ color: colors.textSecondary }}>Close</Text>

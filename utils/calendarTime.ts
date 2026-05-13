@@ -244,6 +244,35 @@ export function filterEventsByTab<T extends { start_time?: string; end_time?: st
   });
 }
 
+/**
+ * Lightweight client substring search for hybrid list UX (baseline window + refinement from server).
+ */
+export function calendarEventMatchesLocalSearch(ev: Record<string, unknown>, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const chunks: string[] = [];
+  for (const key of ['title', 'description', 'notes', 'location'] as const) {
+    const v = ev[key];
+    if (v != null && v !== '') chunks.push(String(v));
+  }
+  const org = ev.organizer;
+  if (org && typeof org === 'object' && !Array.isArray(org)) {
+    const o = org as Record<string, unknown>;
+    if (o.name != null) chunks.push(String(o.name));
+    if (o.email != null) chunks.push(String(o.email));
+  }
+  const parts = ev.participants;
+  if (Array.isArray(parts)) {
+    for (const p of parts) {
+      if (!p || typeof p !== 'object') continue;
+      const row = p as Record<string, unknown>;
+      if (row.email != null) chunks.push(String(row.email));
+      if (row.name != null) chunks.push(String(row.name));
+    }
+  }
+  return chunks.join('\n').toLowerCase().includes(q);
+}
+
 /** True when event has a GrabDocs Reach / video meeting (video_call_id, join URL, or Reach location tag). */
 export function eventHasReachMeeting(ev: {
   meeting_url?: string | null;

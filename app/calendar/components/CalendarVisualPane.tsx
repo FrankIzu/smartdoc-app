@@ -12,7 +12,14 @@ import {
 import { Calendar } from 'react-native-calendars';
 import type { CalendarSubView } from '../../../utils/calendarRange';
 import { calendarFetchRange, toYMDLocal, weekRangeMonday } from '../../../utils/calendarRange';
-import { eventHasReachMeeting, formatEventWhen, parseUTC, sortCalendarEventsByStartDesc } from '../../../utils/calendarTime';
+import {
+  eventHasReachMeeting,
+  formatEventWhen,
+  parseUTC,
+  sortCalendarEventsByStartAsc,
+  sortCalendarEventsByStartDesc,
+  type ListTabFilter,
+} from '../../../utils/calendarTime';
 import { CalendarReachPill } from './CalendarReachIndicator';
 
 export type CalendarVisualEvent = Record<string, any>;
@@ -34,6 +41,8 @@ type Props = {
   /** Keeps fetch window / toolbar title in sync when changing month or week day */
   onCursorDateChange: (d: Date) => void;
   visibleEvents: CalendarVisualEvent[];
+  /** Same sort order as List view for the selected stat tab (`past` = newest first). */
+  listTab: ListTabFilter;
   colors: ThemeColors;
   onEventPress: (eventId: number) => void;
   /** Pull-to-refresh for week / day / agenda lists (month uses outer ScrollView). */
@@ -52,7 +61,12 @@ function sameLocalDay(a: Date, b: Date): boolean {
   );
 }
 
-function eventsForLocalDay(events: CalendarVisualEvent[], day: Date): CalendarVisualEvent[] {
+/** Match `app/calendar/index.tsx` list: Past = newest first; other tabs = earliest first. */
+function sortEventsLikeListTab<T extends { start_time?: string | null }>(events: T[], tab: ListTabFilter): T[] {
+  return tab === 'past' ? sortCalendarEventsByStartDesc(events) : sortCalendarEventsByStartAsc(events);
+}
+
+function eventsForLocalDay(events: CalendarVisualEvent[], day: Date, listTab: ListTabFilter): CalendarVisualEvent[] {
   const y = day.getFullYear();
   const m = day.getMonth();
   const d = day.getDate();
@@ -63,10 +77,15 @@ function eventsForLocalDay(events: CalendarVisualEvent[], day: Date): CalendarVi
     const e = ev.end_time ? parseUTC(ev.end_time).getTime() : s;
     return s <= endMs && e >= startMs;
   });
-  return sortCalendarEventsByStartDesc(inDay);
+  return sortEventsLikeListTab(inDay, listTab);
 }
 
-function eventsInRange(events: CalendarVisualEvent[], start: Date, end: Date): CalendarVisualEvent[] {
+function eventsInRange(
+  events: CalendarVisualEvent[],
+  start: Date,
+  end: Date,
+  listTab: ListTabFilter
+): CalendarVisualEvent[] {
   const sm = start.getTime();
   const em = end.getTime();
   const inRange = events.filter((ev) => {
@@ -74,7 +93,7 @@ function eventsInRange(events: CalendarVisualEvent[], start: Date, end: Date): C
     const e = ev.end_time ? parseUTC(ev.end_time).getTime() : s;
     return s <= em && e >= sm;
   });
-  return sortCalendarEventsByStartDesc(inRange);
+  return sortEventsLikeListTab(inRange, listTab);
 }
 
 export function CalendarVisualPane({
@@ -84,6 +103,7 @@ export function CalendarVisualPane({
   onMonthSelectedDay,
   onCursorDateChange,
   visibleEvents,
+  listTab,
   colors,
   onEventPress,
   listRefreshControl,
@@ -166,10 +186,10 @@ export function CalendarVisualPane({
 
   const eventsWeek = useMemo(() => {
     const { start, end } = weekRangeMonday(cursor);
-    return eventsInRange(visibleEvents, start, end);
-  }, [visibleEvents, cursor]);
+    return eventsInRange(visibleEvents, start, end, listTab);
+  }, [visibleEvents, cursor, listTab]);
 
-  const eventsDay = useMemo(() => eventsForLocalDay(visibleEvents, cursor), [visibleEvents, cursor]);
+  const eventsDay = useMemo(() => eventsForLocalDay(visibleEvents, cursor, listTab), [visibleEvents, cursor, listTab]);
 
   const agendaSections = useMemo(() => {
     const { start, end } = range;
@@ -200,15 +220,15 @@ export function CalendarVisualPane({
           day: 'numeric',
           year: 'numeric',
         });
-        const data = sortCalendarEventsByStartDesc(byDay.get(k) ?? []);
+        const data = sortEventsLikeListTab(byDay.get(k) ?? [], listTab);
         return { title, key: k, data };
       })
       .filter((s) => s.data.length > 0);
-  }, [visibleEvents, range]);
+  }, [visibleEvents, range, listTab]);
 
   const monthDayEvents = useMemo(
-    () => eventsForLocalDay(visibleEvents, monthSelectedDay),
-    [visibleEvents, monthSelectedDay]
+    () => eventsForLocalDay(visibleEvents, monthSelectedDay, listTab),
+    [visibleEvents, monthSelectedDay, listTab]
   );
 
   const styles = useMemo(

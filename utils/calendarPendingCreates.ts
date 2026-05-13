@@ -203,7 +203,6 @@ export function pendingCreatesToEventRows(
     userId: number | undefined;
     viewUserId: number | null;
     isAdmin: boolean;
-    debouncedSearch: string;
     showPersonal: boolean;
     showCompany: boolean;
     isPersonalAccount: boolean;
@@ -213,7 +212,6 @@ export function pendingCreatesToEventRows(
   const { start, end } = defaultCalendarListWindow();
   const startMs = start.getTime();
   const endMs = end.getTime();
-  const q = opts.debouncedSearch.trim().toLowerCase();
 
   if (opts.viewUserId != null && opts.isAdmin && opts.viewUserId !== uid) {
     return [];
@@ -240,13 +238,6 @@ export function pendingCreatesToEventRows(
       startT = NaN;
     }
     if (!Number.isFinite(startT) || startT < startMs || startT > endMs) continue;
-
-    if (q) {
-      const title = String(body.title ?? '').toLowerCase();
-      const desc = String(body.description ?? '').toLowerCase();
-      const loc = String(body.location ?? '').toLowerCase();
-      if (!title.includes(q) && !desc.includes(q) && !loc.includes(q)) continue;
-    }
 
     const numericId = localPendingNumericId(p.localId);
     const needsAttention = p.status === 'failed_permanent' || p.attemptCount >= MAX_FLUSH_ATTEMPTS;
