@@ -35,6 +35,7 @@ import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
 import { checkMinVersion, checkOtaAndFetch, checkSoftStoreUpdate, fetchAppConfig, reportUpdateTelemetry } from '../services/updateService';
+import { refreshDefaultHomePathFromWebUser } from '../utils/defaultHomePath';
 import AppLockScreen from './components/AppLockScreen';
 import OtaUpdateBanner from './components/OtaUpdateBanner';
 import SoftStoreUpdateBanner from './components/SoftStoreUpdateBanner';
@@ -63,6 +64,16 @@ function RootLayoutNav() {
 
   // Hide top bar (NetworkIndicator) on meeting screen to avoid black banner and full-screen meeting UX
   const isMeetingScreen = segments.some((s) => String(s).includes('hms-meeting-interface'));
+
+  useEffect(() => {
+    if (!user) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void refreshDefaultHomePathFromWebUser();
+      }
+    });
+    return () => sub.remove();
+  }, [user]);
 
   const APP_LOCK_REMINDER_KEY = '@grabdocs_app_lock_reminder_last_shown';
   const APP_LOCK_REMINDER_OPTOUT_KEY = '@grabdocs_app_lock_reminder_opt_out';

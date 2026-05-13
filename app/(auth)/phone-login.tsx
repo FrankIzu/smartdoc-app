@@ -1,4 +1,4 @@
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
     ActivityIndicator,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
+import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 import { useAuth } from '../context/auth';
 
 type PhoneLoginStep = 'phone' | 'verify' | 'password';
@@ -113,17 +114,10 @@ export default function PhoneLoginScreen() {
             const loginResponse = await apiService.loginWithPhone(phoneNumber, password);
             
             if (loginResponse.success && loginResponse.user) {
-                // Use the auth context to sign in
-                const user = {
-                    id: loginResponse.user.id.toString(),
-                    email: loginResponse.user.email || phoneNumber,
-                    name: `${loginResponse.user.first_name || ''} ${loginResponse.user.last_name || ''}`.trim() || 
-                          loginResponse.user.username || phoneNumber,
-                };
-                
-                // Set auth state manually since we're bypassing normal signIn
+                // Auth context session (same credentials path as email login)
                 await signIn(phoneNumber, password);
-                router.replace('/(tabs)');
+                const webPath = await resolveDefaultHomeWebPath(loginResponse.user as any);
+                navigateTabsThenDefaultHome(router, webPath);
             } else {
                 setError(loginResponse.message || 'Login failed');
             }

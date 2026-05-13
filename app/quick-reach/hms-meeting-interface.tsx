@@ -8,7 +8,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
-    Animated,
     AppState,
     AppStateStatus,
     BackHandler,
@@ -38,41 +37,26 @@ const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
 
 // Import HMS components (native platforms only)
 let HMSPrebuilt: any = null;
-let HMSConfig: any = null;
 
-// Only try to import HMS on native platforms (not web) and in development builds (not Expo Go)
-// HMS requires native modules that don't work in Expo Go
+// Only try to import HMS on native platforms (not web) and in development builds (not Expo Go).
+// HMS requires native modules that don't work in Expo Go. `require()` is required for conditional native loading.
+/* eslint-disable @typescript-eslint/no-require-imports */
 if (Platform.OS !== 'web') {
   try {
-    // Check if we're in Expo Go (HMS won't work)
     const Constants = require('expo-constants').default;
     const isExpoGo = Constants.appOwnership === 'expo';
-    
-    if (isExpoGo) {
-      // Silently skip HMS in Expo Go - it requires a development build
-      // The error will be handled gracefully in the component
-    } else {
-      // Try to import HMS Room Kit (prebuilt UI) - requires native module
-      // For localhost testing, you need a development build
+
+    if (!isExpoGo) {
       const roomKitPackage = require('@100mslive/react-native-room-kit');
-        if (roomKitPackage && roomKitPackage.HMSPrebuilt) {
+      if (roomKitPackage?.HMSPrebuilt) {
         HMSPrebuilt = roomKitPackage.HMSPrebuilt;
       }
-      
-      // HMS SDK is a peer dependency of room-kit but not required for prebuilt UI
-      // Only import if needed for advanced configuration
-      try {
-        const hmsSDK = require('@100mslive/react-native-hms');
-        HMSConfig = hmsSDK.HMSConfig;
-      } catch (sdkError) {
-        // Silently ignore - SDK is optional
-      }
     }
-  } catch (error: any) {
-    // Silently handle HMS import errors - expected in Expo Go
-    // The component will handle the missing module gracefully
+  } catch {
+    // Import errors expected in Expo Go; component handles missing module
   }
 }
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 // Error Boundary Component for HMS Prebuilt
 class HMSErrorBoundary extends Component<
@@ -114,7 +98,13 @@ const ANDROID_NAV_INSET = 24;
 export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { meetingId, title, userName, passcode, passcode_token: passcodeToken } = params;
+  const { meetingId, title, userName, passcode, passcode_token: passcodeToken, force_join: forceJoinParam } = params;
+  const forceJoinFromRoute =
+    (() => {
+      const f = forceJoinParam;
+      const v = f == null ? '' : Array.isArray(f) ? String(f[0]) : String(f);
+      return v === '1' || v.toLowerCase() === 'true';
+    })();
   const meetingIdForDisplay =
     meetingId == null ? undefined : Array.isArray(meetingId) ? meetingId[0] : meetingId;
   const { user } = useAuth();
@@ -124,12 +114,16 @@ export default function HMSMeetingInterfaceScreen() {
   const goToAppHome = useCallback(async () => {
     try {
       await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
-    } catch (_) {}
+    } catch {
+      /* ignore */
+    }
     try {
       if (meetingId) {
         await apiClient.client.post(`/api/v1/mobile/meetings/${String(meetingId).trim()}/leave`);
       }
-    } catch (_) {}
+    } catch {
+      /* ignore */
+    }
     router.replace('/(tabs)' as any);
   }, [router, meetingId]);
 
@@ -137,8 +131,6 @@ export default function HMSMeetingInterfaceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [hmsError, setHmsError] = useState<string | null>(null);
-  const [hmsInitializing, setHmsInitializing] = useState(false);
-  const [hmsInitTimeout, setHmsInitTimeout] = useState(false);
   const [permissionsGranted, setPermissionsGranted] = useState<boolean | null>(null);
   const [joinConfig, setJoinConfig] = useState<any>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
@@ -157,10 +149,9 @@ export default function HMSMeetingInterfaceScreen() {
   const [showReconnected, setShowReconnected] = useState(false);
   const networkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bannerAnim = useRef(new Animated.Value(0)).current;
 
   // In-meeting dismissable banners (recording started, peer joined)
-  const [bannerQueue, setBannerQueue] = useState<Array<{ message: string; type: 'recording' | 'joined' }>>([]);
+  const [bannerQueue, setBannerQueue] = useState<{ message: string; type: 'recording' | 'joined' }[]>([]);
   const dismissBanner = useCallback(() => setBannerQueue(prev => prev.slice(1)), []);
 
   // Collect peer names over a 2s window, then collapse into one banner
@@ -236,15 +227,13 @@ export default function HMSMeetingInterfaceScreen() {
     };
   }, [joinConfig]);
 
-  // Configure 100ms room-kit join behavior: skip preview and join with mic muted + camera off
-  // (same default as web Prebuilt preview localStorage: isAudioMuted / isVideoMuted).
-  // Camera stays off here to avoid portrait orientation glitches until the user opts in.
+  // Configure 100ms room-kit: show native prejoin (mic/camera, join button). Defaults: mic/camera off until user opts in.
   useEffect(() => {
     if (Platform.OS !== 'web' && typeof global !== 'undefined') {
       (global as any).joinConfig = {
         mutedAudio: true,
         mutedVideo: true,
-        skipPreview: true,
+        skipPreview: false,
       };
     }
   }, []);
@@ -305,6 +294,8 @@ export default function HMSMeetingInterfaceScreen() {
       }
     };
     init();
+    // Intentionally run once on mount; initializePrebuiltInterface reads latest params from closure on first paint
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount init
   }, []);
 
   // Check camera and microphone permissions
@@ -354,50 +345,6 @@ export default function HMSMeetingInterfaceScreen() {
       });
     }
   };
-
-  // Timeout to detect if HMS gets stuck (black screen issue)
-  // Since React Native HMSPrebuilt doesn't have onJoin callback,
-  // we use a two-stage timeout:
-  // 1. After 2s, hide loading overlay so preview (Get Started / audio-video setup) is visible
-  // 2. After 20s, if still initializing, show error
-  useEffect(() => {
-    if (hmsInitializing && authToken) {
-      // Stage 1: Clear loading overlay after 2s so user sees preview screen (audio/video controls, name)
-      const successTimeoutId = setTimeout(() => {
-        setHmsInitializing(false); // Clear loading overlay
-        setIsLoading(false);
-      }, 2000);
-      
-      // Stage 2: Error timeout after 20 seconds
-      const errorTimeoutId = setTimeout(() => {
-        setHmsInitTimeout(true);
-        setHmsInitializing(false);
-        setIsLoading(false);
-        setError('Meeting initialization timed out. Please check your connection and try again.');
-        // Log timeout error
-        errorLogger.logError(
-          new Error('HMS initialization timeout - component failed to join'),
-          {
-            severity: 'error',
-            screenName: 'HMSMeetingInterface',
-            userAction: 'HMS Initialization Timeout',
-            errorType: 'HMSInitializationTimeout',
-            userId: user?.id,
-            metadata: {
-              meetingId: meetingId as string,
-              hasAuthToken: !!authToken,
-              authTokenLength: authToken?.length || 0,
-            }
-          }
-        );
-      }, 20000); // 20 second timeout
-      
-      return () => {
-        clearTimeout(successTimeoutId);
-        clearTimeout(errorTimeoutId);
-      };
-    }
-  }, [hmsInitializing, authToken, meetingId, user?.id]);
 
   // Get room_id from meeting info and set up heartbeat. Defer by 3s so we don't parse a large response on the same frame as mounting HMSPrebuilt (can cause crash).
   useEffect(() => {
@@ -453,10 +400,10 @@ export default function HMSMeetingInterfaceScreen() {
     };
   }, [roomId]);
 
-  // Poll recording status only after user has joined - notify when joining a meeting that is already being recorded.
-  // Do not run while initializing or before first "in call" delay, so we never show the popup when just starting a meeting.
+  // Poll recording status only after token is ready - notify when joining a meeting that is already being recorded.
+  // Defer first check so we never show the popup during GrabDocs / HMS prejoin.
   useEffect(() => {
-    if (!roomId || Platform.OS === 'web' || hmsInitializing) return;
+    if (!roomId || Platform.OS === 'web' || !joinConfig) return;
 
     const RECORDING_POLL_INTERVAL = 6000; // 6 seconds
     const FIRST_CHECK_DELAY_MS = 5000;   // Only check after user has been in the call for 5s (avoids showing when clicking "Start meeting")
@@ -489,7 +436,7 @@ export default function HMSMeetingInterfaceScreen() {
         recordingPollIntervalRef.current = null;
       }
     };
-  }, [roomId, hmsInitializing]);
+  }, [roomId, joinConfig]);
 
   // Cleanup on unmount (e.g., user swipes back). Do NOT call leave endpoint here.
   // Meeting must stay connected so user can return via active meeting card. Leave is only
@@ -543,7 +490,8 @@ export default function HMSMeetingInterfaceScreen() {
         ...(Platform.OS === 'android' && { channelId: 'meeting' }),
       });
       notificationDisplayedRef.current = true;
-    } catch (err) {
+    } catch {
+      /* notification scheduling is best-effort */
     }
   }, [meetingId, title, userName]);
 
@@ -715,8 +663,11 @@ export default function HMSMeetingInterfaceScreen() {
       try {
         let joinRes;
         try {
-          joinRes = await joinById(false);
+          joinRes = await joinById(forceJoinFromRoute);
         } catch (firstErr: any) {
+          if (forceJoinFromRoute) {
+            throw firstErr;
+          }
           const st = firstErr?.response?.status;
           const code = firstErr?.response?.data?.error_code;
           if (st === 409 && code === 'ALREADY_IN_MEETING') {
@@ -792,15 +743,9 @@ export default function HMSMeetingInterfaceScreen() {
         return;
       }
 
-      // Set flag that HMS is initializing
-      // Note: React Native HMSPrebuilt doesn't have onJoin callback
-      // It will automatically join when mounted, so we use a timeout to detect if it fails
-      setHmsInitializing(true);
-      setIsLoading(false); // Clear initial loading, but keep hmsInitializing for overlay
-      
+      setIsLoading(false);
     } catch (error: any) {
       setError('Failed to initialize meeting interface. Please try again.');
-      setHmsInitializing(false);
       setIsLoading(false);
       errorLogger.logError(error, {
         severity: 'error',
@@ -810,8 +755,6 @@ export default function HMSMeetingInterfaceScreen() {
         userId: user?.id,
       });
     }
-    // Note: We don't set isLoading to false here - let it stay true until HMS actually renders
-    // This prevents the blank screen issue
   };
 
   const handleLeaveMeeting = async () => {
@@ -833,7 +776,9 @@ export default function HMSMeetingInterfaceScreen() {
 
               try {
                 await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
-              } catch (_) {}
+              } catch {
+                /* ignore */
+              }
               // Call backend to leave meeting (clears ActiveParticipant table)
               if (meetingId) {
                 await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
@@ -868,22 +813,12 @@ export default function HMSMeetingInterfaceScreen() {
     );
   }
 
-  // Show loading if still initializing OR if we're waiting for HMS to render
-  if (isLoading || (hmsInitializing && !authToken)) {
+  // Loading only while fetching token / preparing join (before HMS prejoin UI is shown)
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Initializing GrabDocs Meeting...</Text>
-          {hmsInitializing && authToken && (
-            <>
-              <Text style={[styles.loadingText, { marginTop: 8, fontSize: 14, opacity: 0.7 }]}>
-                Connecting to meeting...
-              </Text>
-              <Text style={[styles.loadingText, { marginTop: 8, fontSize: 12, opacity: 0.5 }]}>
-                This may take a few seconds
-              </Text>
-            </>
-          )}
         </View>
       </SafeAreaView>
     );
@@ -1017,13 +952,12 @@ export default function HMSMeetingInterfaceScreen() {
     );
     }
 
-    // Native room-kit reads global.joinConfig when joining — set again here so mute/camera defaults
-    // apply even if globals were touched earlier (matches web defaults: mic off, camera off).
+    // Native room-kit reads global.joinConfig — show 100ms prejoin; default mic/camera off until user opts in.
     if (Platform.OS !== 'web' && typeof global !== 'undefined') {
       (global as any).joinConfig = {
         mutedAudio: true,
         mutedVideo: true,
-        skipPreview: true,
+        skipPreview: false,
       };
     }
 
@@ -1070,8 +1004,6 @@ export default function HMSMeetingInterfaceScreen() {
         onLeave: handleLeaveMeeting,
         style: styles.prebuiltContainer
       };
-      
-      const meetingTitleStr = (title as string) || undefined;
 
       return (
         <>
@@ -1082,7 +1014,7 @@ export default function HMSMeetingInterfaceScreen() {
 
           {/* In-meeting event banners (recording started, peer joined) — must be dismissed by tapping OK */}
           <Modal
-            visible={bannerQueue.length > 0 && !!joinConfig && !hmsError && !hmsInitTimeout}
+            visible={bannerQueue.length > 0 && !!joinConfig && !hmsError}
             transparent
             animationType="fade"
             statusBarTranslucent
@@ -1104,7 +1036,7 @@ export default function HMSMeetingInterfaceScreen() {
           {/* Network status overlay — rendered as a Modal so it appears above the HMS native UI.
               Shows a friendly banner instead of the raw "code: 1003" HMS error. */}
           <Modal
-            visible={(isNetworkDown || showReconnected) && !!joinConfig && !hmsError && !hmsInitTimeout}
+            visible={(isNetworkDown || showReconnected) && !!joinConfig && !hmsError}
             transparent
             animationType="fade"
             statusBarTranslucent
@@ -1123,10 +1055,16 @@ export default function HMSMeetingInterfaceScreen() {
                       style={styles.networkLeaveButton}
                       onPress={async () => {
                         if (networkPollRef.current) clearInterval(networkPollRef.current);
-                        try { await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY); } catch {}
+                        try {
+                          await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
+                        } catch {
+                          /* ignore */
+                        }
                         try {
                           if (meetingId) await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
-                        } catch {}
+                        } catch {
+                          /* ignore */
+                        }
                         router.replace('/quick-reach/meeting-call' as any);
                       }}
                     >
@@ -1145,18 +1083,13 @@ export default function HMSMeetingInterfaceScreen() {
 
           <SafeAreaView style={styles.container}>
             <View style={styles.meetingContentWrapper}>
-          {hmsError || hmsInitTimeout ? (
+          {hmsError ? (
             <View style={styles.errorContainer}>
               <Text style={styles.errorTitle}>HMS Error</Text>
               <Text style={styles.errorMessage}>
                 {hmsError || 'HMS component failed to initialize. This may be a native module issue.'}
               </Text>
-              {hmsInitTimeout && (
-                <Text style={[styles.errorMessage, { marginTop: 16, fontSize: 14, color: '#999' }]}>
-                  The meeting interface took too long to load. This could indicate a network issue, HMS configuration problem, or the component may be stuck.
-                </Text>
-              )}
-              
+
               {/* Diagnostic Information */}
               {joinConfig && (
                 <View style={[styles.errorMessage, { marginTop: 16, padding: 12, backgroundColor: '#f5f5f5', borderRadius: 8 }]}>
@@ -1180,19 +1113,9 @@ export default function HMSMeetingInterfaceScreen() {
             </View>
           ) : (
             <>
-              {/* Loading overlay while HMS initializes - prevents black screen */}
-              {hmsInitializing && (
-                <View style={styles.loadingOverlay}>
-                  <View style={styles.loadingBox}>
-                    <Text style={styles.loadingText}>Initializing meeting...</Text>
-                    <Text style={styles.loadingSubtext}>This may take a few seconds</Text>
-                  </View>
-                </View>
-              )}
               <HMSErrorBoundary
                 onError={(error) => {
                   console.error('📱 [HMS] Prebuilt Error Boundary:', error);
-                  setHmsInitializing(false);
                   const rawMessage = error?.message || '';
                   // Intercept 100ms "room not found" / 400 INIT - show friendly message
                   const isRoomNotFound =
@@ -1264,13 +1187,14 @@ export default function HMSMeetingInterfaceScreen() {
                       autoEnterPipMode={Platform.OS !== 'web'}
                       pipConfig={Platform.OS !== 'web' ? { aspectRatio: [1, 1] } : undefined}
                       onLeave={async (data?: any) => {
-                        setHmsInitializing(false);
                         setIsLoading(false);
                         
                         // Clear "current meeting" so user can join another
                         try {
                           await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
-                        } catch (_) {}
+                        } catch {
+                          /* ignore */
+                        }
                         // Call backend to leave meeting (clears ActiveParticipant table)
                         try {
                           if (meetingId) {

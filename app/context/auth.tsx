@@ -3,6 +3,12 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Linking } from 'react-native';
 import { STORAGE_KEYS } from '../../constants/Config';
 import { apiService } from '../../services/api';
+import {
+  extractDefaultHomePathFromUser,
+  persistDefaultHomeWebPath,
+  reconcilePersistenceWithServerNoDefault,
+  refreshDefaultHomePathFromWebAuthCheck,
+} from '../../utils/defaultHomePath';
 import { secureStorage } from '../../utils/storage';
 
 interface User {
@@ -95,6 +101,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // Prefer backend user payload when present, otherwise keep stored user.
             const parsedUser = JSON.parse(userData);
             const backendUser = (response as any).user || (response as any).data?.user || null;
+            const fromCheck = extractDefaultHomePathFromUser(backendUser);
+            if (fromCheck === undefined) {
+              void refreshDefaultHomePathFromWebAuthCheck();
+            } else if (fromCheck === null) {
+              await reconcilePersistenceWithServerNoDefault();
+            } else {
+              await persistDefaultHomeWebPath(fromCheck);
+            }
             if (backendUser?.id) {
               const fullName = `${backendUser.first_name || backendUser.firstName || ''} ${backendUser.last_name || backendUser.lastName || ''}`.trim();
               const displayName = fullName || backendUser.name || backendUser.username || backendUser.email || parsedUser?.name || '';
@@ -171,6 +185,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (error) {
           console.warn(`Failed to clear AsyncStorage key: ${key}`, error);
         }
+      }
+
+      try {
+        await AsyncStorage.removeItem(STORAGE_KEYS.DEFAULT_HOME_WEB_PATH);
+      } catch (e) {
+        console.warn('Failed to clear default home preference', e);
       }
       
       console.log('✅ Complete storage reset completed');
@@ -253,6 +273,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } else {
             await secureStorage.removeItem('auth_token');
           }
+          const dhLogin = extractDefaultHomePathFromUser(response.user as any);
+          if (dhLogin === undefined) {
+            void refreshDefaultHomePathFromWebAuthCheck();
+          } else if (dhLogin === null) {
+            await reconcilePersistenceWithServerNoDefault();
+          } else {
+            await persistDefaultHomeWebPath(dhLogin);
+          }
           setUser(localUser);
           console.log('✅ Sign in successful for:', localUser.name);
           return;
@@ -272,6 +300,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log('💾 Storing user data:', localUser);
           await secureStorage.setItem('user', JSON.stringify(localUser));
           await secureStorage.removeItem('auth_token');
+          void refreshDefaultHomePathFromWebAuthCheck();
           setUser(localUser);
           console.log('✅ Sign in successful with session info for:', localUser.name);
           return;
@@ -415,6 +444,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       await secureStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
+      void (async () => {
+        const dh = extractDefaultHomePathFromUser(userData as any);
+        if (dh === undefined) {
+          await refreshDefaultHomePathFromWebAuthCheck();
+        } else if (dh === null) {
+          await reconcilePersistenceWithServerNoDefault();
+        } else {
+          await persistDefaultHomeWebPath(dh);
+        }
+      })();
       console.log('✅ setUserFromExternal: session established for', userData.email);
     } catch (error) {
       console.error('❌ setUserFromExternal failed:', error);

@@ -506,6 +506,39 @@ class ApiService {
     }
   }
 
+  /** Web session auth-check; includes defaultHomePath when authenticated (same backend session as mobile). */
+  async getWebAuthCheck(): Promise<
+    ApiResponse & { authenticated?: boolean; defaultHomePath?: string | null; default_home_path?: string | null }
+  > {
+    try {
+      const response = await this.client.get('/api/v1/web/auth-check');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Web auth check failed');
+    }
+  }
+
+  /** Web user profile; includes defaultHomePath. */
+  async getWebUser(): Promise<ApiResponse & { defaultHomePath?: string | null; default_home_path?: string | null; user?: any }> {
+    try {
+      const response = await this.client.get('/api/v1/web/user');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch web user');
+    }
+  }
+
+  async updateWebDefaultHomePath(path: string | null): Promise<ApiResponse & { defaultHomePath?: string | null }> {
+    try {
+      const response = await this.client.put('/api/v1/web/user/default-home-path', {
+        defaultHomePath: path,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || 'Failed to update default home path');
+    }
+  }
+
   /**
    * Exchange a temporary Google OAuth token (from backend redirect flow) for a session.
    * Used when the app is opened via grabdocs://login-success?token=...

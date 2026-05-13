@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { API_BASE_URL } from '../../constants/Config';
+import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 import { useAuth } from '../context/auth';
 
 interface OtpVerificationParams {
@@ -74,6 +75,12 @@ export default function OtpVerificationScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<OtpVerificationParams>();
   const { refreshSession } = useAuth(); // Get auth context to refresh session after login
+  
+  const continueToMainApp = async (loginUser?: unknown) => {
+    await refreshSession();
+    const webPath = await resolveDefaultHomeWebPath(loginUser);
+    navigateTabsThenDefaultHome(router, webPath);
+  };
   
   const [otpCode, setOtpCode] = useState(['', '', '', '', '', '']);
   const [isLoading, setIsLoading] = useState(false);
@@ -292,11 +299,11 @@ export default function OtpVerificationScreen() {
               Alert.alert(
                 'Success',
                 `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
-                [{ text: 'Continue', onPress: () => router.replace('/(tabs)') }]
+                [{ text: 'Continue', onPress: () => { void continueToMainApp(data.user); } }]
               );
             } else {
               Alert.alert('Success', 'Authentication successful!', [
-                { text: 'Continue', onPress: () => router.replace('/(tabs)') },
+                { text: 'Continue', onPress: () => { void continueToMainApp(data.user); } },
               ]);
             }
             await refreshSession();
@@ -387,11 +394,11 @@ export default function OtpVerificationScreen() {
             Alert.alert(
               'Success',
               `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
-              [{ text: 'Continue', onPress: () => router.replace('/(tabs)') }]
+              [{ text: 'Continue', onPress: () => { void continueToMainApp(loginData.user); } }]
             );
           } else {
             Alert.alert('Success', 'Authentication successful!', [
-              { text: 'Continue', onPress: () => router.replace('/(tabs)') },
+              { text: 'Continue', onPress: () => { void continueToMainApp(loginData.user); } },
             ]);
           }
 

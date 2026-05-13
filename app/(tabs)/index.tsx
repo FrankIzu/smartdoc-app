@@ -620,7 +620,7 @@ function DashboardScreen() {
         router.push('/bookmarks/manage');
         break;
       case 'fillable-file':
-        router.push('/fillable-file');
+        router.push('/(tabs)/documents');
         break;
       default:
         break;
@@ -1035,6 +1035,15 @@ function DashboardScreen() {
               onPress={() => handleQuickAction('upload')}
             />
             <QuickActionCard
+              key="action-calendar"
+              title="Calendar"
+              subtitle="Events, invites, and external calendars"
+              icon="calendar-outline"
+              color="#5856D6"
+              onPress={() => handleQuickAction('calendar')}
+              isNew={true}
+            />
+            <QuickActionCard
               key="action-meeting-call"
               title="Reach"
               subtitle="Join or start a meeting"
@@ -1045,21 +1054,20 @@ function DashboardScreen() {
               showLiveMeetingIndicator={reachInMeeting}
             />
             <QuickActionCard
-              key="action-calendar"
-              title="Calendar"
-              subtitle="Events, invites, and external calendars"
-              icon="calendar-outline"
-              color="#5856D6"
-              onPress={() => handleQuickAction('calendar')}
-              isNew={true}
-            />
-            <QuickActionCard
               key="action-upload-links"
               title="File Request"
               subtitle="Create links to receive files"
               icon="link"
               color="#8E44AD"
               onPress={() => handleQuickAction('upload-links')}
+            />
+            <QuickActionCard
+              key="action-forms"
+              title="Forms"
+              subtitle="Create and manage forms"
+              icon="clipboard-outline"
+              color="#34C759"
+              onPress={() => handleQuickAction('form')}
             />
             <QuickActionCard
               key="action-workspaces"
@@ -1076,14 +1084,6 @@ function DashboardScreen() {
               icon="bookmark"
               color="#FF9500"
               onPress={() => handleQuickAction('bookmarks')}
-            />
-            <QuickActionCard
-              key="action-forms"
-              title="Forms"
-              subtitle="Create and manage forms"
-              icon="clipboard-outline"
-              color="#34C759"
-              onPress={() => handleQuickAction('form')}
             />
             <QuickActionCard
               key="action-chat"

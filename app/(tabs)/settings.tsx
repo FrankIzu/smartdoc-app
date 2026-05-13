@@ -3,27 +3,41 @@ import Constants from 'expo-constants';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Linking,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppLock } from '../../contexts/AppLockContext';
-import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { MAX_SCALE, MIN_SCALE, useDisplayScale } from '../../contexts/DisplayScaleContext';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
-import { screenCache } from '../../utils/screenCache';
 import deviceSecurityService from '../../services/deviceSecurity';
+import {
+  DEFAULT_HOME_SCREEN_OPTIONS,
+  loadPersistedDefaultHomeWebPath,
+  MOBILE_MAIN_HOME_WEB_ALIAS,
+  MOBILE_NO_DEFAULT_SCREEN_STORAGE,
+  NO_DEFAULT_SCREEN_LABEL,
+  normalizeWebDefaultHomePath,
+  parseDefaultHomeFields,
+  persistDefaultHomeWebPath,
+  persistExplicitNoDefaultScreenPreference,
+  reconcilePersistenceWithServerNoDefault,
+  WebDefaultHomePath,
+} from '../../utils/defaultHomePath';
+import { screenCache } from '../../utils/screenCache';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -118,6 +132,11 @@ export default function SettingsScreen() {
   const [remember2FA, setRemember2FA] = useState(true);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState<DeviceFingerprint | null>(null);
+  const [defaultHomeWebPath, setDefaultHomeWebPath] = useState<WebDefaultHomePath | null>(
+    normalizeWebDefaultHomePath(MOBILE_MAIN_HOME_WEB_ALIAS),
+  );
+  const [defaultHomePickerOpen, setDefaultHomePickerOpen] = useState(false);
+  const [defaultHomeSaving, setDefaultHomeSaving] = useState(false);
   // const [showSetPinModal, setShowSetPinModal] = useState(false);
   // const [pinValue, setPinValue] = useState('');
   // const [pinConfirm, setPinConfirm] = useState('');
@@ -187,21 +206,60 @@ export default function SettingsScreen() {
   const SETTINGS_CACHE_MS = 5 * 60_000; // 5-minute TTL — profile rarely changes
 
   const loadSettings = async (forceRefresh = false) => {
-    // Serve cached profile instantly; still load device/biometric info fresh each time
     if (!forceRefresh) {
       const cached = screenCache.get<UserProfile>(SETTINGS_CACHE_KEY, SETTINGS_CACHE_MS);
       if (cached) {
         setProfile(cached);
-        // Don't skip biometric/device checks below — those are local, not cached
       }
     }
 
+    const defaultPreferences: UserPreferences = {
+      theme: theme,
+      notifications: {
+        push_enabled: true,
+        email_enabled: true,
+        file_upload: true,
+        file_processing: true,
+        form_responses: true,
+        upload_link_activity: true,
+        workspace_updates: true,
+      },
+      file_management: {
+        auto_categorization: true,
+        auto_receipt_processing: true,
+        file_preview: true,
+        auto_backup: false,
+        compress_images: true,
+      },
+      upload_settings: {
+        wifi_only_upload: false,
+        max_file_size_mb: 50,
+        allowed_file_types: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif'],
+      },
+      privacy: {
+        analytics_tracking: true,
+        crash_reporting: true,
+        usage_statistics: true,
+      },
+      display: {
+        show_file_sizes: true,
+        show_upload_dates: true,
+        grid_view_default: false,
+        items_per_page: 20,
+      },
+    };
+    setPreferences(defaultPreferences);
+
     try {
-      // Load user profile using the getUserProfile method
-      const profileResponse = await api.getUserProfile();
-      
+      setLoading(false);
+
+      const [profileResponse, fromPersist, chk] = await Promise.all([
+        api.getUserProfile(),
+        loadPersistedDefaultHomeWebPath(),
+        api.getWebAuthCheck().catch(() => null),
+      ]);
+
       if (profileResponse.success && profileResponse.data) {
-        // Transform the user data to match our UserProfile interface
         const userData = profileResponse.data;
         const profileData: UserProfile = {
           id: userData.id || 0,
@@ -216,54 +274,46 @@ export default function SettingsScreen() {
         screenCache.set(SETTINGS_CACHE_KEY, profileData);
       }
 
-      // Set default preferences since we don't have a specific endpoint yet
-      const defaultPreferences: UserPreferences = {
-        theme: theme, // Use current theme from context
-        notifications: {
-          push_enabled: true,
-          email_enabled: true,
-          file_upload: true,
-          file_processing: true,
-          form_responses: true,
-          upload_link_activity: true,
-          workspace_updates: true,
-        },
-        file_management: {
-        auto_categorization: true,
-          auto_receipt_processing: true,
-        file_preview: true,
-          auto_backup: false,
-          compress_images: true,
-        },
-        upload_settings: {
-          wifi_only_upload: false,
-          max_file_size_mb: 50,
-          allowed_file_types: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif'],
-        },
-        privacy: {
-        analytics_tracking: true,
-          crash_reporting: true,
-          usage_statistics: true,
-        },
-        display: {
-          show_file_sizes: true,
-          show_upload_dates: true,
-          grid_view_default: false,
-          items_per_page: 20,
-        },
-      };
-      setPreferences(defaultPreferences);
-      
-      // Check biometric availability
-      const biometricConfig = await deviceSecurityService.initializeBiometrics();
+      let resolvedForServer: WebDefaultHomePath | null = MOBILE_MAIN_HOME_WEB_ALIAS;
+      let serverSpecified = false;
+
+      try {
+        if (chk && typeof chk === 'object') {
+          const p = parseDefaultHomeFields(chk as Record<string, unknown>);
+          if (p.kind === 'none') {
+            serverSpecified = true;
+            await reconcilePersistenceWithServerNoDefault();
+            const after = await loadPersistedDefaultHomeWebPath();
+            resolvedForServer =
+              after === MOBILE_MAIN_HOME_WEB_ALIAS ? MOBILE_MAIN_HOME_WEB_ALIAS : null;
+          } else if (p.kind === 'path') {
+            serverSpecified = true;
+            await persistDefaultHomeWebPath(p.path);
+            resolvedForServer = p.path;
+          }
+        }
+      } catch {
+        /* keep persisted / fallback */
+      }
+
+      let displaySelection: WebDefaultHomePath | null;
+      if (!serverSpecified) {
+        if (fromPersist === MOBILE_NO_DEFAULT_SCREEN_STORAGE) displaySelection = null;
+        else if (fromPersist === null) displaySelection = MOBILE_MAIN_HOME_WEB_ALIAS;
+        else displaySelection = fromPersist;
+      } else {
+        displaySelection = resolvedForServer;
+      }
+
+      setDefaultHomeWebPath(displaySelection);
+
+      const [biometricConfig, info, userPrefs] = await Promise.all([
+        deviceSecurityService.initializeBiometrics(),
+        deviceSecurityService.getDeviceFingerprint(),
+        deviceSecurityService.getUserPreferences(),
+      ]);
       setBiometricAvailable(biometricConfig.enabled);
-
-      // Load device info
-      const info = await deviceSecurityService.getDeviceFingerprint();
       setDeviceInfo(info);
-
-      // Load user preferences
-      const userPrefs = await deviceSecurityService.getUserPreferences();
       setBiometricEnabled(userPrefs.biometricEnabled);
       setDeviceTrustEnabled(userPrefs.rememberDevice);
       setRemember2FA(userPrefs.rememberDevice);
@@ -339,6 +389,44 @@ export default function SettingsScreen() {
     }
     
     return true;
+  };
+
+  const defaultHomeLabel = useMemo(() => {
+    if (defaultHomeWebPath === null) return NO_DEFAULT_SCREEN_LABEL;
+    return DEFAULT_HOME_SCREEN_OPTIONS.find((o) => o.webPath === defaultHomeWebPath)?.label ?? 'Home';
+  }, [defaultHomeWebPath]);
+
+  type DefaultHomePickerSelection = WebDefaultHomePath | 'no-default';
+
+  const applyDefaultHomeSelection = async (selection: DefaultHomePickerSelection) => {
+    try {
+      setDefaultHomeSaving(true);
+      if (selection === 'no-default') {
+        await api.updateWebDefaultHomePath(null);
+        await persistExplicitNoDefaultScreenPreference();
+        setDefaultHomeWebPath(null);
+        setDefaultHomePickerOpen(false);
+        return;
+      }
+      let next = selection;
+      if (selection !== MOBILE_MAIN_HOME_WEB_ALIAS) {
+        const res = await api.updateWebDefaultHomePath(selection);
+        const returned =
+          (res as { defaultHomePath?: string | null }).defaultHomePath ??
+          (res as { default_home_path?: string | null }).default_home_path;
+        next =
+          typeof returned === 'string' && returned.trim()
+            ? normalizeWebDefaultHomePath(returned)
+            : selection;
+      }
+      await persistDefaultHomeWebPath(next);
+      setDefaultHomeWebPath(next);
+      setDefaultHomePickerOpen(false);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not update default screen');
+    } finally {
+      setDefaultHomeSaving(false);
+    }
   };
 
   const InfoItem = ({
@@ -823,18 +911,23 @@ export default function SettingsScreen() {
       color: colors.textLight,
     },
     themeOptions: {
-      paddingHorizontal: 16,
+      flexDirection: 'row',
+      paddingHorizontal: 12,
       paddingBottom: 12,
-      gap: 12,
+      gap: 8,
     },
     themeOption: {
-      flexDirection: 'row',
+      flex: 1,
+      flexDirection: 'column',
       alignItems: 'center',
-      padding: 12,
+      justifyContent: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 6,
       borderRadius: 8,
       backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.border,
+      minHeight: 76,
     },
     themeOptionActive: {
       backgroundColor: '#e3f2fd',
@@ -842,11 +935,11 @@ export default function SettingsScreen() {
       borderWidth: 2,
     },
     themeIcon: {
-      width: 32,
-      height: 32,
-      borderRadius: 6,
+      width: 26,
+      height: 26,
+      borderRadius: 5,
       borderWidth: 1,
-      marginRight: 12,
+      marginBottom: 6,
       overflow: 'hidden',
     },
     themeIconInner: {
@@ -854,10 +947,10 @@ export default function SettingsScreen() {
       height: '100%',
     },
     themeOptionText: {
-      flex: 1,
-      fontSize: 16,
-      fontWeight: '500',
+      fontSize: scaledFontSize(12),
+      fontWeight: '600',
       color: colors.text,
+      textAlign: 'center',
     },
     themeOptionTextActive: {
       color: '#007AFF',
@@ -943,6 +1036,40 @@ export default function SettingsScreen() {
       width: 8,
       height: 8,
       borderRadius: 4,
+    },
+    defaultHomeModalCard: {
+      maxHeight: '72%',
+      width: '100%',
+      maxWidth: 400,
+      padding: 16,
+      borderRadius: 16,
+      backgroundColor: colors.sectionBackground,
+    },
+    defaultHomeModalTitle: {
+      fontSize: scaledFontSize(18),
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    defaultHomeModalSubtitle: {
+      fontSize: scaledFontSize(13),
+      color: colors.textSecondary,
+      marginBottom: 12,
+    },
+    defaultHomeOptionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+      paddingHorizontal: 4,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    defaultHomeOptionLabel: {
+      fontSize: scaledFontSize(15),
+      color: colors.text,
+      flex: 1,
+      paddingRight: 8,
     },
   }), [colors, scaledFontSize]);
 
@@ -1340,7 +1467,6 @@ export default function SettingsScreen() {
                 <Text style={[dynamicStyles.themeOptionText, theme === 'light' && dynamicStyles.themeOptionTextActive]}>
                   Light
                 </Text>
-                {theme === 'light' && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
               </TouchableOpacity>
               <TouchableOpacity
                 style={[dynamicStyles.themeOption, theme === 'dark' && dynamicStyles.themeOptionActive]}
@@ -1352,7 +1478,6 @@ export default function SettingsScreen() {
                 <Text style={[dynamicStyles.themeOptionText, theme === 'dark' && dynamicStyles.themeOptionTextActive]}>
                   Dark
                 </Text>
-                {theme === 'dark' && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
               </TouchableOpacity>
               <TouchableOpacity
                 style={[dynamicStyles.themeOption, theme === 'system' && dynamicStyles.themeOptionActive]}
@@ -1364,9 +1489,34 @@ export default function SettingsScreen() {
                 <Text style={[dynamicStyles.themeOptionText, theme === 'system' && dynamicStyles.themeOptionTextActive]}>
                   System
                 </Text>
-                {theme === 'system' && <Ionicons name="checkmark-circle" size={20} color="#007AFF" />}
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={dynamicStyles.infoItem}
+              onPress={() => !defaultHomeSaving && setDefaultHomePickerOpen(true)}
+              disabled={defaultHomeSaving}
+            >
+              <View style={dynamicStyles.settingIcon}>
+                <Ionicons name="home-outline" size={20} color={colors.textSecondary} />
+              </View>
+              <View style={dynamicStyles.settingContent}>
+                <Text style={dynamicStyles.settingTitle}>Default screen</Text>
+                <Text style={dynamicStyles.settingSubtitle}>Opens after you sign in</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {defaultHomeSaving ? (
+                  <ActivityIndicator size="small" color="#007AFF" />
+                ) : (
+                  <>
+                    <Text style={[dynamicStyles.settingValue, { marginRight: 4 }]} numberOfLines={1}>
+                      {defaultHomeLabel}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                  </>
+                )}
+              </View>
+            </TouchableOpacity>
             
             {/* Display Scale Control */}
             <View style={dynamicStyles.settingItem}>
@@ -1672,6 +1822,71 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </CollapsibleSection>
       </ScrollView>
+
+      <Modal
+        visible={defaultHomePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !defaultHomeSaving && setDefaultHomePickerOpen(false)}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !defaultHomeSaving && setDefaultHomePickerOpen(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+            style={[dynamicStyles.modalCard, dynamicStyles.defaultHomeModalCard, { backgroundColor: colors.sectionBackground }]}
+          >
+            <Text style={dynamicStyles.defaultHomeModalTitle}>Default screen</Text>
+            <Text style={dynamicStyles.defaultHomeModalSubtitle}>
+              Choose where the app opens after you sign in (same as web).
+            </Text>
+            <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                key="__no_default__"
+                style={dynamicStyles.defaultHomeOptionRow}
+                onPress={() => !defaultHomeSaving && void applyDefaultHomeSelection('no-default')}
+                disabled={defaultHomeSaving}
+              >
+                <Text style={dynamicStyles.defaultHomeOptionLabel}>{NO_DEFAULT_SCREEN_LABEL}</Text>
+                {defaultHomeWebPath === null ? (
+                  <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={22} color={colors.border} />
+                )}
+              </TouchableOpacity>
+              {DEFAULT_HOME_SCREEN_OPTIONS.map((opt) => (
+                <TouchableOpacity
+                  key={opt.webPath}
+                  style={dynamicStyles.defaultHomeOptionRow}
+                  onPress={() => !defaultHomeSaving && void applyDefaultHomeSelection(opt.webPath)}
+                  disabled={defaultHomeSaving}
+                >
+                  <Text style={dynamicStyles.defaultHomeOptionLabel}>{opt.label}</Text>
+                  {defaultHomeWebPath !== null && defaultHomeWebPath === opt.webPath ? (
+                    <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
+                  ) : (
+                    <Ionicons name="ellipse-outline" size={22} color={colors.border} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={[dynamicStyles.secondaryButton, { marginTop: 16 }]}
+              onPress={() => !defaultHomeSaving && setDefaultHomePickerOpen(false)}
+            >
+              <Text style={dynamicStyles.secondaryButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            {defaultHomeSaving && (
+              <View style={{ alignItems: 'center', marginTop: 12 }}>
+                <ActivityIndicator color="#007AFF" />
+              </View>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* GrabDocs Set/Change PIN modal - commented out; app lock uses biometric + device passcode only
       <Modal visible={showSetPinModal} ...>

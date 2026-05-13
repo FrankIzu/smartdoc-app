@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
+import { useNavigation } from '@react-navigation/native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -151,6 +152,7 @@ const DocumentListIcon = React.memo(function DocumentListIcon({
 
 export default function QuickFilesScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
@@ -169,6 +171,14 @@ export default function QuickFilesScreen() {
   const lastLoadTimeRef = useRef<number>(0);
   const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
   const lastUploadTimeRef = useRef<number>(0); // Track when upload happened locally
+
+  const handleDocumentsHeaderBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)');
+    }
+  }, [navigation, router]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('date');
@@ -2907,7 +2917,7 @@ export default function QuickFilesScreen() {
         <View style={dynamicStyles.header}>
           <TouchableOpacity
             style={dynamicStyles.backButton}
-            onPress={() => router.back()}
+            onPress={handleDocumentsHeaderBack}
             accessibilityLabel="Go back"
             accessibilityRole="button"
           >

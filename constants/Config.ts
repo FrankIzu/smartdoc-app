@@ -271,6 +271,8 @@ export const STORAGE_KEYS = {
   DEVICE_TOKEN: 'device_token',
   /** Chat IDs where the user explicitly removed the document/bookmark/workspace context. */
   CONTEXT_REMOVED_CHAT_IDS: 'context_removed_chat_ids',
+  /** Default landing path from web (`/upload` = ChatGD, `/files`, etc.); may use '/' for mobile-only Main Home. */
+  DEFAULT_HOME_WEB_PATH: 'default_home_web_path',
 } as const;
 
 /** After API/network failures, wait this long before showing the orange offline banner (reduces flicker on brief outages). */

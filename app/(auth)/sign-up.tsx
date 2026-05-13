@@ -11,6 +11,7 @@ import { STORAGE_KEYS } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
+import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 
 const isAndroid = Platform.OS === 'android';
 
@@ -69,7 +70,8 @@ export default function SignUpScreen() {
 
       if (result.success) {
         Alert.alert('Success', 'Account created successfully!');
-        router.replace('/(tabs)');
+        const webPath = await resolveDefaultHomeWebPath();
+        navigateTabsThenDefaultHome(router, webPath);
       } else {
         setError(result.message || 'An error occurred during sign up');
       }
@@ -98,7 +100,8 @@ export default function SignUpScreen() {
           Alert.alert('Complete sign-in', 'Please complete sign-in in the browser. You\'ll return to the app when done.');
         } else {
           Alert.alert('Success', 'Account created with Google successfully!');
-          router.replace('/(tabs)');
+          const webPath = await resolveDefaultHomeWebPath((result as any).user);
+          navigateTabsThenDefaultHome(router, webPath);
         }
       } else if (result.requires2FA) {
         Alert.alert(
@@ -179,7 +182,8 @@ export default function SignUpScreen() {
         // Small delay to ensure state propagation
         await new Promise(resolve => setTimeout(resolve, 100));
         
-        router.replace('/(tabs)');
+        const webPath = await resolveDefaultHomeWebPath(backendUser as any);
+        navigateTabsThenDefaultHome(router, webPath);
       } else if (result.requires2FA) {
         Alert.alert(
           '2FA Required',

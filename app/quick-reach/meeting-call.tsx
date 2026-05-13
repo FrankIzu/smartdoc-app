@@ -38,6 +38,8 @@ interface Meeting {
   endTime?: string;
   status: 'scheduled' | 'created' | 'active' | 'ended';
   passcode?: string;
+  /** When true, user must supply passcode (not always present on list row). */
+  passcode_required?: boolean;
   roomUrl?: string;
   description?: string;
   duration?: number;
@@ -260,6 +262,8 @@ function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow |
     endTime: m.endTime || m.end_time || m.end_at || '',
     status: statusRaw as Meeting['status'],
     passcode: m.passcode || m.password || undefined,
+    passcode_required:
+      m.passcode_required === true || m.passcodeRequired === true ? true : undefined,
     roomUrl: m.roomUrl || m.room_url || m.url || undefined,
     description: m.description || undefined,
     duration:
@@ -325,7 +329,7 @@ function parseMeetingsArrayFromMobileResponse(meetingsResponse: any): any[] {
 
 export default function MeetingCallScreen() {
   const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
+  const { user } = useAuth();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const isAuthenticated = !!user;
@@ -486,7 +490,7 @@ export default function MeetingCallScreen() {
               console.log(`❌ Meeting "${m.title}" excluded from upcoming: scheduled but startTime in past (${m.startTime})`);
               return false;
             }
-          } catch (e) {
+          } catch {
             console.warn(`⚠️ Meeting "${m.title}" has invalid startTime format: ${m.startTime}, treating as newly created`);
             return true;
           }
@@ -645,20 +649,27 @@ export default function MeetingCallScreen() {
     router.push('/quick-reach/schedule-meeting');
   };
 
-  const navigateToMeetingScreen = (params: { meetingId: string; title: string; userName?: string; passcode?: string }) => {
+  const navigateToMeetingScreen = (nav: {
+    meetingId: string;
+    title: string;
+    userName?: string;
+    passcode?: string;
+    forceJoin?: boolean;
+  }) => {
     const q = new URLSearchParams({
-      meetingId: params.meetingId,
-      title: params.title,
+      meetingId: nav.meetingId,
+      title: nav.title,
     });
-    const cleaned = sanitizeReachDisplayName(params.userName || getReachParticipantDisplayName(user));
+    const cleaned = sanitizeReachDisplayName(nav.userName || getReachParticipantDisplayName(user));
     if (cleaned) q.set('userName', cleaned);
-    if (params.passcode) q.set('passcode', params.passcode);
+    if (nav.passcode) q.set('passcode', nav.passcode);
+    if (nav.forceJoin) q.set('force_join', '1');
     router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
   };
 
+  /** Open HMS prejoin flow without calling mobile/join first — token + room entry happen on the meeting screen. */
   const joinMeeting = async (meeting: Meeting, forceJoin: boolean = false) => {
     if (isJoining) return;
-    // One meeting at a time: block joining another meeting if already in one
     if (!forceJoin) {
       try {
         const currentRaw = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
@@ -672,103 +683,51 @@ export default function MeetingCallScreen() {
           );
           return;
         }
-      } catch (_) {}
+      } catch {
+        /* ignore storage errors */
+      }
     }
-    setIsJoining(true);
-    try {
-      const response = await apiClient.joinMeeting({
-        meetingId: meeting.meetingId,
-        passcode: meeting.passcode || undefined,
-        force_join: forceJoin || undefined
-      });
 
-      const resp = response as any;
-      if (resp.type === 'already_in_meeting') {
-        Alert.alert(
-          "You're already in this meeting.",
-          resp.message || "You're already participating in this meeting. Would you like to end your current session and join again?",
-          [
-            { text: 'OK', style: 'cancel' },
-            {
-              text: 'Disconnect & Rejoin',
-              onPress: () => joinMeeting(meeting, true)
-            }
-          ]
-        );
-        return;
-      }
-
-      if (!response.success) {
-        Alert.alert('Error', (response as any).message || 'Failed to join meeting');
-        return;
-      }
-
-      if (meeting.passcode && !(response as any).data?.password) {
-        Alert.prompt(
-          'Meeting Passcode',
-          'This is a private meeting. Enter the passcode:',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Join',
-              onPress: async (passcode?: string) => {
-                if (passcode) {
-                  if (isJoining) return;
-                  setIsJoining(true);
-                  try {
-                    const retryResponse = await apiClient.joinMeeting({
-                      meetingId: meeting.meetingId,
-                      passcode,
-                      force_join: forceJoin || undefined
-                    });
-                    const retry = retryResponse as any;
-                    if (retry.type === 'already_in_meeting') {
-                      Alert.alert(
-                        "You're already in this meeting.",
-                        retry.message || "Would you like to end your current session and join again?",
-                        [
-                          { text: 'OK', style: 'cancel' },
-                          { text: 'Disconnect & Rejoin', onPress: () => joinMeeting(meeting, true) }
-                        ]
-                      );
-                      return;
-                    }
-                    if (retryResponse.success && retryResponse.data) {
-                      navigateToMeetingScreen({
-                        meetingId: (retryResponse.data as any).meetingId || meeting.meetingId,
-                        title: (retryResponse.data as any).title || meeting.title,
-                        passcode
-                      });
-                    } else {
-                      Alert.alert('Error', (retryResponse as any).message || 'Invalid passcode');
-                    }
-                  } catch (error: any) {
-                    Alert.alert('Error', error.message || 'Failed to join meeting. Please check the passcode.');
-                  } finally {
-                    setIsJoining(false);
-                  }
-                } else {
-                  Alert.alert('Error', 'Passcode is required for private meetings');
-                }
-              }
-            }
-          ],
-          'secure-text'
-        );
-        return;
-      }
-
+    const openPrejoin = (passOverride?: string) => {
+      const pass =
+        (passOverride && passOverride.trim()) ||
+        (meeting.passcode && String(meeting.passcode).trim()) ||
+        undefined;
       navigateToMeetingScreen({
-        meetingId: (response as any).data?.meetingId || meeting.meetingId,
-        title: (response as any).data?.title || meeting.title,
-        passcode: meeting.passcode || undefined
+        meetingId: meeting.meetingId,
+        title: meeting.title,
+        passcode: pass,
+        forceJoin,
       });
-    } catch (error: any) {
-      console.error('Failed to join meeting:', error);
-      Alert.alert('Error', error.message || 'Failed to join meeting. Please try again.');
-    } finally {
-      setIsJoining(false);
+    };
+
+    const needsPasscodeFromUser =
+      meeting.passcode_required === true &&
+      !(meeting.passcode && String(meeting.passcode).trim());
+
+    if (needsPasscodeFromUser) {
+      Alert.prompt(
+        'Meeting Passcode',
+        'This is a private meeting. Enter the passcode:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Continue',
+            onPress: (typed?: string) => {
+              if (typed && typed.trim()) {
+                openPrejoin(typed);
+              } else {
+                Alert.alert('Error', 'Passcode is required for private meetings');
+              }
+            },
+          },
+        ],
+        'secure-text'
+      );
+      return;
     }
+
+    openPrejoin();
   };
 
   const viewMeetingAssets = (meeting: Meeting, options?: { fromAssetsIcon?: boolean }) => {
@@ -790,7 +749,6 @@ export default function MeetingCallScreen() {
       return;
     }
     const savedMeetingId = meetingId.trim();
-    // One meeting at a time
     try {
       const currentRaw = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
       const currentCanon = currentRaw ? canonicalizeReachMeetingId(currentRaw.trim()) : '';
@@ -803,74 +761,20 @@ export default function MeetingCallScreen() {
         );
         return;
       }
-    } catch (_) {}
+    } catch {
+      /* ignore storage errors */
+    }
     setIsJoining(true);
     const savedPassword = meetingPassword.trim();
     try {
-      const response = await apiClient.joinMeeting({
+      setShowJoinModal(false);
+      setMeetingId('');
+      setMeetingPassword('');
+      navigateToMeetingScreen({
         meetingId: savedMeetingId,
-        passcode: savedPassword || undefined,
-        force_join: undefined
+        title: 'Meeting',
+        ...(savedPassword ? { passcode: savedPassword } : {}),
       });
-
-      const resp = response as any;
-      if (resp.type === 'already_in_meeting') {
-        Alert.alert(
-          "You're already in this meeting.",
-          resp.message || "Would you like to end your current session and join again?",
-          [
-            { text: 'OK', style: 'cancel' },
-            {
-              text: 'Disconnect & Rejoin',
-              onPress: async () => {
-                if (isJoining) return;
-                setIsJoining(true);
-                try {
-                  const retryResponse = await apiClient.joinMeeting({
-                    meetingId: savedMeetingId,
-                    passcode: savedPassword || undefined,
-                    force_join: true
-                  });
-                  const retry = retryResponse as any;
-                  if (retry.type === 'already_in_meeting') {
-                    Alert.alert('Error', (retryResponse as any).message || 'Could not rejoin.');
-                    return;
-                  }
-                  if (retryResponse.success && retryResponse.data) {
-                    setShowJoinModal(false);
-                    setMeetingId('');
-                    setMeetingPassword('');
-                    navigateToMeetingScreen({
-                      meetingId: (retryResponse.data as any).meetingId || savedMeetingId,
-                      title: (retryResponse.data as any).title || 'Meeting'
-                    });
-                  } else {
-                    Alert.alert('Error', (retryResponse as any).message || 'Invalid meeting ID or passcode');
-                  }
-                } finally {
-                  setIsJoining(false);
-                }
-              }
-            }
-          ]
-        );
-        return;
-      }
-
-      if (response.success && response.data) {
-        setShowJoinModal(false);
-        setMeetingId('');
-        setMeetingPassword('');
-        navigateToMeetingScreen({
-          meetingId: (response.data as any).meetingId || savedMeetingId,
-          title: (response.data as any).title || 'Meeting'
-        });
-      } else {
-        Alert.alert('Error', (response as any).message || 'Invalid meeting ID or passcode');
-      }
-    } catch (error: any) {
-      console.error('Failed to join meeting:', error);
-      Alert.alert('Error', error.message || 'Failed to join meeting. Please check the meeting ID and passcode.');
     } finally {
       setIsJoining(false);
     }
@@ -1092,7 +996,7 @@ export default function MeetingCallScreen() {
   };
 
   const stripClipboardEmojis = (text: string) => {
-    const ranges: Array<[number, number]> = [
+    const ranges: [number, number][] = [
       [0x1f600, 0x1f64f],
       [0x1f300, 0x1f5ff],
       [0x1f680, 0x1f6ff],
@@ -1160,7 +1064,7 @@ export default function MeetingCallScreen() {
         const roomData = response.data?.data || response.data || response;
         setMeetingInfoData(roomData);
       }
-    } catch (_error) {
+    } catch {
       // Non-fatal: info modal will show loading/empty state
     } finally {
       setLoadingInfo(false);

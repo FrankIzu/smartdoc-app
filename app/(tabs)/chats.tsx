@@ -4,7 +4,7 @@ import 'react-native-url-polyfill/auto';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     AccessibilityInfo,
     ActivityIndicator,
@@ -715,8 +715,8 @@ export default function ChatsScreen() {
     }
   }, [params.documentId, params.documentName, params.documentType, params.documentCategory]);
 
-  // When coming from home / calendar: openStartNew opens assistant; capture chatSource & placeholder params before clearing
-  useEffect(() => {
+  // Run before native paint so we rarely flash the ChatGD history list before opening the composer.
+  useLayoutEffect(() => {
     const phRaw = params.chatPlaceholder ?? params.inputPlaceholder;
     const ph = Array.isArray(phRaw) ? phRaw[0] : phRaw;
     if (typeof ph === 'string' && ph.trim()) {
@@ -742,8 +742,27 @@ export default function ChatsScreen() {
     selectedChatRef.current = defaultChat;
     setIsGoingBack(false);
     loadMessages(-1, true);
-    router.setParams({});
+    // Do not call router.setParams here — useLayoutEffect runs before the root navigator is ready
+    // after auth transitions; deferred clear in useEffect below.
   }, [params.openStartNew, params.chatSource, params.chatPlaceholder, params.inputPlaceholder]);
+
+  // Clear openStartNew (and related) query params after mount — safe for Expo Router; avoids "navigate before Root Layout" crash.
+  useEffect(() => {
+    const v = params.openStartNew;
+    const openStartNew =
+      v === '1' ||
+      v === 'true' ||
+      (Array.isArray(v) && (v[0] === '1' || v[0] === 'true'));
+    if (!openStartNew) return;
+    const t = setTimeout(() => {
+      try {
+        router.setParams({});
+      } catch {
+        /* ignore if router not ready */
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [params.openStartNew, router]);
 
   useEffect(() => {
     if (selectedChat != null && selectedChat.id !== -1) {
@@ -3181,18 +3200,20 @@ export default function ChatsScreen() {
       }
     }
 
+    // Bare ChatGD assistant (-1): no network; never flip messagesLoading on — avoids empty↔loading UI flicker.
+    if (chatId === -1) {
+      setMessages([]);
+      loadedChatIdRef.current = chatId;
+      setMessagesLoading(false);
+      return;
+    }
+
     setMessagesLoading(true);
     // Declared outside try — `catch` is a sibling block and cannot see bindings from inside `try`.
     let chatIdForApi = chatId;
 
     try {
-      // Start New (id: -1): show empty chat
-      if (chatId === -1) {
-        setMessages([]);
-        loadedChatIdRef.current = chatId;
-        return;
-      }
-
+      // Start New (-1 handled above — no duplicate branch)
       // FIRST: Check the chat type from the local chats array (or selectedChatRef when loaded via context)
       // When opening user/workspace chat via context, the chat may not be in chats yet - use selectedChatRef
       let resolvedChatId = chatId;
@@ -7652,7 +7673,16 @@ export default function ChatsScreen() {
     );
   };
 
-  const renderChatMessages = () => (
+  const renderChatMessages = () => {
+    const openStartRawHdr = params.openStartNew;
+    const openingComposerFromDeepLink =
+      openStartRawHdr === '1' ||
+      openStartRawHdr === 'true' ||
+      (Array.isArray(openStartRawHdr) && (openStartRawHdr[0] === '1' || openStartRawHdr[0] === 'true'));
+    const headerChat =
+      selectedChat ?? (openingComposerFromDeepLink ? DEFAULT_CHAT_ASSISTANT : undefined);
+
+    return (
     <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom']}>
       <TapToToggleHeaderView style={dynamicStyles.container}>
       {/* Chat Header */}
@@ -7683,27 +7713,25 @@ export default function ChatsScreen() {
         <View style={dynamicStyles.chatHeaderInfo}>
           <Text style={[dynamicStyles.chatTitle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">
             {(() => {
-              // CRITICAL: Always use document_context/bookmark_context name if available
-              // This ensures the title doesn't change when chat is refreshed or reloaded
-              if (selectedChat?.document_context?.name) {
-                return `Document: ${truncateFilename(selectedChat.document_context.name)}`;
+              const hc = headerChat;
+              if (hc?.document_context?.name) {
+                return `Document: ${truncateFilename(hc.document_context.name)}`;
               }
-              if (selectedChat?.bookmark_context?.name) {
-                return `Bookmark: ${selectedChat.bookmark_context.name}`;
+              if (hc?.bookmark_context?.name) {
+                return `Bookmark: ${hc.bookmark_context.name}`;
               }
-              if (selectedChat?.workspace?.name) {
-                return selectedChat.workspace.name;
+              if (hc?.workspace?.name) {
+                return hc.workspace.name;
               }
-              // Fallback to title property
-              return selectedChat?.title || 'Chat';
+              return hc?.title || 'Chat';
             })()}
           </Text>
           <Text style={dynamicStyles.chatSubtitle}>
-            {selectedChat?.type === 'ai_assistant' ? 'Start New' : 
-             selectedChat?.type === 'document_focused' ? 'Document Chat' :
-             selectedChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
-             selectedChat?.type === 'workspace' ? 'Workspace Chat' :
-             selectedChat?.type === 'user_direct' ? 'Direct Message' : 'Chat'}
+            {headerChat?.type === 'ai_assistant' ? 'Start New' : 
+             headerChat?.type === 'document_focused' ? 'Document Chat' :
+             headerChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
+             headerChat?.type === 'workspace' ? 'Workspace Chat' :
+             headerChat?.type === 'user_direct' ? 'Direct Message' : 'Chat'}
           </Text>
         </View>
 
@@ -8017,9 +8045,8 @@ export default function ChatsScreen() {
       </View>
       </TapToToggleHeaderView>
     </SafeAreaView>
-  );
-
-  // New Chat Modal Component
+    );
+  };
   const renderNewChatModal = () => (
     <Modal
       visible={showNewChatModal}
@@ -8970,11 +8997,16 @@ export default function ChatsScreen() {
     );
   };
 
-  // If fileId param is present, show chat messages view immediately (will be set by useEffect)
-  // This prevents showing the chat list first when navigating from files screen
-  // BUT: If user is going back, always show chat list (even if params haven't updated yet)
+  // If fileId param is present, show chat messages view immediately (will be set by useEffect).
+  // openStartNew: show composer chrome immediately — avoids flashing the ChatGD history list before useLayoutEffect selects the assistant.
   const hasFileIdParam = !!params.fileId;
-  const shouldShowChatMessages = !isGoingBack && (selectedChat || hasFileIdParam);
+  const openStartRaw = params.openStartNew;
+  const hasOpenStartNewParam =
+    openStartRaw === '1' ||
+    openStartRaw === 'true' ||
+    (Array.isArray(openStartRaw) && (openStartRaw[0] === '1' || openStartRaw[0] === 'true'));
+  const shouldShowChatMessages =
+    !isGoingBack && (selectedChat || hasFileIdParam || hasOpenStartNewParam);
   
   return (
     <>

@@ -448,9 +448,21 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         // 🔄 SYNC WITH REGULAR AUTH CONTEXT FOR NAVIGATION
         console.log('🔄 Syncing biometric login with regular auth context...');
         try {
-          if (authContext?.signIn) {
-            // For biometric login, we don't have the password, so just set authenticated state
-            authContext.setUser(result.user);
+          if (authContext?.setUserFromExternal && result.user) {
+            const ru = result.user as Record<string, any>;
+            const fullName =
+              `${ru.first_name || ru.firstName || ''} ${ru.last_name || ru.lastName || ''}`.trim();
+            await authContext.setUserFromExternal(
+              {
+                id: String(ru.id ?? ru.user_id ?? ''),
+                email: (typeof ru.email === 'string' && ru.email) || (typeof ru.username === 'string' && ru.username) || '',
+                name: fullName || ru.name || ru.username || ru.email || '',
+                first_name: ru.first_name ?? ru.firstName,
+                last_name: ru.last_name ?? ru.lastName,
+                username: typeof ru.username === 'string' ? ru.username : undefined,
+              },
+              typeof result.token === 'string' ? result.token : undefined
+            );
             console.log('✅ Regular auth context updated successfully');
           }
         } catch (error) {

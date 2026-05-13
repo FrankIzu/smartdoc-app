@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as AppleAuthentication from 'expo-apple-authentication';
 import Constants from 'expo-constants';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Link, useRouter } from 'expo-router';
@@ -17,11 +16,12 @@ import {
     View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GoogleLogo } from '../../components/GoogleLogo';
 import { API_BASE_URL } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
-import { GoogleLogo } from '../../components/GoogleLogo';
+import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 import { useAuth } from '../context/auth';
 
 export default function SignInScreen() {
@@ -117,8 +117,8 @@ export default function SignInScreen() {
       // Step 1: Try regular login first
       try {
         await signIn(username, password, rememberDevice);
-        // Success: we're on sign-in screen so we must navigate to home (index only redirects when it's the active route)
-        router.replace('/(tabs)');
+        const webPath = await resolveDefaultHomeWebPath();
+        navigateTabsThenDefaultHome(router, webPath);
         return;
       } catch (loginError: any) {
         // IMPORTANT: On login failure, stay on login screen and show error
@@ -306,8 +306,10 @@ export default function SignInScreen() {
         } else {
           setError(result.message || 'Biometric authentication failed');
         }
+      } else {
+        const webPath = await resolveDefaultHomeWebPath();
+        navigateTabsThenDefaultHome(router, webPath);
       }
-      // Navigation handled by context if successful
     } catch (error: any) {
       console.error('Biometric login error:', error);
       setError('Biometric authentication failed. Please try again or use your password.');
@@ -374,7 +376,8 @@ export default function SignInScreen() {
       }
 
       await setUserFromExternal(userData, backendResult.token);
-      router.replace('/(tabs)');
+      const webPath = await resolveDefaultHomeWebPath(backendResult.user ?? backendUser);
+      navigateTabsThenDefaultHome(router, webPath);
     } catch (error: any) {
       console.error('Google sign-in error:', error);
       setError(error.message || 'Google sign-in failed');
@@ -419,7 +422,8 @@ export default function SignInScreen() {
         // hiccup cannot bounce the user back to the login screen.
         await setUserFromExternal(userData, result.token || undefined);
         
-        router.replace('/(tabs)');
+        const webPath = await resolveDefaultHomeWebPath(result.user ?? backendUser);
+        navigateTabsThenDefaultHome(router, webPath);
       } else {
         if (result.requires2FA) {
           // Handle 2FA requirement if needed
