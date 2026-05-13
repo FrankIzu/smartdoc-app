@@ -240,7 +240,7 @@ export default function HelpScreen() {
               </Text>
             </View>
             <Text style={dynamicStyles.infoText}>
-              We'd love to hear from you! Share your feedback, report issues, or ask questions.
+              {"We'd love to hear from you! Share your feedback, report issues, or ask questions."}
             </Text>
           </View>
 

@@ -40,6 +40,8 @@ type Props = {
   listRefreshControl?: React.ReactElement<typeof RefreshControl>;
   /** Month grid lives inside a parent ScrollView; used to scroll events into view after day tap. */
   monthScrollRef?: React.RefObject<ScrollView | null>;
+  /** Keyboard / search dropdown — dismiss when user interacts with calendar body or scrolls lists. */
+  onDismissOverlays?: () => void;
 };
 
 function sameLocalDay(a: Date, b: Date): boolean {
@@ -86,6 +88,7 @@ export function CalendarVisualPane({
   onEventPress,
   listRefreshControl,
   monthScrollRef,
+  onDismissOverlays,
 }: Props) {
   const range = useMemo(() => calendarFetchRange(cursor, subView), [cursor, subView]);
   const monthCalCardHeightRef = useRef(0);
@@ -279,7 +282,10 @@ export function CalendarVisualPane({
     return (
     <TouchableOpacity
       style={styles.row}
-      onPress={() => onEventPress(Number(ev.id))}
+      onPress={() => {
+        onDismissOverlays?.();
+        onEventPress(Number(ev.id));
+      }}
       accessibilityRole="button"
     >
       <View style={{ flex: 1 }}>
@@ -331,10 +337,12 @@ export function CalendarVisualPane({
             theme={calendarTheme}
             enableSwipeMonths
             onDayPress={(day) => {
+              onDismissOverlays?.();
               onMonthSelectedDay(new Date(day.year, day.month - 1, day.day));
               scrollParentToDayEvents();
             }}
             onMonthChange={(m) => {
+              onDismissOverlays?.();
               const lastDay = new Date(m.year, m.month, 0).getDate();
               const day = Math.min(monthSelectedDay.getDate(), lastDay);
               const next = new Date(m.year, m.month - 1, day);
@@ -391,6 +399,9 @@ export function CalendarVisualPane({
             keyExtractor={(item) => String(item.id)}
             renderItem={({ item }) => renderEventRow(item)}
             refreshControl={listRefreshControl}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            onScrollBeginDrag={() => onDismissOverlays?.()}
           />
         )}
       </View>
@@ -436,6 +447,9 @@ export function CalendarVisualPane({
         ListEmptyComponent={<Text style={styles.empty}>No events in this range</Text>}
         stickySectionHeadersEnabled
         refreshControl={listRefreshControl}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => onDismissOverlays?.()}
       />
     </View>
   );

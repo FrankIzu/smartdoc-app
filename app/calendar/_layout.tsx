@@ -13,6 +13,7 @@ export default function CalendarLayout() {
       <Stack.Screen name="link-tester" />
       <Stack.Screen name="edit/[id]" />
       <Stack.Screen name="assets/[eventId]" />
+      <Stack.Screen name="pending/[localId]" />
     </Stack>
   );
 }

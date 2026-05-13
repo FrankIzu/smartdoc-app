@@ -46,6 +46,7 @@ import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import type { ChatHistory } from '../../types';
 import { parseGrabDocsFileViewUrl } from '../../utils/chatFileLinks';
+import { localizeUtcDatesInAssistantText } from '../../utils/chatUtcDisplay';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 import { screenCache } from '../../utils/screenCache';
@@ -6917,7 +6918,10 @@ export default function ChatsScreen() {
     if (!content || content.trim().length === 0) {
       return null;
     }
-    
+
+    const displayContent =
+      !isOwnMessage ? localizeUtcDatesInAssistantText(content) : content;
+
     return (
       <Text 
         style={[
@@ -6926,7 +6930,7 @@ export default function ChatsScreen() {
           isPreview && dynamicStyles.previewMessageText
         ]}
       >
-        {content}
+        {displayContent}
       </Text>
     );
   };

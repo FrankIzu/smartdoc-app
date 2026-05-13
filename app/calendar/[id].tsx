@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useNetworkState } from 'expo-network';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -22,11 +23,20 @@ import {
   calendarGetEvent,
   calendarResendInvite,
   calendarRsvp,
+  calendarSyncGoogleWithStaleConnectionRecovery,
   noteCreate,
   noteDelete,
   notesForCalendarEvent,
   noteUpdate,
 } from '../../services/calendarApi';
+import {
+  getCalendarEventDetailOffline,
+  invalidateCalendarListCache,
+  isCalendarFetchOfflineError,
+  removeCalendarEventDetailOffline,
+  saveCalendarEventDetailOffline,
+} from '../../utils/calendarCache';
+import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
 import { calendarDisplayLocation, formatUtcIsoForDevice } from '../../utils/calendarTime';
 
 /** Resolve Reach `meeting_id` for join-meeting from URL, meeting payload, or event.video_call_id. */
@@ -72,6 +82,12 @@ export default function CalendarEventDetailScreen() {
   const colors = useThemeColors();
   const { profile, refresh: refreshProfile } = useCalendarProfile();
 
+  const networkState = useNetworkState();
+  const deviceOffline = useMemo(
+    () => isDeviceOfflineForCalendar(networkState),
+    [networkState?.isConnected, networkState?.type, networkState?.isInternetReachable]
+  );
+
   const [loading, setLoading] = useState(true);
   const [event, setEvent] = useState<any | null>(null);
   const [meetingInfo, setMeetingInfo] = useState<any | null>(null);
@@ -85,20 +101,54 @@ export default function CalendarEventDetailScreen() {
 
   const loadEvent = useCallback(async () => {
     if (!Number.isFinite(eventId)) return;
-    const ev = await calendarGetEvent(eventId);
-    setEvent(ev);
-    try {
-      const m = await calendarEventMeeting(eventId);
-      if (m?.has_meeting && m.meeting) setMeetingInfo(m.meeting);
-      else setMeetingInfo(null);
-    } catch {
-      setMeetingInfo(null);
+
+    if (deviceOffline) {
+      const cached = await getCalendarEventDetailOffline(eventId);
+      if (cached) {
+        setEvent(cached);
+        setMeetingInfo(null);
+      } else {
+        setEvent(null);
+      }
+      return;
     }
-  }, [eventId]);
+
+    try {
+      const ev = await calendarGetEvent(eventId);
+      setEvent(ev);
+      await saveCalendarEventDetailOffline(ev as Record<string, unknown>);
+      try {
+        const m = await calendarEventMeeting(eventId);
+        if (m?.has_meeting && m.meeting) setMeetingInfo(m.meeting);
+        else setMeetingInfo(null);
+      } catch {
+        setMeetingInfo(null);
+      }
+    } catch (e: any) {
+      const cached = await getCalendarEventDetailOffline(eventId);
+      if (cached) {
+        setEvent(cached);
+        setMeetingInfo(null);
+        if (!isCalendarFetchOfflineError(e)) {
+          Alert.alert('Error', e?.response?.data?.error || e?.message || 'Failed to load event');
+        }
+      } else {
+        Alert.alert('Error', e?.response?.data?.error || e?.message || 'Failed to load event');
+      }
+    }
+  }, [eventId, deviceOffline]);
 
   useEffect(() => {
     refreshProfile();
   }, [refreshProfile]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!deviceOffline) {
+        calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
+      }
+    }, [deviceOffline])
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -108,13 +158,8 @@ export default function CalendarEventDetailScreen() {
         return;
       }
       setLoading(true);
-      try {
-        await loadEvent();
-      } catch (e: any) {
-        Alert.alert('Error', e?.response?.data?.error || e?.message || 'Failed to load event');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      await loadEvent();
+      if (!cancelled) setLoading(false);
     })();
     return () => {
       cancelled = true;
@@ -123,6 +168,10 @@ export default function CalendarEventDetailScreen() {
 
   const loadNotes = useCallback(async () => {
     if (!Number.isFinite(eventId)) return;
+    if (deviceOffline) {
+      setNotes([]);
+      return;
+    }
     setNotesLoading(true);
     try {
       const list = await notesForCalendarEvent(eventId);
@@ -132,12 +181,16 @@ export default function CalendarEventDetailScreen() {
     } finally {
       setNotesLoading(false);
     }
-  }, [eventId]);
+  }, [eventId, deviceOffline]);
 
   useEffect(() => {
     if (!event || !Number.isFinite(eventId)) return;
+    if (deviceOffline) {
+      setNotes([]);
+      return;
+    }
     notesForCalendarEvent(eventId).then(setNotes).catch(() => setNotes([]));
-  }, [event, eventId]);
+  }, [event, eventId, deviceOffline]);
 
   useEffect(() => {
     if (notesOpen && Number.isFinite(eventId)) loadNotes();
@@ -148,7 +201,14 @@ export default function CalendarEventDetailScreen() {
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
         header: { flexDirection: 'row', alignItems: 'center', padding: 12 },
-        h1: { fontSize: 20, fontWeight: '700', color: colors.text, flex: 1 },
+        h1: {
+          fontSize: 20,
+          fontWeight: '700',
+          color: colors.text,
+          flex: 1,
+          flexShrink: 1,
+          minWidth: 0,
+        },
         body: { padding: 16, paddingBottom: 48 },
         meta: { color: colors.textSecondary, fontSize: 14, marginBottom: 8 },
         pill: {
@@ -197,6 +257,10 @@ export default function CalendarEventDetailScreen() {
     (event.event_type === 'company' ? isAdmin : isOrganizer);
 
   const handleDelete = () => {
+    if (deviceOffline) {
+      Alert.alert('Offline', 'Delete requires a connection.');
+      return;
+    }
     Alert.alert('Delete event', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -205,6 +269,8 @@ export default function CalendarEventDetailScreen() {
         onPress: async () => {
           try {
             await calendarDeleteEvent(eventId);
+            await removeCalendarEventDetailOffline(eventId);
+            await invalidateCalendarListCache();
             router.replace('/calendar' as any);
           } catch (e: any) {
             Alert.alert('Error', e?.response?.data?.error || 'Delete failed');
@@ -215,6 +281,10 @@ export default function CalendarEventDetailScreen() {
   };
 
   const saveNote = async () => {
+    if (deviceOffline) {
+      Alert.alert('Offline', 'Notes require a connection.');
+      return;
+    }
     if (!newNoteTitle.trim() || !newNoteBody.trim()) {
       Alert.alert('Note', 'Enter title and content');
       return;
@@ -247,7 +317,7 @@ export default function CalendarEventDetailScreen() {
     );
   }
 
-  if (loading || !event) {
+  if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
@@ -256,6 +326,23 @@ export default function CalendarEventDetailScreen() {
           </TouchableOpacity>
         </View>
         <ActivityIndicator style={{ marginTop: 40 }} />
+      </SafeAreaView>
+    );
+  }
+
+  if (!event) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+        <Text style={[styles.meta, { paddingHorizontal: 16, marginTop: 24 }]}>
+          {deviceOffline
+            ? 'This event is not saved on this device. Open it once while online to save a copy.'
+            : 'Could not load this event.'}
+        </Text>
       </SafeAreaView>
     );
   }
@@ -272,15 +359,30 @@ export default function CalendarEventDetailScreen() {
           {event.title || 'Event'}
         </Text>
         {canEditDelete ? (
-          <TouchableOpacity onPress={() => router.push(`/calendar/edit/${eventId}` as any)} accessibilityLabel="Edit">
+          <TouchableOpacity
+            style={{ flexShrink: 0 }}
+            onPress={() => {
+              if (deviceOffline) {
+                Alert.alert('Offline', 'Editing requires a connection.');
+                return;
+              }
+              router.push(`/calendar/edit/${eventId}` as any);
+            }}
+            accessibilityLabel="Edit"
+          >
             <Text style={{ color: '#007AFF', fontSize: 17, fontWeight: '600' }}>Edit</Text>
           </TouchableOpacity>
         ) : (
-          <View style={{ minWidth: 36 }} />
+          <View style={{ minWidth: 36, flexShrink: 0 }} />
         )}
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>
+        {deviceOffline ? (
+          <Text style={[styles.meta, { marginBottom: 12, color: colors.text }]}>
+            Offline — showing saved copy. Connect for live updates, notes, and RSVP.
+          </Text>
+        ) : null}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
           {(!isPersonalAccount || event.event_type === 'company') ? (
             <View style={styles.pill}>
@@ -371,6 +473,10 @@ export default function CalendarEventDetailScreen() {
               <TouchableOpacity
                 style={styles.smallBtn}
                 onPress={async () => {
+                  if (deviceOffline) {
+                    Alert.alert('Offline', 'RSVP requires a connection.');
+                    return;
+                  }
                   try {
                     await calendarRsvp(eventId, 'accepted', rsvpComment.trim() || undefined);
                     setRsvpComment('');
@@ -385,6 +491,10 @@ export default function CalendarEventDetailScreen() {
               <TouchableOpacity
                 style={styles.smallBtn}
                 onPress={async () => {
+                  if (deviceOffline) {
+                    Alert.alert('Offline', 'RSVP requires a connection.');
+                    return;
+                  }
                   try {
                     await calendarRsvp(eventId, 'tentative', rsvpComment.trim() || undefined);
                     setRsvpComment('');
@@ -399,6 +509,10 @@ export default function CalendarEventDetailScreen() {
               <TouchableOpacity
                 style={styles.smallBtn}
                 onPress={async () => {
+                  if (deviceOffline) {
+                    Alert.alert('Offline', 'RSVP requires a connection.');
+                    return;
+                  }
                   try {
                     await calendarRsvp(eventId, 'declined', rsvpComment.trim() || undefined);
                     setRsvpComment('');
@@ -436,6 +550,10 @@ export default function CalendarEventDetailScreen() {
                 {p.status === 'needs-action' && !p.is_organizer && (isOrganizer || canEditDelete) && p.id ? (
                   <TouchableOpacity
                     onPress={async () => {
+                      if (deviceOffline) {
+                        Alert.alert('Offline', 'Resend requires a connection.');
+                        return;
+                      }
                       try {
                         await calendarResendInvite(eventId, p.id);
                         Alert.alert('Sent', 'Invitation resent');
@@ -469,6 +587,9 @@ export default function CalendarEventDetailScreen() {
               </TouchableOpacity>
             </View>
             {notesLoading ? <ActivityIndicator style={{ marginTop: 16 }} /> : null}
+            {deviceOffline ? (
+              <Text style={[styles.meta, { marginTop: 8 }]}>Notes are unavailable offline.</Text>
+            ) : null}
             <ScrollView style={{ maxHeight: 220, marginTop: 12 }}>
               {notes.map((n) => (
                 <View key={String(n.id)} style={{ marginBottom: 12, padding: 10, backgroundColor: colors.surface, borderRadius: 8 }}>
@@ -493,6 +614,10 @@ export default function CalendarEventDetailScreen() {
                               text: 'Delete',
                               style: 'destructive',
                               onPress: async () => {
+                                if (deviceOffline) {
+                                  Alert.alert('Offline', 'Deleting notes requires a connection.');
+                                  return;
+                                }
                                 try {
                                   await noteDelete(n.id);
                                   await loadNotes();

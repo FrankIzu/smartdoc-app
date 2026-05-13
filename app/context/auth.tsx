@@ -128,9 +128,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const forceReset = async () => {
-    console.log('🧹 Performing complete authentication reset');
-    
-    // Clear user state immediately
+      console.log('🧹 Performing complete authentication reset');
+      
+      try {
+        const { clearAllPendingCalendarCreates } = await import('../../utils/calendarPendingCreates');
+        const { clearCalendarOfflineOnLogout } = await import('../../utils/calendarCache');
+        await clearAllPendingCalendarCreates();
+        await clearCalendarOfflineOnLogout();
+      } catch (calErr) {
+        console.warn('Calendar local clear on logout:', calErr);
+      }
+      
+      // Clear user state immediately
     setUser(null);
     
     // Clear all possible storage locations

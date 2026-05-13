@@ -18,6 +18,7 @@ import {
     type NestedListItem,
 } from '../utils/chatFormatting';
 import { formatDocumentOpenLinkLabel } from '../utils/chatLinkLabels';
+import { localizeUtcDatesInAssistantText } from '../utils/chatUtcDisplay';
 import { validateAndSanitizeUrl } from '../utils/linkSecurity';
 import type { SermonCitationType } from '../utils/sermonParagraphLinks';
 import {
@@ -231,9 +232,13 @@ export default function AssistantMessageBody({
     [content, chartFileId]
   );
   const clean = useMemo(() => stripCiteAnchors(displayRaw), [displayRaw]);
-  const normalized = useMemo(
-    () => normalizeDenseListMarkdown(clean),
+  const cleanLocalTimes = useMemo(
+    () => localizeUtcDatesInAssistantText(clean),
     [clean]
+  );
+  const normalized = useMemo(
+    () => normalizeDenseListMarkdown(cleanLocalTimes),
+    [cleanLocalTimes]
   );
   const blocks = useMemo(() => parseBlocks(normalized), [normalized]);
 
@@ -243,7 +248,7 @@ export default function AssistantMessageBody({
   const codeBg = colors.isDark ? '#374151' : '#f3f4f6';
   const codeBlockBg = colors.isDark ? '#1f2937' : '#f3f4f6';
 
-  if (!clean.trim()) return null;
+  if (!cleanLocalTimes.trim()) return null;
 
   const renderBlockContent = (block: FormattedBlock, keyPrefix: string) => {
     if (block.type === 'h1') {
@@ -483,7 +488,7 @@ export default function AssistantMessageBody({
                         style={[styles.referenceExcerpt, { color: colors.textSecondary }]}
                         numberOfLines={3}
                       >
-                        {c.excerpt}
+                        {localizeUtcDatesInAssistantText(String(c.excerpt))}
                       </Text>
                     )}
                   </View>

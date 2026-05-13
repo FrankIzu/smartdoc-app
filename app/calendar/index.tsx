@@ -1,50 +1,62 @@
 import { Ionicons } from '@expo/vector-icons';
+import { addNetworkStateListener, useNetworkState } from 'expo-network';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    ListRenderItem,
-    Modal,
-    Platform,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Keyboard,
+  ListRenderItem,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
-    calendarAssetsMetadata,
-    calendarConnections,
-    calendarDeleteConnection,
-    calendarGetStats,
-    calendarListEvents,
-    calendarSearchCompanyMembers,
-    calendarSyncGoogle,
+  calendarAssetsMetadata,
+  calendarConnections,
+  calendarDeleteConnection,
+  calendarGetStats,
+  calendarListEvents,
+  calendarSearchCompanyMembers,
+  calendarSyncGoogleWithStaleConnectionRecovery,
 } from '../../services/calendarApi';
+import { addCalendarPeriod, formatCalendarTitle, type CalendarSubView } from '../../utils/calendarRange';
 import {
-    addCalendarPeriod,
-    calendarFetchRange,
-    formatCalendarTitle,
-    type CalendarSubView,
-} from '../../utils/calendarRange';
+  buildCalendarListStorageKey,
+  getCalendarListCache,
+  getCalendarListFallback,
+  isCalendarFetchOfflineError,
+  saveCalendarListCache,
+} from '../../utils/calendarCache';
+import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
 import {
-    defaultCalendarListWindow,
-    calendarDisplayLocation,
-    eventHasReachMeeting,
-    filterEventsByTab,
-    formatEventWhen,
-    ListTabFilter,
-    parseUTC,
-    sortCalendarEventsByStartDesc,
+  flushPendingCalendarCreates,
+  getPendingCalendarCreates,
+  pendingCreatesToEventRows,
+  type FlushResult,
+  type PendingEventRow,
+} from '@/utils/calendarPendingCreates';
+import {
+  calendarDisplayLocation,
+  defaultCalendarListWindow,
+  eventHasReachMeeting,
+  filterEventsByTab,
+  formatEventWhen,
+  ListTabFilter,
+  sortCalendarEventsByStartAsc,
+  sortCalendarEventsByStartDesc,
 } from '../../utils/calendarTime';
 import { CalendarOAuthWebView } from './components/CalendarOAuthWebView';
 import { CalendarReachPill } from './components/CalendarReachIndicator';
@@ -86,7 +98,6 @@ export default function CalendarHomeScreen() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [tab, setTab] = useState<ListTabFilter>('upcoming');
@@ -107,6 +118,14 @@ export default function CalendarHomeScreen() {
   const [linkMenuOpen, setLinkMenuOpen] = useState(false);
   const [oauthOpen, setOauthOpen] = useState(false);
   const [syncMenuBusy, setSyncMenuBusy] = useState(false);
+
+  const networkState = useNetworkState();
+  const deviceOffline = useMemo(
+    () => isDeviceOfflineForCalendar(networkState),
+    [networkState?.isConnected, networkState?.type, networkState?.isInternetReachable]
+  );
+  const [calendarReadOnlyOffline, setCalendarReadOnlyOffline] = useState(false);
+  const [pendingEventRows, setPendingEventRows] = useState<EventRow[]>([]);
 
   const [layoutMode, setLayoutMode] = useState<'calendar' | 'list'>('calendar');
   const [calendarCursor, setCalendarCursor] = useState(() => new Date());
@@ -132,6 +151,11 @@ export default function CalendarHomeScreen() {
     [calendarConnectionsList]
   );
 
+  const dismissCalendarOverlays = useCallback(() => {
+    Keyboard.dismiss();
+    setMemberHits([]);
+  }, []);
+
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 350);
     return () => clearTimeout(t);
@@ -154,11 +178,31 @@ export default function CalendarHomeScreen() {
     setShowCompany(false);
   }, [isPersonalAccount]);
 
+  const listStorageKey = useMemo(
+    () =>
+      buildCalendarListStorageKey({
+        userId: profile?.id,
+        debouncedSearch,
+        showCancelled,
+        viewUserId,
+        isPersonalAccount,
+        showPersonal,
+        showCompany,
+      }),
+    [
+      profile?.id,
+      debouncedSearch,
+      showCancelled,
+      viewUserId,
+      isPersonalAccount,
+      showPersonal,
+      showCompany,
+    ]
+  );
+
   const load = useCallback(async () => {
-    const { start, end } =
-      layoutMode === 'list'
-        ? defaultCalendarListWindow()
-        : calendarFetchRange(calendarCursor, calendarSubView);
+    /** Same window as web: past 30 days through next 90 days for events + stats. */
+    const { start, end } = defaultCalendarListWindow();
     const params: Parameters<typeof calendarListEvents>[0] = {
       start_date: start.toISOString(),
       end_date: end.toISOString(),
@@ -182,18 +226,17 @@ export default function CalendarHomeScreen() {
 
     setMetaById({});
 
-    const statsParams = {
-      start_date: start.toISOString(),
-      end_date: end.toISOString(),
+    const statsParams: Parameters<typeof calendarGetStats>[0] = {
+      start_date: params.start_date,
+      end_date: params.end_date,
     };
-    const [list, st] = await Promise.all([
-      calendarListEvents(params),
-      viewUserId != null && isAdmin
-        ? Promise.resolve({} as Record<string, number>)
-        : calendarGetStats(statsParams),
-    ]);
+    if (viewUserId != null && isAdmin) statsParams.view_user_id = viewUserId;
+    if (params.event_type) statsParams.event_type = params.event_type;
+
+    const [list, st] = await Promise.all([calendarListEvents(params), calendarGetStats(statsParams)]);
     setEvents(list);
     setStats(st);
+    if (listStorageKey) void saveCalendarListCache(listStorageKey, list, st);
   }, [
     debouncedSearch,
     viewUserId,
@@ -202,55 +245,230 @@ export default function CalendarHomeScreen() {
     showCompany,
     showCancelled,
     isPersonalAccount,
-    layoutMode,
-    calendarCursor,
-    calendarSubView,
+    profile?.id,
+    listStorageKey,
   ]);
 
-  const eventsSignature = useMemo(() => events.map((e) => String(e.id ?? '')).join(','), [events]);
+  const reloadPendingRows = useCallback(async () => {
+    const uid = profile?.id;
+    if (uid == null) {
+      setPendingEventRows([]);
+      return;
+    }
+    const list = await getPendingCalendarCreates();
+    setPendingEventRows(
+      pendingCreatesToEventRows(list, {
+        userId: uid,
+        viewUserId,
+        isAdmin,
+        debouncedSearch,
+        showPersonal,
+        showCompany,
+        isPersonalAccount,
+      })
+    );
+  }, [
+    profile?.id,
+    viewUserId,
+    isAdmin,
+    debouncedSearch,
+    showPersonal,
+    showCompany,
+    isPersonalAccount,
+  ]);
+
+  const displayEvents = useMemo(
+    () => sortCalendarEventsByStartAsc([...events, ...pendingEventRows]),
+    [events, pendingEventRows]
+  );
+
+  const eventsSignature = useMemo(() => displayEvents.map((e) => String(e.id ?? '')).join(','), [displayEvents]);
 
   useFocusEffect(
     useCallback(() => {
       refreshProfile();
       refreshConnections();
-      calendarSyncGoogle().catch(() => {});
-    }, [refreshProfile, refreshConnections])
+      if (!deviceOffline) {
+        calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
+      }
+      reloadPendingRows();
+    }, [refreshProfile, refreshConnections, deviceOffline, reloadPendingRows])
   );
 
   React.useEffect(() => {
     if (profileLoading) return;
     let cancelled = false;
+
+    const hydrateDisk = async (): Promise<boolean> => {
+      if (listStorageKey) {
+        const cached = await getCalendarListCache(listStorageKey);
+        if (!cancelled && cached) {
+          setEvents(cached.events);
+          setStats(cached.stats);
+          setLoading(false);
+          return true;
+        }
+      }
+      const fallback = await getCalendarListFallback(profile?.id);
+      if (!cancelled && fallback) {
+        setEvents(fallback.events);
+        setStats(fallback.stats);
+        setLoading(false);
+        return true;
+      }
+      return false;
+    };
+
     (async () => {
-      setLoading(true);
-      setLoadError(null);
+      const hadDisk = await hydrateDisk();
+
+      if (deviceOffline) {
+        if (!cancelled) setCalendarReadOnlyOffline(true);
+        if (!hadDisk && !cancelled) {
+          setEvents([]);
+          setStats({});
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (!hadDisk && !cancelled) setLoading(true);
+      if (!cancelled) setCalendarReadOnlyOffline(false);
+
       try {
         if (!cancelled) await load();
+        if (!cancelled) setCalendarReadOnlyOffline(false);
       } catch (e: any) {
         console.warn('Calendar load failed', e?.message);
-        if (!cancelled) {
-          setLoadError(e?.response?.data?.error || e?.message || 'Could not load calendar');
+        if (isCalendarFetchOfflineError(e)) {
+          await hydrateDisk();
+          if (!cancelled) setCalendarReadOnlyOffline(true);
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [load, profileLoading]);
+  }, [load, profileLoading, listStorageKey, profile?.id, deviceOffline]);
+
+  React.useEffect(() => {
+    if (deviceOffline || profileLoading || profile?.id == null) return;
+    let cancelled = false;
+    (async () => {
+      const r = await flushPendingCalendarCreates(profile.id);
+      if (cancelled) return;
+      try {
+        if (r.synced > 0) await load();
+      } catch {
+        /* load handles hydrate */
+      }
+      await reloadPendingRows();
+      const parts: string[] = [];
+      if (r.synced > 0) {
+        parts.push(
+          `${r.synced} queued event(s) were saved. Invitations and emails are handled by the server.`
+        );
+      }
+      if (r.permanent > 0) {
+        parts.push(
+          `${r.permanent} item(s) need attention (validation error or max retries). Open each queued event for details or discard.`
+        );
+      }
+      if (parts.length) Alert.alert('Calendar sync', parts.join('\n\n'));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    deviceOffline,
+    profileLoading,
+    profile?.id,
+    load,
+    reloadPendingRows,
+    networkState?.isConnected,
+    networkState?.isInternetReachable,
+  ]);
+
+  React.useEffect(() => {
+    if (profileLoading || profile?.id == null) return;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const sub = addNetworkStateListener((state) => {
+      if (isDeviceOfflineForCalendar(state)) return;
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        flushPendingCalendarCreates(profile.id).then(async (r: FlushResult) => {
+          if (r.synced > 0) {
+            try {
+              await load();
+            } catch {
+              /* ignore */
+            }
+            await reloadPendingRows();
+          }
+        });
+      }, 800);
+    });
+    return () => {
+      sub.remove();
+      clearTimeout(debounce);
+    };
+  }, [profile?.id, profileLoading, load, reloadPendingRows]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    setLoadError(null);
     try {
-      await calendarSyncGoogle().catch(() => {});
+      if (deviceOffline) {
+        let ok = false;
+        if (listStorageKey) {
+          const c = await getCalendarListCache(listStorageKey);
+          if (c) {
+            setEvents(c.events);
+            setStats(c.stats);
+            ok = true;
+          }
+        }
+        if (!ok) {
+          const fb = await getCalendarListFallback(profile?.id);
+          if (fb) {
+            setEvents(fb.events);
+            setStats(fb.stats);
+          }
+        }
+        setCalendarReadOnlyOffline(true);
+        return;
+      }
+      if (profile?.id != null) {
+        await flushPendingCalendarCreates(profile.id);
+      }
+      await calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
       await load();
+      setCalendarReadOnlyOffline(false);
     } catch (e: any) {
-      setLoadError(e?.response?.data?.error || e?.message || 'Refresh failed');
+      console.warn('Calendar refresh failed', e?.message);
+      if (isCalendarFetchOfflineError(e)) {
+        if (listStorageKey) {
+          const c = await getCalendarListCache(listStorageKey);
+          if (c) {
+            setEvents(c.events);
+            setStats(c.stats);
+          }
+        } else {
+          const fb = await getCalendarListFallback(profile?.id);
+          if (fb) {
+            setEvents(fb.events);
+            setStats(fb.stats);
+          }
+        }
+        setCalendarReadOnlyOffline(true);
+      }
     } finally {
       setRefreshing(false);
+      reloadPendingRows();
     }
-  }, [load]);
+  }, [load, deviceOffline, listStorageKey, profile?.id, reloadPendingRows]);
 
   const calendarListRefresh = useMemo(
     () => <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />,
@@ -266,9 +484,13 @@ export default function CalendarHomeScreen() {
   }, [hasGoogleLinked]);
 
   const syncGoogleFromMenu = useCallback(async () => {
+    if (deviceOffline) {
+      Alert.alert('Offline', 'Connect to sync Google Calendar.');
+      return;
+    }
     setSyncMenuBusy(true);
     try {
-      await calendarSyncGoogle();
+      await calendarSyncGoogleWithStaleConnectionRecovery();
       await refreshConnections();
       await load();
       Alert.alert('Sync', 'Calendar sync started');
@@ -278,7 +500,7 @@ export default function CalendarHomeScreen() {
     } finally {
       setSyncMenuBusy(false);
     }
-  }, [load, refreshConnections]);
+  }, [load, refreshConnections, deviceOffline]);
 
   const disconnectGoogleFromMenu = useCallback(() => {
     Alert.alert('Disconnect', 'Remove Google Calendar from GrabDocs?', [
@@ -287,6 +509,10 @@ export default function CalendarHomeScreen() {
         text: 'Disconnect',
         style: 'destructive',
         onPress: async () => {
+          if (deviceOffline) {
+            Alert.alert('Offline', 'Disconnecting requires a connection.');
+            return;
+          }
           const googleIds = calendarConnectionsList
             .filter((c) => isGoogleCalendarConnection(c))
             .map((c) => Number(c.id))
@@ -304,7 +530,7 @@ export default function CalendarHomeScreen() {
         },
       },
     ]);
-  }, [calendarConnectionsList, load, refreshConnections]);
+  }, [calendarConnectionsList, load, refreshConnections, deviceOffline]);
 
   const goCalendarToday = useCallback(() => {
     const n = new Date();
@@ -330,19 +556,22 @@ export default function CalendarHomeScreen() {
         return next;
       });
     },
-    [calendarSubView]
+    [calendarSubView, dismissCalendarOverlays]
   );
 
   const visibleEvents = useMemo(() => {
-    if (showCancelled) return events;
-    return events.filter((e) => String(e.status ?? '').toLowerCase() !== 'cancelled');
-  }, [events, showCancelled]);
+    if (showCancelled) return displayEvents;
+    return displayEvents.filter((e) => String(e.status ?? '').toLowerCase() !== 'cancelled');
+  }, [displayEvents, showCancelled]);
 
   const filtered = useMemo(() => {
     const base =
       layoutMode === 'calendar' ? visibleEvents : filterEventsByTab(visibleEvents, tab);
     if (layoutMode !== 'list') return base;
-    return sortCalendarEventsByStartDesc(base);
+    /** Web: Past = newest first; All / Upcoming / Today = earliest first. */
+    return tab === 'past'
+      ? sortCalendarEventsByStartDesc(base)
+      : sortCalendarEventsByStartAsc(base);
   }, [visibleEvents, tab, layoutMode]);
 
   React.useEffect(() => {
@@ -383,32 +612,6 @@ export default function CalendarHomeScreen() {
     };
   }, [pagedFiltered, metaById]);
 
-  const listStats = useMemo(() => {
-    const now = Date.now();
-    const dayStart = new Date();
-    dayStart.setHours(0, 0, 0, 0);
-    const dayStartMs = dayStart.getTime();
-    const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000 - 1;
-
-    return visibleEvents.reduce(
-      (acc, ev) => {
-        const start = ev.start_time ? parseUTC(ev.start_time).getTime() : 0;
-        const end = ev.end_time ? parseUTC(ev.end_time).getTime() : start;
-        acc.total_events += 1;
-        if (end >= now && ev.status !== 'cancelled') acc.upcoming_events += 1;
-        if (end < now) acc.past_events += 1;
-        if (
-          ev.status !== 'cancelled' &&
-          ((start >= dayStartMs && start <= dayEndMs) || (start < dayStartMs && end >= dayStartMs))
-        ) {
-          acc.events_today += 1;
-        }
-        return acc;
-      },
-      { total_events: 0, upcoming_events: 0, past_events: 0, events_today: 0 }
-    );
-  }, [visibleEvents]);
-  const displayStats = viewUserId != null && isAdmin ? listStats : stats;
   const todayLabel = 'Today';
 
   const styles = useMemo(
@@ -418,12 +621,18 @@ export default function CalendarHomeScreen() {
         header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
         back: { padding: 8, marginRight: 8 },
         h1: { fontSize: 22, fontWeight: '700', color: colors.text, flex: 1, minWidth: 0 },
+        headerRight: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          flexShrink: 0,
+          gap: 2,
+        },
         headerLinkBtn: {
           maxWidth: 158,
           alignItems: 'flex-end',
           justifyContent: 'center',
           paddingVertical: 4,
-          paddingLeft: 8,
+          paddingLeft: 4,
         },
         headerConnectText: {
           color: '#007AFF',
@@ -462,6 +671,12 @@ export default function CalendarHomeScreen() {
         tabBtnOn: { backgroundColor: '#007AFF' },
         tabTxt: { color: colors.text, fontSize: 13, lineHeight: 18 },
         tabTxtOn: { color: '#fff', fontWeight: '600' },
+        listEventCount: {
+          paddingHorizontal: 16,
+          marginBottom: 8,
+          fontSize: 13,
+          color: colors.textSecondary,
+        },
         statRow: {
           flexDirection: 'row',
           paddingHorizontal: 12,
@@ -496,15 +711,43 @@ export default function CalendarHomeScreen() {
           justifyContent: 'space-between',
           paddingHorizontal: 16,
           marginBottom: 10,
-          gap: 8,
+          gap: 10,
         },
-        layoutModeChips: {
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          gap: 8,
-          alignItems: 'center',
+        /** Segmented control: Calendar | List — reads as tabs, not loose chips. */
+        layoutModeSegment: {
           flex: 1,
           minWidth: 0,
+          flexDirection: 'row',
+          alignItems: 'stretch',
+          padding: 3,
+          borderRadius: 10,
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        layoutModeTab: {
+          flex: 1,
+          minWidth: 0,
+          paddingVertical: 9,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 8,
+        },
+        layoutModeTabActive: {
+          backgroundColor: colors.primary,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.12,
+          shadowRadius: 2,
+          elevation: 2,
+        },
+        layoutModeTabText: {
+          fontSize: 14,
+          fontWeight: '600',
+          color: colors.textSecondary,
+        },
+        layoutModeTabTextActive: {
+          color: '#fff',
         },
         showCancelledCluster: {
           flexDirection: 'row',
@@ -581,17 +824,6 @@ export default function CalendarHomeScreen() {
           elevation: 4,
         },
         linkTxt: { color: '#007AFF', fontSize: 15, fontWeight: '600' },
-        errBanner: {
-          marginHorizontal: 16,
-          marginBottom: 10,
-          padding: 12,
-          borderRadius: 10,
-          backgroundColor: '#FEE2E2',
-          borderWidth: 1,
-          borderColor: '#FECACA',
-        },
-        errText: { color: '#991B1B', fontSize: 14, marginBottom: 8 },
-        errRetry: { color: '#007AFF', fontSize: 15, fontWeight: '600' },
         filterChipsOnlyRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -637,6 +869,18 @@ export default function CalendarHomeScreen() {
           borderColor: colors.border,
         },
         viewingBannerText: { flex: 1, fontSize: 14, color: colors.textSecondary, marginRight: 12 },
+        offlineBanner: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          marginBottom: 8,
+          backgroundColor: `${colors.tint ?? '#007AFF'}18`,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+        },
+        offlineBannerText: { flex: 1, fontSize: 13, color: colors.text, lineHeight: 18 },
         memberSuggestBox: {
           marginHorizontal: 16,
           marginTop: -4,
@@ -690,12 +934,24 @@ export default function CalendarHomeScreen() {
   );
 
   const openCreate = useCallback(() => {
+    dismissCalendarOverlays();
     if (viewUserId != null && isAdmin) {
       router.push({ pathname: '/calendar/create', params: { viewUserId: String(viewUserId) } } as any);
     } else {
       router.push('/calendar/create' as any);
     }
-  }, [router, viewUserId, isAdmin]);
+  }, [router, viewUserId, isAdmin, dismissCalendarOverlays]);
+
+  const navigateToEventDetail = useCallback(
+    (ev: EventRow) => {
+      if (ev._offlinePendingCreate && ev._offlinePendingLocalId) {
+        router.push(`/calendar/pending/${ev._offlinePendingLocalId}` as any);
+      } else {
+        router.push(`/calendar/${ev.id}` as any);
+      }
+    },
+    [router]
+  );
 
   const metaIndicatorLabels = useCallback((id: number): string[] => {
     const m = metaById[String(id)];
@@ -728,9 +984,13 @@ export default function CalendarHomeScreen() {
       return (
         <TouchableOpacity
           style={styles.card}
-          onPress={() => router.push(`/calendar/${ev.id}` as any)}
+          onPress={() => {
+            dismissCalendarOverlays();
+            navigateToEventDetail(ev);
+          }}
         >
           <Text style={styles.cardTitle}>
+            {ev._offlinePendingCreate ? (ev._needsAttention ? 'Needs attention · ' : 'Queued · ') : ''}
             {String(ev.status ?? '').toLowerCase() === 'cancelled' ? 'Cancelled · ' : ''}
             {ev.title || 'Untitled'}
           </Text>
@@ -766,15 +1026,16 @@ export default function CalendarHomeScreen() {
         </TouchableOpacity>
       );
     },
-    [router, styles, metaIndicatorLabels]
+    [router, styles, metaIndicatorLabels, dismissCalendarOverlays, navigateToEventDetail]
   );
 
   const listKeyExtractor = useCallback((item: EventRow) => String(item.id), []);
 
   const openStatList = useCallback((nextTab: ListTabFilter) => {
+    dismissCalendarOverlays();
     setLayoutMode('list');
     setTab(nextTab);
-  }, []);
+  }, [dismissCalendarOverlays]);
 
   const listHeader = useMemo(
     () => (
@@ -783,10 +1044,10 @@ export default function CalendarHomeScreen() {
           style={[styles.statMiniCard, layoutMode === 'list' && tab === 'all' && styles.statMiniCardSelected]}
           onPress={() => openStatList('all')}
           accessibilityRole="button"
-          accessibilityLabel={`Total ${displayStats.total_events ?? displayStats.total ?? '—'} events, show list`}
+          accessibilityLabel={`Total ${stats.total_events ?? stats.total ?? '—'} events, show list`}
         >
           <Text style={styles.statVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-            {displayStats.total_events ?? displayStats.total ?? '—'}
+            {stats.total_events ?? stats.total ?? '—'}
           </Text>
           <Text style={styles.statLbl} numberOfLines={1}>
             Total
@@ -796,10 +1057,10 @@ export default function CalendarHomeScreen() {
           style={[styles.statMiniCard, layoutMode === 'list' && tab === 'upcoming' && styles.statMiniCardSelected]}
           onPress={() => openStatList('upcoming')}
           accessibilityRole="button"
-          accessibilityLabel={`Upcoming ${displayStats.upcoming_events ?? displayStats.upcoming ?? '—'} events, show list`}
+          accessibilityLabel={`Upcoming ${stats.upcoming_events ?? stats.upcoming ?? '—'} events, show list`}
         >
           <Text style={styles.statVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-            {displayStats.upcoming_events ?? displayStats.upcoming ?? '—'}
+            {stats.upcoming_events ?? stats.upcoming ?? '—'}
           </Text>
           <Text style={styles.statLbl} numberOfLines={1}>
             Upcoming
@@ -809,10 +1070,10 @@ export default function CalendarHomeScreen() {
           style={[styles.statMiniCard, layoutMode === 'list' && tab === 'today' && styles.statMiniCardSelected]}
           onPress={() => openStatList('today')}
           accessibilityRole="button"
-          accessibilityLabel={`Today ${displayStats.events_today ?? displayStats.today ?? '—'} events, show list`}
+          accessibilityLabel={`Today ${stats.events_today ?? stats.today ?? '—'} events, show list`}
         >
           <Text style={styles.statVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-            {displayStats.events_today ?? displayStats.today ?? '—'}
+            {stats.events_today ?? stats.today ?? '—'}
           </Text>
           <Text style={styles.statLbl} numberOfLines={1}>
             {todayLabel}
@@ -822,10 +1083,10 @@ export default function CalendarHomeScreen() {
           style={[styles.statMiniCard, layoutMode === 'list' && tab === 'past' && styles.statMiniCardSelected]}
           onPress={() => openStatList('past')}
           accessibilityRole="button"
-          accessibilityLabel={`Past ${displayStats.past_events ?? displayStats.past ?? '—'} events, show list`}
+          accessibilityLabel={`Past ${stats.past_events ?? stats.past ?? '—'} events, show list`}
         >
           <Text style={styles.statVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-            {displayStats.past_events ?? displayStats.past ?? '—'}
+            {stats.past_events ?? stats.past ?? '—'}
           </Text>
           <Text style={styles.statLbl} numberOfLines={1}>
             Past
@@ -833,25 +1094,29 @@ export default function CalendarHomeScreen() {
         </TouchableOpacity>
       </View>
     ),
-    [displayStats, layoutMode, openStatList, styles, tab, todayLabel]
+    [layoutMode, openStatList, stats, styles, tab, todayLabel]
   );
+
+  const showOfflineBanner = deviceOffline || calendarReadOnlyOffline;
 
   const listEmpty = useMemo(() => {
     if (loading) {
       return <ActivityIndicator style={{ marginTop: 40 }} />;
     }
-    if (loadError && events.length === 0) {
+    if (filtered.length === 0) {
+      const offlineEmpty =
+        showOfflineBanner &&
+        events.length === 0 &&
+        pendingEventRows.length === 0 &&
+        Object.keys(stats).length === 0;
       return (
-        <Text style={[styles.cardSub, { textAlign: 'center', marginTop: 32, paddingHorizontal: 24 }]}>
-          Calendar could not be loaded. Use Try again above.
+        <Text style={[styles.cardSub, { textAlign: 'center', marginTop: 32 }]}>
+          {offlineEmpty ? 'No saved calendar yet. Connect once to download events.' : 'No events in this view.'}
         </Text>
       );
     }
-    if (filtered.length === 0) {
-      return <Text style={[styles.cardSub, { textAlign: 'center', marginTop: 32 }]}>No events in this view.</Text>;
-    }
     return null;
-  }, [loading, loadError, events.length, filtered.length, styles.cardSub]);
+  }, [loading, filtered.length, styles.cardSub, showOfflineBanner, events.length, pendingEventRows.length, stats]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -860,18 +1125,39 @@ export default function CalendarHomeScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.h1}>Calendar</Text>
-        <TouchableOpacity
-          style={styles.headerLinkBtn}
-          onPress={onHeaderCalendarLinkPress}
-          accessibilityLabel={hasGoogleLinked ? 'Google Calendar — sync or disconnect' : 'Connect Google Calendar'}
-        >
-          {hasGoogleLinked ? (
-            <Ionicons name="link-outline" size={24} color="#007AFF" />
-          ) : (
-            <Text style={styles.headerConnectText}>Connect Google Calendar</Text>
-          )}
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            onPress={openCreate}
+            accessibilityLabel="New event"
+            accessibilityRole="button"
+            style={styles.headerIconBtn}
+          >
+            <Ionicons name="add" size={24} color={colors.tint ?? '#007AFF'} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerLinkBtn}
+            onPress={onHeaderCalendarLinkPress}
+            accessibilityLabel={hasGoogleLinked ? 'Google Calendar — sync or disconnect' : 'Connect Google Calendar'}
+          >
+            {hasGoogleLinked ? (
+              <Ionicons name="link-outline" size={24} color="#007AFF" />
+            ) : (
+              <Text style={styles.headerConnectText}>Connect Google Calendar</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {showOfflineBanner ? (
+        <View style={styles.offlineBanner} accessibilityRole="text">
+          <Ionicons name="cloud-offline-outline" size={20} color={colors.tint ?? '#007AFF'} />
+          <Text style={styles.offlineBannerText}>
+            {deviceOffline
+              ? "You're offline — showing saved calendar."
+              : "Can't reach the server — showing saved calendar."}
+          </Text>
+        </View>
+      ) : null}
 
       {isAdmin && viewUserId != null ? (
         <View style={styles.viewingBanner}>
@@ -893,10 +1179,16 @@ export default function CalendarHomeScreen() {
       {showCompanyPersonalFilters ? (
         <View style={styles.filterChipsOnlyRow}>
           <View style={styles.filterChipsStandalone}>
-            <TouchableOpacity style={[styles.chip, showPersonal && styles.chipOn]} onPress={() => setShowPersonal((v) => !v)}>
+            <TouchableOpacity style={[styles.chip, showPersonal && styles.chipOn]} onPress={() => {
+              dismissCalendarOverlays();
+              setShowPersonal((v) => !v);
+            }}>
               <Text style={styles.chipText}>Personal</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.chip, showCompany && styles.chipOn]} onPress={() => setShowCompany((v) => !v)}>
+            <TouchableOpacity style={[styles.chip, showCompany && styles.chipOn]} onPress={() => {
+              dismissCalendarOverlays();
+              setShowCompany((v) => !v);
+            }}>
               <Text style={styles.chipText}>Company</Text>
             </TouchableOpacity>
           </View>
@@ -918,17 +1210,10 @@ export default function CalendarHomeScreen() {
           value={search}
           onChangeText={setSearch}
           returnKeyType="search"
+          blurOnSubmit={false}
           clearButtonMode={Platform.OS === 'ios' ? 'while-editing' : 'never'}
         />
         <View style={styles.filterRowActions}>
-          <TouchableOpacity
-            onPress={openCreate}
-            accessibilityLabel="New event"
-            accessibilityRole="button"
-            style={styles.headerIconBtn}
-          >
-            <Ionicons name="add-circle-outline" size={24} color={colors.tint} />
-          </TouchableOpacity>
           <TouchableOpacity
             onPress={() =>
               router.push('/(tabs)/chats?openStartNew=1&chatSource=calendar' as any)
@@ -971,22 +1256,41 @@ export default function CalendarHomeScreen() {
       {listHeader}
 
       <View style={styles.layoutModeRow}>
-        <View style={styles.layoutModeChips}>
+        <View style={styles.layoutModeSegment}>
           <TouchableOpacity
-            style={[styles.chip, layoutMode === 'calendar' && styles.chipOn]}
-            onPress={() => setLayoutMode('calendar')}
-            accessibilityRole="button"
+            style={[styles.layoutModeTab, layoutMode === 'calendar' && styles.layoutModeTabActive]}
+            onPress={() => {
+              dismissCalendarOverlays();
+              setLayoutMode('calendar');
+            }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: layoutMode === 'calendar' }}
             accessibilityLabel="Calendar view"
           >
-            <Text style={styles.chipText}>Calendar</Text>
+            <Text
+              style={[
+                styles.layoutModeTabText,
+                layoutMode === 'calendar' && styles.layoutModeTabTextActive,
+              ]}
+            >
+              Calendar
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.chip, layoutMode === 'list' && styles.chipOn]}
-            onPress={() => setLayoutMode('list')}
-            accessibilityRole="button"
+            style={[styles.layoutModeTab, layoutMode === 'list' && styles.layoutModeTabActive]}
+            onPress={() => {
+              dismissCalendarOverlays();
+              setLayoutMode('list');
+            }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: layoutMode === 'list' }}
             accessibilityLabel="List view"
           >
-            <Text style={styles.chipText}>List</Text>
+            <Text
+              style={[styles.layoutModeTabText, layoutMode === 'list' && styles.layoutModeTabTextActive]}
+            >
+              List
+            </Text>
           </TouchableOpacity>
         </View>
         <View style={styles.showCancelledCluster}>
@@ -995,69 +1299,80 @@ export default function CalendarHomeScreen() {
           </Text>
           <Switch
             value={showCancelled}
-            onValueChange={setShowCancelled}
+            onValueChange={(v) => {
+              dismissCalendarOverlays();
+              setShowCancelled(v);
+            }}
             accessibilityLabel="Show cancelled events"
             style={styles.switchShowCancelled}
           />
         </View>
       </View>
 
-      {loadError && !loading ? (
-        <View style={styles.errBanner}>
-          <Text style={styles.errText}>{loadError}</Text>
-          <TouchableOpacity
-            onPress={() => {
-              setLoadError(null);
-              setLoading(true);
-              load()
-                .catch((e: any) => setLoadError(e?.response?.data?.error || e?.message || 'Could not load calendar'))
-                .finally(() => setLoading(false));
-            }}
-          >
-            <Text style={styles.errRetry}>Try again</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
       {layoutMode === 'calendar' ? (
         <>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, marginBottom: 8 }}>
-            <TouchableOpacity style={{ width: 52 }} onPress={goCalendarToday}>
+          {calendarSubView !== 'month' ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 12,
+                marginBottom: 8,
+                gap: 12,
+              }}
+            >
+              <TouchableOpacity onPress={() => bumpCalendar(-1)} accessibilityLabel="Previous period">
+                <Ionicons name="chevron-back" size={24} color="#007AFF" />
+              </TouchableOpacity>
+              <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text, maxWidth: 180 }} numberOfLines={1}>
+                {formatCalendarTitle(calendarCursor, calendarSubView)}
+              </Text>
+              <TouchableOpacity onPress={() => bumpCalendar(1)} accessibilityLabel="Next period">
+                <Ionicons name="chevron-forward" size={24} color="#007AFF" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: 12,
+              marginBottom: 10,
+              gap: 8,
+            }}
+          >
+            <ScrollView
+              horizontal
+              keyboardShouldPersistTaps="handled"
+              onScrollBeginDrag={dismissCalendarOverlays}
+              showsHorizontalScrollIndicator={false}
+              style={{ flex: 1, minWidth: 0 }}
+              contentContainerStyle={{ gap: 8, alignItems: 'center', paddingVertical: 2 }}
+            >
+              {(['month', 'week', 'day', 'agenda'] as const).map((v) => (
+                <TouchableOpacity
+                  key={v}
+                  style={[styles.chip, calendarSubView === v && styles.chipOn]}
+                  onPress={() => {
+                    dismissCalendarOverlays();
+                    setCalendarSubView(v);
+                  }}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.chipText}>{v === 'agenda' ? 'Agenda' : v.charAt(0).toUpperCase() + v.slice(1)}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              onPress={goCalendarToday}
+              style={{ flexShrink: 0, alignSelf: 'center' }}
+              accessibilityRole="button"
+              accessibilityLabel="Today"
+            >
               <Text style={styles.linkTxt}>Today</Text>
             </TouchableOpacity>
-            {calendarSubView === 'month' ? (
-              <View style={{ flex: 1 }} />
-            ) : (
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-                <TouchableOpacity onPress={() => bumpCalendar(-1)} accessibilityLabel="Previous period">
-                  <Ionicons name="chevron-back" size={24} color="#007AFF" />
-                </TouchableOpacity>
-                <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text, maxWidth: 180 }} numberOfLines={1}>
-                  {formatCalendarTitle(calendarCursor, calendarSubView)}
-                </Text>
-                <TouchableOpacity onPress={() => bumpCalendar(1)} accessibilityLabel="Next period">
-                  <Ionicons name="chevron-forward" size={24} color="#007AFF" />
-                </TouchableOpacity>
-              </View>
-            )}
           </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ flexGrow: 0, flexShrink: 0, marginBottom: 10 }}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
-          >
-            {(['month', 'week', 'day', 'agenda'] as const).map((v) => (
-              <TouchableOpacity
-                key={v}
-                style={[styles.chip, calendarSubView === v && styles.chipOn]}
-                onPress={() => setCalendarSubView(v)}
-                accessibilityRole="button"
-              >
-                <Text style={styles.chipText}>{v === 'agenda' ? 'Agenda' : v.charAt(0).toUpperCase() + v.slice(1)}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
 
           {calendarSubView === 'month' ? (
             <ScrollView
@@ -1068,6 +1383,7 @@ export default function CalendarHomeScreen() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: calendarScrollBottomPad }}
               keyboardShouldPersistTaps="handled"
+              onScrollBeginDrag={dismissCalendarOverlays}
             >
               <CalendarVisualPane
                 subView={calendarSubView}
@@ -1076,6 +1392,7 @@ export default function CalendarHomeScreen() {
                 onMonthSelectedDay={setMonthSelectedDay}
                 onCursorDateChange={setCalendarCursor}
                 visibleEvents={visibleEvents}
+                onDismissOverlays={dismissCalendarOverlays}
                 colors={{
                   background: colors.background,
                   surface: colors.surface,
@@ -1083,7 +1400,12 @@ export default function CalendarHomeScreen() {
                   textSecondary: colors.textSecondary,
                   border: colors.border,
                 }}
-                onEventPress={(id) => router.push(`/calendar/${id}` as any)}
+                onEventPress={(id) => {
+                  dismissCalendarOverlays();
+                  const ev = visibleEvents.find((e) => e.id === id);
+                  if (ev) navigateToEventDetail(ev);
+                  else router.push(`/calendar/${id}` as any);
+                }}
                 monthScrollRef={monthVerticalScrollRef}
               />
             </ScrollView>
@@ -1103,7 +1425,11 @@ export default function CalendarHomeScreen() {
                   textSecondary: colors.textSecondary,
                   border: colors.border,
                 }}
-                onEventPress={(id) => router.push(`/calendar/${id}` as any)}
+                onEventPress={(id) => {
+                  const ev = visibleEvents.find((e) => e.id === id);
+                  if (ev) navigateToEventDetail(ev);
+                  else router.push(`/calendar/${id}` as any);
+                }}
                 listRefreshControl={calendarListRefresh}
               />
             </View>
@@ -1113,6 +1439,7 @@ export default function CalendarHomeScreen() {
         <>
           <ScrollView
             horizontal
+            keyboardShouldPersistTaps="handled"
             showsHorizontalScrollIndicator={false}
             style={{ flexGrow: 0, flexShrink: 0 }}
             contentContainerStyle={styles.tabs}
@@ -1131,6 +1458,10 @@ export default function CalendarHomeScreen() {
             ))}
           </ScrollView>
 
+          <Text style={styles.listEventCount} accessibilityLiveRegion="polite">
+            {filtered.length} event(s)
+          </Text>
+
           <FlatList
             style={{ flex: 1 }}
             data={pagedFiltered}
@@ -1140,6 +1471,9 @@ export default function CalendarHomeScreen() {
             ListEmptyComponent={listEmpty}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             contentContainerStyle={{ paddingBottom: calendarScrollBottomPad, flexGrow: 1 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            onScrollBeginDrag={dismissCalendarOverlays}
             onEndReached={onListEndReached}
             onEndReachedThreshold={0.35}
             onMomentumScrollBegin={() => {
@@ -1190,7 +1524,7 @@ export default function CalendarHomeScreen() {
         onClose={() => setOauthOpen(false)}
         onSuccess={async () => {
           await refreshConnections();
-          await calendarSyncGoogle().catch(() => {});
+          await calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
           try {
             await load();
           } catch {

@@ -568,7 +568,7 @@ export default function DraftsListScreen() {
         >
           <Ionicons name="search-outline" size={56} color={colors.textSecondary} style={dynamicStyles.emptyIcon} />
           <Text style={dynamicStyles.emptyTitle}>No drafts found</Text>
-          <Text style={dynamicStyles.emptySubtitle}>No drafts match "{searchQuery}"</Text>
+          <Text style={dynamicStyles.emptySubtitle}>{`No drafts match "${searchQuery}"`}</Text>
         </ScrollView>
       ) : (
         <ScrollView

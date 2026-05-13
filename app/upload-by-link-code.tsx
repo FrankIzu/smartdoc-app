@@ -249,7 +249,7 @@ export default function UploadByLinkCodeScreen() {
           </TouchableOpacity>
 
           <Text style={dynamicStyles.helpText}>
-            Don't have a code? Contact the person who shared the upload link with you.
+            {"Don't have a code? Contact the person who shared the upload link with you."}
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

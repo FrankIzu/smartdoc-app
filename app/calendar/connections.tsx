@@ -8,7 +8,7 @@ import {
   calendarConnections,
   calendarDeleteConnection,
   calendarResetConnection,
-  calendarSyncGoogle,
+  calendarSyncGoogleWithStaleConnectionRecovery,
 } from '../../services/calendarApi';
 import { CalendarOAuthWebView } from './components/CalendarOAuthWebView';
 
@@ -73,7 +73,7 @@ export default function CalendarConnectionsScreen() {
 
   const syncAll = async () => {
     try {
-      await calendarSyncGoogle();
+      await calendarSyncGoogleWithStaleConnectionRecovery();
       Alert.alert('Sync', 'Calendar sync started');
       await load();
     } catch (e: any) {
@@ -158,7 +158,7 @@ export default function CalendarConnectionsScreen() {
         onClose={() => setOauthOpen(false)}
         onSuccess={async () => {
           await load();
-          await calendarSyncGoogle().catch(() => {});
+          await calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
         }}
         onError={(msg) => Alert.alert('Connection', msg)}
       />

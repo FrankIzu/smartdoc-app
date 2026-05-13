@@ -1,12 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useNetworkState } from 'expo-network';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -22,8 +25,12 @@ import {
   calendarCategoriesWithRecords,
   calendarCreateEvent,
   calendarSearchCompanyMembers,
+  calendarSyncGoogleWithStaleConnectionRecovery,
   scheduleReachMeeting,
 } from '../../services/calendarApi';
+import { invalidateCalendarListCache, isCalendarFetchOfflineError } from '../../utils/calendarCache';
+import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
+import { enqueuePendingCalendarCreate } from '@/utils/calendarPendingCreates';
 import {
   combineLocalDateAndTimeStrings,
   convertLocalTimeToUTC,
@@ -61,6 +68,7 @@ export default function CalendarCreateScreen() {
   const colors = useThemeColors();
   const params = useLocalSearchParams<{ viewUserId?: string }>();
   const { profile, refresh } = useCalendarProfile();
+  const networkState = useNetworkState();
   const isAdmin = calendarIsCompanyAdmin(profile);
   const isPersonalAccount = useMemo(() => (profile?.company_id ?? 0) === 0, [profile?.company_id]);
 
@@ -114,9 +122,23 @@ export default function CalendarCreateScreen() {
     return preset?.label ?? `${durationMin} minutes`;
   }, [durationMin]);
 
+  const dismissFormOverlays = useCallback(() => {
+    Keyboard.dismiss();
+    setShowPicker(null);
+    setDurationPickerOpen(false);
+  }, []);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isDeviceOfflineForCalendar(networkState)) {
+        calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
+      }
+    }, [networkState?.isConnected, networkState?.type, networkState?.isInternetReachable])
+  );
 
   useEffect(() => {
     if (isPersonalAccount) {
@@ -282,9 +304,16 @@ export default function CalendarCreateScreen() {
 
     setSubmitting(true);
     try {
+      const deviceOffline = isDeviceOfflineForCalendar(networkState);
       let videoMeetingUrl = meetingUrlManual.trim() || undefined;
       let videoCallId: string | number | undefined = undefined;
       let loc = location.trim();
+
+      if (useReach && deviceOffline) {
+        Alert.alert('Offline', 'Reach video meetings require an internet connection.');
+        setSubmitting(false);
+        return;
+      }
 
       if (useReach) {
         try {
@@ -351,9 +380,52 @@ export default function CalendarCreateScreen() {
           setSubmitting(false);
           return;
         }
-        await calendarCreateEvent(eventData);
+
+        if (deviceOffline) {
+          if (profile?.id == null) {
+            Alert.alert('Sign in required', 'Sign in to save events on this device.');
+            setSubmitting(false);
+            return;
+          }
+          await enqueuePendingCalendarCreate(eventData, profile.id);
+          Alert.alert(
+            'Saved on device',
+            'This event will sync when you are online. Invitations and emails are sent after it is saved on the server.'
+          );
+          router.replace('/calendar' as any);
+          setSubmitting(false);
+          return;
+        }
+
+        const crid =
+          typeof globalThis !== 'undefined' && globalThis.crypto && 'randomUUID' in globalThis.crypto
+            ? globalThis.crypto.randomUUID()
+            : `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+        const onlinePayload: Record<string, unknown> = {
+          ...eventData,
+          client_request_id: crid,
+          created_from_offline_queue: false,
+          original_client_timestamp: new Date().toISOString(),
+        };
+
+        try {
+          await calendarCreateEvent(onlinePayload);
+        } catch (e: any) {
+          if (isCalendarFetchOfflineError(e) && profile?.id != null) {
+            await enqueuePendingCalendarCreate(eventData, profile.id);
+            Alert.alert(
+              'Saved on device',
+              'Could not reach the server. This event will sync when you are back online; invitations go out after sync.'
+            );
+            router.replace('/calendar' as any);
+            setSubmitting(false);
+            return;
+          }
+          throw e;
+        }
       }
 
+      await invalidateCalendarListCache();
       router.replace('/calendar' as any);
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.error || e?.message || 'Create failed');
@@ -383,6 +455,8 @@ export default function CalendarCreateScreen() {
     recordId,
     reminderMinutes,
     router,
+    networkState,
+    profile?.id,
   ]);
 
   return (
@@ -405,6 +479,7 @@ export default function CalendarCreateScreen() {
           contentContainerStyle={styles.body}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          onScrollBeginDrag={dismissFormOverlays}
           showsVerticalScrollIndicator={false}
         >
         <Text style={styles.label}>Title *</Text>
@@ -596,8 +671,9 @@ export default function CalendarCreateScreen() {
       </KeyboardAvoidingView>
 
       {showPicker === 'date' && Platform.OS === 'ios' ? (
-        <Modal transparent animationType="slide">
-          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: '#0006' }}>
+        <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
+          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
             <View style={{ backgroundColor: colors.background, padding: 16 }}>
               <DateTimePicker
                 value={getPickerDateTime(eventDate, eventTime)}
@@ -605,7 +681,6 @@ export default function CalendarCreateScreen() {
                 display="spinner"
                 onChange={(_, d) => {
                   if (d) setEventDate(toLocalDateString(d));
-                  setShowPicker(null);
                 }}
               />
               <TouchableOpacity onPress={() => setShowPicker(null)}>
@@ -617,8 +692,9 @@ export default function CalendarCreateScreen() {
       ) : null}
 
       {showPicker === 'time' && Platform.OS === 'ios' ? (
-        <Modal transparent animationType="slide">
-          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: '#0006' }}>
+        <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
+          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
             <View style={{ backgroundColor: colors.background, padding: 16 }}>
               <DateTimePicker
                 value={getPickerDateTime(eventDate, eventTime)}
@@ -626,7 +702,6 @@ export default function CalendarCreateScreen() {
                 display="spinner"
                 onChange={(_, d) => {
                   if (d) setEventTime(formatLocalTime12h(d));
-                  setShowPicker(null);
                 }}
               />
               <TouchableOpacity onPress={() => setShowPicker(null)}>
@@ -695,8 +770,14 @@ export default function CalendarCreateScreen() {
               mode="date"
               display="default"
               onChange={(e, d) => {
-                setShowPicker(null);
-                if (e.type === 'set' && d) setEventDate(toLocalDateString(d));
+                if (e.type === 'dismissed') {
+                  setShowPicker(null);
+                  return;
+                }
+                if (e.type === 'set' && d) {
+                  setEventDate(toLocalDateString(d));
+                  setShowPicker(null);
+                }
               }}
             />
           ) : null}
@@ -706,8 +787,14 @@ export default function CalendarCreateScreen() {
               mode="time"
               display="default"
               onChange={(e, d) => {
-                setShowPicker(null);
-                if (e.type === 'set' && d) setEventTime(formatLocalTime12h(d));
+                if (e.type === 'dismissed') {
+                  setShowPicker(null);
+                  return;
+                }
+                if (e.type === 'set' && d) {
+                  setEventTime(formatLocalTime12h(d));
+                  setShowPicker(null);
+                }
               }}
             />
           ) : null}
@@ -715,7 +802,15 @@ export default function CalendarCreateScreen() {
       ) : null}
 
       <Modal visible={memberModal} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: '#0008', justifyContent: 'flex-end' }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => {
+              Keyboard.dismiss();
+              setMemberModal(false);
+            }}
+          />
           <View style={{ backgroundColor: colors.background, padding: 16, maxHeight: '75%' }}>
             <Text style={{ fontWeight: '600', color: colors.text, marginBottom: 8 }}>Search member</Text>
             <TextInput
@@ -749,8 +844,21 @@ export default function CalendarCreateScreen() {
       </Modal>
 
       <Modal visible={categoryModal} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: '#0008', padding: 16, justifyContent: 'center' }}>
-          <View style={{ backgroundColor: colors.background, borderRadius: 12, padding: 16, maxHeight: '80%' }}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
+          <Pressable
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: '#0008' }]}
+            onPress={() => setCategoryModal(false)}
+          />
+          <View
+            style={{
+              backgroundColor: colors.background,
+              borderRadius: 12,
+              padding: 16,
+              maxHeight: '80%',
+              zIndex: 1,
+              elevation: 4,
+            }}
+          >
             <Text style={{ fontWeight: '600', marginBottom: 8, color: colors.text }}>Category & record</Text>
             <ScrollView>
               {categories.map((c) => (

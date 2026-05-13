@@ -105,14 +105,6 @@ export default function CalendarEventAssetsScreen() {
     [colors]
   );
 
-  if (!Number.isFinite(eventId)) {
-    return (
-      <SafeAreaView style={styles.safe}>
-        <Text style={{ padding: 16 }}>Invalid</Text>
-      </SafeAreaView>
-    );
-  }
-
   const assets = useMemo<AssetItem[]>(() => {
     const meeting = payload?.meeting ?? payload;
     if (!meeting) return [];
@@ -169,6 +161,14 @@ export default function CalendarEventAssetsScreen() {
 
     return rows;
   }, [payload]);
+
+  if (!Number.isFinite(eventId)) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Text style={{ padding: 16 }}>Invalid</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

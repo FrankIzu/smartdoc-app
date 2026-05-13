@@ -32,6 +32,7 @@ export function parseUTC(iso: string | number | null | undefined): Date {
 }
 
 const START_SORT_MISSING = Number.NEGATIVE_INFINITY;
+const START_SORT_MISSING_LAST_ASC = Number.POSITIVE_INFINITY;
 
 /** Start-time ms for sorting; missing start sorts last when using descending order. */
 export function calendarEventStartMs(ev: { start_time?: string | null }): number {
@@ -39,6 +40,19 @@ export function calendarEventStartMs(ev: { start_time?: string | null }): number
   if (raw == null || String(raw).trim() === '') return START_SORT_MISSING;
   const t = parseUTC(raw).getTime();
   return Number.isNaN(t) ? START_SORT_MISSING : t;
+}
+
+/** Missing / invalid start sorts last when ordering ascending (earliest first). */
+export function calendarEventStartMsAsc(ev: { start_time?: string | null }): number {
+  const raw = ev.start_time;
+  if (raw == null || String(raw).trim() === '') return START_SORT_MISSING_LAST_ASC;
+  const t = parseUTC(raw).getTime();
+  return Number.isNaN(t) ? START_SORT_MISSING_LAST_ASC : t;
+}
+
+/** Earliest start first (web list: All / Upcoming / Today). */
+export function sortCalendarEventsByStartAsc<T extends { start_time?: string | null }>(events: T[]): T[] {
+  return [...events].sort((a, b) => calendarEventStartMsAsc(a) - calendarEventStartMsAsc(b));
 }
 
 /** Latest start time first (reverse chronological). Events without start_time sort last. */
@@ -199,38 +213,31 @@ function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function isCancelledEvent(e: { status?: string }) {
-  return String(e.status ?? '').toLowerCase() === 'cancelled';
-}
-
-/** Client tabs after fetch — match web list behavior in local TZ. */
+/**
+ * Client tabs after fetch — match web `frontend/src/pages/calendar/index.tsx`:
+ * upcoming: start >= now; today: local calendar day on start [today 00:00, tomorrow 00:00); past: start < now.
+ */
 export function filterEventsByTab<T extends { start_time?: string; end_time?: string; status?: string }>(
   events: T[],
   tab: ListTabFilter
 ): T[] {
   const now = new Date();
-  const sod = startOfLocalDay(now).getTime();
-  const eod = sod + 24 * 60 * 60 * 1000 - 1;
+  const today = startOfLocalDay(now);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
 
   return events.filter((e) => {
     const start = e.start_time ? parseUTC(e.start_time) : new Date(0);
-    const end = e.end_time ? parseUTC(e.end_time) : start;
-    const startMs = start.getTime();
-    const endMs = end.getTime();
-    const cancelled = isCancelledEvent(e);
 
     switch (tab) {
       case 'all':
         return true;
       case 'upcoming':
-        return endMs >= now.getTime() && !cancelled;
+        return start.getTime() >= now.getTime();
       case 'today':
-        return (
-          !cancelled &&
-          ((startMs >= sod && startMs <= eod) || (startMs < sod && endMs >= sod))
-        );
+        return start.getTime() >= today.getTime() && start.getTime() < tomorrow.getTime();
       case 'past':
-        return endMs < now.getTime();
+        return start.getTime() < now.getTime();
       default:
         return true;
     }

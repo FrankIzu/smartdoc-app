@@ -1,13 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useNetworkState } from 'expo-network';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -23,9 +26,12 @@ import {
   calendarCategoriesWithRecords,
   calendarGetEvent,
   calendarSearchCompanyMembers,
+  calendarSyncGoogleWithStaleConnectionRecovery,
   calendarUpdateEvent,
   scheduleReachMeeting,
 } from '../../../services/calendarApi';
+import { invalidateCalendarListCache } from '../../../utils/calendarCache';
+import { isDeviceOfflineForCalendar } from '../../../utils/calendarOffline';
 import {
   combineLocalDateAndTimeStrings,
   convertLocalTimeToUTC,
@@ -36,6 +42,9 @@ import {
 } from '../../../utils/calendarTime';
 
 type Participant = { email: string; name: string; type: string };
+
+/** Matches `app/calendar/create.tsx` and Reach meeting name limits. */
+const MAX_EVENT_TITLE_LENGTH = 50;
 
 const REMINDER_OPTIONS: { minutes: number; label: string }[] = [
   { minutes: 5, label: '5 min before' },
@@ -53,7 +62,20 @@ export default function CalendarEditScreen() {
   const colors = useThemeColors();
   const { profile, refresh } = useCalendarProfile();
   const isAdmin = calendarIsCompanyAdmin(profile);
+  const networkState = useNetworkState();
+  const deviceOffline = useMemo(
+    () => isDeviceOfflineForCalendar(networkState),
+    [networkState?.isConnected, networkState?.type, networkState?.isInternetReachable]
+  );
   const tz = useMemo(() => getDeviceIanaTimezone(), []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!deviceOffline) {
+        calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
+      }
+    }, [deviceOffline])
+  );
 
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
@@ -275,6 +297,10 @@ export default function CalendarEditScreen() {
       Alert.alert('Title', 'Required');
       return;
     }
+    if (title.trim().length > MAX_EVENT_TITLE_LENGTH) {
+      Alert.alert('Title', `Max ${MAX_EVENT_TITLE_LENGTH} characters`);
+      return;
+    }
     if (newEmail.trim().length > 0) {
       Alert.alert(
         'Participant not added',
@@ -375,6 +401,7 @@ export default function CalendarEditScreen() {
       }
 
       await calendarUpdateEvent(eventId, eventData);
+      await invalidateCalendarListCache();
       router.replace(`/calendar/${eventId}` as any);
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.error || e?.message || 'Update failed');
@@ -422,7 +449,13 @@ export default function CalendarEditScreen() {
           showsVerticalScrollIndicator={false}
         >
         <Text style={styles.label}>Title</Text>
-        <TextInput style={styles.input} value={title} onChangeText={setTitle} placeholderTextColor={colors.textSecondary} />
+        <TextInput
+          style={styles.input}
+          value={title}
+          onChangeText={setTitle}
+          placeholderTextColor={colors.textSecondary}
+          maxLength={MAX_EVENT_TITLE_LENGTH}
+        />
 
         {isAdmin && eventType === 'company' ? (
           <>
@@ -572,19 +605,24 @@ export default function CalendarEditScreen() {
           mode={showPicker === 'startT' || showPicker === 'endT' ? 'time' : 'date'}
           display="default"
           onChange={(e, d) => {
-            setShowPicker(null);
+            if (e.type === 'dismissed') {
+              setShowPicker(null);
+              return;
+            }
             if (e.type !== 'set' || !d) return;
             if (showPicker === 'startD') setStartDate(toLocalDateString(d));
             if (showPicker === 'startT') setStartTime(formatLocalTime12h(d));
             if (showPicker === 'endD') setEndDate(toLocalDateString(d));
             if (showPicker === 'endT') setEndTime(formatLocalTime12h(d));
+            setShowPicker(null);
           }}
         />
       ) : null}
 
       {Platform.OS === 'ios' && showPicker ? (
-        <Modal transparent animationType="slide">
-          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: '#0006' }}>
+        <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
+          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
             <View style={{ backgroundColor: colors.background, padding: 16 }}>
               <DateTimePicker
                 value={getPickerValue()}
@@ -607,7 +645,15 @@ export default function CalendarEditScreen() {
       ) : null}
 
       <Modal visible={memberModal} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: '#0008', justifyContent: 'flex-end' }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => {
+              Keyboard.dismiss();
+              setMemberModal(false);
+            }}
+          />
           <View style={{ backgroundColor: colors.background, padding: 16, maxHeight: '75%' }}>
             <Text style={{ fontWeight: '600', color: colors.text, marginBottom: 8 }}>Search member</Text>
             <TextInput
@@ -642,8 +688,21 @@ export default function CalendarEditScreen() {
       </Modal>
 
       <Modal visible={categoryModal} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: '#0008', padding: 16, justifyContent: 'center' }}>
-          <View style={{ backgroundColor: colors.background, borderRadius: 12, padding: 16, maxHeight: '80%' }}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
+          <Pressable
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: '#0008' }]}
+            onPress={() => setCategoryModal(false)}
+          />
+          <View
+            style={{
+              backgroundColor: colors.background,
+              borderRadius: 12,
+              padding: 16,
+              maxHeight: '80%',
+              zIndex: 1,
+              elevation: 4,
+            }}
+          >
             <ScrollView>
               {categories.map((c) => (
                 <View key={String(c.id)} style={{ marginBottom: 12 }}>
