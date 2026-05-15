@@ -254,6 +254,7 @@ export default function JoinMeetingScreen() {
         enable_audio: false,
         enable_video: false,
         viewer_type: 'near-realtime',
+        join_intent: 'prepare',
         ...(params.passcode_token ? { passcode_token: params.passcode_token } : (pc ? { passcode: pc } : {})),
       });
 

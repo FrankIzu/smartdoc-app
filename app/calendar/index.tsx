@@ -854,10 +854,10 @@ export default function CalendarHomeScreen() {
           flexShrink: 0,
         },
         switchShowCancelled: {
-          transform: [{ scaleX: 0.94 }, { scaleY: 0.94 }],
+          transform: [{ scaleX: 0.72 }, { scaleY: 0.72 }],
         },
         listCancelledLabel: {
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: '600',
           color: colors.text,
           maxWidth: 108,

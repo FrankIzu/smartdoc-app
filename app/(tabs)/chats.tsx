@@ -4450,7 +4450,7 @@ export default function ChatsScreen() {
             // Discard any deferred main_search_pending / preview_complete /
             // result_superseded action queued by runWhenTyped — once we cut
             // over, those would otherwise re-flip the row to a stale preview
-            // state (showing "Preparing final response ..." dots over refinement text)
+            // state (showing "Preparing final response" + RefiningStatusDots over refinement text)
             // when the typewriter eventually catches up to the new buffer.
             pendingFinalActionRef.current = null;
             if (previewWasSkipped) {
@@ -7259,12 +7259,12 @@ export default function ChatsScreen() {
                         accessibilityRole="text"
                         accessibilityLabel={
                           item.main_search_pending
-                            ? 'Preparing final response ...'
+                            ? 'Preparing final response'
                             : 'Refining response'
                         }
                       >
                         <Text style={{ color: refiningStatusColor, fontSize: 15 }}>
-                          {item.main_search_pending ? 'Preparing final response ...' : 'Refining response'}
+                          {item.main_search_pending ? 'Preparing final response' : 'Refining response'}
                         </Text>
                         <RefiningStatusDots color={refiningStatusColor} />
                       </View>

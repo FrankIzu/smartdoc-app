@@ -2,10 +2,21 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
+import * as Device from 'expo-device';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { Component, ErrorInfo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import React, {
+  Component,
+  ErrorInfo,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
     Alert,
     AppState,
@@ -28,6 +39,7 @@ import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { errorLogger } from '../../services/errorLogger';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
+import { MeetingPresenceConfirmBridge } from './MeetingPresenceConfirmBridge';
 
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
 
@@ -95,6 +107,20 @@ class HMSErrorBoundary extends Component<
 // Minimal bottom inset for Android so prebuilt toolbar clears system nav (kept small to avoid moving UI up too much)
 const ANDROID_NAV_INSET = 24;
 
+/** Must match `@100mslive/react-native-room-kit` defaults so stale/partial `global.joinConfig` never leaves AV unmuted. */
+function applyGrabdocsHmsRoomKitJoinDefaults() {
+  if (typeof global === 'undefined') return;
+  (global as any).joinConfig = {
+    mutedAudio: true,
+    mutedVideo: true,
+    skipPreview: false,
+    audioMixer: false,
+    musicMode: false,
+    softwareDecoder: true,
+    autoResize: false,
+  };
+}
+
 export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -140,9 +166,30 @@ export default function HMSMeetingInterfaceScreen() {
 
   const notificationDisplayedRef = useRef(false);
   const pipFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [orientationReadyForHms, setOrientationReadyForHms] = useState(() => Platform.OS === 'web');
   const [joinSoundReady, setJoinSoundReady] = useState(false);
   /** Canonical GrabDocs meeting id from join response (preferred for list/storage merge). */
   const [resolvedStorageMeetingId, setResolvedStorageMeetingId] = useState<string | null>(null);
+  /** True only after HMS room join + `/join-by-id/confirm` — gates presence side effects (storage, heartbeat, etc.). */
+  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
+
+  type JoinConfirmContext = {
+    meetingIdStr: string;
+    token: string;
+    displayName: string;
+    viewerType: string;
+    passcodePayload: Record<string, string>;
+    startedWithForceJoin: boolean;
+  };
+  const joinConfirmContextRef = useRef<JoinConfirmContext>({
+    meetingIdStr: '',
+    token: '',
+    displayName: '',
+    viewerType: 'guest',
+    passcodePayload: {},
+    startedWithForceJoin: false,
+  });
+  const presenceConfirmSentRef = useRef(false);
 
   // Network connectivity monitoring — shown as a friendly overlay instead of the raw HMS error
   const [isNetworkDown, setIsNetworkDown] = useState(false);
@@ -176,20 +223,22 @@ export default function HMSMeetingInterfaceScreen() {
     }, 2000);
   }, []);
 
-  // Delay mounting MeetingJoinSound until after HMSPrebuilt has joined (useHMSPeerUpdates can crash without room context)
+  // Delay mounting MeetingJoinSound until GrabDocs presence is confirmed (useHMSPeerUpdates needs room context)
   useEffect(() => {
-    if (!joinConfig || Platform.OS === 'web') return;
-    setJoinSoundReady(false);
-    const t = setTimeout(() => setJoinSoundReady(true), 5000);
+    if (!joinConfig || Platform.OS === 'web' || !presenceConfirmed) {
+      setJoinSoundReady(false);
+      return;
+    }
+    const t = setTimeout(() => setJoinSoundReady(true), 4000);
     return () => clearTimeout(t);
-  }, [joinConfig]);
+  }, [joinConfig, presenceConfirmed]);
 
   // Network connectivity monitor — poll the backend health endpoint every 5 s during a live call.
   // When the connection drops we show our own friendly banner (which renders above the HMS native UI
   // via a transparent Modal). When it recovers, we flash "Reconnected" for 3 s then hide the banner.
   useEffect(() => {
-    // Only monitor while a call is active and HMS is available
-    if (!joinConfig || Platform.OS === 'web' || !HMSPrebuilt) return;
+    // Only monitor after confirmed presence (prejoin HMS UI should not show call-level overlays)
+    if (!joinConfig || Platform.OS === 'web' || !HMSPrebuilt || !presenceConfirmed) return;
 
     const checkConnectivity = async () => {
       const controller = new AbortController();
@@ -225,18 +274,42 @@ export default function HMSMeetingInterfaceScreen() {
       if (networkPollRef.current) clearInterval(networkPollRef.current);
       if (reconnectedTimerRef.current) clearTimeout(reconnectedTimerRef.current);
     };
-  }, [joinConfig]);
+  }, [joinConfig, presenceConfirmed]);
 
-  // Configure 100ms room-kit: show native prejoin (mic/camera, join button). Defaults: mic/camera off until user opts in.
-  useEffect(() => {
-    if (Platform.OS !== 'web' && typeof global !== 'undefined') {
-      (global as any).joinConfig = {
-        mutedAudio: true,
-        mutedVideo: true,
-        skipPreview: false,
-      };
-    }
-  }, []);
+  // Room-kit HMSSDK.build reads `global.joinConfig` before mount; portrait lock aligns camera preview with phone use while `app.config` orientation is unlocked.
+  useLayoutEffect(() => {
+    if (Platform.OS === 'web') return;
+    applyGrabdocsHmsRoomKitJoinDefaults();
+
+    let cancelled = false;
+    setOrientationReadyForHms(false);
+
+    const run = async () => {
+      try {
+        if (Device.deviceType !== Device.DeviceType.TABLET) {
+          const supported = await ScreenOrientation.supportsOrientationLockAsync(
+            ScreenOrientation.OrientationLock.PORTRAIT_UP,
+          );
+          if (!cancelled && supported) {
+            await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+          }
+        }
+      } catch {
+        /* non-fatal */
+      } finally {
+        if (!cancelled) {
+          setOrientationReadyForHms(true);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+      ScreenOrientation.unlockAsync().catch(() => {});
+    };
+  }, [meetingId]);
 
   useEffect(() => {
     // Check permissions first, then initialize
@@ -368,7 +441,7 @@ export default function HMSMeetingInterfaceScreen() {
 
   // Set up heartbeat interval when room_id is available
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !presenceConfirmed) return;
 
     // Clear any existing interval
     if (heartbeatIntervalRef.current) {
@@ -398,12 +471,12 @@ export default function HMSMeetingInterfaceScreen() {
         heartbeatIntervalRef.current = null;
       }
     };
-  }, [roomId]);
+  }, [roomId, presenceConfirmed]);
 
   // Poll recording status only after token is ready - notify when joining a meeting that is already being recorded.
   // Defer first check so we never show the popup during GrabDocs / HMS prejoin.
   useEffect(() => {
-    if (!roomId || Platform.OS === 'web' || !joinConfig) return;
+    if (!roomId || Platform.OS === 'web' || !joinConfig || !presenceConfirmed) return;
 
     const RECORDING_POLL_INTERVAL = 6000; // 6 seconds
     const FIRST_CHECK_DELAY_MS = 5000;   // Only check after user has been in the call for 5s (avoids showing when clicking "Start meeting")
@@ -436,7 +509,7 @@ export default function HMSMeetingInterfaceScreen() {
         recordingPollIntervalRef.current = null;
       }
     };
-  }, [roomId, joinConfig]);
+  }, [roomId, joinConfig, presenceConfirmed]);
 
   // Cleanup on unmount (e.g., user swipes back). Do NOT call leave endpoint here.
   // Meeting must stay connected so user can return via active meeting card. Leave is only
@@ -541,7 +614,7 @@ export default function HMSMeetingInterfaceScreen() {
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
-        if (!authToken || !meetingId) return;
+        if (!authToken || !meetingId || !presenceConfirmed) return;
 
         // Always restart the timer so rapid state changes (inactive→background) don't
         // double-fire — the last event wins.
@@ -559,7 +632,7 @@ export default function HMSMeetingInterfaceScreen() {
                 // Stage 2: PiP truly unavailable — show notification.
                 setTimeout(() => {
                   pipModule.isInPipMode?.().then((inPip: boolean) => {
-                    if (!inPip && authToken && meetingId) {
+                    if (!inPip && authToken && meetingId && presenceConfirmed) {
                       showMeetingNotification();
                     }
                   }).catch(() => {});
@@ -596,11 +669,11 @@ export default function HMSMeetingInterfaceScreen() {
         pipFallbackTimerRef.current = null;
       }
     };
-  }, [authToken, meetingId, showMeetingNotification, pipEnabled, pipModule]);
+  }, [authToken, meetingId, presenceConfirmed, showMeetingNotification, pipEnabled, pipModule]);
 
   // Screen wake lock: activate when in meeting
   useEffect(() => {
-    if (authToken && meetingId) {
+    if (authToken && meetingId && presenceConfirmed) {
       activateKeepAwake();
     } else {
       deactivateKeepAwake();
@@ -608,18 +681,18 @@ export default function HMSMeetingInterfaceScreen() {
     return () => {
       deactivateKeepAwake();
     };
-  }, [authToken, meetingId]);
+  }, [authToken, meetingId, presenceConfirmed]);
 
   // Track current meeting for "one meeting at a time" and return-via-active-card
   useEffect(() => {
-    if (authToken && meetingId) {
+    if (authToken && meetingId && presenceConfirmed) {
       const id =
         resolvedStorageMeetingId ??
         canonicalizeReachMeetingId(String(meetingId));
       AsyncStorage.setItem(REACH_CURRENT_MEETING_KEY, id).catch(() => {});
     }
     return () => {};
-  }, [authToken, meetingId, resolvedStorageMeetingId]);
+  }, [authToken, meetingId, presenceConfirmed, resolvedStorageMeetingId]);
 
   const initializePrebuiltInterface = async () => {
     try {
@@ -655,12 +728,15 @@ export default function HMSMeetingInterfaceScreen() {
           enable_audio: false,
           enable_video: false,
           viewer_type: user ? 'host' : 'guest',
+          join_intent: 'prepare',
           ...(forceJoin ? { force_join: true } : {}),
           ...passcodePayload,
         });
       };
 
       try {
+        presenceConfirmSentRef.current = false;
+        setPresenceConfirmed(false);
         let joinRes;
         try {
           joinRes = await joinById(forceJoinFromRoute);
@@ -693,6 +769,14 @@ export default function HMSMeetingInterfaceScreen() {
             ? String(apiMeetingId)
             : String(meetingId)
         );
+        joinConfirmContextRef.current = {
+          meetingIdStr: (meetingId as string).trim(),
+          token: token.trim(),
+          displayName: displayUserName,
+          viewerType: user ? 'host' : 'guest',
+          passcodePayload: passcodePayload as Record<string, string>,
+          startedWithForceJoin: forceJoinFromRoute,
+        };
         setResolvedStorageMeetingId(forStorage);
         const tokenParts = token.split('.');
         setAuthToken(token);
@@ -756,6 +840,49 @@ export default function HMSMeetingInterfaceScreen() {
       });
     }
   };
+
+  const handleHmsEnteredForPresenceConfirm = useCallback(async () => {
+    if (presenceConfirmSentRef.current) return;
+    presenceConfirmSentRef.current = true;
+    const ctx = joinConfirmContextRef.current;
+    if (!ctx.token || !ctx.meetingIdStr) {
+      presenceConfirmSentRef.current = false;
+      return;
+    }
+
+    const doConfirm = (forceJoin: boolean) =>
+      apiClient.client.post('/api/v1/video/room/join-by-id/confirm', {
+        meeting_id: ctx.meetingIdStr.trim(),
+        participant_name: ctx.displayName,
+        token: ctx.token,
+        viewer_type: ctx.viewerType,
+        ...(forceJoin ? { force_join: true } : {}),
+        ...ctx.passcodePayload,
+      });
+
+    try {
+      try {
+        await doConfirm(ctx.startedWithForceJoin);
+      } catch (firstErr: unknown) {
+        const fe = firstErr as {
+          response?: { status?: number; data?: { error_code?: string } };
+        };
+        if (
+          !ctx.startedWithForceJoin &&
+          fe?.response?.status === 409 &&
+          fe?.response?.data?.error_code === 'ALREADY_IN_MEETING'
+        ) {
+          await doConfirm(true);
+        } else {
+          throw firstErr;
+        }
+      }
+      setPresenceConfirmed(true);
+    } catch (e) {
+      console.error('[HMS] POST /join-by-id/confirm failed', e);
+      presenceConfirmSentRef.current = false;
+    }
+  }, []);
 
   const handleLeaveMeeting = async () => {
     Alert.alert(
@@ -838,7 +965,7 @@ export default function HMSMeetingInterfaceScreen() {
     );
   }
 
-  if (HMSPrebuilt && authToken && meetingId) {
+  if (HMSPrebuilt && authToken && meetingId && orientationReadyForHms) {
     const roomCode = meetingId as string;
     const token = authToken;
     const displayUserName = getHmsDisplayUserName(userName, user, meetingIdForDisplay);
@@ -952,14 +1079,7 @@ export default function HMSMeetingInterfaceScreen() {
     );
     }
 
-    // Native room-kit reads global.joinConfig — show 100ms prejoin; default mic/camera off until user opts in.
-    if (Platform.OS !== 'web' && typeof global !== 'undefined') {
-      (global as any).joinConfig = {
-        mutedAudio: true,
-        mutedVideo: true,
-        skipPreview: false,
-      };
-    }
+    if (Platform.OS !== 'web') applyGrabdocsHmsRoomKitJoinDefaults();
 
     try {
       // Final validation before rendering
@@ -1007,9 +1127,13 @@ export default function HMSMeetingInterfaceScreen() {
 
       return (
         <>
-          {/* Mount join sound only after room is likely joined (useHMSPeerUpdates can crash without room context) */}
+          <MeetingPresenceConfirmBridge
+            enabled={!!joinConfig && !!authToken && !hmsError}
+            onEnteredRoom={handleHmsEnteredForPresenceConfirm}
+          />
+          {/* Join sound after GrabDocs presence + short delay (useHMSPeerUpdates needs room context) */}
           {HMSPrebuilt && joinSoundReady && (
-            <MeetingJoinSound enabled={!!authToken && !!meetingId} onPeerJoined={handlePeerJoined} />
+            <MeetingJoinSound enabled={!!authToken && !!meetingId && presenceConfirmed} onPeerJoined={handlePeerJoined} />
           )}
 
           {/* In-meeting event banners (recording started, peer joined) — must be dismissed by tapping OK */}
@@ -1036,7 +1160,7 @@ export default function HMSMeetingInterfaceScreen() {
           {/* Network status overlay — rendered as a Modal so it appears above the HMS native UI.
               Shows a friendly banner instead of the raw "code: 1003" HMS error. */}
           <Modal
-            visible={(isNetworkDown || showReconnected) && !!joinConfig && !hmsError}
+            visible={(isNetworkDown || showReconnected) && !!joinConfig && !!presenceConfirmed && !hmsError}
             transparent
             animationType="fade"
             statusBarTranslucent
@@ -1245,6 +1369,16 @@ export default function HMSMeetingInterfaceScreen() {
         </SafeAreaView>
       );
     }
+  }
+
+  if (HMSPrebuilt && authToken && meetingId && !orientationReadyForHms && Platform.OS !== 'web') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Initializing GrabDocs Meeting...</Text>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   // Development mode fallback

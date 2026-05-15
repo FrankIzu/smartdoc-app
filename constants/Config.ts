@@ -14,7 +14,10 @@ const PRODUCTION_API_URL = 'https://api.grabdocs.com';
 
 export const API_BASE_URL = (() => {
   const appOwnership = Constants.appOwnership;
-  const isStandalone = appOwnership !== 'expo'; // Expo Go = 'expo'; dev/prod builds = 'standalone' or undefined
+  // Expo Go signed-in: 'expo'. Expo Go opened from QR without Expo login: 'guest' — still must use dev LAN URL.
+  // Only installed binaries use 'standalone' (treat as production unless EXPO_PUBLIC_* overrides elsewhere).
+  const runsInExpoGo = appOwnership === 'expo' || appOwnership === 'guest';
+  const isStandalone = !runsInExpoGo;
 
   // For standalone apps (dev builds, production builds, EAS updates): ALWAYS use production.
   // EAS Update can accidentally bake in local .env (e.g. EXPO_PUBLIC_API_URL=http://192.168.x.x)
@@ -46,18 +49,14 @@ export const API_BASE_URL = (() => {
   // 2. Check if running on web platform
   const isWeb = Platform.OS === 'web';
   
-  // 3. Expo Go = local testing, use localhost
-  const isExpoGo = appOwnership === 'expo';
-
   // For web platform in development, use localhost (requires CORS configuration on backend)
   if (isWeb && __DEV__) {
     return 'http://localhost:5000'; // Local development - backend must allow CORS from http://localhost:8081
   }
 
-  // Only use localhost when explicitly running in Expo Go
-  // For dev builds installed on device, appOwnership should be 'standalone' or null
-  if (isExpoGo) {
-    return LOCAL_DEV_URL; // Local development
+  // Expo Go (signed-in or guest): same LAN backend as dev machine (see LOCAL_DEV_IP).
+  if (runsInExpoGo) {
+    return LOCAL_DEV_URL;
   }
 
   // 4. For standalone apps (dev builds or production builds), ALWAYS use production

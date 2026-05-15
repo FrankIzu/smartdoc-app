@@ -10,7 +10,6 @@ export default function CalendarLayout() {
       <Stack.Screen name="connections" />
       <Stack.Screen name="rsvp" />
       <Stack.Screen name="ics" />
-      <Stack.Screen name="link-tester" />
       <Stack.Screen name="edit/[id]" />
       <Stack.Screen name="assets/[eventId]" />
       <Stack.Screen name="pending/[localId]" />

@@ -9,9 +9,33 @@ type Props = {
   onError: (message: string) => void;
 };
 
+/** Must match backend `google_calendar_callback` mobile return URL (see calendar_api.py). */
+const CALENDAR_OAUTH_RETURN = 'grabdocs://calendar-oauth';
+
+function parseCalendarOAuthReturnUrl(url: string): { result: 'success' } | { result: 'error'; reason: string } | null {
+  if (!url.startsWith(CALENDAR_OAUTH_RETURN)) {
+    return null;
+  }
+  const q = url.includes('?') ? url.split('?')[1] ?? '' : '';
+  const params = new URLSearchParams(q);
+  const r = params.get('result');
+  if (r === 'success') {
+    return { result: 'success' };
+  }
+  if (r === 'error') {
+    const reason = params.get('reason') || 'unknown';
+    try {
+      return { result: 'error', reason: decodeURIComponent(reason) };
+    } catch {
+      return { result: 'error', reason };
+    }
+  }
+  return null;
+}
+
 /**
- * Headless component: opens Google OAuth in the system browser immediately
- * when `visible` becomes true — no intermediate screen shown.
+ * Opens Google Calendar OAuth in the browser and completes the session when the backend
+ * redirects to grabdocs:// — same pattern as main Google login (HTTPS callback → app deep link).
  */
 export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: Props) {
   const handlersRef = useRef({ onSuccess, onError, onClose });
@@ -24,11 +48,33 @@ export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: P
     const run = async () => {
       const { onSuccess: ok, onError: err, onClose: close } = handlersRef.current;
       try {
+        WebBrowser.maybeCompleteAuthSession();
+
         const authUrl = await calendarGoogleConnectUrl();
         if (!active) return;
-        await WebBrowser.openBrowserAsync(authUrl);
+
+        const result = await WebBrowser.openAuthSessionAsync(authUrl, CALENDAR_OAUTH_RETURN);
         if (!active) return;
-        ok();
+
+        if (result.type === 'success' && result.url) {
+          const parsed = parseCalendarOAuthReturnUrl(result.url);
+          if (parsed?.result === 'success') {
+            ok();
+            close();
+            return;
+          }
+          if (parsed?.result === 'error') {
+            err(parsed.reason.replace(/_/g, ' ') || 'Could not connect Google Calendar');
+            close();
+            return;
+          }
+        }
+
+        if (result.type === 'cancel' || result.type === 'dismiss') {
+          close();
+          return;
+        }
+
         close();
       } catch (e: unknown) {
         if (!active) return;
@@ -38,9 +84,11 @@ export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: P
       }
     };
 
-    run();
+    void run();
 
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [visible]);
 
   return null;
