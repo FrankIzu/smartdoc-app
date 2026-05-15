@@ -13,6 +13,7 @@ import { Calendar } from 'react-native-calendars';
 import type { CalendarSubView } from '../../../utils/calendarRange';
 import { calendarFetchRange, toYMDLocal, weekRangeMonday } from '../../../utils/calendarRange';
 import {
+  calendarDisplayLocation,
   eventHasReachMeeting,
   formatEventWhen,
   parseUTC,
@@ -20,6 +21,7 @@ import {
   sortCalendarEventsByStartDesc,
   type ListTabFilter,
 } from '../../../utils/calendarTime';
+import { openMapsForLocationLabel } from '../../../utils/openMapsQuery';
 import { CalendarReachPill } from './CalendarReachIndicator';
 
 export type CalendarVisualEvent = Record<string, any>;
@@ -51,6 +53,8 @@ type Props = {
   monthScrollRef?: React.RefObject<ScrollView | null>;
   /** Keyboard / search dropdown — dismiss when user interacts with calendar body or scrolls lists. */
   onDismissOverlays?: () => void;
+  /** Tap Reach pill on an event row to join (same resolution as list view). */
+  onReachMeetingPress?: (ev: CalendarVisualEvent) => void;
 };
 
 function sameLocalDay(a: Date, b: Date): boolean {
@@ -109,6 +113,7 @@ export function CalendarVisualPane({
   listRefreshControl,
   monthScrollRef,
   onDismissOverlays,
+  onReachMeetingPress,
 }: Props) {
   const range = useMemo(() => calendarFetchRange(cursor, subView), [cursor, subView]);
   const monthCalCardHeightRef = useRef(0);
@@ -263,6 +268,7 @@ export function CalendarVisualPane({
         },
         rowTitle: { fontSize: 15, fontWeight: '600', color: colors.text, flex: 1 },
         rowMeta: { fontSize: 13, color: colors.textSecondary },
+        rowLocationLink: { fontSize: 13, color: '#007AFF', marginTop: 4 },
         weekStrip: {
           flexDirection: 'row',
           marginHorizontal: 12,
@@ -288,9 +294,16 @@ export function CalendarVisualPane({
         metaRow: {
           flexDirection: 'row',
           alignItems: 'center',
-          flexWrap: 'wrap',
+          flexWrap: 'nowrap',
           gap: 8,
           marginTop: 4,
+        },
+        metaRowRight: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          flexShrink: 0,
+          marginLeft: 'auto',
         },
       }),
     [colors]
@@ -298,7 +311,9 @@ export function CalendarVisualPane({
 
   const renderEventRow = (ev: CalendarVisualEvent) => {
     const reach = eventHasReachMeeting(ev);
+    const cancelled = String(ev.status ?? '').toLowerCase() === 'cancelled';
     const company = String(ev.event_type ?? '').toLowerCase() === 'company';
+    const locationLabel = calendarDisplayLocation(ev.location);
     return (
     <TouchableOpacity
       style={styles.row}
@@ -318,8 +333,34 @@ export function CalendarVisualPane({
             {formatEventWhen(ev)}
             {company ? ' · Company' : ''}
           </Text>
-          {reach ? <CalendarReachPill /> : null}
+          {reach ? (
+            <View style={styles.metaRowRight}>
+              <CalendarReachPill
+                onPress={
+                  cancelled || !onReachMeetingPress
+                    ? undefined
+                    : () => {
+                        onDismissOverlays?.();
+                        onReachMeetingPress(ev);
+                      }
+                }
+              />
+            </View>
+          ) : null}
         </View>
+        {locationLabel ? (
+          <Text
+            style={styles.rowLocationLink}
+            onPress={() => {
+              onDismissOverlays?.();
+              void openMapsForLocationLabel(locationLabel);
+            }}
+            accessibilityRole="link"
+            accessibilityLabel={`Open maps for ${locationLabel}`}
+          >
+            📍 {locationLabel}
+          </Text>
+        ) : null}
       </View>
     </TouchableOpacity>
     );

@@ -1753,7 +1753,8 @@ class ApiService {
       console.log('🔐 Message and response will be encrypted by backend encryption class');
       const payload: any = { 
         message,
-        response_mode: 'flexible' // Use same response mode as web
+        response_mode: 'flexible', // Use same response mode as web
+        user_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       };
       
       // Map filters to the same format as web
@@ -1965,6 +1966,7 @@ class ApiService {
         preview_mode: true,
         enable_preview_mode: filters?.enable_preview_mode !== false, // FEATURE 16: Preview mode support
         search_type: filters?.search_type || 'refined',
+        user_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       };
 
       // Helper functions for ID conversion
@@ -2423,6 +2425,7 @@ class ApiService {
         stream: false, // Job-based polling; server still emits preview/refinement chunks to the job
         preview_mode: false,
         search_type: filters?.search_type || 'refined',
+        user_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       };
 
       const toNum = (v: any) => (v == null || v === '') ? null : Number(v);

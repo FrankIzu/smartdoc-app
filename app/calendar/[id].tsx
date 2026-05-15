@@ -1,8 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNetworkState } from 'expo-network';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import * as Linking from 'expo-linking';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -37,43 +36,8 @@ import {
   saveCalendarEventDetailOffline,
 } from '../../utils/calendarCache';
 import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
+import { navigateJoinMeeting } from '../../utils/calendarReachJoin';
 import { calendarDisplayLocation, formatUtcIsoForDevice } from '../../utils/calendarTime';
-
-/** Resolve Reach `meeting_id` for join-meeting from URL, meeting payload, or event.video_call_id. */
-function resolveJoinMeetingId(
-  meetingUrl: string | undefined,
-  meetingPayload: Record<string, any> | null | undefined,
-  videoCallId: unknown
-): string | null {
-  const url = meetingUrl?.trim();
-  if (url) {
-    const q = url.match(/[?&]meeting_id=([^&]+)/i);
-    if (q?.[1]) return decodeURIComponent(q[1]).trim();
-    const q2 = url.match(/[?&]meetingId=([^&]+)/i);
-    if (q2?.[1]) return decodeURIComponent(q2[1]).trim();
-  }
-  const m = meetingPayload;
-  if (m && typeof m === 'object') {
-    const mid = m.meeting_id ?? m.meetingId ?? m.hms_room_id ?? m.room_meeting_id;
-    if (mid != null && String(mid).trim() !== '') return String(mid).trim();
-  }
-  if (videoCallId != null && String(videoCallId).trim() !== '') return String(videoCallId).trim();
-  return null;
-}
-
-function navigateJoinMeeting(
-  meetingUrl: string | undefined,
-  meetingPayload: Record<string, any> | null | undefined,
-  videoCallId: unknown,
-  router: ReturnType<typeof useRouter>
-) {
-  const mid = resolveJoinMeetingId(meetingUrl, meetingPayload, videoCallId);
-  if (mid) {
-    router.push({ pathname: '/join-meeting', params: { meeting_id: mid } } as any);
-    return;
-  }
-  if (meetingUrl?.trim()) Linking.openURL(meetingUrl.trim()).catch(() => {});
-}
 
 export default function CalendarEventDetailScreen() {
   const { id: idParam } = useLocalSearchParams<{ id?: string }>();
@@ -138,6 +102,33 @@ export default function CalendarEventDetailScreen() {
     }
   }, [eventId, deviceOffline]);
 
+  /** First paint for this event id shows spinner; later focuses (e.g. back from Edit) refresh silently. */
+  const initialDetailLoadRef = useRef(false);
+
+  useEffect(() => {
+    initialDetailLoadRef.current = false;
+  }, [eventId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        if (!Number.isFinite(eventId)) {
+          setLoading(false);
+          return;
+        }
+        const blocking = !initialDetailLoadRef.current;
+        if (blocking) setLoading(true);
+        await loadEvent();
+        initialDetailLoadRef.current = true;
+        if (!cancelled) setLoading(false);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [eventId, loadEvent])
+  );
+
   useEffect(() => {
     refreshProfile();
   }, [refreshProfile]);
@@ -149,22 +140,6 @@ export default function CalendarEventDetailScreen() {
       }
     }, [deviceOffline])
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!Number.isFinite(eventId)) {
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      await loadEvent();
-      if (!cancelled) setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [eventId, loadEvent]);
 
   const loadNotes = useCallback(async () => {
     if (!Number.isFinite(eventId)) return;
@@ -309,6 +284,30 @@ export default function CalendarEventDetailScreen() {
     }
   };
 
+  /** Reach hub assets experience (same as meeting list folder icon), not the legacy calendar assets page. */
+  const openReachMeetingAssets = useCallback(() => {
+    if (!Number.isFinite(eventId)) return;
+    const rawId = meetingInfo?.meeting_id ?? meetingInfo?.meetingId;
+    const mid = rawId != null ? String(rawId).trim() : '';
+    if (!mid) {
+      router.push(`/calendar/assets/${eventId}` as any);
+      return;
+    }
+    const title =
+      (meetingInfo?.room_name && String(meetingInfo.room_name).trim()) ||
+      (typeof event?.title === 'string' && event.title.trim()) ||
+      'Meeting';
+    router.push({
+      pathname: '/quick-reach/meeting-details',
+      params: {
+        meetingId: mid,
+        meetingTitle: title,
+        roomCode: mid,
+        entry: 'assets',
+      },
+    } as any);
+  }, [router, eventId, meetingInfo, event]);
+
   if (!Number.isFinite(eventId)) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -427,7 +426,7 @@ export default function CalendarEventDetailScreen() {
               {joinEligible ? (
                 <TouchableOpacity
                   style={[styles.btn, styles.btnRowHalf]}
-                  onPress={() => navigateJoinMeeting(event.meeting_url, meetingInfo, event.video_call_id, router)}
+                  onPress={() => navigateJoinMeeting(router, event.meeting_url, meetingInfo, event.video_call_id)}
                 >
                   <Text style={styles.btnText}>Join meeting</Text>
                 </TouchableOpacity>
@@ -449,7 +448,7 @@ export default function CalendarEventDetailScreen() {
           meetingInfo.has_chat) ? (
           <TouchableOpacity
             style={[styles.btn, styles.btnSecondary]}
-            onPress={() => router.push(`/calendar/assets/${eventId}` as any)}
+            onPress={openReachMeetingAssets}
           >
             <Text style={styles.btnTextDark}>Meeting assets</Text>
           </TouchableOpacity>

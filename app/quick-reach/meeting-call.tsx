@@ -78,10 +78,11 @@ function meetingInfoDurationMinutes(
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-function meetingInfoRoomUrl(meeting: Meeting, room: Record<string, any> | null | undefined): string | undefined {
-  const u = room?.room_url || meeting.roomUrl;
-  if (u == null || String(u).trim() === '') return undefined;
-  return String(u);
+/** GrabDocs join link from API (same encoding as copy-invite). Never client-fake: backend uses salt + SHA256 in `encode_meeting_id`. */
+function meetingInfoJoinLinkUrl(_meeting: Meeting, room: Record<string, any> | null | undefined): string | undefined {
+  const fromApi = room?.invite_link;
+  if (fromApi != null && String(fromApi).trim() !== '') return String(fromApi).trim();
+  return undefined;
 }
 
 function extractReachHostUserIds(raw: unknown): string[] {
@@ -1034,15 +1035,17 @@ export default function MeetingCallScreen() {
         await Clipboard.setStringAsync(stripClipboardEmojis(response.data.invite_message));
         Alert.alert('Copied', 'Meeting invitation copied to clipboard');
       } else {
-        // Fallback to basic details if backend doesn't return invite_message
+        // Fallback: same masked join URL as copy when API returns invite_link but no full message
         let details = `Meeting: ${stripClipboardEmojis(meeting.title)}\n`;
         details += `Meeting ID: ${meeting.meetingId}\n`;
         if (meeting.passcode) {
           details += `Passcode: ${meeting.passcode}\n`;
         }
-        if (meeting.roomUrl) {
-          details += `Room URL: ${meeting.roomUrl}\n`;
-        }
+        const link =
+          response.data && typeof response.data === 'object' && 'invite_link' in response.data
+            ? String((response.data as { invite_link?: string }).invite_link ?? '').trim()
+            : '';
+        if (link) details += `Join: ${link}\n`;
         await Clipboard.setStringAsync(details);
         Alert.alert('Copied', 'Meeting details copied to clipboard');
       }
@@ -2024,23 +2027,39 @@ export default function MeetingCallScreen() {
                   </View>
                 </View>
 
-                {/* Start and End Time - Moved Up */}
+                {/* Start time + duration (under participants); end time on next row when set */}
                 <View style={dynamicStyles.infoRow}>
-                  <View style={dynamicStyles.infoItem}>
+                  <View
+                    style={
+                      meetingInfoDurationMinutes(infoMeeting, meetingInfoData) != null
+                        ? dynamicStyles.infoItem
+                        : dynamicStyles.infoItemFull
+                    }
+                  >
                     <Text style={dynamicStyles.infoLabel}>Start Time</Text>
                     <Text style={dynamicStyles.infoValue}>
                       {meetingInfoStartLabel(infoMeeting, meetingInfoData)}
                     </Text>
                   </View>
-                  {meetingInfoEndLabel(infoMeeting, meetingInfoData) ? (
+                  {meetingInfoDurationMinutes(infoMeeting, meetingInfoData) != null ? (
                     <View style={dynamicStyles.infoItem}>
+                      <Text style={dynamicStyles.infoLabel}>Duration</Text>
+                      <Text style={dynamicStyles.infoValue}>
+                        {meetingInfoDurationMinutes(infoMeeting, meetingInfoData)} min
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                {meetingInfoEndLabel(infoMeeting, meetingInfoData) ? (
+                  <View style={dynamicStyles.infoRow}>
+                    <View style={dynamicStyles.infoItemFull}>
                       <Text style={dynamicStyles.infoLabel}>End Time</Text>
                       <Text style={dynamicStyles.infoValue}>
                         {meetingInfoEndLabel(infoMeeting, meetingInfoData)}
                       </Text>
                     </View>
-                  ) : null}
-                </View>
+                  </View>
+                ) : null}
 
                 {/* Meeting Connect Info Section */}
                 <View style={dynamicStyles.infoSection}>
@@ -2154,36 +2173,25 @@ export default function MeetingCallScreen() {
                   )}
                 </View>
 
-                {meetingInfoDurationMinutes(infoMeeting, meetingInfoData) != null && (
-                  <View style={dynamicStyles.infoRow}>
-                    <View style={dynamicStyles.infoItem}>
-                      <Text style={dynamicStyles.infoLabel}>Duration</Text>
-                      <Text style={dynamicStyles.infoValue}>
-                        {meetingInfoDurationMinutes(infoMeeting, meetingInfoData)} min
-                      </Text>
-                    </View>
-                  </View>
-                )}
-
-                {meetingInfoRoomUrl(infoMeeting, meetingInfoData) ? (
+                {meetingInfoJoinLinkUrl(infoMeeting, meetingInfoData) ? (
                   <View style={dynamicStyles.infoSection}>
-                    <Text style={dynamicStyles.infoLabel}>Room URL</Text>
+                    <Text style={dynamicStyles.infoLabel}>Join meeting link</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
                       <Text style={[dynamicStyles.infoValue, { flex: 1 }]} selectable numberOfLines={4}>
-                        {meetingInfoRoomUrl(infoMeeting, meetingInfoData)}
+                        {meetingInfoJoinLinkUrl(infoMeeting, meetingInfoData)}
                       </Text>
                       <TouchableOpacity
                         onPress={async () => {
-                          const url = meetingInfoRoomUrl(infoMeeting, meetingInfoData);
+                          const url = meetingInfoJoinLinkUrl(infoMeeting, meetingInfoData);
                           if (!url) return;
                           try {
                             await Clipboard.setStringAsync(url);
-                            Alert.alert('Copied', 'Room URL copied to clipboard');
+                            Alert.alert('Copied', 'Join link copied to clipboard');
                           } catch {
                             Alert.alert('Error', 'Could not copy URL');
                           }
                         }}
-                        accessibilityLabel="Copy room URL"
+                        accessibilityLabel="Copy join meeting link"
                         accessibilityRole="button"
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       >

@@ -1,63 +1,68 @@
 import {
-  flushPendingCalendarCreates,
-  getPendingCalendarCreates,
-  pendingCreatesToEventRows,
-  type FlushResult
+    flushPendingCalendarCreates,
+    getPendingCalendarCreates,
+    pendingCreatesToEventRows,
+    type FlushResult
 } from '@/utils/calendarPendingCreates';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { addNetworkStateListener, useNetworkState } from 'expo-network';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Keyboard,
-  ListRenderItem,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Keyboard,
+    ListRenderItem,
+    Modal,
+    Platform,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { STORAGE_KEYS } from '../../constants/Config';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
-  calendarAssetsMetadata,
-  calendarConnections,
-  calendarDeleteConnection,
-  calendarGetStats,
-  calendarListEvents,
-  calendarSearchCompanyMembers,
-  calendarSyncGoogleWithStaleConnectionRecovery,
+    calendarAssetsMetadata,
+    calendarConnections,
+    calendarDeleteConnection,
+    calendarGetStats,
+    calendarListEvents,
+    calendarSearchCompanyMembers,
+    calendarSyncGoogleWithStaleConnectionRecovery,
 } from '../../services/calendarApi';
 import {
-  buildCalendarListStorageKey,
-  getCalendarListCache,
-  getCalendarListFallback,
-  isCalendarFetchOfflineError,
-  saveCalendarListCache,
+    buildCalendarListStorageKey,
+    getCalendarListCache,
+    getCalendarListFallback,
+    isCalendarFetchOfflineError,
+    saveCalendarListCache,
 } from '../../utils/calendarCache';
 import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
 import { addCalendarPeriod, formatCalendarTitle, type CalendarSubView } from '../../utils/calendarRange';
+import { navigateReachJoinFromCalendarListRow } from '../../utils/calendarReachJoin';
 import {
-  calendarDisplayLocation,
-  calendarEventMatchesLocalSearch,
-  defaultCalendarListWindow,
-  eventHasReachMeeting,
-  filterEventsByTab,
-  formatEventWhen,
-  ListTabFilter,
-  sortCalendarEventsByStartAsc,
-  sortCalendarEventsByStartDesc,
+    calendarDisplayLocation,
+    calendarEventMatchesLocalSearch,
+    defaultCalendarListWindow,
+    eventHasReachMeeting,
+    filterEventsByTab,
+    formatEventWhen,
+    ListTabFilter,
+    sortCalendarEventsByStartAsc,
+    sortCalendarEventsByStartDesc,
 } from '../../utils/calendarTime';
+import { openMapsForLocationLabel } from '../../utils/openMapsQuery';
+import { useAuth } from '../context/auth';
 import { CalendarOAuthWebView } from './components/CalendarOAuthWebView';
 import { CalendarReachPill } from './components/CalendarReachIndicator';
 import { CalendarVisualPane } from './components/CalendarVisualPane';
@@ -93,7 +98,8 @@ export default function CalendarHomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
-  const { profile, loading: profileLoading, refresh: refreshProfile } = useCalendarProfile();
+  const { user } = useAuth();
+  const { profile, refresh: refreshProfile } = useCalendarProfile();
   const isAdmin = calendarIsCompanyAdmin(profile);
   const isPersonalAccount = useMemo(() => {
     if (!profile) return false;
@@ -141,6 +147,8 @@ export default function CalendarHomeScreen() {
   const [pendingEventRows, setPendingEventRows] = useState<EventRow[]>([]);
 
   const [layoutMode, setLayoutMode] = useState<'calendar' | 'list'>('calendar');
+  /** After first read from AsyncStorage so we do not clobber saved mode before hydrate. */
+  const [layoutStorageReady, setLayoutStorageReady] = useState(false);
   const [calendarCursor, setCalendarCursor] = useState(() => new Date());
   const [calendarSubView, setCalendarSubView] = useState<CalendarSubView>('month');
   const [monthSelectedDay, setMonthSelectedDay] = useState(() => new Date());
@@ -200,15 +208,50 @@ export default function CalendarHomeScreen() {
   }, [stats]);
 
   React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEYS.CALENDAR_LAYOUT_MODE);
+        if (cancelled) return;
+        if (raw === 'calendar' || raw === 'list') {
+          setLayoutMode(raw);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setLayoutStorageReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!layoutStorageReady) return;
+    void AsyncStorage.setItem(STORAGE_KEYS.CALENDAR_LAYOUT_MODE, layoutMode).catch(() => {});
+  }, [layoutMode, layoutStorageReady]);
+
+  React.useEffect(() => {
     if (!isPersonalAccount) return;
     setShowPersonal(true);
     setShowCompany(false);
   }, [isPersonalAccount]);
 
+  /** Personal / company calendar scope uses API profile once loaded; meanwhile prefer auth user id for disk cache hydrate. */
+  const calendarOwnerId = useMemo(() => {
+    if (profile?.id != null && Number.isFinite(profile.id)) return profile.id;
+    if (user?.id != null && String(user.id).trim() !== '') {
+      const n = Number(user.id);
+      return Number.isFinite(n) ? n : undefined;
+    }
+    return undefined;
+  }, [profile?.id, user?.id]);
+
   const listStorageKey = useMemo(
     () =>
       buildCalendarListStorageKey({
-        userId: profile?.id,
+        userId: calendarOwnerId,
         debouncedSearch,
         showCancelled,
         viewUserId,
@@ -217,7 +260,7 @@ export default function CalendarHomeScreen() {
         showCompany,
       }),
     [
-      profile?.id,
+      calendarOwnerId,
       debouncedSearch,
       showCancelled,
       viewUserId,
@@ -310,12 +353,12 @@ export default function CalendarHomeScreen() {
     showCompany,
     showCancelled,
     isPersonalAccount,
-    profile?.id,
+    calendarOwnerId,
     listStorageKey,
   ]);
 
   const reloadPendingRows = useCallback(async () => {
-    const uid = profile?.id;
+    const uid = calendarOwnerId;
     if (uid == null) {
       setPendingEventRows([]);
       return;
@@ -332,7 +375,7 @@ export default function CalendarHomeScreen() {
       })
     );
   }, [
-    profile?.id,
+    calendarOwnerId,
     viewUserId,
     isAdmin,
     showPersonal,
@@ -377,7 +420,7 @@ export default function CalendarHomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      refreshProfile();
+      refreshProfile({ silent: true });
       refreshConnections();
       if (!deviceOffline) {
         calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
@@ -387,7 +430,6 @@ export default function CalendarHomeScreen() {
   );
 
   React.useEffect(() => {
-    if (profileLoading) return;
     let cancelled = false;
 
     const hydrateDisk = async (): Promise<boolean> => {
@@ -403,7 +445,7 @@ export default function CalendarHomeScreen() {
           return true;
         }
       }
-      const fallback = await getCalendarListFallback(profile?.id);
+      const fallback = await getCalendarListFallback(calendarOwnerId);
       if (!cancelled && fallback) {
         const keyHasEventSearch =
           debouncedSearch.trim().length > 0 && !debouncedSearch.trim().startsWith('@');
@@ -430,33 +472,37 @@ export default function CalendarHomeScreen() {
         return;
       }
 
+      /** Cold open (no disk): spinner until server responds; with cache paint immediately and refresh in background. */
       if (!hadDisk && !cancelled) setLoading(true);
+      else if (!cancelled) setLoading(false);
       if (!cancelled) setCalendarReadOnlyOffline(false);
 
-      try {
-        if (!cancelled) await load();
-        if (!cancelled) setCalendarReadOnlyOffline(false);
-      } catch (e: any) {
-        console.warn('Calendar load failed', e?.message);
-        if (isCalendarFetchOfflineError(e)) {
-          await hydrateDisk();
-          if (!cancelled) setCalendarReadOnlyOffline(true);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      void load()
+        .then(() => {
+          if (!cancelled) setCalendarReadOnlyOffline(false);
+        })
+        .catch(async (e: unknown) => {
+          console.warn('Calendar load failed', (e as { message?: string })?.message);
+          if (!cancelled && isCalendarFetchOfflineError(e)) {
+            await hydrateDisk();
+            setCalendarReadOnlyOffline(true);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [load, profileLoading, listStorageKey, profile?.id, deviceOffline, debouncedSearch]);
+  }, [load, listStorageKey, calendarOwnerId, deviceOffline, debouncedSearch]);
 
   React.useEffect(() => {
-    if (deviceOffline || profileLoading || profile?.id == null) return;
+    if (deviceOffline || calendarOwnerId == null) return;
     let cancelled = false;
     (async () => {
-      const r = await flushPendingCalendarCreates(profile.id);
+      const r = await flushPendingCalendarCreates(calendarOwnerId);
       if (cancelled) return;
       try {
         if (r.synced > 0) await load();
@@ -482,8 +528,7 @@ export default function CalendarHomeScreen() {
     };
   }, [
     deviceOffline,
-    profileLoading,
-    profile?.id,
+    calendarOwnerId,
     load,
     reloadPendingRows,
     networkState?.isConnected,
@@ -491,13 +536,13 @@ export default function CalendarHomeScreen() {
   ]);
 
   React.useEffect(() => {
-    if (profileLoading || profile?.id == null) return;
+    if (calendarOwnerId == null) return;
     let debounce: ReturnType<typeof setTimeout> | undefined;
     const sub = addNetworkStateListener((state) => {
       if (isDeviceOfflineForCalendar(state)) return;
       clearTimeout(debounce);
       debounce = setTimeout(() => {
-        flushPendingCalendarCreates(profile.id).then(async (r: FlushResult) => {
+        flushPendingCalendarCreates(calendarOwnerId).then(async (r: FlushResult) => {
           if (r.synced > 0) {
             try {
               await load();
@@ -513,7 +558,7 @@ export default function CalendarHomeScreen() {
       sub.remove();
       clearTimeout(debounce);
     };
-  }, [profile?.id, profileLoading, load, reloadPendingRows]);
+  }, [calendarOwnerId, load, reloadPendingRows]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -529,7 +574,7 @@ export default function CalendarHomeScreen() {
           }
         }
         if (!ok) {
-          const fb = await getCalendarListFallback(profile?.id);
+          const fb = await getCalendarListFallback(calendarOwnerId);
           if (fb) {
             setEvents(fb.events);
             setStats(fb.stats);
@@ -538,8 +583,8 @@ export default function CalendarHomeScreen() {
         setCalendarReadOnlyOffline(true);
         return;
       }
-      if (profile?.id != null) {
-        await flushPendingCalendarCreates(profile.id);
+      if (calendarOwnerId != null) {
+        await flushPendingCalendarCreates(calendarOwnerId);
       }
       await calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
       await load();
@@ -554,7 +599,7 @@ export default function CalendarHomeScreen() {
             setStats(c.stats);
           }
         } else {
-          const fb = await getCalendarListFallback(profile?.id);
+          const fb = await getCalendarListFallback(calendarOwnerId);
           if (fb) {
             setEvents(fb.events);
             setStats(fb.stats);
@@ -566,7 +611,7 @@ export default function CalendarHomeScreen() {
       setRefreshing(false);
       reloadPendingRows();
     }
-  }, [load, deviceOffline, listStorageKey, profile?.id, reloadPendingRows]);
+  }, [load, deviceOffline, listStorageKey, calendarOwnerId, reloadPendingRows]);
 
   const calendarListRefresh = useMemo(
     () => <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />,
@@ -749,24 +794,31 @@ export default function CalendarHomeScreen() {
         },
         chipOn: { backgroundColor: '#007AFF22', borderColor: '#007AFF' },
         chipText: { color: colors.text, fontSize: 13 },
+        /** All / Upcoming / Today / Past — full pills below Calendar|List (not the stats row). */
         tabs: {
           flexDirection: 'row',
           alignItems: 'center',
-          paddingHorizontal: 12,
-          paddingVertical: 6,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
           marginBottom: 8,
           minHeight: 48,
+          gap: 8,
         },
         tabBtn: {
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          minHeight: 40,
+          paddingHorizontal: 18,
+          paddingVertical: 8,
+          minHeight: 36,
           justifyContent: 'center',
-          marginHorizontal: 4,
-          borderRadius: 8,
+          alignItems: 'center',
+          borderRadius: 9999,
           backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.border,
         },
-        tabBtnOn: { backgroundColor: '#007AFF' },
+        tabBtnOn: {
+          backgroundColor: '#007AFF',
+          borderColor: '#007AFF',
+        },
         tabTxt: { color: colors.text, fontSize: 13, lineHeight: 18 },
         tabTxtOn: { color: '#fff', fontWeight: '600' },
         listEventCount: {
@@ -895,6 +947,14 @@ export default function CalendarHomeScreen() {
           flexGrow: 0,
           flexShrink: 0,
           gap: 6,
+        },
+        /** Pills + company + Reach — kept at end of row; `marginLeft: 'auto'` via parent. */
+        cardMetaRight: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          flexShrink: 0,
+          marginLeft: 'auto',
         },
         /** Plain row (no nested ScrollView) — ScrollView inside FlatList rows often lays out full-width and stacks. */
         cardMetaPillsRow: {
@@ -1053,6 +1113,13 @@ export default function CalendarHomeScreen() {
     [router]
   );
 
+  const handleReachMeetingPress = useCallback(
+    (ev: EventRow | Record<string, unknown>) => {
+      navigateReachJoinFromCalendarListRow(router, ev as Record<string, unknown>);
+    },
+    [router]
+  );
+
   const metaIndicatorLabels = useCallback((id: number): string[] => {
     const m = metaById[String(id)];
     if (!m) return [];
@@ -1075,6 +1142,7 @@ export default function CalendarHomeScreen() {
 
   const renderEventItem: ListRenderItem<EventRow> = useCallback(
     ({ item: ev }) => {
+      const cancelled = String(ev.status ?? '').toLowerCase() === 'cancelled';
       const reach = eventHasReachMeeting(ev);
       const hasAssetMeta = !isPersonalEvent(ev) && metaIndicatorLabels(ev.id).length > 0;
       const company = String(ev.event_type ?? '').toLowerCase() === 'company';
@@ -1096,37 +1164,62 @@ export default function CalendarHomeScreen() {
           </Text>
           <View style={styles.cardMetaRow}>
             <View style={styles.cardMetaDateWrap}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                <Text style={styles.cardMetaDate} numberOfLines={2}>
-                  {formatEventWhen(ev)}
-                </Text>
-                {reach ? <CalendarReachPill /> : null}
-              </View>
+              <Text style={styles.cardMetaDate} numberOfLines={2}>
+                {formatEventWhen(ev)}
+              </Text>
             </View>
-            {showRightTail ? (
-              <View style={styles.cardMetaTail}>
-                {hasAssetMeta ? (
-                  <View style={styles.cardMetaPillsRow}>
-                    {metaIndicatorLabels(ev.id).map((label) => (
-                      <View key={label} style={styles.cardIndicatorPill}>
-                        <Text style={styles.cardIndicatorTxt}>{label}</Text>
+            {showRightTail || reach ? (
+              <View style={styles.cardMetaRight}>
+                {showRightTail ? (
+                  <View style={styles.cardMetaTail}>
+                    {hasAssetMeta ? (
+                      <View style={styles.cardMetaPillsRow}>
+                        {metaIndicatorLabels(ev.id).map((label) => (
+                          <View key={label} style={styles.cardIndicatorPill}>
+                            <Text style={styles.cardIndicatorTxt}>{label}</Text>
+                          </View>
+                        ))}
                       </View>
-                    ))}
+                    ) : null}
+                    {company ? (
+                      <Text style={styles.cardMetaType} numberOfLines={1}>
+                        Company event
+                      </Text>
+                    ) : null}
                   </View>
                 ) : null}
-                {company ? (
-                  <Text style={styles.cardMetaType} numberOfLines={1}>
-                    Company event
-                  </Text>
+                {reach ? (
+                  <CalendarReachPill
+                    onPress={
+                      cancelled
+                        ? undefined
+                        : () => {
+                            dismissCalendarOverlays();
+                            handleReachMeetingPress(ev);
+                          }
+                    }
+                  />
                 ) : null}
               </View>
             ) : null}
           </View>
-          {locationLabel ? <Text style={styles.cardSub}>📍 {locationLabel}</Text> : null}
+          {locationLabel ? (
+            <Text
+              style={[styles.cardSub, { color: colors.tint ?? '#007AFF' }]}
+              onPress={() => {
+                dismissCalendarOverlays();
+                void openMapsForLocationLabel(locationLabel);
+              }}
+              accessibilityRole="link"
+              accessibilityLabel={`Open maps for ${locationLabel}`}
+            >
+              📍 {locationLabel}
+            </Text>
+          ) : null}
         </TouchableOpacity>
       );
     },
-    [router, styles, metaIndicatorLabels, dismissCalendarOverlays, navigateToEventDetail]
+    [styles, metaIndicatorLabels, dismissCalendarOverlays, navigateToEventDetail, colors.tint, handleReachMeetingPress]
   );
 
   const listKeyExtractor = useCallback((item: EventRow) => String(item.id), []);
@@ -1497,6 +1590,7 @@ export default function CalendarHomeScreen() {
                 visibleEvents={visibleEvents}
                 listTab={tab}
                 onDismissOverlays={dismissCalendarOverlays}
+                onReachMeetingPress={(ev) => handleReachMeetingPress(ev)}
                 colors={{
                   background: colors.background,
                   surface: colors.surface,
@@ -1523,6 +1617,8 @@ export default function CalendarHomeScreen() {
                 onCursorDateChange={setCalendarCursor}
                 visibleEvents={visibleEvents}
                 listTab={tab}
+                onDismissOverlays={dismissCalendarOverlays}
+                onReachMeetingPress={(ev) => handleReachMeetingPress(ev)}
                 colors={{
                   background: colors.background,
                   surface: colors.surface,

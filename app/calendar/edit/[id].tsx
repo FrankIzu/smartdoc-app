@@ -55,6 +55,19 @@ const REMINDER_OPTIONS: { minutes: number; label: string }[] = [
   { minutes: 180, label: '3 hr before' },
 ];
 
+/** Same presets as `app/calendar/create.tsx` */
+const DURATION_PRESETS: { minutes: number; label: string }[] = [
+  { minutes: 15, label: '15 minutes' },
+  { minutes: 30, label: '30 minutes' },
+  { minutes: 45, label: '45 minutes' },
+  { minutes: 60, label: '1 hour' },
+  { minutes: 90, label: '1.5 hours' },
+  { minutes: 120, label: '2 hours' },
+  { minutes: 180, label: '3 hours' },
+  { minutes: 240, label: '4 hours' },
+  { minutes: 480, label: '8 hours' },
+];
+
 export default function CalendarEditScreen() {
   const { id: idParam } = useLocalSearchParams<{ id?: string }>();
   const eventId = Number(idParam);
@@ -86,10 +99,9 @@ export default function CalendarEditScreen() {
   const [useReach, setUseReach] = useState(false);
   const [existingVideoCallId, setExistingVideoCallId] = useState<number | null>(null);
 
-  const [startDate, setStartDate] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [endTime, setEndTime] = useState('');
+  const [eventDate, setEventDate] = useState('');
+  const [eventTime, setEventTime] = useState('');
+  const [durationMin, setDurationMin] = useState(60);
 
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [newEmail, setNewEmail] = useState('');
@@ -109,7 +121,8 @@ export default function CalendarEditScreen() {
   const [recordId, setRecordId] = useState<number | null>(null);
   const [categoryModal, setCategoryModal] = useState(false);
 
-  const [showPicker, setShowPicker] = useState<'startD' | 'startT' | 'endD' | 'endT' | null>(null);
+  const [showPicker, setShowPicker] = useState<'date' | 'time' | null>(null);
+  const [durationPickerOpen, setDurationPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -159,13 +172,15 @@ export default function CalendarEditScreen() {
 
     if (event.start_time) {
       const s = parseUTC(event.start_time);
-      setStartDate(toLocalDateString(s));
-      setStartTime(formatLocalTime12h(s));
-    }
-    if (event.end_time) {
-      const e = parseUTC(event.end_time);
-      setEndDate(toLocalDateString(e));
-      setEndTime(formatLocalTime12h(e));
+      setEventDate(toLocalDateString(s));
+      setEventTime(formatLocalTime12h(s));
+      if (event.end_time) {
+        const e = parseUTC(event.end_time);
+        const mins = Math.round((e.getTime() - s.getTime()) / 60000);
+        setDurationMin(Number.isFinite(mins) && mins > 0 ? mins : 60);
+      } else {
+        setDurationMin(60);
+      }
     }
 
     const plist = Array.isArray(event.participants)
@@ -206,15 +221,13 @@ export default function CalendarEditScreen() {
     };
   }, [eventId, load]);
 
-  const getPickerValue = () => {
-    if (showPicker === 'startD' || showPicker === 'startT') {
-      if (startDate && startTime) return combineLocalDateAndTimeStrings(startDate, startTime);
-    }
-    if (showPicker === 'endD' || showPicker === 'endT') {
-      if (endDate && endTime) return combineLocalDateAndTimeStrings(endDate, endTime);
-    }
-    return new Date();
-  };
+  const durationLabel = useMemo(() => {
+    const preset = DURATION_PRESETS.find((p) => p.minutes === durationMin);
+    return preset?.label ?? `${durationMin} minutes`;
+  }, [durationMin]);
+
+  const getPickerDateTime = (): Date =>
+    eventDate && eventTime ? combineLocalDateAndTimeStrings(eventDate, eventTime) : new Date();
 
   const styles = useMemo(
     () =>
@@ -321,22 +334,18 @@ export default function CalendarEditScreen() {
       );
       return;
     }
-    if (!startDate || !startTime || !endDate || !endTime) {
-      Alert.alert('Time', 'Select start and end');
+    if (!eventDate || !eventTime) {
+      Alert.alert('Time', 'Select date and start time');
       return;
     }
 
     let startDt: Date;
     let endDt: Date;
     try {
-      startDt = convertLocalTimeToUTC(startDate, startTime, tz);
-      endDt = convertLocalTimeToUTC(endDate, endTime, tz);
+      startDt = convertLocalTimeToUTC(eventDate, eventTime, tz);
+      endDt = new Date(startDt.getTime() + Math.max(1, durationMin) * 60 * 1000);
     } catch {
-      Alert.alert('Time', 'Enter valid start and end times (for example 5:00 PM).');
-      return;
-    }
-    if (endDt <= startDt) {
-      Alert.alert('Time', 'End must be after start');
+      Alert.alert('Time', 'Enter a valid start time (for example 5:00 PM).');
       return;
     }
 
@@ -359,7 +368,7 @@ export default function CalendarEditScreen() {
 
       if (useReach && !existingVideoCallId) {
         try {
-          const durationMinutes = Math.max(1, Math.ceil((endDt.getTime() - startDt.getTime()) / 60000));
+          const durationMinutes = Math.max(1, durationMin);
           const videoMeetingData = {
             room_name: title.trim(),
             description: description.trim() || 'Reach Video Meeting',
@@ -479,25 +488,26 @@ export default function CalendarEditScreen() {
           </>
         ) : null}
 
-        <Text style={styles.label}>Start</Text>
+        <Text style={styles.label}>Starts</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('startD')}>
-            <Text style={{ color: colors.text }}>{startDate}</Text>
+          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('date')}>
+            <Text style={{ color: colors.text }}>{eventDate}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('startT')}>
-            <Text style={{ color: colors.text }}>{startTime}</Text>
+          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('time')}>
+            <Text style={{ color: colors.text }}>{eventTime}</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.label}>End</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('endD')}>
-            <Text style={{ color: colors.text }}>{endDate}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('endT')}>
-            <Text style={{ color: colors.text }}>{endTime}</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.label}>Duration</Text>
+        <TouchableOpacity
+          style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+          onPress={() => setDurationPickerOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`Duration, ${durationLabel}`}
+        >
+          <Text style={{ color: colors.text }}>{durationLabel}</Text>
+          <Ionicons name="chevron-down" size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
 
         <Text style={styles.label}>Location</Text>
         <TextInput style={styles.input} value={location} onChangeText={setLocation} placeholderTextColor={colors.textSecondary} />
@@ -618,52 +628,141 @@ export default function CalendarEditScreen() {
       </ScrollView>
       </KeyboardAvoidingView>
 
-      {Platform.OS === 'android' && showPicker ? (
-        <DateTimePicker
-          value={getPickerValue()}
-          mode={showPicker === 'startT' || showPicker === 'endT' ? 'time' : 'date'}
-          display="default"
-          positiveButton={{ label: 'OK', textColor: colors.tint }}
-          negativeButton={{ label: 'Cancel', textColor: colors.textSecondary }}
-          onChange={(e, d) => {
-            if (e.type === 'dismissed') {
-              setShowPicker(null);
-              return;
-            }
-            if (e.type !== 'set' || !d) return;
-            if (showPicker === 'startD') setStartDate(toLocalDateString(d));
-            if (showPicker === 'startT') setStartTime(formatLocalTime12h(d));
-            if (showPicker === 'endD') setEndDate(toLocalDateString(d));
-            if (showPicker === 'endT') setEndTime(formatLocalTime12h(d));
-            setShowPicker(null);
-          }}
-        />
-      ) : null}
-
-      {Platform.OS === 'ios' && showPicker ? (
+      {showPicker === 'date' && Platform.OS === 'ios' ? (
         <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
           <View style={{ flex: 1, justifyContent: 'flex-end' }}>
             <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
             <View style={{ backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 14, borderTopRightRadius: 14 }}>
               <DateTimePicker
-                value={getPickerValue()}
-                mode={showPicker === 'startT' || showPicker === 'endT' ? 'time' : 'date'}
+                value={getPickerDateTime()}
+                mode="date"
                 display="spinner"
                 themeVariant={iosPickerTheme}
                 onChange={(_, d) => {
-                  if (!d) return;
-                  if (showPicker === 'startD') setStartDate(toLocalDateString(d));
-                  if (showPicker === 'startT') setStartTime(formatLocalTime12h(d));
-                  if (showPicker === 'endD') setEndDate(toLocalDateString(d));
-                  if (showPicker === 'endT') setEndTime(formatLocalTime12h(d));
+                  if (d) setEventDate(toLocalDateString(d));
                 }}
               />
               <TouchableOpacity onPress={() => setShowPicker(null)}>
-                <Text style={{ color: '#007AFF', textAlign: 'center', padding: 12 }}>Done</Text>
+                <Text style={{ color: colors.tint, textAlign: 'center', padding: 12 }}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
+      ) : null}
+
+      {showPicker === 'time' && Platform.OS === 'ios' ? (
+        <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
+          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
+            <View style={{ backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 14, borderTopRightRadius: 14 }}>
+              <DateTimePicker
+                value={getPickerDateTime()}
+                mode="time"
+                display="spinner"
+                themeVariant={iosPickerTheme}
+                onChange={(_, d) => {
+                  if (d) setEventTime(formatLocalTime12h(d));
+                }}
+              />
+              <TouchableOpacity onPress={() => setShowPicker(null)}>
+                <Text style={{ color: colors.tint, textAlign: 'center', padding: 12 }}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      <Modal visible={durationPickerOpen} transparent animationType="slide" onRequestClose={() => setDurationPickerOpen(false)}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <TouchableOpacity style={{ flex: 1, backgroundColor: '#0008' }} activeOpacity={1} onPress={() => setDurationPickerOpen(false)} />
+          <View
+            style={{
+              backgroundColor: colors.background,
+              borderTopLeftRadius: 14,
+              borderTopRightRadius: 14,
+              paddingBottom: 12,
+              maxHeight: '52%',
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderColor: colors.border,
+            }}
+          >
+            <Text style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8, fontSize: 17, fontWeight: '700', color: colors.text }}>
+              Duration
+            </Text>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 320 }}>
+              {DURATION_PRESETS.map((p) => {
+                const selected = durationMin === p.minutes;
+                return (
+                  <TouchableOpacity
+                    key={p.minutes}
+                    style={{
+                      paddingVertical: 14,
+                      paddingHorizontal: 16,
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: colors.border,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                    }}
+                    onPress={() => {
+                      setDurationMin(p.minutes);
+                      setDurationPickerOpen(false);
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: selected ? '700' : '400' }}>{p.label}</Text>
+                    {selected ? <Ionicons name="checkmark" size={22} color={colors.tint} /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity onPress={() => setDurationPickerOpen(false)} style={{ padding: 14 }}>
+              <Text style={{ color: colors.tint, textAlign: 'center', fontSize: 17, fontWeight: '600' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {Platform.OS === 'android' ? (
+        <>
+          {showPicker === 'date' ? (
+            <DateTimePicker
+              value={getPickerDateTime()}
+              mode="date"
+              display="default"
+              positiveButton={{ label: 'OK', textColor: colors.tint }}
+              negativeButton={{ label: 'Cancel', textColor: colors.textSecondary }}
+              onChange={(e, d) => {
+                if (e.type === 'dismissed') {
+                  setShowPicker(null);
+                  return;
+                }
+                if (e.type === 'set' && d) {
+                  setEventDate(toLocalDateString(d));
+                  setShowPicker(null);
+                }
+              }}
+            />
+          ) : null}
+          {showPicker === 'time' ? (
+            <DateTimePicker
+              value={getPickerDateTime()}
+              mode="time"
+              display="default"
+              positiveButton={{ label: 'OK', textColor: colors.tint }}
+              negativeButton={{ label: 'Cancel', textColor: colors.textSecondary }}
+              onChange={(e, d) => {
+                if (e.type === 'dismissed') {
+                  setShowPicker(null);
+                  return;
+                }
+                if (e.type === 'set' && d) {
+                  setEventTime(formatLocalTime12h(d));
+                  setShowPicker(null);
+                }
+              }}
+            />
+          ) : null}
+        </>
       ) : null}
 
       <Modal visible={memberModal} animationType="slide" transparent>

@@ -12,13 +12,16 @@ export type CalendarUserProfile = {
   company_id?: number;
 };
 
+export type CalendarProfileRefreshOpts = { silent?: boolean };
+
 export function useCalendarProfile() {
   const [profile, setProfile] = useState<CalendarUserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts?: CalendarProfileRefreshOpts) => {
+    const silent = opts?.silent === true;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const raw = await apiClient.getUserProfile();
       const data = (raw as any)?.data;
       if (data?.id != null) {
@@ -35,9 +38,9 @@ export function useCalendarProfile() {
         setProfile(null);
       }
     } catch {
-      setProfile(null);
+      if (!silent) setProfile(null);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
