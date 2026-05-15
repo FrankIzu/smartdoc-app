@@ -163,6 +163,19 @@ function RefiningStatusDots({ color }: { color: string }) {
   );
 }
 
+/** Normalize SSE bodies so CRLF/trailing whitespace alone don't trigger a needless typewriter rewind on `complete`. */
+function normalizeStreamingTextForCompare(s: string): string {
+  return s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
+}
+
+/** True if what we've already typed matches the same substring of the authoritative answer (cursor can stay put). */
+function canPreserveDisplayedPrefixOnComplete(displayedChars: number, oldBuffer: string, finalResponse: string): boolean {
+  if (displayedChars <= 0) return true;
+  const max = Math.min(displayedChars, oldBuffer.length, finalResponse.length);
+  if (max <= 0) return false;
+  return oldBuffer.slice(0, max) === finalResponse.slice(0, max);
+}
+
 interface Workspace {
   id: number;
   name: string;
@@ -3756,10 +3769,10 @@ export default function ChatsScreen() {
     // This prevents idle gaps on screen
     if (isTransition && streamingIntervalRef.current) {
       console.log('🔄 Transition detected - keeping existing interval running, just updating buffer');
-      // Interval is already running, it will automatically pick up the new buffer content
-      // Just ensure displayedChars is reset if buffer was replaced
+      // Clamp cursor to buffer length if the buffer was replaced with a shorter body.
+      // Never reset to 0 here — that would replay already-shown content.
       if (displayedCharsRef.current > contentBufferRef.current.length) {
-        displayedCharsRef.current = 0; // Reset to start streaming new content
+        displayedCharsRef.current = contentBufferRef.current.length;
       }
       return; // Don't restart interval, let it continue
     }
@@ -3814,7 +3827,6 @@ export default function ChatsScreen() {
         }
         // All current content is displayed
         if (isStreamCompleteRef.current) {
-          // Stream is complete and all content is displayed - stop streaming
           console.log('✅ All content displayed and stream complete - stopping streaming interval');
           stopStreaming(assistantMsgIndex, true);
           return;
@@ -4438,15 +4450,16 @@ export default function ChatsScreen() {
           console.log('🔄 Refinement chunk received', {
             chunk_index: data.chunk_index,
             contentLength: refinementChunkContent.length,
-            preview: refinementChunkContent.substring(0, 40),
-            is_first_refinement: isFirstRefinement,
-            is_preview_phase_flag: isPreviewPhaseFromData,
+            isFirstRefinement,
             current_phase: isPreviewPhaseRef.current ? 'preview' : 'refinement',
-            phase_transition_detected: phaseTransitionDetected,
-            preview_was_skipped: previewWasSkipped,
-            fake_streaming_active: isFakeStreamingRef.current
           });
-          if (isFirstRefinement) {
+          // Hard cursor reset only when genuinely transitioning from preview/fake → refinement.
+          // When already in refinement, a backend `refinement_cursor_reset` means the full
+          // authoritative answer is replacing a preliminary chunk — keep the cursor as-is.
+          const isTrueFirstRefinement = isFirstRefinement && isPreviewPhaseRef.current;
+          const isRefinementReplacement  = isFirstRefinement && !isPreviewPhaseRef.current;
+
+          if (isTrueFirstRefinement) {
             // Discard any deferred main_search_pending / preview_complete /
             // result_superseded action queued by runWhenTyped — once we cut
             // over, those would otherwise re-flip the row to a stale preview
@@ -4493,6 +4506,21 @@ export default function ChatsScreen() {
             lastStreamedMessageIndexRef.current = assistantMessageIndex;
             lastStreamCompleteTimeRef.current = Date.now();
             console.log('🔄 Ensuring refinement streaming continues - smooth transition from', previewWasSkipped ? 'fake streaming' : 'preview');
+            startOrContinueStreaming(assistantMessageIndex, true);
+          } else if (isRefinementReplacement) {
+            // Full authoritative answer replacing a preliminary refinement chunk.
+            // Keep the cursor exactly where it is so already-shown chars are never replayed.
+            console.log('🔄 [REFINEMENT-REPLACE] Replacing buffer without cursor rewind', {
+              chunk_index: data.chunk_index,
+              prevDisplayedChars: displayedCharsRef.current,
+              prevBufLen: contentBufferRef.current.length,
+              newChunkLen: refinementChunkContent.length,
+            });
+            contentBufferRef.current = refinementChunkContent;
+            // Clamp cursor if the new content is somehow shorter (edge case).
+            displayedCharsRef.current = Math.min(displayedCharsRef.current, refinementChunkContent.length);
+            lastStreamedMessageIndexRef.current = assistantMessageIndex;
+            lastStreamCompleteTimeRef.current = Date.now();
             startOrContinueStreaming(assistantMessageIndex, true);
           } else {
             contentBufferRef.current += refinementChunkContent;
@@ -4598,28 +4626,36 @@ export default function ChatsScreen() {
           }
           if (data.response != null && String(data.response).length > 0) {
             const resp = String(data.response);
+            const buf = contentBufferRef.current;
+            const dc = displayedCharsRef.current;
+            const wasRefinement = !isPreviewPhaseRef.current;
+            const strictlySame = resp === buf;
             console.log('✅ Complete with final response', { length: resp.length });
-            const isContentDifferent = resp !== contentBufferRef.current;
-            const isRefinementPhase = !isPreviewPhaseRef.current;
-            if (isContentDifferent && isRefinementPhase) {
-              console.log('🔄 Complete: Refinement content differs, replacing preview');
-              contentBufferRef.current = resp;
-              displayedCharsRef.current = 0;
-              isPreviewPhaseRef.current = false;
-              startOrContinueStreaming(assistantMessageIndex);
-            } else if (isContentDifferent && !isRefinementPhase) {
-              console.log('⚠️ Complete: Content differs but still in preview phase - updating buffer only');
-              contentBufferRef.current = resp;
-              isPreviewPhaseRef.current = false;
+
+            // Always persist canonical server body; refinement often sends `complete.response` equal to chunked
+            // streaming but `!==` due to benign differences — never rewind the typewriter in those cases.
+            contentBufferRef.current = resp;
+            isPreviewPhaseRef.current = false;
+
+            if (!wasRefinement) {
+              console.log('⚠️ Complete with body during preview-flag phase — syncing buffer');
               if (displayedCharsRef.current < contentBufferRef.current.length) {
                 startOrContinueStreaming(assistantMessageIndex);
               }
             } else {
-              console.log('✅ Complete: Content matches buffer - finalizing without restart');
-              contentBufferRef.current = resp;
-              isPreviewPhaseRef.current = false;
+              // Once refinement content is already on screen, never rewind to 0.
+              // Clamp the cursor to the authoritative response length (in case resp is shorter),
+              // then let the already-running interval continue seamlessly without clearing it.
+              if (!strictlySame) {
+                console.log('🔄 Complete: refinement — merged authoritative body without replaying prefix');
+              } else {
+                console.log('✅ Complete: content matches buffer — finalizing without restart');
+              }
+              displayedCharsRef.current = Math.min(dc, resp.length);
               if (displayedCharsRef.current < contentBufferRef.current.length) {
-                startOrContinueStreaming(assistantMessageIndex);
+                // Pass isTransition=true so the running interval is kept alive instead of
+                // being cleared+restarted (which caused the visible pause then jump).
+                startOrContinueStreaming(assistantMessageIndex, true);
               } else {
                 stopStreaming(assistantMessageIndex, true);
               }
