@@ -13,6 +13,7 @@ import {
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { resolveSignatureRoute } from '../../utils/signatureRouteResolver';
 import { useAuth } from '../context/auth';
 import { getNotificationScreen, parseNotificationPath } from '../services/pushNotifications';
 import { AnimatedHeaderContainer } from './AnimatedHeaderContainer';
@@ -158,6 +159,18 @@ export function NotificationsInboxContent({
       if (path !== '/notifications') {
         if (variant === 'modal') onDismiss?.();
         try {
+          if (path.includes('signatures') || n.type.startsWith('signature_')) {
+            router.push(
+              resolveSignatureRoute({
+                navigation_path: path,
+                envelopeId: n.metadata?.envelope_id as string | undefined,
+                public_id: n.metadata?.public_id as string | undefined,
+                token: n.metadata?.token as string | undefined,
+                type: n.metadata?.action as string | undefined,
+              }) as any,
+            );
+            return;
+          }
           const { pathname, params } = parseNotificationPath(path);
           if (params && Object.keys(params).length > 0) {
             router.push({ pathname, params } as any);

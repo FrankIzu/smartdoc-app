@@ -3,6 +3,7 @@ import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { shouldShowPersistentBottomNav } from '../../utils/persistentBottomNavInset';
 
 interface TabItem {
   name: string;
@@ -43,17 +44,6 @@ const tabs: TabItem[] = [
     route: '/(tabs)/help',
   },
 ];
-
-/** Bottom bar on main tab routes only — calendar stack has its own header/back navigation. */
-function shouldShowPersistentBottomNav(pathname: string | null | undefined): boolean {
-  if (!pathname) return false;
-  const p = pathname;
-  if (p === '/calendar' || p === '/calendar/' || p.startsWith('/calendar/')) return false;
-  if (!p.startsWith('/(tabs)')) return false;
-  const rest = p.replace(/^\/\(tabs\)\/?/, '') || 'index';
-  const root = rest.split('/')[0];
-  return ['index', 'documents', 'chats', 'help', 'settings'].includes(root);
-}
 
 export default function PersistentBottomNavigation() {
   const router = useRouter();

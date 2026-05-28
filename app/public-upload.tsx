@@ -12,6 +12,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import FileNameText from '../components/FileNameText';
 import { API_BASE_URL } from '../constants/Config';
 import { useLimitError } from '../contexts/LimitErrorContext';
 import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
@@ -380,7 +381,7 @@ export default function PublicUploadScreen() {
                     <Ionicons name={getFileIcon(file.name)} size={20} color="#007AFF" />
                   </View>
                   <View style={styles.fileInfo}>
-                    <Text style={styles.fileName}>{file.name}</Text>
+                    <FileNameText name={file.name} style={styles.fileName} />
                     <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>
                     {uploading && progress > 0 && (
                       <View style={styles.progressContainer}>
@@ -558,6 +559,7 @@ const styles = StyleSheet.create({
   },
   fileInfo: {
     flex: 1,
+    minWidth: 0,
   },
   fileName: {
     fontSize: 14,

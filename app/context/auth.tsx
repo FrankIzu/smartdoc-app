@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Linking } from 'react-native';
 import { STORAGE_KEYS } from '../../constants/Config';
 import { apiService } from '../../services/api';
@@ -40,6 +40,26 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const prevUserIdRef = useRef<string | null>(null);
+
+  // Purge in-memory caches when switching accounts without a full logout cycle.
+  useEffect(() => {
+    const nextId = user?.id ?? null;
+    const prevId = prevUserIdRef.current;
+    if (prevId && nextId && prevId !== nextId) {
+      void (async () => {
+        try {
+          const { clearAllUserScopedCaches } = await import('../../services/userScopedCache');
+          const { clearMeetingAssetsCache } = await import('../../services/api');
+          await clearAllUserScopedCaches();
+          clearMeetingAssetsCache();
+        } catch {
+          // non-fatal
+        }
+      })();
+    }
+    prevUserIdRef.current = nextId;
+  }, [user?.id]);
 
   useEffect(() => {
     // Check for existing session
@@ -147,8 +167,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { clearAllPendingCalendarCreates } = await import('../../utils/calendarPendingCreates');
         const { clearCalendarOfflineOnLogout } = await import('../../utils/calendarCache');
+        const { clearAllUserScopedCaches } = await import('../../services/userScopedCache');
+        const { clearMeetingAssetsCache } = await import('../../services/api');
         await clearAllPendingCalendarCreates();
         await clearCalendarOfflineOnLogout();
+        await clearAllUserScopedCaches();
+        clearMeetingAssetsCache();
       } catch (calErr) {
         console.warn('Calendar local clear on logout:', calErr);
       }

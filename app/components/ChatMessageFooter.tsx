@@ -2,6 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import { Modal, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Toast from 'react-native-toast-message';
+import FileNameText from '../../components/FileNameText';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 
@@ -48,11 +49,6 @@ export interface ChatMessageFooterProps {
   showMoreSources?: boolean;
   onMoreSources?: () => void;
   moreSourcesDisabled?: boolean;
-}
-
-function truncateWithEllipsis(str: string, maxLen: number): string {
-  if (!str || str.length <= maxLen) return str;
-  return str.substring(0, maxLen) + '...';
 }
 
 function formatTime(dateString: string): string {
@@ -263,9 +259,10 @@ export function ChatMessageFooter({
                   const data = (item.chunk_content || item.excerpt || '').trim();
                   return (
                     <View key={index} style={[styles.sourceItem, { borderBottomColor: colors.border }]}>
-                      <Text style={[styles.sourceName, { color: colors.text }]} numberOfLines={2}>
-                        {truncateWithEllipsis(name, 35)}
-                      </Text>
+                      <FileNameText
+                        name={name}
+                        style={[styles.sourceName, { color: colors.text }]}
+                      />
                       {data ? (
                         <>
                           <Text style={[styles.sourceDataLabel, { color: colors.textSecondary }]}>Data</Text>

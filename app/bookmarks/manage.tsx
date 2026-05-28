@@ -16,7 +16,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
+import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { apiClient } from '../../services/api';
+import { bookmarksListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
@@ -33,6 +35,7 @@ interface Bookmark {
 
 export default function ManageBookmarksScreen() {
   const router = useRouter();
+  const openChatGD = useOpenChatGD();
   const { user } = useAuth();
   const colors = useThemeColors();
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
@@ -52,12 +55,14 @@ export default function ManageBookmarksScreen() {
     '#AF52DE', '#5856D6', '#8E44AD', '#E74C3C'
   ];
 
-  const BOOKMARKS_LIST_CACHE_KEY = 'bookmarks_list';
   const BOOKMARKS_LIST_CACHE_MS = 30_000;
+  const bookmarksCacheKey = bookmarksListScreenKey(user?.id);
 
   const loadBookmarks = async (forceRefresh = false) => {
-    if (!forceRefresh) {
-      const cached = screenCache.get<Bookmark[]>(BOOKMARKS_LIST_CACHE_KEY, BOOKMARKS_LIST_CACHE_MS);
+    if (!user?.id) return;
+
+    if (!forceRefresh && bookmarksCacheKey) {
+      const cached = screenCache.get<Bookmark[]>(bookmarksCacheKey, BOOKMARKS_LIST_CACHE_MS);
       if (cached) {
         setBookmarks(cached);
         setLoading(false);
@@ -75,7 +80,7 @@ export default function ManageBookmarksScreen() {
           : (response.data.bookmarks || []);
         
         setBookmarks(bookmarksData);
-        screenCache.set(BOOKMARKS_LIST_CACHE_KEY, bookmarksData);
+        if (bookmarksCacheKey) screenCache.set(bookmarksCacheKey, bookmarksData);
       } else {
         setBookmarks([]);
       }
@@ -91,13 +96,13 @@ export default function ManageBookmarksScreen() {
   // but respect the cache TTL to avoid redundant calls on quick tab switches.
   useFocusEffect(
     useCallback(() => {
-      loadBookmarks();
-    }, [])
+      if (user?.id) loadBookmarks();
+    }, [user?.id])
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+    if (bookmarksCacheKey) screenCache.invalidate(bookmarksCacheKey);
     loadBookmarks(true);
   };
 
@@ -120,7 +125,7 @@ export default function ManageBookmarksScreen() {
         setNewBookmarkName('');
         setNewBookmarkDescription('');
         setSelectedColor('#007AFF');
-        screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+        if (bookmarksCacheKey) screenCache.invalidate(bookmarksCacheKey);
         loadBookmarks(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to create bookmark');
@@ -144,7 +149,7 @@ export default function ManageBookmarksScreen() {
               const response = await apiClient.deleteBookmark(bookmark.id);
               if (response.success) {
                 Alert.alert('Success', 'Bookmark deleted successfully!');
-                screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+                if (bookmarksCacheKey) screenCache.invalidate(bookmarksCacheKey);
                 loadBookmarks(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete bookmark');
@@ -183,7 +188,7 @@ export default function ManageBookmarksScreen() {
         setShowRenameModal(false);
         setBookmarkToRename(null);
         setRenameInputValue('');
-        screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+        if (bookmarksCacheKey) screenCache.invalidate(bookmarksCacheKey);
         loadBookmarks(true);
         Alert.alert('Success', 'Bookmark renamed successfully');
       } else {
@@ -198,14 +203,11 @@ export default function ManageBookmarksScreen() {
 
   const handleChatWithBookmark = (bookmark: Bookmark, e: any) => {
     e?.stopPropagation?.();
-    router.push({
-      pathname: '/(tabs)/chats',
-      params: {
-        bookmark_id: bookmark.id.toString(),
-        bookmark_name: bookmark.name,
-        bookmark_description: bookmark.description || '',
-        bookmark_file_count: bookmark.file_count.toString(),
-      },
+    openChatGD({
+      bookmark_id: bookmark.id.toString(),
+      bookmark_name: bookmark.name,
+      bookmark_description: bookmark.description || '',
+      bookmark_file_count: bookmark.file_count.toString(),
     });
   };
 
@@ -220,7 +222,7 @@ export default function ManageBookmarksScreen() {
           setBookmarks(prev => prev.map(b =>
             b.id === item.id ? { ...b, is_locked: newLocked } : b
           ));
-          screenCache.invalidate(BOOKMARKS_LIST_CACHE_KEY);
+          if (bookmarksCacheKey) screenCache.invalidate(bookmarksCacheKey);
           Alert.alert('Success', newLocked ? 'Bookmark locked' : 'Bookmark unlocked');
         } else {
           Alert.alert('Error', response.message || 'Failed to update bookmark lock');

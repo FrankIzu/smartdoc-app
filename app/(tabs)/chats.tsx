@@ -4,7 +4,8 @@ import 'react-native-url-polyfill/auto';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useChatGDSheetHostParams } from '../../contexts/ChatGDSheetContext';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     AccessibilityInfo,
     ActivityIndicator,
@@ -36,6 +37,7 @@ import { io, Socket } from 'socket.io-client';
 import AssistantMessageBody from '../../components/AssistantMessageBody';
 import ChartImageModal from '../../components/ChartImageModal';
 import InAppWebViewModal, { shouldUseExternalLinking } from '../../components/InAppWebViewModal';
+import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import SermonViewerModal from '../../components/SermonViewerModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
@@ -50,6 +52,11 @@ import { localizeUtcDatesInAssistantText } from '../../utils/chatUtcDisplay';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 import { screenCache } from '../../utils/screenCache';
+import {
+  chatContextsStorageKey,
+  chatListScreenKey,
+  favoriteChatsStorageKey,
+} from '../../services/userScopedCache';
 import { secureStorage } from '../../utils/storage';
 import {
     WORKSPACE_MEMBERS_CACHE_MS,
@@ -233,17 +240,20 @@ const DEFAULT_CHAT_ASSISTANT: Chat = {
   unread_count: 0
 };
 
-// Storage key for persisting chat contexts
-const CHAT_CONTEXTS_KEY = '@grabdocs_chat_contexts';
-const FAVORITE_CHATS_KEY = '@grabdocs_favorite_chats';
+// Storage keys are scoped per user via userScopedCache helpers.
 
 // Composite key to prevent AI chat and user chat ID collision in storage
 const getChatStorageKey = (chat: { type: string; id: number }) =>
   (chat.type === 'user_direct' || chat.type === 'workspace' ? 'user_' : 'ai_') + chat.id;
 
 // Helper: Save document/bookmark/user/workspace chat contexts to AsyncStorage
-const savePersistedChatContexts = async (chats: Chat[]) => {
+const savePersistedChatContexts = async (
+  userId: string | number | null | undefined,
+  chats: Chat[],
+) => {
   try {
+    const storageKey = chatContextsStorageKey(userId);
+    if (!storageKey) return;
     const contextsToSave: Record<string, {
       type: string;
       title: string;
@@ -282,14 +292,16 @@ const savePersistedChatContexts = async (chats: Chat[]) => {
       }
     });
     
-    await AsyncStorage.setItem(CHAT_CONTEXTS_KEY, JSON.stringify(contextsToSave));
+    await AsyncStorage.setItem(storageKey, JSON.stringify(contextsToSave));
   } catch (error) {
     console.error('❌ Failed to save chat contexts:', error);
   }
 };
 
 // Helper: Load persisted chat contexts from AsyncStorage (uses composite key: ai_95, user_95)
-const loadPersistedChatContexts = async (): Promise<Map<string, {
+const loadPersistedChatContexts = async (
+  userId: string | number | null | undefined,
+): Promise<Map<string, {
   type: string;
   title: string;
   document_context?: Document;
@@ -298,7 +310,9 @@ const loadPersistedChatContexts = async (): Promise<Map<string, {
   workspace?: Workspace;
 }>> => {
   try {
-    const stored = await AsyncStorage.getItem(CHAT_CONTEXTS_KEY);
+    const storageKey = chatContextsStorageKey(userId);
+    if (!storageKey) return new Map();
+    const stored = await AsyncStorage.getItem(storageKey);
     if (!stored) return new Map();
     
     const parsed = JSON.parse(stored);
@@ -358,10 +372,25 @@ function getAiHistoryListPreview(history: any): string {
 
 export default function ChatsScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
+  const routeParams = useLocalSearchParams();
+  const sheetHostParams = useChatGDSheetHostParams();
+  const params = sheetHostParams ?? routeParams;
+  const isSheet =
+    sheetHostParams != null ||
+    params.isSheet === '1' ||
+    params.isSheet === 'true';
+  const clearRouteParams = useCallback(() => {
+    if (sheetHostParams != null) return;
+    try {
+      router.setParams({});
+    } catch {
+      /* ignore if router not ready */
+    }
+  }, [sheetHostParams, router]);
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const { user: authUser } = useAuth();
+  const authUserId = authUser?.id ?? null;
   const { showLimitError } = useLimitError();
   const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
 
@@ -458,6 +487,10 @@ export default function ChatsScreen() {
   const selectedChatRef = useRef<Chat | null>(null); // Track selectedChat to preserve it across reloads
   /** Per-chat message cache: chatId → { messages, timestamp }. Cleared when a new message is sent. */
   const messageCacheRef = useRef<Map<number, { messages: ChatMessage[]; timestamp: number }>>(new Map());
+
+  useEffect(() => {
+    messageCacheRef.current.clear();
+  }, [authUserId]);
   const MESSAGE_CACHE_MS = 2 * 60_000; // 2-minute TTL for cached messages
   /** Last time the full chat list was fetched. Used to debounce useFocusEffect reloads. */
   const chatListLastLoadRef = useRef<number>(0);
@@ -472,7 +505,8 @@ export default function ChatsScreen() {
   const contextPreservationTimeRef = useRef<number>(0); // Track when context was last preserved
   const pendingBookmarkFromParamsRef = useRef<Bookmark | null>(null); // Bookmark from nav params so loadChats can re-inject if it overwrites list
   const placeholderChatToPreserveRef = useRef<Chat | null>(null); // Placeholder -2 when going back, so loadChats can merge it (avoids stale closure)
-  
+  const fmAutosubmitHandledRef = useRef(false);
+  const sendMessageRef = useRef<(overrideText?: string) => Promise<void>>(async () => {});
   // Keep selectedChatRef in sync with selectedChat state
   useEffect(() => {
     selectedChatRef.current = selectedChat;
@@ -490,6 +524,11 @@ export default function ChatsScreen() {
   // Keyboard top (screenY) tracking for input positioning
   /** Keyboard top (screenY) when visible - used to position input just above keyboard */
   const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
+  const composerKeyboardLift = useMemo(() => {
+    // In sheet mode the parent MinimizableBottomSheet already lifts content above the keyboard.
+    if (isSheet || keyboardTop == null) return 0;
+    return Math.max(0, Dimensions.get('window').height - keyboardTop - insets.bottom);
+  }, [isSheet, keyboardTop, insets.bottom]);
   const inputContainerRef = useRef<View>(null);
   const [inputContainerY, setInputContainerY] = useState(0);
   const [inputContainerHeight, setInputContainerHeight] = useState(68);
@@ -714,7 +753,7 @@ export default function ChatsScreen() {
         }
         
         // Persist document context immediately
-        savePersistedChatContexts(updatedChats);
+        savePersistedChatContexts(authUserId,updatedChats);
         return updatedChats;
       });
       setSelectedChat(documentChat);
@@ -724,7 +763,7 @@ export default function ChatsScreen() {
       loadedChatIdRef.current = documentChat.id; // Track that we've set empty messages for this chat
       
       // Clear the params to prevent re-triggering
-      router.setParams({});
+      clearRouteParams();
     }
   }, [params.documentId, params.documentName, params.documentType, params.documentCategory]);
 
@@ -769,7 +808,7 @@ export default function ChatsScreen() {
     if (!openStartNew) return;
     const t = setTimeout(() => {
       try {
-        router.setParams({});
+        clearRouteParams();
       } catch {
         /* ignore if router not ready */
       }
@@ -824,7 +863,7 @@ export default function ChatsScreen() {
             name: existingDocumentChat.document_context!.name,
             data: existingDocumentChat.document_context!
           });
-          router.setParams({});
+          clearRouteParams();
           return;
         }
 
@@ -863,7 +902,7 @@ export default function ChatsScreen() {
           }
           
           // Persist document context immediately
-          savePersistedChatContexts(updatedChats);
+          savePersistedChatContexts(authUserId,updatedChats);
           return updatedChats;
         });
         
@@ -889,7 +928,7 @@ export default function ChatsScreen() {
         loadedChatIdRef.current = documentChat.id;
         
         // Clear the params to prevent re-triggering (but context is already set)
-        router.setParams({});
+        clearRouteParams();
         
         // Reset the flag after a short delay to allow context setup to complete
         // This prevents useFocusEffect from interfering during setup
@@ -934,7 +973,7 @@ export default function ChatsScreen() {
             
             // Update persisted contexts
             setChats(prev => {
-              savePersistedChatContexts(prev);
+              savePersistedChatContexts(authUserId,prev);
               return prev;
             });
           }
@@ -992,7 +1031,7 @@ export default function ChatsScreen() {
         setMessages([]);
         loadedChatIdRef.current = fallbackChat.id;
         
-        router.setParams({});
+        clearRouteParams();
         
         // Reset the flag after a short delay
         setTimeout(() => {
@@ -1008,6 +1047,38 @@ export default function ChatsScreen() {
     // Context should show instantly when fileId params are available
   }, [params.fileId, params.fileName, params.workspaceId]);
 
+  // AI File Manager handoff: pre-fill and autosubmit (no FM imports — query string only).
+  useEffect(() => {
+    const rawQ = params.initialQuery ?? params.q;
+    const rawAuto = params.autosubmit;
+    if (!rawQ) return;
+    const autosubmit =
+      rawAuto === '1' ||
+      rawAuto === 'true' ||
+      (Array.isArray(rawAuto) && (rawAuto[0] === '1' || rawAuto[0] === 'true'));
+    if (!autosubmit || fmAutosubmitHandledRef.current) return;
+
+    const text = decodeURIComponent(String(Array.isArray(rawQ) ? rawQ[0] : rawQ)).trim();
+    if (!text) return;
+
+    fmAutosubmitHandledRef.current = true;
+    setSelectedChat(DEFAULT_CHAT_ASSISTANT);
+    selectedChatRef.current = DEFAULT_CHAT_ASSISTANT;
+    setIsGoingBack(false);
+    setNewMessage(text);
+    loadMessages(-1, true);
+
+    const t = setTimeout(() => {
+      void sendMessageRef.current(text);
+      try {
+        clearRouteParams();
+      } catch {
+        /* ignore */
+      }
+    }, 200);
+    return () => clearTimeout(t);
+  }, [params.initialQuery, params.q, params.autosubmit, router]);
+
   // Handle bookmark context from navigation: set ref and load chats; loadChats will find existing or create -2 and load messages
   useEffect(() => {
     if (params.bookmark_id && params.bookmark_name) {
@@ -1020,7 +1091,7 @@ export default function ChatsScreen() {
       };
       pendingBookmarkFromParamsRef.current = bookmarkContext;
       loadChats().then(() => { /* selection and loadMessages done inside loadChats */ });
-      router.setParams({});
+      clearRouteParams();
     }
   }, [params.bookmark_id, params.bookmark_name, params.bookmark_description, params.bookmark_file_count]);
 
@@ -1060,7 +1131,7 @@ export default function ChatsScreen() {
           Alert.alert('Error', error.message || 'Failed to start workspace chat. Please try again.');
         } finally {
           // Clear the params to prevent re-triggering
-          router.setParams({});
+          clearRouteParams();
         }
       };
       
@@ -1465,7 +1536,9 @@ export default function ChatsScreen() {
       // Load favorites from storage (merge with current so server favorites from loadChats are not lost)
       const loadFavorites = async () => {
         try {
-          const stored = await AsyncStorage.getItem(FAVORITE_CHATS_KEY);
+          const favKey = authUserId ? favoriteChatsStorageKey(authUserId) : null;
+          if (!favKey) return;
+          const stored = await AsyncStorage.getItem(favKey);
           if (stored) {
             const favoriteIds = JSON.parse(stored) as number[];
             setFavoriteChatIds(prev => {
@@ -1996,7 +2069,7 @@ export default function ChatsScreen() {
       setLoading(true);
       
       // Load persisted chat contexts from AsyncStorage FIRST (survives app restart)
-      const persistedContexts = await loadPersistedChatContexts();
+      const persistedContexts = await loadPersistedChatContexts(authUserId);
 
       // Parallel network: AI histories + user chats + favorites (was sequential; slowest path dominated load time)
       const { fetchChatHistories } = useChatStore.getState();
@@ -2007,7 +2080,7 @@ export default function ChatsScreen() {
       let serverFavoriteChatIds: number[] = [];
       let aiPagination: { has_more: boolean; total: number } = { has_more: false, total: 0 };
 
-      const CHAT_LIST_CACHE_KEY = 'chat_list_data';
+      const CHAT_LIST_CACHE_KEY = authUserId ? chatListScreenKey(authUserId) : null;
       const CHAT_LIST_CACHE_MS = 30_000;
       interface ChatListCacheData {
         histories: any[];
@@ -2021,7 +2094,7 @@ export default function ChatsScreen() {
 
       // On first page loads, serve cached API data immediately to skip 3 network round-trips.
       // Context restoration from AsyncStorage still runs every time (it's local & fast).
-      const cachedChatData = offset === 0
+      const cachedChatData = offset === 0 && CHAT_LIST_CACHE_KEY
         ? screenCache.get<ChatListCacheData>(CHAT_LIST_CACHE_KEY, CHAT_LIST_CACHE_MS)
         : null;
 
@@ -2074,15 +2147,17 @@ export default function ChatsScreen() {
 
         // Cache the raw API results so subsequent tab-focuses skip these 3 requests
         const { histories: freshHistories } = useChatStore.getState();
-        screenCache.set<ChatListCacheData>(CHAT_LIST_CACHE_KEY, {
-          histories: freshHistories || [],
-          userChats,
-          rawUserChats,
-          serverFavoriteHistoryIds,
-          serverFavoriteChatIds,
-          aiPagination,
-          userChatHasMore,
-        });
+        if (CHAT_LIST_CACHE_KEY) {
+          screenCache.set<ChatListCacheData>(CHAT_LIST_CACHE_KEY, {
+            histories: freshHistories || [],
+            userChats,
+            rawUserChats,
+            serverFavoriteHistoryIds,
+            serverFavoriteChatIds,
+            aiPagination,
+            userChatHasMore,
+          });
+        }
       }
 
       const { histories, error, clearError } = useChatStore.getState();
@@ -2102,7 +2177,10 @@ export default function ChatsScreen() {
         rawUserChats.forEach((c: any) => {
           if (c.is_favorite) next.add(Number(c.id));
         });
-        AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(next)));
+        const favKey = authUserId ? favoriteChatsStorageKey(authUserId) : null;
+        if (favKey) {
+          void AsyncStorage.setItem(favKey, JSON.stringify(Array.from(next)));
+        }
         return next;
       });
       
@@ -2726,7 +2804,7 @@ export default function ChatsScreen() {
 
       // CRITICAL: Persist document/bookmark chat contexts to AsyncStorage
       // This ensures contexts survive app restarts and reloads
-      savePersistedChatContexts(finalChats).catch(error => {
+      savePersistedChatContexts(authUserId,finalChats).catch(error => {
         console.error('❌ Failed to persist chat contexts after loadChats:', error);
       });
 
@@ -2906,7 +2984,18 @@ export default function ChatsScreen() {
     try {
       // metadata_only=true tells the backend to skip file content/preview data.
       // perPage=200 ensures we cover the vast majority of user libraries without multiple round-trips.
-      documentRequestRef.current = api.getDocuments(1, 200, undefined, undefined, undefined, false, true);
+      documentRequestRef.current = api.getDocuments(
+        1,
+        200,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        true,
+        undefined,
+        undefined,
+        { folderId: null, folderAware: true, scope: 'global' }
+      );
       const response = await documentRequestRef.current;
       // A timed-out response has success:true but timedOut:true — keep existing cache
       if ((response as any)?.timedOut) return;
@@ -2948,7 +3037,18 @@ export default function ChatsScreen() {
     try {
       // 8s timeout — fast enough to not frustrate but won't hang forever.
       // Local results are already showing so there's no blank-screen penalty on timeout.
-      const response = await api.getDocuments(1, 20, query, undefined, undefined, false, true, 8000, controller.signal);
+      const response = await api.getDocuments(
+        1,
+        20,
+        query,
+        undefined,
+        undefined,
+        false,
+        true,
+        8000,
+        controller.signal,
+        { folderId: null, folderAware: true, scope: 'global' }
+      );
       if (mentionSearchSeqRef.current !== mySeq || controller.signal.aborted) return;
       if ((response as any)?.timedOut) return;
       if (response && response.success !== false) {
@@ -3023,7 +3123,8 @@ export default function ChatsScreen() {
             // Fetch members from each workspace in parallel
             const memberPromises = workspacesData.map(async (workspace: any) => {
               try {
-                const ck = workspaceMembersCacheKey(workspace.id);
+                const ck = workspaceMembersCacheKey(authUserId, workspace.id);
+                if (!ck) return [];
                 const cached = screenCache.get<WorkspaceMembersCachePayload>(
                   ck,
                   WORKSPACE_MEMBERS_CACHE_MS
@@ -4577,15 +4678,17 @@ export default function ChatsScreen() {
                       hasDocumentContext: !!updatedChat.document_context,
                       type: updatedChat.type
                     });
-                    savePersistedChatContexts(updatedChats).then(async () => {
+                    savePersistedChatContexts(authUserId,updatedChats).then(async () => {
                       if (currentChatId === -2) {
                         try {
-                          const stored = await AsyncStorage.getItem(CHAT_CONTEXTS_KEY);
+                          const ctxKey = authUserId ? chatContextsStorageKey(authUserId) : null;
+                          if (!ctxKey) return;
+                          const stored = await AsyncStorage.getItem(ctxKey);
                           if (stored) {
                             const parsed = JSON.parse(stored);
                             if (parsed['-2']) {
                               delete parsed['-2'];
-                              await AsyncStorage.setItem(CHAT_CONTEXTS_KEY, JSON.stringify(parsed));
+                              await AsyncStorage.setItem(ctxKey, JSON.stringify(parsed));
                               console.log('🗑️ Removed old temporary chat ID -2 from AsyncStorage, context transferred to', returnedChatId);
                             }
                           }
@@ -4702,13 +4805,14 @@ export default function ChatsScreen() {
     smartChatPollingChunkReadyRef.current = true;
   }, []); // empty deps: refs are always current; selectedChat uses selectedChatRef
 
-  const sendMessage = async () => {
+  const sendMessage = async (overrideText?: string) => {
     
-    if (!selectedChat || !newMessage.trim()) {
+    const messageText = (overrideText ?? newMessage).trim();
+    if (!selectedChat || !messageText) {
       if (__DEV__) console.log('⚠️ [CHATS-WEB] Cannot send - missing chat or empty message:', {
         hasSelectedChat: !!selectedChat,
-        hasMessage: !!newMessage.trim(),
-        messageLength: newMessage.trim().length
+        hasMessage: !!messageText,
+        messageLength: messageText.length
       });
       return;
     }
@@ -4731,14 +4835,11 @@ export default function ChatsScreen() {
       // Add user message immediately for better UX
       const userMessage: ChatMessage = {
         id: generateUniqueMessageId(),
-        content: newMessage.trim(),
+        content: messageText,
         sender: null,
         is_own_message: true,
         created_at: new Date().toISOString(),
       };
-      
-      // Save message text before clearing
-      const messageText = newMessage.trim();
       
       setNewMessage('');
 
@@ -5437,6 +5538,7 @@ export default function ChatsScreen() {
       // so that would hide fake streaming before any chunk arrives. It is cleared in 'complete' / 'error' handlers or in catch above.
     }
   };
+  sendMessageRef.current = sendMessage;
 
   // Helper function to restore context for a chat (reusable)
   const restoreChatContext = (chat: Chat) => {
@@ -5618,7 +5720,7 @@ export default function ChatsScreen() {
           
           // CRITICAL: Save immediately to AsyncStorage
           console.log('💾 [BOOKMARK] Saving bookmark context to AsyncStorage for chat', selectedChat.id);
-          savePersistedChatContexts(updated).then(() => {
+          savePersistedChatContexts(authUserId,updated).then(() => {
             console.log('✅ [BOOKMARK] Successfully saved bookmark context to AsyncStorage');
           }).catch(error => {
             console.error('❌ [BOOKMARK] Failed to save bookmark context:', error);
@@ -5656,7 +5758,7 @@ export default function ChatsScreen() {
           const updated = prev.map(chat => 
             chat.id === selectedChat.id ? updatedChat : chat
           );
-          savePersistedChatContexts(updated);
+          savePersistedChatContexts(authUserId,updated);
           return updated;
         });
       }
@@ -5729,7 +5831,7 @@ export default function ChatsScreen() {
         const updated = prev.map(c => 
           c.id === -1 ? chatAssistantClean : c
         );
-        savePersistedChatContexts(updated);
+        savePersistedChatContexts(authUserId,updated);
         return updated;
       });
       
@@ -5960,7 +6062,7 @@ export default function ChatsScreen() {
         });
         
         // CRITICAL: Save to AsyncStorage and keep flag set for 3 seconds
-        savePersistedChatContexts(updatedChats).then(() => {
+        savePersistedChatContexts(authUserId,updatedChats).then(() => {
           console.log('✅ Successfully saved chat contexts to AsyncStorage, including bookmark context for chat', selectedChat.id);
           // Keep flag set for 3 seconds to prevent loadChats from overwriting
           setTimeout(() => {
@@ -5977,7 +6079,7 @@ export default function ChatsScreen() {
     }
     
     // Clear fileId params to ensure params are cleared (even if it doesn't update immediately)
-    router.setParams({});
+    clearRouteParams();
     
     // CRITICAL: If Chat Assistant had context somehow, clear it before going back
     // This prevents Chat Assistant from inheriting context from previous chats
@@ -5994,7 +6096,7 @@ export default function ChatsScreen() {
             title: 'Start New'
           } : chat
         );
-        savePersistedChatContexts(updated);
+        savePersistedChatContexts(authUserId,updated);
         return updated;
       });
     }
@@ -6008,7 +6110,11 @@ export default function ChatsScreen() {
     // Store in ref so loadChats can merge it (avoids stale closure - loadChats would otherwise read old chats)
     if (selectedChat && selectedChat.id === -2 && (selectedChat.bookmark_context || selectedChat.document_context)) {
       placeholderChatToPreserveRef.current = selectedChat;
-      setTimeout(() => { screenCache.invalidate('chat_list_data'); loadChats(); }, 500); // Brief delay so backend can persist the new chat
+      setTimeout(() => {
+        const k = authUserId ? chatListScreenKey(authUserId) : null;
+        if (k) screenCache.invalidate(k);
+        loadChats();
+      }, 500);
     }
     
     // CRITICAL: Clear selectedMention if we're leaving Chat Assistant
@@ -6507,7 +6613,7 @@ export default function ChatsScreen() {
           }
           
           // Persist chat context immediately for user_direct, workspace, document, and bookmark chats
-          savePersistedChatContexts(updatedChats);
+          savePersistedChatContexts(authUserId,updatedChats);
           return updatedChats;
         });
       } else {
@@ -6525,7 +6631,7 @@ export default function ChatsScreen() {
           }
           const updatedChats = [newChat, ...prev];
           // Persist chat context immediately for user_direct, workspace, document, and bookmark chats
-          savePersistedChatContexts(updatedChats);
+          savePersistedChatContexts(authUserId,updatedChats);
           return updatedChats;
         });
       }
@@ -6589,7 +6695,8 @@ export default function ChatsScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    screenCache.invalidate('chat_list_data');
+    const k = authUserId ? chatListScreenKey(authUserId) : null;
+    if (k) screenCache.invalidate(k);
     chatListLastLoadRef.current = 0; // Reset debounce so loadChats actually runs
     loadChats();
   };
@@ -7014,7 +7121,8 @@ export default function ChatsScreen() {
               const success = await useChatStore.getState().deleteChatHistory(chatId);
               
               if (success) {
-                screenCache.invalidate('chat_list_data');
+                const k = authUserId ? chatListScreenKey(authUserId) : null;
+    if (k) screenCache.invalidate(k);
                 // Remove from local chats list
                 setChats(prev => prev.filter(chat => chat.id !== chatId));
                 
@@ -7063,7 +7171,10 @@ export default function ChatsScreen() {
       } else {
         newFavorites.delete(chatId);
       }
-      await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+      const favKey = authUserId ? favoriteChatsStorageKey(authUserId) : null;
+      if (favKey) {
+        await AsyncStorage.setItem(favKey, JSON.stringify(Array.from(newFavorites)));
+      }
       setFavoriteChatIds(newFavorites);
 
       setMenuChatId(null);
@@ -7393,54 +7504,17 @@ export default function ChatsScreen() {
   };
 
   const renderHistoryModal = () => (
-    <Modal
+    <MinimizableBottomSheet
       visible={showHistoryModal}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={closeHistoryModal}
+      onClose={closeHistoryModal}
+      title="Chat History"
+      heightRatio={0.8}
     >
-      <GestureHandlerRootView style={{ flex: 1 }}>
       <KeyboardAvoidingView
-        style={{ flex: 1, justifyContent: 'flex-end' }}
+        style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
       >
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-        <TouchableOpacity
-          style={{ flex: 1 }}
-          activeOpacity={1}
-          onPress={closeHistoryModal}
-        />
-        <View style={{
-          backgroundColor: colors.card,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          maxHeight: '80%',
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: -3 },
-          shadowOpacity: 0.15,
-          shadowRadius: 8,
-          elevation: 12,
-        }}>
-          {/* Drag handle */}
-          <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
-            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
-          </View>
-          {/* Header */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderBottomWidth: 1,
-            borderBottomColor: colors.border,
-          }}>
-            <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>Chat History</Text>
-            <TouchableOpacity onPress={closeHistoryModal} style={{ padding: 4 }}>
-              <Ionicons name="close" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
           {/* Search */}
           <View style={{
             flexDirection: 'row',
@@ -7594,53 +7668,52 @@ export default function ChatsScreen() {
               }}
             />
           )}
-        </View>
-        </View>
       </KeyboardAvoidingView>
-      </GestureHandlerRootView>
-    </Modal>
+    </MinimizableBottomSheet>
   );
 
   const renderChatsList = () => {
     return (
-    <SafeAreaView style={dynamicStyles.container} edges={['top']}>
+    <SafeAreaView style={dynamicStyles.container} edges={isSheet ? [] : ['top']}>
       <TapToToggleHeaderView style={dynamicStyles.container}>
-      <AnimatedHeaderContainer>
-        <View style={dynamicStyles.header}>
-          <TouchableOpacity
-            style={dynamicStyles.backButton}
-            onPress={() => router.back()}
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-          >
-            <Ionicons name="arrow-back" size={28} color="#007AFF" />
-          </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
-          <View style={{ flexDirection: 'row' }}>
+      {!isSheet && (
+        <AnimatedHeaderContainer>
+          <View style={dynamicStyles.header}>
             <TouchableOpacity
-              style={dynamicStyles.newChatButton}
-              onPress={onRefresh}
-              disabled={refreshing}
-              accessibilityLabel="Refresh chats"
+              style={dynamicStyles.backButton}
+              onPress={() => router.back()}
+              accessibilityLabel="Go back"
               accessibilityRole="button"
             >
-              <Ionicons
-                name="refresh"
-                size={30}
-                color={refreshing ? "#999" : "#007AFF"}
-              />
+              <Ionicons name="arrow-back" size={28} color="#007AFF" />
             </TouchableOpacity>
-            <TouchableOpacity
-              style={dynamicStyles.newChatButton}
-              onPress={() => setShowNewChatModal(true)}
-              accessibilityLabel="New chat"
-              accessibilityRole="button"
-            >
-              <Ionicons name="add" size={30} color="#007AFF" />
-            </TouchableOpacity>
+            <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
+            <View style={{ flexDirection: 'row' }}>
+              <TouchableOpacity
+                style={dynamicStyles.newChatButton}
+                onPress={onRefresh}
+                disabled={refreshing}
+                accessibilityLabel="Refresh chats"
+                accessibilityRole="button"
+              >
+                <Ionicons
+                  name="refresh"
+                  size={30}
+                  color={refreshing ? "#999" : "#007AFF"}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={dynamicStyles.newChatButton}
+                onPress={() => setShowNewChatModal(true)}
+                accessibilityLabel="New chat"
+                accessibilityRole="button"
+              >
+                <Ionicons name="add" size={30} color="#007AFF" />
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      </AnimatedHeaderContainer>
+        </AnimatedHeaderContainer>
+      )}
 
       {/* Search Box with Chat Types */}
       <View style={dynamicStyles.searchInputContainer}>
@@ -7719,101 +7792,98 @@ export default function ChatsScreen() {
       selectedChat ?? (openingComposerFromDeepLink ? DEFAULT_CHAT_ASSISTANT : undefined);
 
     return (
-    <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={dynamicStyles.container} edges={isSheet ? [] : ['top', 'bottom']}>
       <TapToToggleHeaderView style={dynamicStyles.container}>
-      {/* Chat Header */}
-      <AnimatedHeaderContainer height={64}>
-        <View style={dynamicStyles.chatHeader}>
-        <TouchableOpacity
-          style={dynamicStyles.backButton}
-          onPress={() => {
-            // Abort any ongoing streaming/requests before leaving
-            if (abortControllerRef.current) {
-              abortControllerRef.current.abort();
-              abortControllerRef.current = null;
-            }
-            if (streamingIntervalRef.current) {
-              clearInterval(streamingIntervalRef.current);
-              streamingIntervalRef.current = null;
-            }
-            isStreamingRef.current = false;
-            isStreamCompleteRef.current = false;
-            router.back();
-          }}
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-        >
-          <Ionicons name="arrow-back" size={28} color="#007AFF" />
-        </TouchableOpacity>
-        
-        <View style={dynamicStyles.chatHeaderInfo}>
-          <Text style={[dynamicStyles.chatTitle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">
-            {(() => {
-              const hc = headerChat;
-              if (hc?.document_context?.name) {
-                return `Document: ${truncateFilename(hc.document_context.name)}`;
-              }
-              if (hc?.bookmark_context?.name) {
-                return `Bookmark: ${hc.bookmark_context.name}`;
-              }
-              if (hc?.workspace?.name) {
-                return hc.workspace.name;
-              }
-              if (hc?.type === 'ai_assistant' && hc?.id === -1) {
-                return 'ChatGD';
-              }
-              return hc?.title || 'Chat';
-            })()}
-          </Text>
-          <Text style={dynamicStyles.chatSubtitle}>
-            {headerChat?.type === 'ai_assistant' ? 'Start New' : 
-             headerChat?.type === 'document_focused' ? 'Document Chat' :
-             headerChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
-             headerChat?.type === 'workspace' ? 'Workspace Chat' :
-             headerChat?.type === 'user_direct' ? 'Direct Message' : 'Chat'}
-          </Text>
-        </View>
-
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+      {/* Chat Header — hidden in sheet mode; sheet provides its own header */}
+      {!isSheet && (
+        <AnimatedHeaderContainer height={64}>
+          <View style={dynamicStyles.chatHeader}>
           <TouchableOpacity
-            style={dynamicStyles.searchTypeButton}
-            onPress={() => setShowHistoryModal(true)}
-            accessibilityLabel="Chat history"
+            style={dynamicStyles.backButton}
+            onPress={() => {
+              if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+              }
+              if (streamingIntervalRef.current) {
+                clearInterval(streamingIntervalRef.current);
+                streamingIntervalRef.current = null;
+              }
+              isStreamingRef.current = false;
+              isStreamCompleteRef.current = false;
+              router.back();
+            }}
+            accessibilityLabel="Go back"
             accessibilityRole="button"
           >
-            <Ionicons name="time-outline" size={30} color="#007AFF" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={dynamicStyles.searchTypeButton}
-            onPress={handleShareConversation}
-            disabled={!selectedChat || messages.length === 0}
-          >
-            <Ionicons
-              name="share-outline"
-              size={30}
-              color={!selectedChat || messages.length === 0 ? '#999' : '#007AFF'}
-            />
-          </TouchableOpacity>
-          {/* + opens same chat types as listing page (New Chat modal) */}
-          <TouchableOpacity 
-            style={dynamicStyles.searchTypeButton} 
-            onPress={() => setShowNewChatModal(true)}
-          >
-            <Ionicons name="add" size={30} color="#007AFF" />
+            <Ionicons name="arrow-back" size={28} color="#007AFF" />
           </TouchableOpacity>
           
+          <View style={dynamicStyles.chatHeaderInfo}>
+            <Text style={[dynamicStyles.chatTitle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">
+              {(() => {
+                const hc = headerChat;
+                if (hc?.document_context?.name) {
+                  return `Document: ${truncateFilename(hc.document_context.name)}`;
+                }
+                if (hc?.bookmark_context?.name) {
+                  return `Bookmark: ${hc.bookmark_context.name}`;
+                }
+                if (hc?.workspace?.name) {
+                  return hc.workspace.name;
+                }
+                if (hc?.type === 'ai_assistant' && hc?.id === -1) {
+                  return 'ChatGD';
+                }
+                return hc?.title || 'Chat';
+              })()}
+            </Text>
+            <Text style={dynamicStyles.chatSubtitle}>
+              {headerChat?.type === 'ai_assistant' ? 'Start New' : 
+               headerChat?.type === 'document_focused' ? 'Document Chat' :
+               headerChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
+               headerChat?.type === 'workspace' ? 'Workspace Chat' :
+               headerChat?.type === 'user_direct' ? 'Direct Message' : 'Chat'}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              style={dynamicStyles.searchTypeButton}
+              onPress={() => setShowHistoryModal(true)}
+              accessibilityLabel="Chat history"
+              accessibilityRole="button"
+            >
+              <Ionicons name="time-outline" size={30} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={dynamicStyles.searchTypeButton}
+              onPress={handleShareConversation}
+              disabled={!selectedChat || messages.length === 0}
+            >
+              <Ionicons
+                name="share-outline"
+                size={30}
+                color={!selectedChat || messages.length === 0 ? '#999' : '#007AFF'}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dynamicStyles.searchTypeButton} 
+              onPress={() => setShowNewChatModal(true)}
+            >
+              <Ionicons name="add" size={30} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-      </AnimatedHeaderContainer>
+        </AnimatedHeaderContainer>
+      )}
 
       <View
         style={[
           dynamicStyles.chatContainer,
           isEmptyChat && { justifyContent: 'center' },
           {
-            paddingBottom: keyboardTop != null
-              ? Math.max(0, Dimensions.get('window').height - keyboardTop - insets.bottom)
-              : 0,
+            paddingBottom: composerKeyboardLift,
           },
         ]}
       >
@@ -7941,9 +8011,11 @@ export default function ChatsScreen() {
               right: 0,
               // Sit just above the input bar. inputContainerHeight is measured live via onLayout
               // so it stays accurate as the TextInput grows (multiline) or shrinks.
-              bottom: keyboardTop != null
-                ? Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop) + inputContainerHeight
-                : inputContainerHeight,
+              bottom: isSheet
+                ? inputContainerHeight
+                : keyboardTop != null
+                  ? Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop) + inputContainerHeight
+                  : inputContainerHeight,
               // Cap height so the dropdown never fills more than 40% of the visible area
               // above the keyboard — keeps messages and the text input visible at all times.
               maxHeight: keyboardTop != null
@@ -8068,7 +8140,7 @@ export default function ChatsScreen() {
                   dynamicStyles.sendButton,
                   (!newMessage.trim() && !sendingMessage) && { opacity: 0.5 }
                 ]}
-                onPress={sendingMessage ? stopProcessing : sendMessage}
+                onPress={sendingMessage ? stopProcessing : () => void sendMessage()}
                 disabled={!newMessage.trim() && !sendingMessage}
               >
                 {sendingMessage ? (

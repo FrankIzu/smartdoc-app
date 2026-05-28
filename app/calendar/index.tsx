@@ -29,6 +29,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { STORAGE_KEYS } from '../../constants/Config';
+import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
@@ -96,6 +97,7 @@ const TABS: { key: ListTabFilter; label: string }[] = [
 
 export default function CalendarHomeScreen() {
   const router = useRouter();
+  const openChatGD = useOpenChatGD();
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const { user } = useAuth();
@@ -1408,9 +1410,7 @@ export default function CalendarHomeScreen() {
         />
         <View style={styles.filterRowActions}>
           <TouchableOpacity
-            onPress={() =>
-              router.push('/(tabs)/chats?openStartNew=1&chatSource=calendar' as any)
-            }
+            onPress={() => openChatGD({ chatSource: 'calendar' })}
             accessibilityLabel="Open ChatGD"
             accessibilityRole="button"
             style={styles.headerIconBtn}

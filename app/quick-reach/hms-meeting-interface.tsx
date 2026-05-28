@@ -39,7 +39,7 @@ import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { errorLogger } from '../../services/errorLogger';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
-import { MeetingPresenceConfirmBridge } from './MeetingPresenceConfirmBridge';
+import { MeetingPresenceConfirmBridge } from '../../components/quick-reach/MeetingPresenceConfirmBridge';
 
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
 

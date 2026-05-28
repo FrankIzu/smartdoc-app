@@ -30,12 +30,16 @@ import NetworkIndicator from '../components/NetworkIndicator';
 import { AppLockProvider, useAppLock } from '../contexts/AppLockContext';
 import { DisplayScaleProvider } from '../contexts/DisplayScaleContext';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
+import ChatGDBottomSheetHost from '../components/chatgd/ChatGDBottomSheet';
+import { ChatGDSheetProvider } from '../contexts/ChatGDSheetContext';
 import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { apiClient } from '../services/api';
 import { useProgressStore } from '../services/progressService';
 import { checkMinVersion, checkOtaAndFetch, checkSoftStoreUpdate, fetchAppConfig, reportUpdateTelemetry } from '../services/updateService';
 import { refreshDefaultHomePathFromWebUser } from '../utils/defaultHomePath';
+import { runSignatureGCOnLaunch } from '../services/signatureFileGC';
+import { evictStaleSessions } from '../services/signatureSessionCache';
 import AppLockScreen from './components/AppLockScreen';
 import OtaUpdateBanner from './components/OtaUpdateBanner';
 import SoftStoreUpdateBanner from './components/SoftStoreUpdateBanner';
@@ -67,9 +71,12 @@ function RootLayoutNav() {
 
   useEffect(() => {
     if (!user) return;
+    void runSignatureGCOnLaunch();
+    void evictStaleSessions();
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void refreshDefaultHomePathFromWebUser();
+        useProgressStore.getState().cleanupStaleProgress();
       }
     });
     return () => sub.remove();
@@ -216,6 +223,7 @@ function RootLayoutNav() {
           <NetworkIndicator compact persistent />
         </SafeAreaView>
       )}
+      <ChatGDSheetProvider>
       <View ref={mainContentRef} style={[styles.mainContainer, { backgroundColor: isDark ? '#151718' : '#fff' }]} accessibilityLabel="Main content">
         <HeaderVisibilityProvider>
         <Stack screenOptions={{ headerShown: false }}>
@@ -233,6 +241,7 @@ function RootLayoutNav() {
           <Stack.Screen name="quick-reach" options={{ headerShown: false }} />
           <Stack.Screen name="join-meeting" options={{ headerShown: false }} />
           <Stack.Screen name="upload-links" options={{ headerShown: false }} />
+          <Stack.Screen name="signatures" options={{ headerShown: false }} />
           <Stack.Screen name="workspaces" options={{ headerShown: false }} />
           <Stack.Screen name="scanner" options={{ headerShown: false }} />
           <Stack.Screen name="public-upload" options={{ headerShown: false }} />
@@ -243,6 +252,8 @@ function RootLayoutNav() {
           <PersistentBottomNavigation />
         </View>
       </View>
+      <ChatGDBottomSheetHost />
+      </ChatGDSheetProvider>
       <Toast />
       <GlobalProgressBar
         visible={visible}

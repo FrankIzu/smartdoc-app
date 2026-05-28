@@ -1106,6 +1106,7 @@ export default function DocumentViewer({
     },
     title: {
       flex: 1,
+      minWidth: 0,
       fontSize: 18,
       fontWeight: '600',
       color: colors.text,
@@ -2915,7 +2916,7 @@ export default function DocumentViewer({
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <Ionicons name="close" size={24} color={colors.primary} />
           </TouchableOpacity>
-          <Text style={dynamicStyles.title} numberOfLines={1}>
+          <Text style={dynamicStyles.title} numberOfLines={1} ellipsizeMode="tail">
             {getViewerTitle()}
           </Text>
           <View style={styles.placeholder} />
@@ -2953,6 +2954,7 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
+    minWidth: 0,
     fontSize: 18,
     fontWeight: '600',
     // color removed - using dynamicStyles

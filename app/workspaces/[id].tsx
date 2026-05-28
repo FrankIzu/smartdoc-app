@@ -19,6 +19,8 @@ import {
 import Toast from 'react-native-toast-message';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import FileNameText from '../../components/FileNameText';
+import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import QuickFormViewer from '../../components/QuickFormViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
@@ -27,6 +29,7 @@ import { screenCache } from '../../utils/screenCache';
 import {
   invalidateWorkspaceScreenCaches,
   workspaceActivitiesCacheKey,
+  workspaceDetailCacheKey as buildWorkspaceDetailCacheKey,
   workspaceFilesSheetFirstPageKey,
   WORKSPACE_ACTIVITIES_CACHE_MS,
   WORKSPACE_FILES_SHEET_CACHE_MS,
@@ -169,7 +172,8 @@ export default function WorkspaceDetailsScreen() {
   }, [workspaceSheetBookmarks, workspaceSheetFiles]);
 
   const WORKSPACE_DETAIL_CACHE_MS = 30_000;
-  const workspaceDetailCacheKey = `workspace_detail_${id}`;
+  const workspaceDetailCacheKey =
+    user?.id && id ? buildWorkspaceDetailCacheKey(user.id, String(id)) ?? '' : '';
 
   interface WorkspaceDetailCache {
     workspace: Workspace;
@@ -184,8 +188,10 @@ export default function WorkspaceDetailsScreen() {
       currentWorkspace: any,
       currentActivities: any[]
     ) => {
-      const mk = workspaceMembersCacheKey(wid);
-      const cached = screenCache.get<WorkspaceMembersCachePayload>(mk, WORKSPACE_MEMBERS_CACHE_MS);
+      const mk = workspaceMembersCacheKey(user?.id, wid);
+      const cached = mk
+        ? screenCache.get<WorkspaceMembersCachePayload>(mk, WORKSPACE_MEMBERS_CACHE_MS)
+        : null;
       if (cached) {
         setMembers(cached.members as WorkspaceMember[]);
         setInvitations(cached.invitations);
@@ -204,10 +210,12 @@ export default function WorkspaceDetailsScreen() {
         const invitationsData: any[] = res.data.invitations || [];
         setMembers(membersData);
         setInvitations(invitationsData);
-        screenCache.set<WorkspaceMembersCachePayload>(mk, {
-          members: membersData,
-          invitations: invitationsData,
-        });
+        if (mk) {
+          screenCache.set<WorkspaceMembersCachePayload>(mk, {
+            members: membersData,
+            invitations: invitationsData,
+          });
+        }
         screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
           workspace: currentWorkspace,
           members: membersData,
@@ -228,8 +236,10 @@ export default function WorkspaceDetailsScreen() {
       currentMembers: WorkspaceMember[],
       currentInvitations: any[]
     ) => {
-      const ak = workspaceActivitiesCacheKey(wid);
-      const cached = screenCache.get<WorkspaceActivitiesCachePayload>(ak, WORKSPACE_ACTIVITIES_CACHE_MS);
+      const ak = workspaceActivitiesCacheKey(user?.id, wid);
+      const cached = ak
+        ? screenCache.get<WorkspaceActivitiesCachePayload>(ak, WORKSPACE_ACTIVITIES_CACHE_MS)
+        : null;
       if (cached) {
         setRecentActivities(cached.activities);
         screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
@@ -269,7 +279,7 @@ export default function WorkspaceDetailsScreen() {
             };
           });
         setRecentActivities(activities);
-        screenCache.set<WorkspaceActivitiesCachePayload>(ak, { activities });
+        if (ak) screenCache.set<WorkspaceActivitiesCachePayload>(ak, { activities });
         screenCache.set<WorkspaceDetailCache>(workspaceDetailCacheKey, {
           workspace: currentWorkspace,
           members: currentMembers,
@@ -350,10 +360,10 @@ export default function WorkspaceDetailsScreen() {
       let priorInvitations =
         priorCache?.workspace?.id === wid ? (priorCache.invitations ?? []) : [];
       if (priorMembers.length === 0) {
-        const mc = screenCache.get<WorkspaceMembersCachePayload>(
-          workspaceMembersCacheKey(wid),
-          WORKSPACE_MEMBERS_CACHE_MS
-        );
+        const mcKey = workspaceMembersCacheKey(user?.id, wid);
+        const mc = mcKey
+          ? screenCache.get<WorkspaceMembersCachePayload>(mcKey, WORKSPACE_MEMBERS_CACHE_MS)
+          : null;
         if (mc) {
           priorMembers = mc.members as WorkspaceMember[];
           priorInvitations = mc.invitations;
@@ -362,10 +372,10 @@ export default function WorkspaceDetailsScreen() {
       let priorActivities =
         priorCache?.workspace?.id === wid ? (priorCache.recentActivities ?? []) : [];
       if (priorActivities.length === 0) {
-        const ac = screenCache.get<WorkspaceActivitiesCachePayload>(
-          workspaceActivitiesCacheKey(wid),
-          WORKSPACE_ACTIVITIES_CACHE_MS
-        );
+        const acKey = workspaceActivitiesCacheKey(user?.id, wid);
+        const ac = acKey
+          ? screenCache.get<WorkspaceActivitiesCachePayload>(acKey, WORKSPACE_ACTIVITIES_CACHE_MS)
+          : null;
         if (ac?.activities?.length) priorActivities = ac.activities;
       }
       setMembers(priorMembers);
@@ -400,7 +410,7 @@ export default function WorkspaceDetailsScreen() {
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
-    invalidateWorkspaceScreenCaches(String(id), Number(id));
+    invalidateWorkspaceScreenCaches(user?.id, String(id), Number(id));
     loadWorkspaceDetails(true);
   };
 
@@ -419,7 +429,7 @@ export default function WorkspaceDetailsScreen() {
         setInviteModalVisible(false);
         setInviteEmail('');
         setInviteRole('member');
-        invalidateWorkspaceScreenCaches(String(id), Number(id));
+        invalidateWorkspaceScreenCaches(user?.id, String(id), Number(id));
         loadWorkspaceDetails(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to send invitation');
@@ -477,7 +487,7 @@ export default function WorkspaceDetailsScreen() {
       const response = await apiService.resendWorkspaceInvitation(Number(id), selectedInvitation.id);
       if (response.success) {
         Alert.alert('Success', 'Invitation resent successfully');
-        invalidateWorkspaceScreenCaches(String(id), Number(id));
+        invalidateWorkspaceScreenCaches(user?.id, String(id), Number(id));
         loadWorkspaceDetails(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to resend invitation');
@@ -505,7 +515,7 @@ export default function WorkspaceDetailsScreen() {
               const response = await apiService.cancelWorkspaceInvitation(Number(id), selectedInvitation.id);
               if (response.success) {
                 Alert.alert('Success', 'Invitation cancelled');
-                invalidateWorkspaceScreenCaches(String(id), Number(id));
+                invalidateWorkspaceScreenCaches(user?.id, String(id), Number(id));
                 loadWorkspaceDetails(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to cancel invitation');
@@ -526,7 +536,7 @@ export default function WorkspaceDetailsScreen() {
       const response = await apiService.updateWorkspaceMemberRole(Number(id), selectedMember.id, newRole);
       if (response.success) {
         Alert.alert('Success', `Member role updated to ${newRole}`);
-        invalidateWorkspaceScreenCaches(String(id), Number(id));
+        invalidateWorkspaceScreenCaches(user?.id, String(id), Number(id));
         loadWorkspaceDetails(true);
         setSelectedMember(null);
       } else {
@@ -577,8 +587,8 @@ export default function WorkspaceDetailsScreen() {
       const wid = Number(id);
       if (!user || !Number.isFinite(wid)) return;
       const offset = append ? workspaceFilesNextOffset ?? 0 : 0;
-      const sheetKey = workspaceFilesSheetFirstPageKey(wid);
-      if (!append) {
+      const sheetKey = workspaceFilesSheetFirstPageKey(user?.id, wid);
+      if (!append && sheetKey) {
         const fc = screenCache.get<WorkspaceFilesSheetCachePayload>(
           sheetKey,
           WORKSPACE_FILES_SHEET_CACHE_MS
@@ -617,16 +627,18 @@ export default function WorkspaceDetailsScreen() {
         if (append) {
           setWorkspaceSheetBookmarks((prev) => [...prev, ...normBm]);
           setWorkspaceSheetFiles((prev) => [...prev, ...rawFiles]);
-          screenCache.invalidate(sheetKey);
+          if (sheetKey) screenCache.invalidate(sheetKey);
         } else {
           setWorkspaceSheetBookmarks(normBm);
           setWorkspaceSheetFiles(rawFiles);
-          screenCache.set<WorkspaceFilesSheetCachePayload>(sheetKey, {
+          if (sheetKey) {
+            screenCache.set<WorkspaceFilesSheetCachePayload>(sheetKey, {
             bookmarks: normBm,
             files: rawFiles,
             hasMore,
             nextOffset: nextOffNum,
-          });
+            });
+          }
         }
         setWorkspaceFilesHasMore(hasMore);
         setWorkspaceFilesNextOffset(nextOffNum);
@@ -637,7 +649,7 @@ export default function WorkspaceDetailsScreen() {
           setWorkspaceSheetFiles([]);
           setWorkspaceFilesHasMore(false);
           setWorkspaceFilesNextOffset(null);
-          screenCache.invalidate(sheetKey);
+          if (sheetKey) screenCache.invalidate(sheetKey);
         } else {
           Alert.alert('Error', e?.message || 'Failed to load more');
         }
@@ -728,7 +740,7 @@ export default function WorkspaceDetailsScreen() {
               const response = await apiService.removeWorkspaceMember(Number(id), selectedMember.id);
               if (response.success) {
                 Alert.alert('Success', 'Member removed from workspace');
-                invalidateWorkspaceScreenCaches(String(id), Number(id));
+                invalidateWorkspaceScreenCaches(user?.id, String(id), Number(id));
                 loadWorkspaceDetails(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to remove member');
@@ -860,7 +872,7 @@ export default function WorkspaceDetailsScreen() {
       borderBottomColor: colors.border,
       gap: 8,
     },
-    filesSheetRowText: { flex: 1 },
+    filesSheetRowText: { flex: 1, minWidth: 0 },
     filesSheetRowTitle: { fontSize: 16, fontWeight: '600', color: colors.text },
     filesSheetRowSub: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
     filesSheetEmpty: { padding: 32, alignItems: 'center' },
@@ -1386,88 +1398,54 @@ export default function WorkspaceDetailsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Member Action Sheet */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showMemberActionSheet}
-        transparent
-        animationType="slide"
-        onRequestClose={() => {
+        onClose={() => {
           setShowMemberActionSheet(false);
           setSelectedMember(null);
         }}
+        showHeader={false}
+        sheetHeight={220}
       >
-        <TouchableOpacity
-          style={dynamicStyles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setShowMemberActionSheet(false);
-            setSelectedMember(null);
-          }}
-        >
-          <View style={dynamicStyles.actionSheetContainer}>
-            <TouchableOpacity
-              style={dynamicStyles.actionSheetItem}
-              onPress={handleShowRoleSelector}
-            >
-              <Ionicons name="person-outline" size={20} color="#007AFF" />
-              <Text style={dynamicStyles.actionSheetText}>Change Role</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[dynamicStyles.actionSheetItem, dynamicStyles.actionSheetItemDanger]}
-              onPress={() => {
-                setShowMemberActionSheet(false);
-                handleRemoveMember();
-              }}
-            >
-              <Ionicons name="person-remove-outline" size={20} color="#FF3B30" />
-              <Text style={[dynamicStyles.actionSheetText, { color: '#FF3B30' }]}>Remove Member</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={dynamicStyles.actionSheetCancel}
-              onPress={() => {
-                setShowMemberActionSheet(false);
-                setSelectedMember(null);
-              }}
-            >
-              <Text style={dynamicStyles.actionSheetCancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Workspace shared files — bottom sheet (only content shared in this workspace) */}
-      <Modal
-        visible={workspaceFilesSheetVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setWorkspaceFilesSheetVisible(false)}
-      >
-        <View style={dynamicStyles.filesSheetBackdrop}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setWorkspaceFilesSheetVisible(false)}
-            accessibilityRole="button"
-            accessibilityLabel="Close"
-          />
-          <View
-            style={[dynamicStyles.filesSheetPanel, { paddingBottom: insets.bottom + 16 }]}
+        <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+          <TouchableOpacity
+            style={dynamicStyles.actionSheetItem}
+            onPress={handleShowRoleSelector}
           >
-            <View style={dynamicStyles.filesSheetHandle} />
-            <View style={dynamicStyles.filesSheetHeader}>
-              <Text style={dynamicStyles.filesSheetTitle} numberOfLines={1}>
-                Files in {workspace.name}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setWorkspaceFilesSheetVisible(false)}
-                hitSlop={12}
-                accessibilityRole="button"
-                accessibilityLabel="Close files list"
-              >
-                <Ionicons name="close" size={26} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
+            <Ionicons name="person-outline" size={20} color="#007AFF" />
+            <Text style={dynamicStyles.actionSheetText}>Change Role</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[dynamicStyles.actionSheetItem, dynamicStyles.actionSheetItemDanger]}
+            onPress={() => {
+              setShowMemberActionSheet(false);
+              handleRemoveMember();
+            }}
+          >
+            <Ionicons name="person-remove-outline" size={20} color="#FF3B30" />
+            <Text style={[dynamicStyles.actionSheetText, { color: '#FF3B30' }]}>Remove Member</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={dynamicStyles.actionSheetCancel}
+            onPress={() => {
+              setShowMemberActionSheet(false);
+              setSelectedMember(null);
+            }}
+          >
+            <Text style={dynamicStyles.actionSheetCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </MinimizableBottomSheet>
+
+      <MinimizableBottomSheet
+        visible={workspaceFilesSheetVisible}
+        onClose={() => setWorkspaceFilesSheetVisible(false)}
+        title={workspace ? `Files in ${workspace.name}` : 'Workspace files'}
+        heightRatio={0.75}
+        paddingBottom={insets.bottom + 16}
+      >
             {workspaceFilesLoading &&
             workspaceSheetBookmarks.length === 0 &&
             workspaceSheetFiles.length === 0 ? (
@@ -1489,7 +1467,8 @@ export default function WorkspaceDetailsScreen() {
                   <RefreshControl
                     refreshing={workspaceFilesLoading && !workspaceFilesLoadingMore}
                     onRefresh={() => {
-                      screenCache.invalidate(workspaceFilesSheetFirstPageKey(Number(id)));
+                      const sk = workspaceFilesSheetFirstPageKey(user?.id, Number(id));
+                      if (sk) screenCache.invalidate(sk);
                       void loadWorkspaceFilesSheet(false);
                     }}
                     tintColor="#007AFF"
@@ -1553,9 +1532,10 @@ export default function WorkspaceDetailsScreen() {
                       activeOpacity={0.7}
                     >
                       <View style={dynamicStyles.filesSheetRowText}>
-                        <Text style={dynamicStyles.filesSheetRowTitle} numberOfLines={2}>
-                          {originalName}
-                        </Text>
+                        <FileNameText
+                          name={originalName}
+                          style={dynamicStyles.filesSheetRowTitle}
+                        />
                         <Text style={dynamicStyles.filesSheetRowSub} numberOfLines={1}>
                           {workspaceStandaloneFileSubtitle(f)}
                         </Text>
@@ -1591,17 +1571,13 @@ export default function WorkspaceDetailsScreen() {
                     </View>
                   ) : null
                 }
-                style={{
-                  maxHeight: Math.round(Dimensions.get('window').height * 0.58),
-                }}
+                style={{ flex: 1 }}
                 contentContainerStyle={
                   workspaceSheetListItems.length === 0 ? { flexGrow: 1 } : { paddingBottom: 8 }
                 }
               />
             )}
-          </View>
-        </View>
-      </Modal>
+      </MinimizableBottomSheet>
 
       {viewerFile && (
         <DocumentViewer

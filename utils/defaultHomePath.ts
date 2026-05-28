@@ -30,6 +30,7 @@ const ALLOWED_WEB_PATHS = [
   '/chat',
   '/workspaces',
   '/analysis',
+  '/signatures',
 ] as const;
 
 export type WebDefaultHomePath = (typeof ALLOWED_WEB_PATHS)[number];
@@ -67,9 +68,10 @@ export const DEFAULT_HOME_SCREEN_OPTIONS: ReadonlyArray<{ webPath: WebDefaultHom
   { webPath: '/quick-links', label: 'File Request' },
   { webPath: '/forms', label: 'Forms' },
   { webPath: '/video-meeting', label: 'Reach' },
-  { webPath: '/drafts', label: 'Drafts' },
+  { webPath: '/drafts', label: 'Notes' },
   { webPath: '/workspaces', label: 'Workspace' },
   { webPath: '/analysis', label: 'Financials' },
+  { webPath: '/signatures', label: 'Signatures' },
 ];
 
 /** Web slug → Expo route (there is no `app/upload` stack screen; `/upload` = ChatGD → chats tab + composer). */
@@ -79,18 +81,19 @@ const WEB_TO_EXPO_HREF: Record<WebDefaultHomePath, Href> = {
   '/files': '/(tabs)/documents',
   '/calendar': '/calendar',
   '/quick-links': '/upload-links',
-  '/forms': '/forms',
-  '/video-meeting': '/quick-reach',
+  '/forms': '/forms' as Href,
+  '/video-meeting': '/quick-reach' as Href,
   '/drafts': '/drafts',
   '/chat': '/(tabs)/chats?openStartNew=1',
   '/workspaces': '/workspaces',
   '/analysis': '/analytics/dashboard',
+  '/signatures': '/signatures' as Href,
 };
 
 /** Map web-only default-home segments to routes the mobile app supports. */
 function coerceWebOnlyPaths(withSlash: string): string {
   if (withSlash === '/signatures' || withSlash.startsWith('/signatures/')) {
-    return '/files';
+    return '/signatures';
   }
   if (withSlash === '/trend-insights' || withSlash.startsWith('/trend-insights')) {
     return '/analysis';

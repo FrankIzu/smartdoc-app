@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import FileNameText from '../../components/FileNameText';
 import { FRONTEND_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
@@ -520,6 +521,7 @@ export default function UploadLinkDetailsScreen() {
     },
     fileInfo: {
       flex: 1,
+      minWidth: 0,
     },
     fileName: {
       fontSize: 16,
@@ -663,7 +665,7 @@ export default function UploadLinkDetailsScreen() {
             />
           </View>
           <View style={dynamicStyles.fileInfo}>
-            <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.filename}</Text>
+            <FileNameText name={item.filename} style={dynamicStyles.fileName} />
             <View style={dynamicStyles.fileMetadata}>
               <Text style={dynamicStyles.fileSize}>{formatFileSize(item.file_size)}</Text>
               <Text style={dynamicStyles.fileSeparator}>•</Text>

@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 // Local Development Configuration - Single source of truth for local backend IP
 // ⚠️ CHANGE THIS IP ADDRESS TO UPDATE ALL LOCAL DEVELOPMENT URLs
 // This affects: API backend URL, Expo dev server URL, and all local development endpoints
-export const LOCAL_DEV_IP = '192.168.1.5';
+export const LOCAL_DEV_IP = '192.168.1.6';
 export const LOCAL_DEV_PORT = 5000;
 export const EXPO_DEV_PORT = 8081; // Metro bundler default port
 export const LOCAL_DEV_URL = `http://${LOCAL_DEV_IP}:${LOCAL_DEV_PORT}`;
@@ -274,6 +274,8 @@ export const STORAGE_KEYS = {
   DEFAULT_HOME_WEB_PATH: 'default_home_web_path',
   /** Calendar home: `calendar` vs `list` segmented control. */
   CALENDAR_LAYOUT_MODE: 'calendar_layout_mode',
+  /** Device-scoped AI File Manager session correlation id */
+  AI_FM_SESSION: 'gd_ai_fm_session',
 } as const;
 
 /** After API/network failures, wait this long before showing the orange offline banner (reduces flicker on brief outages). */

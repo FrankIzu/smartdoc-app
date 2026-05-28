@@ -5,13 +5,18 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
 
-let hmsPkg: Record<string, unknown> | null = null;
-try {
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  hmsPkg = require('@100mslive/react-native-hms') as Record<string, unknown>;
-  /* eslint-enable @typescript-eslint/no-require-imports */
-} catch {
-  hmsPkg = null;
+let hmsPkgCache: Record<string, unknown> | null | undefined;
+
+function getHmsPkg(): Record<string, unknown> | null {
+  if (hmsPkgCache !== undefined) return hmsPkgCache;
+  try {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    hmsPkgCache = require('@100mslive/react-native-hms') as Record<string, unknown>;
+    /* eslint-enable @typescript-eslint/no-require-imports */
+  } catch {
+    hmsPkgCache = null;
+  }
+  return hmsPkgCache;
 }
 
 /** Safe no-op hook when HMS SDK is unavailable (Expo Go, etc.). */
@@ -39,6 +44,7 @@ function pickLocalPeerId(state: Record<string, unknown>): string | null {
 function InnerPresenceBridge({ enabled, onEnteredRoom }: Props) {
   const doneRef = useRef(false);
   const firedRef = useRef(false);
+  const hmsPkg = useMemo(() => getHmsPkg(), []);
 
   const fireOnce = useCallback(() => {
     if (doneRef.current || firedRef.current) return;
@@ -79,7 +85,7 @@ function InnerPresenceBridge({ enabled, onEnteredRoom }: Props) {
                 {};
               return r?.rtcState ?? r?.roomState ?? r?.sessionState ?? st?.roomState ?? null;
             }) as (s: unknown) => unknown,
-    []
+    [hmsPkg],
   );
 
   const roomStateStr = useHMSSelectors(roomStateSelector);
@@ -105,7 +111,7 @@ function InnerPresenceBridge({ enabled, onEnteredRoom }: Props) {
         fireOnce();
       }
     },
-    [enabled, localPeerId, fireOnce]
+    [enabled, localPeerId, fireOnce],
   );
 
   useEffect(() => {

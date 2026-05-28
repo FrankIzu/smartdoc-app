@@ -20,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MinimizableBottomSheet from '../../../components/MinimizableBottomSheet';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import {
@@ -629,98 +630,86 @@ export default function CalendarEditScreen() {
       </KeyboardAvoidingView>
 
       {showPicker === 'date' && Platform.OS === 'ios' ? (
-        <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
-          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-            <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
-            <View style={{ backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 14, borderTopRightRadius: 14 }}>
-              <DateTimePicker
-                value={getPickerDateTime()}
-                mode="date"
-                display="spinner"
-                themeVariant={iosPickerTheme}
-                onChange={(_, d) => {
-                  if (d) setEventDate(toLocalDateString(d));
-                }}
-              />
-              <TouchableOpacity onPress={() => setShowPicker(null)}>
-                <Text style={{ color: colors.tint, textAlign: 'center', padding: 12 }}>Done</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
+        <MinimizableBottomSheet
+          visible
+          onClose={() => setShowPicker(null)}
+          title="Date"
+          sheetHeight={300}
+          headerRight={() => (
+            <TouchableOpacity onPress={() => setShowPicker(null)}>
+              <Text style={{ color: colors.tint, fontWeight: '600' }}>Done</Text>
+            </TouchableOpacity>
+          )}
+        >
+          <DateTimePicker
+            value={getPickerDateTime()}
+            mode="date"
+            display="spinner"
+            themeVariant={iosPickerTheme}
+            onChange={(_, d) => {
+              if (d) setEventDate(toLocalDateString(d));
+            }}
+          />
+        </MinimizableBottomSheet>
       ) : null}
 
       {showPicker === 'time' && Platform.OS === 'ios' ? (
-        <Modal transparent animationType="slide" onRequestClose={() => setShowPicker(null)}>
-          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-            <Pressable style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setShowPicker(null)} />
-            <View style={{ backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 14, borderTopRightRadius: 14 }}>
-              <DateTimePicker
-                value={getPickerDateTime()}
-                mode="time"
-                display="spinner"
-                themeVariant={iosPickerTheme}
-                onChange={(_, d) => {
-                  if (d) setEventTime(formatLocalTime12h(d));
-                }}
-              />
-              <TouchableOpacity onPress={() => setShowPicker(null)}>
-                <Text style={{ color: colors.tint, textAlign: 'center', padding: 12 }}>Done</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
+        <MinimizableBottomSheet
+          visible
+          onClose={() => setShowPicker(null)}
+          title="Time"
+          sheetHeight={300}
+          headerRight={() => (
+            <TouchableOpacity onPress={() => setShowPicker(null)}>
+              <Text style={{ color: colors.tint, fontWeight: '600' }}>Done</Text>
+            </TouchableOpacity>
+          )}
+        >
+          <DateTimePicker
+            value={getPickerDateTime()}
+            mode="time"
+            display="spinner"
+            themeVariant={iosPickerTheme}
+            onChange={(_, d) => {
+              if (d) setEventTime(formatLocalTime12h(d));
+            }}
+          />
+        </MinimizableBottomSheet>
       ) : null}
 
-      <Modal visible={durationPickerOpen} transparent animationType="slide" onRequestClose={() => setDurationPickerOpen(false)}>
-        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-          <TouchableOpacity style={{ flex: 1, backgroundColor: '#0008' }} activeOpacity={1} onPress={() => setDurationPickerOpen(false)} />
-          <View
-            style={{
-              backgroundColor: colors.background,
-              borderTopLeftRadius: 14,
-              borderTopRightRadius: 14,
-              paddingBottom: 12,
-              maxHeight: '52%',
-              borderTopWidth: StyleSheet.hairlineWidth,
-              borderColor: colors.border,
-            }}
-          >
-            <Text style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8, fontSize: 17, fontWeight: '700', color: colors.text }}>
-              Duration
-            </Text>
-            <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 320 }}>
-              {DURATION_PRESETS.map((p) => {
-                const selected = durationMin === p.minutes;
-                return (
-                  <TouchableOpacity
-                    key={p.minutes}
-                    style={{
-                      paddingVertical: 14,
-                      paddingHorizontal: 16,
-                      borderBottomWidth: StyleSheet.hairlineWidth,
-                      borderBottomColor: colors.border,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}
-                    onPress={() => {
-                      setDurationMin(p.minutes);
-                      setDurationPickerOpen(false);
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: selected ? '700' : '400' }}>{p.label}</Text>
-                    {selected ? <Ionicons name="checkmark" size={22} color={colors.tint} /> : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <TouchableOpacity onPress={() => setDurationPickerOpen(false)} style={{ padding: 14 }}>
-              <Text style={{ color: colors.tint, textAlign: 'center', fontSize: 17, fontWeight: '600' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <MinimizableBottomSheet
+        visible={durationPickerOpen}
+        onClose={() => setDurationPickerOpen(false)}
+        title="Duration"
+        heightRatio={0.52}
+      >
+        <ScrollView keyboardShouldPersistTaps="handled">
+          {DURATION_PRESETS.map((p) => {
+            const selected = durationMin === p.minutes;
+            return (
+              <TouchableOpacity
+                key={p.minutes}
+                style={{
+                  paddingVertical: 14,
+                  paddingHorizontal: 16,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.border,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+                onPress={() => {
+                  setDurationMin(p.minutes);
+                  setDurationPickerOpen(false);
+                }}
+              >
+                <Text style={{ fontSize: 16, color: colors.text, fontWeight: selected ? '700' : '400' }}>{p.label}</Text>
+                {selected ? <Ionicons name="checkmark" size={22} color={colors.tint} /> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </MinimizableBottomSheet>
 
       {Platform.OS === 'android' ? (
         <>
@@ -765,48 +754,40 @@ export default function CalendarEditScreen() {
         </>
       ) : null}
 
-      <Modal visible={memberModal} animationType="slide" transparent>
-        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-          <TouchableOpacity
-            style={{ flex: 1 }}
-            activeOpacity={1}
-            onPress={() => {
-              Keyboard.dismiss();
-              setMemberModal(false);
-            }}
-          />
-          <View style={{ backgroundColor: colors.background, padding: 16, maxHeight: '75%' }}>
-            <Text style={{ fontWeight: '600', color: colors.text, marginBottom: 8 }}>Search member</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Name or email"
-              placeholderTextColor={colors.textSecondary}
-              value={memberQuery}
-              onChangeText={setMemberQuery}
-            />
-            <ScrollView style={{ maxHeight: 280 }}>
-              {memberHits.map((m) => (
-                <TouchableOpacity
-                  key={String(m.id)}
-                  style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
-                  onPress={() => {
-                    setAssignedMemberId(Number(m.id));
-                    setSelectedMemberLabel(m.name || m.email || `Member #${m.id}`);
-                    setMemberModal(false);
-                    setMemberQuery('');
-                  }}
-                >
-                  <Text style={{ color: colors.text }}>{m.name || m.email || `Member #${m.id}`}</Text>
-                  {m.email ? <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{m.email}</Text> : null}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <TouchableOpacity onPress={() => setMemberModal(false)} style={{ marginTop: 8 }}>
-              <Text style={{ color: '#007AFF' }}>Close</Text>
+      <MinimizableBottomSheet
+        visible={memberModal}
+        onClose={() => {
+          Keyboard.dismiss();
+          setMemberModal(false);
+        }}
+        title="Search member"
+        heightRatio={0.75}
+      >
+        <TextInput
+          style={styles.input}
+          placeholder="Name or email"
+          placeholderTextColor={colors.textSecondary}
+          value={memberQuery}
+          onChangeText={setMemberQuery}
+        />
+        <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+          {memberHits.map((m) => (
+            <TouchableOpacity
+              key={String(m.id)}
+              style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
+              onPress={() => {
+                setAssignedMemberId(Number(m.id));
+                setSelectedMemberLabel(m.name || m.email || `Member #${m.id}`);
+                setMemberModal(false);
+                setMemberQuery('');
+              }}
+            >
+              <Text style={{ color: colors.text }}>{m.name || m.email || `Member #${m.id}`}</Text>
+              {m.email ? <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{m.email}</Text> : null}
             </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+          ))}
+        </ScrollView>
+      </MinimizableBottomSheet>
 
       <Modal visible={categoryModal} transparent animationType="fade">
         <View style={{ flex: 1, justifyContent: 'center', padding: 16 }}>

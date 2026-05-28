@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -11,6 +10,7 @@ import {
 import { WebView } from 'react-native-webview';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
+import MinimizableBottomSheet from './MinimizableBottomSheet';
 
 export interface SermonViewerModalProps {
   visible: boolean;
@@ -167,45 +167,41 @@ export default function SermonViewerModal({
   const showTabs = textAvailable === true;
   const effectiveTab = showTabs ? tab : 'pdf';
 
+  const headerTitle =
+    (title || 'Document') +
+    (paragraph > 0
+      ? ` — par ${
+          paragraphEnd != null && paragraphEnd > paragraph
+            ? `${paragraph}–${paragraphEnd}`
+            : paragraph
+        }`
+      : '');
+
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Dismiss" />
-        <View style={[styles.sheet, { height: sheetHeight }]} onStartShouldSetResponder={() => true}>
-          <View style={styles.header}>
-            <Text style={styles.title} numberOfLines={2}>
-              {title || 'Document'}
-              {paragraph > 0
-                ? ` — par ${
-                    paragraphEnd != null && paragraphEnd > paragraph
-                      ? `${paragraph}–${paragraphEnd}`
-                      : paragraph
-                  }`
-                : ''}
-            </Text>
-            <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={12}>
-              <Text style={styles.closeText}>Close</Text>
-            </Pressable>
-          </View>
+    <MinimizableBottomSheet
+      visible={visible}
+      onClose={onClose}
+      sheetHeight={sheetHeight}
+      title={headerTitle}
+    >
+      {showTabs ? (
+        <View style={styles.tabRow}>
+          <Pressable
+            onPress={() => setTab('text')}
+            style={[styles.tab, effectiveTab === 'text' && styles.tabActive]}
+          >
+            <Text style={[styles.tabLabel, effectiveTab === 'text' && styles.tabLabelActive]}>Text</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setTab('pdf')}
+            style={[styles.tab, effectiveTab === 'pdf' && styles.tabActive]}
+          >
+            <Text style={[styles.tabLabel, effectiveTab === 'pdf' && styles.tabLabelActive]}>PDF</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
-          {showTabs ? (
-            <View style={styles.tabRow}>
-              <Pressable
-                onPress={() => setTab('text')}
-                style={[styles.tab, effectiveTab === 'text' && styles.tabActive]}
-              >
-                <Text style={[styles.tabLabel, effectiveTab === 'text' && styles.tabLabelActive]}>Text</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setTab('pdf')}
-                style={[styles.tab, effectiveTab === 'pdf' && styles.tabActive]}
-              >
-                <Text style={[styles.tabLabel, effectiveTab === 'pdf' && styles.tabLabelActive]}>PDF</Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          <View style={[styles.body, { minHeight: webMinHeight }]}>
+      <View style={[styles.body, { minHeight: webMinHeight }]}>
             {fetchingText && textAvailable === null ? (
               <View style={styles.loadingOverlay} pointerEvents="none">
                 <ActivityIndicator size="large" color="#007AFF" />
@@ -271,9 +267,7 @@ export default function SermonViewerModal({
               </>
             )}
           </View>
-        </View>
-      </View>
-    </Modal>
+    </MinimizableBottomSheet>
   );
 }
 

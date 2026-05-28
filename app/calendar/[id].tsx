@@ -5,7 +5,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
@@ -576,15 +576,18 @@ export default function CalendarEventDetailScreen() {
         ) : null}
       </ScrollView>
 
-      <Modal visible={notesOpen} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: '#0009', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: colors.background, maxHeight: '92%', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>Notebook</Text>
-              <TouchableOpacity onPress={() => setNotesOpen(false)}>
-                <Text style={{ color: '#007AFF', fontSize: 16 }}>Done</Text>
-              </TouchableOpacity>
-            </View>
+      <MinimizableBottomSheet
+        visible={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        title="Notebook"
+        heightRatio={0.92}
+        headerRight={() => (
+          <TouchableOpacity onPress={() => setNotesOpen(false)}>
+            <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>Done</Text>
+          </TouchableOpacity>
+        )}
+      >
+        <View style={{ paddingHorizontal: 16, flex: 1 }}>
             {notesLoading ? <ActivityIndicator style={{ marginTop: 16 }} /> : null}
             {deviceOffline ? (
               <Text style={[styles.meta, { marginTop: 8 }]}>Notes are unavailable offline.</Text>
@@ -665,9 +668,8 @@ export default function CalendarEventDetailScreen() {
                 <Text style={{ color: '#007AFF', textAlign: 'center', marginTop: 8 }}>Cancel edit</Text>
               </TouchableOpacity>
             ) : null}
-          </View>
         </View>
-      </Modal>
+      </MinimizableBottomSheet>
     </SafeAreaView>
   );
 }

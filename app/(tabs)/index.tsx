@@ -19,11 +19,14 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { REACH_CURRENT_MEETING_KEY } from '../../constants/reachMeeting';
+import { SignatureIcon } from '../../components/SignatureIcon';
+import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
+import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
+import { dashboardScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
 import { NotificationsInboxContent } from '../components/NotificationsInboxContent';
 import { UploadOptionsModal } from '../components/UploadOptionsModal';
@@ -78,6 +81,7 @@ const reachLiveDotStyles = StyleSheet.create({
 
 function DashboardScreen() {
   const router = useRouter();
+  const openChatGD = useOpenChatGD();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { user, signOut } = useAuth();
@@ -107,7 +111,11 @@ function DashboardScreen() {
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
   const DASHBOARD_CACHE_MS = 60000; // 60 s TTL for dashboard data
-  const DASHBOARD_CACHE_KEY = 'dashboard_data';
+
+  const getDashboardCacheKey = useCallback(
+    () => (user?.id ? dashboardScreenKey(user.id) : null),
+    [user?.id],
+  );
 
   /** Get user initials for header avatar: first+last name, else name, else username/email prefix, else null (show icon). */
   const getUserInitials = (u: { name?: string; email?: string; first_name?: string; last_name?: string; username?: string } | null): string | null => {
@@ -204,10 +212,10 @@ function DashboardScreen() {
 
     // Serve cached data immediately (skip spinner on tab re-focus)
     if (!forceRefresh) {
-      const cached = screenCache.get<{ stats: typeof stats }>(
-        DASHBOARD_CACHE_KEY,
-        DASHBOARD_CACHE_MS
-      );
+      const cacheKey = getDashboardCacheKey();
+      const cached = cacheKey
+        ? screenCache.get<{ stats: typeof stats }>(cacheKey, DASHBOARD_CACHE_MS)
+        : null;
       if (cached) {
         setStats(cached.stats);
         setLoading(false);
@@ -334,7 +342,8 @@ function DashboardScreen() {
     const [resolvedStats] = await Promise.all([statsPromise, notifPromise]);
 
     if (resolvedStats) {
-      screenCache.set(DASHBOARD_CACHE_KEY, { stats: resolvedStats });
+      const cacheKey = getDashboardCacheKey();
+      if (cacheKey) screenCache.set(cacheKey, { stats: resolvedStats });
     }
       
     } catch (error) {
@@ -357,16 +366,18 @@ function DashboardScreen() {
   }, [user, isAuthenticated]); // Include auth state in dependencies to reload when auth changes
 
   const onNotificationsListMutated = useCallback(() => {
-    screenCache.invalidate(DASHBOARD_CACHE_KEY);
+    const cacheKey = getDashboardCacheKey();
+    if (cacheKey) screenCache.invalidate(cacheKey);
     void loadDashboardData(true);
   }, [loadDashboardData]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    screenCache.invalidate(DASHBOARD_CACHE_KEY);
+    const cacheKey = getDashboardCacheKey();
+    if (cacheKey) screenCache.invalidate(cacheKey);
     await loadDashboardData(true);
     setRefreshing(false);
-  }, [loadDashboardData]);
+  }, [getDashboardCacheKey, loadDashboardData]);
 
   // useFocusEffect fires on first mount AND on every subsequent focus — a separate mount
   // useEffect would fire simultaneously on cold open, doubling all API requests (6-8 extra calls).
@@ -388,12 +399,13 @@ function DashboardScreen() {
     if (!isAuthenticated || !user) return;
 
     const interval = setInterval(() => {
-      screenCache.invalidate(DASHBOARD_CACHE_KEY);
+      const cacheKey = getDashboardCacheKey();
+      if (cacheKey) screenCache.invalidate(cacheKey);
       loadDashboardData(true);
     }, AUTO_REFRESH_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, user, loadDashboardData]);
+  }, [isAuthenticated, user, loadDashboardData, getDashboardCacheKey]);
 
   // When connection failed, retry with exponential backoff so we don't hammer the server
   useEffect(() => {
@@ -470,10 +482,11 @@ function DashboardScreen() {
     </TouchableOpacity>
   );
 
-  const QuickActionCard = ({ title, subtitle, icon, color, onPress, isNew, showLiveMeetingIndicator }: {
+  const QuickActionCard = ({ title, subtitle, icon, iconElement, color, onPress, isNew, showLiveMeetingIndicator }: {
     title: string;
     subtitle: string;
-    icon: string;
+    icon?: string;
+    iconElement?: React.ReactNode;
     color: string;
     onPress: () => void;
     isNew?: boolean;
@@ -488,7 +501,7 @@ function DashboardScreen() {
       accessibilityRole="button"
     >
       <View style={[dynamicStyles.quickActionIcon, { backgroundColor: color }]}>
-        <Ionicons name={icon as any} size={22} color="#fff" />
+        {iconElement ?? <Ionicons name={icon as any} size={22} color="#fff" />}
         {showLiveMeetingIndicator ? <ReachLiveMeetingDot /> : null}
         {isNew ? <View style={dynamicStyles.newBadge}><Text style={dynamicStyles.newBadgeText}>NEW</Text></View> : null}
       </View>
@@ -609,6 +622,9 @@ function DashboardScreen() {
         break;
       case 'upload-links':
         router.push('/upload-links');
+        break;
+      case 'signatures':
+        router.push('/signatures' as any);
         break;
       case 'meeting-call':
         router.push('/quick-reach/meeting-call');
@@ -995,7 +1011,7 @@ function DashboardScreen() {
             />
             <StatCard
               key="stat-draft"
-              title="Draft"
+              title="Notes"
               icon="create-outline"
               color="#5AC8FA"
               subtitle="Create notes"
@@ -1017,7 +1033,7 @@ function DashboardScreen() {
               icon="chatbubbles"
               color="#AF52DE"
               subtitle="Ask a question"
-              onPress={() => router.push('/(tabs)/chats?openStartNew=1')}
+              onPress={() => openChatGD()}
             />
           </View>
         </View>
@@ -1050,8 +1066,16 @@ function DashboardScreen() {
               icon="call"
               color="#007AFF"
               onPress={() => handleQuickAction('meeting-call')}
-              isNew={true}
               showLiveMeetingIndicator={reachInMeeting}
+            />
+            <QuickActionCard
+              key="action-signatures"
+              title="Signatures"
+              subtitle="Send and sign documents"
+              iconElement={<SignatureIcon size={22} color="#fff" />}
+              color="#0EA5E9"
+              onPress={() => handleQuickAction('signatures')}
+              isNew={true}
             />
             <QuickActionCard
               key="action-upload-links"
@@ -1145,76 +1169,29 @@ function DashboardScreen() {
         onLink={handleUploadByLink}
       />
 
-      <Modal
+      <MinimizableBottomSheet
         visible={notificationsModalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={closeNotificationsModal}
+        onClose={closeNotificationsModal}
+        showHeader={false}
+        heightRatio={0.8}
+        paddingBottom={insets.bottom}
       >
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <KeyboardAvoidingView
-            style={{ flex: 1, justifyContent: 'flex-end' }}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={0}
-          >
-            <View
-              style={{
-                flex: 1,
-                justifyContent: 'flex-end',
-                backgroundColor: 'rgba(0,0,0,0.4)',
-              }}
-            >
-              <TouchableOpacity
-                style={{ flex: 1 }}
-                activeOpacity={1}
-                onPress={closeNotificationsModal}
-                accessibilityLabel="Dismiss notifications"
-              />
-              <View
-                style={{
-                  width: '100%',
-                  backgroundColor: colors.card,
-                  borderTopLeftRadius: 20,
-                  borderTopRightRadius: 20,
-                  maxHeight: '80%',
-                  minHeight: 280,
-                  paddingBottom: insets.bottom,
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: -3 },
-                  shadowOpacity: 0.15,
-                  shadowRadius: 8,
-                  elevation: 12,
-                }}
-              >
-                <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
-                  <View
-                    style={{
-                      width: 36,
-                      height: 4,
-                      borderRadius: 2,
-                      backgroundColor: colors.border,
-                    }}
-                  />
-                </View>
-                <View
-                  style={{
-                    height: Math.min(
-                      Math.max(240, Math.round(windowHeight * 0.62)),
-                      Math.round(windowHeight * 0.8) - 48
-                    ),
-                  }}
-                >
-                  <NotificationsInboxContent
-                    variant="modal"
-                    onDismiss={closeNotificationsModal}
-                    onListMutated={onNotificationsListMutated}
-                  />
-                </View>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </GestureHandlerRootView>
-      </Modal>
+        <View
+          style={{
+            flex: 1,
+            minHeight: Math.min(
+              Math.max(240, Math.round(windowHeight * 0.62)),
+              Math.round(windowHeight * 0.8) - 48
+            ),
+          }}
+        >
+          <NotificationsInboxContent
+            variant="modal"
+            onDismiss={closeNotificationsModal}
+            onListMutated={onNotificationsListMutated}
+          />
+        </View>
+      </MinimizableBottomSheet>
     </SafeAreaView>
   );
 }

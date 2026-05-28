@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+﻿import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +18,7 @@ import {
     Text,
     TextInput,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     useColorScheme,
     View
 } from 'react-native';
@@ -27,10 +28,12 @@ import { WebView } from 'react-native-webview';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../../../constants/Config';
 import {
-  shouldRestoreHeaderAfterScrollToEdge,
-  useHeaderVisibility,
+    shouldRestoreHeaderAfterScrollToEdge,
+    useHeaderVisibility,
 } from '../../../contexts/HeaderVisibilityContext';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { useDelayedOfflineBanner } from '../../../hooks/useDelayedOfflineBanner';
+import { useOpenChatGD } from '../../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiClient } from '../../../services/api';
 import { toAlertMessage } from '../../../utils/alertUtils';
@@ -67,7 +70,7 @@ function textToSimpleHtml(text: string): string {
 }
 
 function stripExtension(name?: string): string {
-  if (!name) return 'Untitled Draft';
+  if (!name) return 'Untitled Note';
   return name.replace(/\.[^./\\]+$/, '');
 }
 
@@ -95,9 +98,17 @@ function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: b
     : '';
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/><style>
     *{box-sizing:border-box}
-    body{margin:0;padding:0;padding-left:12px;padding-right:12px;padding-bottom:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:1.5;background:${safeBg};color:${safeText};min-height:100vh;-webkit-user-select:auto;user-select:auto}
-    #content{outline:0;min-height:200px}
+    body{margin:0;padding:0 20px 20px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:1.6;background:${safeBg};color:${safeText};min-height:100vh;-webkit-user-select:auto;user-select:auto}
+    #content{outline:0;min-height:200px;padding-top:12px}
     #content:empty:before{content:attr(data-placeholder);color:gray}
+    #content p{margin:0 0 4px 0}
+    #content ul,#content ol{margin:4px 0;padding-left:20px}
+    #content ul ul,#content ol ol,#content ul ol,#content ol ul{margin:2px 0;padding-left:16px}
+    #content li{margin:2px 0;padding-left:0}
+    #content blockquote{margin:8px 0;padding:4px 0 4px 16px;border-left:3px solid ${safeText}40;color:${safeText}99}
+    #content [style*="margin-left"]{display:block}
+    table{border-collapse:collapse;width:100%;margin:8px 0}
+    td,th{border:1px solid ${safeText}40;padding:8px}
     ${darkModeBlackTextFix}
   </style></head><body><div id="content" contenteditable="true" data-placeholder="Start typing..."></div>
   <script>
@@ -105,11 +116,46 @@ function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: b
       var el=document.getElementById('content');
       el.innerHTML='<p><br><\\/p>';
       function send(){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(el.innerHTML); }
+      function sendUndoState(){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('__UNDO_STATE__:'+JSON.stringify({canUndo:document.queryCommandEnabled('undo'),canRedo:document.queryCommandEnabled('redo')})); }
       setTimeout(function(){
-        el.addEventListener('input',send);
-        el.addEventListener('blur',send);
-        el.addEventListener('paste',function(){ setTimeout(send,0); });
+        el.addEventListener('input',function(){ send(); sendUndoState(); });
+        el.addEventListener('blur',function(){ send(); sendUndoState(); });
+        el.addEventListener('paste',function(){ setTimeout(function(){ send(); sendUndoState(); },0); });
       },0);
+
+      // Auto-list shortcuts: "- " or "-[Enter]" → bullet list, "1. "[Enter] → numbered list
+      el.addEventListener('keydown',function(e){
+        if(e.key!=='Enter'&&!(e.key===' '||e.keyCode===32)) return;
+        var sel=window.getSelection();
+        if(!sel||sel.rangeCount===0) return;
+        var range=sel.getRangeAt(0);
+        if(!range.collapsed) return;
+        // Walk up from cursor to find the current block element
+        var node=range.startContainer;
+        var block=node.nodeType===3?node.parentNode:node;
+        while(block&&block!==el&&!['P','DIV','H1','H2','H3','H4'].includes(block.nodeName)){
+          block=block.parentNode;
+        }
+        if(!block||block===el) return;
+        var text=(block.textContent||'').trimEnd();
+        var isBulletTrigger=(e.key==='Enter'&&(text==='-'||text==='*'))||(e.key===' '&&(text==='-'||text==='*'));
+        var isOrderedTrigger=(e.key===' ')&&/^[1][\\.)]$/.test(text);
+        if(isBulletTrigger){
+          e.preventDefault();
+          block.textContent='';
+          document.execCommand('insertUnorderedList',false,null);
+          send(); sendUndoState();
+          return;
+        }
+        if(isOrderedTrigger){
+          e.preventDefault();
+          block.textContent='';
+          document.execCommand('insertOrderedList',false,null);
+          send(); sendUndoState();
+          return;
+        }
+      });
+
       var lastTap=0;
       el.addEventListener('touchend',function(e){
         var now=Date.now();
@@ -144,17 +190,22 @@ const DRAFT_WEBVIEW_BLUR_FOR_SAVE_JS = `(function(){
 export default function DraftEditScreen() {
   const { id, share } = useLocalSearchParams<{ id: string; share?: string }>();
   const router = useRouter();
+  const openChatGD = useOpenChatGD();
   const { user } = useAuth();
+  const userId = user?.id;
   const colors = useThemeColors();
   const colorScheme = useColorScheme();
   const isDarkMode = colorScheme === 'dark';
+  const { isDark, setTheme } = useTheme();
   const draftId = id ? parseInt(id, 10) : NaN;
   const { toggleHeader, toggleEnabled, showHeader } = useHeaderVisibility();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [filename, setFilename] = useState('Untitled Draft');
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [filename, setFilename] = useState('Untitled Note');
   const [contentText, setContentText] = useState('');
   const [contentHtml, setContentHtml] = useState('');
   const [initialEditorHtml, setInitialEditorHtml] = useState<string | null>(null);
@@ -189,9 +240,11 @@ export default function DraftEditScreen() {
   const { offlineBannerVisible, showOfflineBannerAfterDelay, showOfflineBannerNow } = useDelayedOfflineBanner(isOffline);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'local' | 'error' | null>(null);
   const initialFilenameRef = useRef<string | null>(null);
-  const currentFilenameRef = useRef<string>('Untitled Draft');
+  const currentFilenameRef = useRef<string>('Untitled Note');
   const renameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftLoadedRef = useRef(false);
+  /** True when this draft was opened as a fresh empty note (no content, default title). */
+  const wasCreatedEmptyRef = useRef(false);
   currentFilenameRef.current = filename;
 
   useEffect(() => {
@@ -220,7 +273,7 @@ export default function DraftEditScreen() {
     } finally {
       setLoadingShares(false);
     }
-  }, [draftId]);
+  }, [draftId, userId]);
 
   const handleRevokeShare = useCallback(async (shareId: number) => {
     if (!draftId || isNaN(draftId)) return;
@@ -341,7 +394,7 @@ export default function DraftEditScreen() {
 
   // Load draft content — cache-first for instant offline access
   useEffect(() => {
-    if (!draftId || isNaN(draftId)) return;
+    if (!draftId || isNaN(draftId) || !userId) return;
     draftLoadedRef.current = false;
     let cancelled = false;
     (async () => {
@@ -349,11 +402,11 @@ export default function DraftEditScreen() {
         setLoading(true);
 
         // 1. Load from local cache immediately (no network needed)
-        const cached = await draftsCache.getDraftContent(draftId);
+        const cached = await draftsCache.getDraftContent(userId, draftId);
         if (cached && !cancelled) {
           const cachedHtml = cached.content_html || '<p><br></p>';
-          setFilename(cached.filename || 'Untitled Draft');
-          initialFilenameRef.current = cached.filename || 'Untitled Draft';
+          setFilename(cached.filename || 'Untitled Note');
+          initialFilenameRef.current = cached.filename || 'Untitled Note';
           setContentText(stripHtmlToText(cachedHtml));
           setContentHtml(cachedHtml);
           setInitialEditorHtml(cachedHtml);
@@ -371,13 +424,18 @@ export default function DraftEditScreen() {
           showOfflineBannerNow();
           if (!cached) {
             const emptyHtml = '<p><br></p>';
-            setFilename('Untitled Draft');
-            initialFilenameRef.current = 'Untitled Draft';
+            setFilename('Untitled Note');
+            initialFilenameRef.current = 'Untitled Note';
             setContentText('');
             setContentHtml(emptyHtml);
             setInitialEditorHtml(emptyHtml);
             contentToInjectRef.current = emptyHtml;
             draftLoadedRef.current = true;
+            wasCreatedEmptyRef.current = true;
+          } else {
+            const cachedText = stripHtmlToText(cached.content_html || '').trim();
+            const cachedTitle = (cached.filename || 'Untitled Note').trim();
+            wasCreatedEmptyRef.current = !cachedText && cachedTitle === 'Untitled Note';
           }
           return;
         }
@@ -388,7 +446,7 @@ export default function DraftEditScreen() {
         if ((res as any)?.success) {
           const data = (res as any).data ?? res;
           const html = (res as any).content_html ?? data?.content_html ?? '';
-          const name = (res as any).filename ?? data?.filename ?? 'Untitled Draft';
+          const name = (res as any).filename ?? data?.filename ?? 'Untitled Note';
           const ver = (res as any).version ?? data?.version;
           const updatedAt = (res as any).updated_at ?? data?.updated_at;
 
@@ -409,6 +467,7 @@ export default function DraftEditScreen() {
             if (ver != null) lastKnownVersionRef.current = Number(ver);
             if (updatedAt != null) lastKnownUpdatedAtRef.current = String(updatedAt);
             ignoreFirstEmptyMessageRef.current = !!(html && stripHtmlToText(html).trim());
+            wasCreatedEmptyRef.current = !stripHtmlToText(html).trim() && (name === 'Untitled Note' || !name);
             // Inject updated content into WebView if already rendered
             if (cached) {
               const script = `(function(){ var el=document.getElementById('content'); if(el) el.innerHTML=${JSON.stringify(safeHtml)}; })(); true;`;
@@ -418,7 +477,7 @@ export default function DraftEditScreen() {
 
           setIsOffline(false);
           // Persist to cache
-          await draftsCache.saveDraftContent(draftId, {
+          await draftsCache.saveDraftContent(userId, draftId, {
             filename: name,
             content_html: html,
             version: ver != null ? Number(ver) : undefined,
@@ -427,7 +486,7 @@ export default function DraftEditScreen() {
 
           await flushPendingOpsForDraft();
         } else if (!cached) {
-          Alert.alert('Error', 'Failed to load draft', [{ text: 'OK', onPress: () => router.back() }]);
+          Alert.alert('Error', 'Failed to load note', [{ text: 'OK', onPress: () => router.back() }]);
         }
       } catch (e: any) {
         if (cancelled) return;
@@ -443,7 +502,7 @@ export default function DraftEditScreen() {
           // If we loaded from cache, stay on screen — already showing cached content
         } else {
           if (!draftLoadedRef.current) {
-            Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to load draft'), [
+            Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to load note'), [
               { text: 'OK', onPress: () => router.back() },
             ]);
           }
@@ -453,7 +512,7 @@ export default function DraftEditScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [draftId, router, showOfflineBannerAfterDelay, showOfflineBannerNow]);
+  }, [draftId, userId, router, showOfflineBannerAfterDelay, showOfflineBannerNow]);
 
   // Socket.IO: connect, join document room, presence
   useEffect(() => {
@@ -523,8 +582,8 @@ export default function DraftEditScreen() {
             }
             if (hasUnsavedRef.current) {
               Alert.alert(
-                'Draft updated elsewhere',
-                'This draft was updated on another device. Reload?',
+                'Note updated elsewhere',
+                'This note was updated on another device. Reload?',
                 [
                   { text: 'Cancel', style: 'cancel' },
                   { text: 'Reload', onPress: () => refetchDraftContentRef.current?.(data.version, data.updated_at) },
@@ -582,7 +641,7 @@ export default function DraftEditScreen() {
   }, []);
 
   const handleSave = useCallback(async (textOrHtml?: string, isHtml = false) => {
-    if (!draftId || isNaN(draftId)) return;
+    if (!draftId || isNaN(draftId) || !userId) return;
     let html = isHtml ? (textOrHtml ?? contentHtmlRef.current) : textToSimpleHtml(textOrHtml ?? contentTextRef.current);
     if (isHtml) {
       html = normalizeHtml(html);
@@ -590,8 +649,8 @@ export default function DraftEditScreen() {
     const plainText = stripHtmlToText(html);
 
     // Always persist locally first so content is never lost
-    await draftsCache.saveDraftContent(draftId, {
-      filename: currentFilenameRef.current || 'Untitled Draft',
+    await draftsCache.saveDraftContent(userId, draftId, {
+      filename: currentFilenameRef.current || 'Untitled Note',
       content_html: html,
       version: lastKnownVersionRef.current ?? undefined,
       updated_at: lastKnownUpdatedAtRef.current ?? undefined,
@@ -601,10 +660,10 @@ export default function DraftEditScreen() {
     setSaveStatus('saving');
     try {
       if (draftsCache.isLocalDraftId(draftId)) {
-        await draftsCache.updatePendingCreate(draftId, {
+        await draftsCache.updatePendingCreate(userId, draftId, {
           html,
           plainText,
-          filename: currentFilenameRef.current || 'Untitled Draft',
+          filename: currentFilenameRef.current || 'Untitled Note',
         });
         setIsOffline(true);
         showOfflineBannerNow();
@@ -625,13 +684,13 @@ export default function DraftEditScreen() {
       setIsOffline(false);
       setSaveStatus('saved');
       // Remove from pending queue on successful save
-      await draftsCache.removePendingSave(draftId);
+      await draftsCache.removePendingSave(userId, draftId);
       const file = (res as any)?.file ?? (res as any)?.data?.file;
       if (file?.version != null) lastKnownVersionRef.current = Number(file.version);
       if (file?.updated_at != null) lastKnownUpdatedAtRef.current = String(file.updated_at);
       // Update cache with server-confirmed version info
-      await draftsCache.saveDraftContent(draftId, {
-        filename: currentFilenameRef.current || 'Untitled Draft',
+      await draftsCache.saveDraftContent(userId, draftId, {
+        filename: currentFilenameRef.current || 'Untitled Note',
         content_html: html,
         version: lastKnownVersionRef.current ?? undefined,
         updated_at: lastKnownUpdatedAtRef.current ?? undefined,
@@ -639,27 +698,27 @@ export default function DraftEditScreen() {
     } catch (e: any) {
       if (e?.message?.includes('409') || (e?.response?.status === 409)) {
         setSaveStatus('error');
-        Alert.alert('Someone else is editing', 'Your changes were not saved. Someone else is editing this draft.');
+        Alert.alert('Someone else is editing', 'Your changes were not saved. Someone else is editing this note.');
       } else if (isNetworkError(e)) {
         // Queue for later sync — content already saved locally above
         setIsOffline(true);
         showOfflineBannerAfterDelay();
         setSaveStatus('local');
-        await draftsCache.addPendingSave({
+        await draftsCache.addPendingSave(userId, {
           id: draftId,
           html,
           plainText,
-          filename: currentFilenameRef.current || 'Untitled Draft',
+          filename: currentFilenameRef.current || 'Untitled Note',
         });
         setHasUnsavedChanges(false);
       } else {
         setSaveStatus('error');
-        Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to save draft'));
+        Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Failed to save note'));
       }
     } finally {
       setSaving(false);
     }
-  }, [draftId, normalizeHtml, showOfflineBannerAfterDelay, showOfflineBannerNow]);
+  }, [draftId, userId, normalizeHtml, showOfflineBannerAfterDelay, showOfflineBannerNow]);
 
   const refetchDraftContent = useCallback(async (version: number, updatedAt: string) => {
     if (!draftId || isNaN(draftId)) return;
@@ -684,7 +743,7 @@ export default function DraftEditScreen() {
     } catch (_) {
       // ignore refetch errors
     }
-  }, [draftId]);
+  }, [draftId, userId]);
 
   useEffect(() => {
     refetchDraftContentRef.current = refetchDraftContent;
@@ -693,19 +752,19 @@ export default function DraftEditScreen() {
 
   /** Flush pending save/rename for this draft to the server. Safe to call speculatively. */
   const flushPendingOpsForDraft = useCallback(async () => {
-    if (!draftId || isNaN(draftId)) return;
+    if (!draftId || isNaN(draftId) || !userId) return;
     if (draftsCache.isLocalDraftId(draftId)) return;
-    const pending = await draftsCache.getPendingSaves();
+    const pending = await draftsCache.getPendingSaves(userId);
     const item = pending.find(p => p.id === draftId);
     if (item) {
       try {
         await apiClient.saveDraft(draftId, item.html, item.plainText);
-        await draftsCache.removePendingSave(draftId);
+        await draftsCache.removePendingSave(userId, draftId);
         setIsOffline(false);
         setSaveStatus('saved');
         setHasUnsavedChanges(false);
         if (item.filename) {
-          await draftsCache.saveDraftContent(draftId, {
+          await draftsCache.saveDraftContent(userId, draftId, {
             filename: item.filename,
             content_html: item.html,
           });
@@ -715,18 +774,18 @@ export default function DraftEditScreen() {
       }
     }
 
-    const pendingRenames = await draftsCache.getPendingRenames();
+    const pendingRenames = await draftsCache.getPendingRenames(userId);
     const rename = pendingRenames.find(r => r.id === draftId);
     if (!rename) return;
     try {
       await apiClient.renameFile(draftId, rename.filename);
-      await draftsCache.removePendingRename(draftId);
+      await draftsCache.removePendingRename(userId, draftId);
       setIsOffline(false);
       setSaveStatus('saved');
     } catch {
       // Still offline — leave in queue
     }
-  }, [draftId]);
+  }, [draftId, userId]);
 
   // Sync pending operations when app comes to foreground; also pull latest content from server
   useEffect(() => {
@@ -763,6 +822,16 @@ export default function DraftEditScreen() {
       if (toggleEnabled) {
         toggleHeader();
       }
+      return;
+    }
+
+    // Handle undo/redo availability update
+    if (rawHtml.startsWith('__UNDO_STATE__:')) {
+      try {
+        const state = JSON.parse(rawHtml.slice('__UNDO_STATE__:'.length));
+        setCanUndo(!!state.canUndo);
+        setCanRedo(!!state.canRedo);
+      } catch {}
       return;
     }
     
@@ -830,7 +899,7 @@ export default function DraftEditScreen() {
       ? `document.execCommand('${command}', false, ${JSON.stringify(value)});`
       : `document.execCommand('${command}', false);`;
     webViewRef.current?.injectJavaScript(
-      `(function(){ var el=document.getElementById('content'); if(el){ el.focus(); ${cmd} if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(el.innerHTML); } })(); true;`
+      `(function(){ var el=document.getElementById('content'); if(el){ el.focus(); ${cmd} if(window.ReactNativeWebView){ window.ReactNativeWebView.postMessage(el.innerHTML); window.ReactNativeWebView.postMessage('__UNDO_STATE__:'+JSON.stringify({canUndo:document.queryCommandEnabled('undo'),canRedo:document.queryCommandEnabled('redo')})); } } })(); true;`
     );
   }, []);
 
@@ -1000,36 +1069,69 @@ export default function DraftEditScreen() {
 
   /** Persist current filename to server if it changed. Call on blur, Back, and Save. */
   const persistFilenameIfChanged = useCallback(async (): Promise<void> => {
-    const name = (currentFilenameRef.current || '').trim() || 'Untitled Draft';
+    const name = (currentFilenameRef.current || '').trim() || 'Untitled Note';
     if (name === (initialFilenameRef.current ?? '')) return;
-    if (!draftId || isNaN(draftId)) return;
+    if (!draftId || isNaN(draftId) || !userId) return;
     // Always update local cache immediately
-    await draftsCache.updateCachedFilename(draftId, name);
+    await draftsCache.updateCachedFilename(userId, draftId, name);
     initialFilenameRef.current = name;
     if (draftsCache.isLocalDraftId(draftId)) {
-      await draftsCache.updatePendingCreate(draftId, { filename: name });
+      await draftsCache.updatePendingCreate(userId, draftId, { filename: name });
       return;
     }
     try {
       await apiClient.renameFile(draftId, name);
     } catch (e: any) {
       if (!isNetworkError(e)) throw e;
-      await draftsCache.addPendingRename({ id: draftId, filename: name });
+      await draftsCache.addPendingRename(userId, { id: draftId, filename: name });
       setIsOffline(true);
       showOfflineBannerAfterDelay();
       setSaveStatus('local');
     }
-  }, [draftId, showOfflineBannerAfterDelay]);
+  }, [draftId, userId, showOfflineBannerAfterDelay]);
 
   const handleRenameBlur = useCallback(async () => {
     try {
       await persistFilenameIfChanged();
     } catch (e: any) {
-      Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename draft'));
+      Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename note'));
     }
   }, [persistFilenameIfChanged]);
 
   const handleBack = useCallback(async () => {
+    if (!userId) { router.back(); return; }
+
+    // If the note was opened empty and the user never added content or changed
+    // the title, discard it entirely rather than leaving an empty shell.
+    if (wasCreatedEmptyRef.current) {
+      const currentText = stripHtmlToText(contentHtmlRef.current).trim();
+      const currentTitle = (currentFilenameRef.current || '').trim();
+      const stillEmpty = !currentText;
+      const stillUntitled = !currentTitle || currentTitle === 'Untitled Note';
+
+      if (stillEmpty && stillUntitled) {
+        try {
+          if (draftsCache.isLocalDraftId(draftId)) {
+            await draftsCache.removePendingCreate(userId, draftId);
+            await draftsCache.removePendingSave(userId, draftId);
+            await draftsCache.removePendingRename(userId, draftId);
+            await draftsCache.removeFromDraftsList(userId, draftId);
+            await draftsCache.deleteDraftContent(userId, draftId);
+          } else if (!isNaN(draftId)) {
+            await apiClient.deleteDraft(draftId);
+            await draftsCache.removePendingSave(userId, draftId);
+            await draftsCache.removePendingRename(userId, draftId);
+            await draftsCache.removeFromDraftsList(userId, draftId);
+            await draftsCache.deleteDraftContent(userId, draftId);
+          }
+        } catch (_) {
+          // Best-effort — still navigate back
+        }
+        router.back();
+        return;
+      }
+    }
+
     try {
       await persistFilenameIfChanged();
     } catch (_) {
@@ -1043,18 +1145,18 @@ export default function DraftEditScreen() {
     } else {
       router.back();
     }
-  }, [router, persistFilenameIfChanged]);
+  }, [router, persistFilenameIfChanged, userId, draftId]);
 
   // Debounced immediate save of filename when user types (persist after 600ms idle). Only run after draft has loaded so we don't trigger a rename on open (e.g. shared file permission error).
   useEffect(() => {
     if (!draftId || isNaN(draftId) || !draftLoadedRef.current) return;
     if (renameTimeoutRef.current) clearTimeout(renameTimeoutRef.current);
-    const name = (filename || '').trim() || 'Untitled Draft';
+    const name = (filename || '').trim() || 'Untitled Note';
     if (name === (initialFilenameRef.current ?? '')) return;
     const timeoutId = setTimeout(() => {
       renameTimeoutRef.current = null;
       persistFilenameIfChanged().catch((e: any) => {
-        Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename draft'));
+        Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename note'));
       });
     }, 600);
     renameTimeoutRef.current = timeoutId;
@@ -1072,6 +1174,18 @@ export default function DraftEditScreen() {
       : others.length === 2
         ? `${others[0].name} and ${others[1].name} are editing`
         : `${others.length} people are editing`;
+
+  const editorMoreButtonRef = useRef<TouchableOpacity>(null);
+  const [editorMenuVisible, setEditorMenuVisible] = useState(false);
+  const [editorMenuAnchor, setEditorMenuAnchor] = useState({ top: 0, right: 0 });
+
+  const handleEditorMoreOptions = useCallback(() => {
+    editorMoreButtonRef.current?.measureInWindow((x, y, width, height) => {
+      const screenWidth = Dimensions.get('window').width;
+      setEditorMenuAnchor({ top: y + height + 6, right: screenWidth - x - width });
+      setEditorMenuVisible(true);
+    });
+  }, []);
 
   const handleCreateShareLink = useCallback(async () => {
     if (!draftId || isNaN(draftId)) return;
@@ -1161,14 +1275,14 @@ export default function DraftEditScreen() {
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 12,
+      paddingHorizontal: 8,
       paddingVertical: 10,
-      borderBottomWidth: 1,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
       backgroundColor: colors.card,
     },
-    backBtn: { padding: 10, marginRight: 6, marginTop: 4 },
-    titleWrap: { flex: 1, minWidth: 0 },
+    backBtn: { paddingHorizontal: 6, paddingVertical: 8 },
+    titleWrap: { flex: 1, minWidth: 0, paddingHorizontal: 4 },
     title: { fontSize: 17, fontWeight: '600', color: colors.text },
     titleInput: {
       fontSize: 17,
@@ -1178,7 +1292,7 @@ export default function DraftEditScreen() {
       margin: 0,
     },
     headerActions: { flexDirection: 'row', alignItems: 'center' },
-    headerBtn: { padding: 10, marginTop: 4 },
+    headerBtn: { paddingHorizontal: 6, paddingVertical: 8 },
     offlineBanner: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1210,21 +1324,37 @@ export default function DraftEditScreen() {
     },
     keyboardToolbar: {
       position: 'absolute',
-      left: 8,
-      right: 8,
-      minHeight: 48,
+      left: 6,
+      right: 6,
       paddingVertical: 8,
-      paddingHorizontal: 12,
+      paddingHorizontal: 8,
       backgroundColor: colors.card,
-      borderRadius: 12,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: -2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      elevation: 4,
+      shadowOffset: { width: 0, height: -3 },
+      shadowOpacity: isDarkMode ? 0.4 : 0.12,
+      shadowRadius: 8,
+      elevation: 8,
     },
-    toolbarScroll: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 0, minHeight: 36 },
-    toolBtn: { padding: 8, marginRight: 4, minWidth: 40, alignItems: 'center', justifyContent: 'center' },
+    toolbarScroll: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 0, minHeight: 44 },
+    toolBtn: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 44,
+      height: 38,
+      borderRadius: 9,
+      marginRight: 3,
+      backgroundColor: colors.background,
+      paddingHorizontal: 8,
+    },
+    toolBtnDivider: {
+      width: StyleSheet.hairlineWidth,
+      height: 26,
+      backgroundColor: colors.border,
+      marginHorizontal: 6,
+    },
     editorWrap: { flex: 1, paddingTop: 0, paddingBottom: 0, paddingHorizontal: 0 },
     editor: {
       flex: 1,
@@ -1371,7 +1501,35 @@ export default function DraftEditScreen() {
     shareLinkRevokeBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: '#FF3B30' },
     shareLinkRevokeBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
     shareLinkDeleteBtn: { padding: 6, borderRadius: 6, backgroundColor: '#FF3B30' },
-  }), [colors]);
+    popoverOverlay: { flex: 1 },
+    popoverCard: {
+      position: 'absolute',
+      backgroundColor: colors.card,
+      borderRadius: 13,
+      minWidth: 210,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDarkMode ? 0.5 : 0.18,
+      shadowRadius: 12,
+      elevation: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      overflow: 'hidden',
+    },
+    popoverItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 13,
+      paddingHorizontal: 16,
+    },
+    popoverItemBorder: {
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    popoverItemIcon: { marginRight: 12 },
+    popoverItemText: { fontSize: 16, color: colors.text, flex: 1 },
+    popoverItemTextDestructive: { fontSize: 16, color: '#FF3B30', flex: 1 },
+  }), [colors, isDarkMode]);
 
   if (loading) {
     return (
@@ -1388,7 +1546,7 @@ export default function DraftEditScreen() {
         <AnimatedHeaderContainer height={100}>
           <View style={dynamicStyles.header}>
             <TouchableOpacity style={dynamicStyles.backBtn} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={28} color={colors.text} />
+              <Ionicons name="chevron-back" size={30} color={colors.primary || '#007AFF'} />
             </TouchableOpacity>
             <View style={dynamicStyles.titleWrap}>
               <TextInput
@@ -1397,7 +1555,7 @@ export default function DraftEditScreen() {
                 value={filename}
                 onChangeText={setFilename}
                 onBlur={handleRenameBlur}
-                placeholder="Untitled Draft"
+                placeholder="Untitled Note"
                 placeholderTextColor={colors.textSecondary}
                 selectTextOnFocus
                 returnKeyType="done"
@@ -1406,36 +1564,19 @@ export default function DraftEditScreen() {
               />
             </View>
             <View style={dynamicStyles.headerActions}>
-              <TouchableOpacity style={dynamicStyles.headerBtn} onPress={() => {
-                if (shareLink) {
-                  setShowSendLinkModal(true);
-                } else {
-                  setShowShareModal(true);
-                }
-              }}>
-                <Ionicons name="share-outline" size={26} color={colors.text} />
+              {saving ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} style={{ marginRight: 4, padding: 10 }} />
+              ) : saveStatus === 'saved' ? (
+                <Ionicons name="checkmark-circle" size={30} color="#34C759" style={{ marginRight: 2, padding: 8 }} />
+              ) : null}
+              <TouchableOpacity
+                style={dynamicStyles.headerBtn}
+                onPress={() => { if (shareLink) setShowSendLinkModal(true); else setShowShareModal(true); }}
+              >
+                <Ionicons name="share-outline" size={30} color={colors.primary || '#007AFF'} />
               </TouchableOpacity>
-              <TouchableOpacity style={dynamicStyles.headerBtn} onPress={() => {
-                if (shareLink) {
-                  setShowSendLinkModal(true);
-                } else {
-                  setShowShareModal(true);
-                }
-              }}>
-                <Ionicons name="person-add-outline" size={26} color={colors.text} />
-              </TouchableOpacity>
-              <TouchableOpacity style={dynamicStyles.headerBtn} onPress={async () => {
-                filenameInputRef.current?.blur();
-                editorRef.current?.blur();
-                Keyboard.dismiss();
-                try {
-                  await persistFilenameIfChanged();
-                } catch (_) {}
-                saveRequestedRef.current = true;
-                webViewRef.current?.injectJavaScript(DRAFT_WEBVIEW_BLUR_FOR_SAVE_JS);
-                if (!webViewRef.current) handleSave(contentHtmlRef.current || '', true);
-              }} disabled={saving}>
-                {saving ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="checkmark-outline" size={26} color={colors.text} />}
+              <TouchableOpacity ref={editorMoreButtonRef} style={dynamicStyles.headerBtn} onPress={handleEditorMoreOptions}>
+                <Ionicons name="ellipsis-horizontal-circle" size={30} color={colors.primary || '#007AFF'} />
               </TouchableOpacity>
             </View>
           </View>
@@ -1495,58 +1636,72 @@ export default function DraftEditScreen() {
         <View style={[dynamicStyles.keyboardToolbar, { bottom: keyboardHeight }]}>
           <ScrollView
             horizontal
-            showsHorizontalScrollIndicator={true}
+            showsHorizontalScrollIndicator={false}
             contentContainerStyle={dynamicStyles.toolbarScroll}
             keyboardShouldPersistTaps="always"
           >
+            {/* Undo / Redo */}
+            {canUndo && (
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('undo')} accessibilityLabel="Undo">
-              <Ionicons name="return-up-back-outline" size={20} color={colors.text} />
+              <Ionicons name="arrow-undo-outline" size={22} color={colors.text} />
             </TouchableOpacity>
+            )}
+            {canRedo && (
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('redo')} accessibilityLabel="Redo">
-              <Ionicons name="return-up-forward-outline" size={20} color={colors.text} />
+              <Ionicons name="arrow-redo-outline" size={22} color={colors.text} />
             </TouchableOpacity>
+            )}
+
+            <View style={dynamicStyles.toolBtnDivider} />
+
+            {/* Bold / Italic / Underline */}
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('bold')} accessibilityLabel="Bold">
-              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>B</Text>
+              <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.5 }}>B</Text>
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('italic')} accessibilityLabel="Italic">
-              <Text style={{ fontSize: 16, fontStyle: 'italic', fontWeight: '600', color: colors.text }}>I</Text>
+              <Text style={{ fontSize: 18, fontStyle: 'italic', fontWeight: '700', color: colors.text }}>I</Text>
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('underline')} accessibilityLabel="Underline">
-              <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text, textDecorationLine: 'underline' }}>U</Text>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, textDecorationLine: 'underline' }}>U</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={dynamicStyles.toolBtn}
-              onPress={() => {
-                setShowColorPicker(null);
-                setShowFontSizePicker(true);
-              }}
+              onPress={() => { setShowColorPicker(null); setShowFontSizePicker(true); }}
               accessibilityLabel="Font size"
             >
-              <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>Aa</Text>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Aa</Text>
             </TouchableOpacity>
+
+            <View style={dynamicStyles.toolBtnDivider} />
+
+            {/* Lists */}
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('insertUnorderedList')} accessibilityLabel="Bullet list">
-              <Ionicons name="ellipse-outline" size={18} color={colors.text} />
+              <Ionicons name="list-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('insertOrderedList')} accessibilityLabel="Numbered list">
-              <Ionicons name="reorder-three-outline" size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={toggleLink} accessibilityLabel="Link">
-              <Ionicons name="link-outline" size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => setShowColorPicker('fore')} accessibilityLabel="Text color">
-              <Ionicons name="color-palette-outline" size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => setShowColorPicker('back')} accessibilityLabel="Background color">
-              <Ionicons name="color-fill-outline" size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={insertTable} accessibilityLabel="Insert table">
-              <Ionicons name="grid-outline" size={20} color={colors.text} />
+              <Ionicons name="reorder-four-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('indent')} accessibilityLabel="Indent">
-              <Ionicons name="arrow-forward-outline" size={20} color={colors.text} />
+              <Ionicons name="chevron-forward-outline" size={22} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('outdent')} accessibilityLabel="Outdent">
-              <Ionicons name="arrow-back-outline" size={20} color={colors.text} />
+              <Ionicons name="chevron-back-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+
+            <View style={dynamicStyles.toolBtnDivider} />
+
+            {/* Link / Color / Table */}
+            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={toggleLink} accessibilityLabel="Link">
+              <Ionicons name="link-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => setShowColorPicker('fore')} accessibilityLabel="Text color">
+              <Ionicons name="color-palette-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => setShowColorPicker('back')} accessibilityLabel="Highlight">
+              <Ionicons name="color-fill-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={dynamicStyles.toolBtn} onPress={insertTable} accessibilityLabel="Insert table">
+              <Ionicons name="grid-outline" size={22} color={colors.text} />
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -1935,6 +2090,114 @@ export default function DraftEditScreen() {
           </TouchableOpacity>
         </TouchableOpacity>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Editor ... popover */}
+      <Modal visible={editorMenuVisible} transparent animationType="fade" onRequestClose={() => setEditorMenuVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setEditorMenuVisible(false)}>
+          <View style={dynamicStyles.popoverOverlay}>
+            <View style={[dynamicStyles.popoverCard, { top: editorMenuAnchor.top, right: editorMenuAnchor.right }]}>
+              <TouchableOpacity
+                style={[dynamicStyles.popoverItem, dynamicStyles.popoverItemBorder]}
+                onPress={() => {
+                  setEditorMenuVisible(false);
+                  if (shareLink) setShowSendLinkModal(true);
+                  else setShowShareModal(true);
+                }}
+              >
+                <Ionicons name="share-outline" size={20} color={colors.text} style={dynamicStyles.popoverItemIcon} />
+                <Text style={dynamicStyles.popoverItemText}>Share / Invite</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.popoverItem, dynamicStyles.popoverItemBorder]}
+                onPress={() => {
+                  setEditorMenuVisible(false);
+                  setShowShareModal(true);
+                }}
+              >
+                <Ionicons name="link-outline" size={20} color={colors.text} style={dynamicStyles.popoverItemIcon} />
+                <Text style={dynamicStyles.popoverItemText}>Manage Links</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.popoverItem, dynamicStyles.popoverItemBorder]}
+                onPress={() => {
+                  setEditorMenuVisible(false);
+                  setTheme(isDark ? 'light' : 'dark');
+                }}
+              >
+                <Ionicons
+                  name={isDark ? 'sunny-outline' : 'moon-outline'}
+                  size={20}
+                  color={colors.text}
+                  style={dynamicStyles.popoverItemIcon}
+                />
+                <Text style={dynamicStyles.popoverItemText}>
+                  {isDark ? 'Light Background' : 'Dark Background'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.popoverItem, dynamicStyles.popoverItemBorder]}
+                onPress={() => {
+                  setEditorMenuVisible(false);
+                  openChatGD({ chatPlaceholder: 'Ask about this note' });
+                }}
+              >
+                <Ionicons name="chatbubbles-outline" size={20} color={colors.text} style={dynamicStyles.popoverItemIcon} />
+                <Text style={dynamicStyles.popoverItemText}>Ask ChatGD</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[dynamicStyles.popoverItem, others.length > 0 ? dynamicStyles.popoverItemBorder : undefined]}
+                onPress={() => {
+                  setEditorMenuVisible(false);
+                  Alert.alert(
+                    'Move to Trash?',
+                    'You can restore this note within 30 days from Deleted Notes.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Move to Trash',
+                        style: 'destructive',
+                        onPress: async () => {
+                          if (!userId) return;
+                          try {
+                            if (draftsCache.isLocalDraftId(draftId)) {
+                              await draftsCache.removePendingCreate(userId, draftId);
+                              await draftsCache.removePendingSave(userId, draftId);
+                              await draftsCache.removePendingRename(userId, draftId);
+                              await draftsCache.removeFromDraftsList(userId, draftId);
+                              await draftsCache.deleteDraftContent(userId, draftId);
+                            } else if (!isNaN(draftId)) {
+                              await apiClient.deleteDraft(draftId);
+                              await draftsCache.removePendingSave(userId, draftId);
+                              await draftsCache.removePendingRename(userId, draftId);
+                              await draftsCache.removeFromDraftsList(userId, draftId);
+                              await draftsCache.deleteDraftContent(userId, draftId);
+                            }
+                            router.back();
+                          } catch (e: any) {
+                            Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not delete note'));
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+              >
+                <Ionicons name="trash-outline" size={20} color="#FF3B30" style={dynamicStyles.popoverItemIcon} />
+                <Text style={dynamicStyles.popoverItemTextDestructive}>Delete Note</Text>
+              </TouchableOpacity>
+              {others.length > 0 && (
+                <TouchableOpacity
+                  style={dynamicStyles.popoverItem}
+                  onPress={() => { setEditorMenuVisible(false); setShowEditorsModal(true); }}
+                >
+                  <Ionicons name="people-outline" size={20} color={colors.text} style={dynamicStyles.popoverItemIcon} />
+                  <Text style={dynamicStyles.popoverItemText}>Currently Editing ({others.length})</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </SafeAreaView>
   );

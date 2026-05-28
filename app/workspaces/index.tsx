@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { workspacesListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
@@ -41,14 +42,14 @@ export default function WorkspacesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const WORKSPACES_CACHE_KEY = 'workspaces_list';
   const WORKSPACES_CACHE_MS = 30_000;
+  const workspacesCacheKey = workspacesListScreenKey(user?.id);
 
   const loadWorkspaces = async (forceRefresh = false) => {
     if (!user) return;
 
-    if (!forceRefresh) {
-      const cached = screenCache.get<Workspace[]>(WORKSPACES_CACHE_KEY, WORKSPACES_CACHE_MS);
+    if (!forceRefresh && workspacesCacheKey) {
+      const cached = screenCache.get<Workspace[]>(workspacesCacheKey, WORKSPACES_CACHE_MS);
       if (cached) {
         setWorkspaces(cached);
         setLoading(false);
@@ -67,7 +68,7 @@ export default function WorkspacesScreen() {
         
         console.log('✅ Loaded workspaces:', workspacesData.length);
         setWorkspaces(workspacesData);
-        screenCache.set(WORKSPACES_CACHE_KEY, workspacesData);
+        if (workspacesCacheKey) screenCache.set(workspacesCacheKey, workspacesData);
       } else {
         console.log('❌ No workspaces found:', response);
         setWorkspaces([]);
@@ -90,7 +91,7 @@ export default function WorkspacesScreen() {
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
-    screenCache.invalidate(WORKSPACES_CACHE_KEY);
+    if (workspacesCacheKey) screenCache.invalidate(workspacesCacheKey);
     loadWorkspaces(true);
   };
 
@@ -108,7 +109,7 @@ export default function WorkspacesScreen() {
               const response = await apiService.deleteWorkspace(workspace.id);
               if (response.success) {
                 Alert.alert('Success', 'Workspace deleted successfully');
-                screenCache.invalidate(WORKSPACES_CACHE_KEY);
+                if (workspacesCacheKey) screenCache.invalidate(workspacesCacheKey);
                 loadWorkspaces(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete workspace');
@@ -128,7 +129,7 @@ export default function WorkspacesScreen() {
         is_active: !workspace.is_active
       });
       if (response.success) {
-        screenCache.invalidate(WORKSPACES_CACHE_KEY);
+        if (workspacesCacheKey) screenCache.invalidate(workspacesCacheKey);
         loadWorkspaces(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to update workspace');

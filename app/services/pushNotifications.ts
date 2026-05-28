@@ -138,7 +138,7 @@ class PushNotificationService {
       // Backend notification types (all 8)
       { id: 'file_request', name: 'File requests', description: 'Upload link requests', importance: Notifications.AndroidImportance.HIGH },
       { id: 'file_received', name: 'File received', description: 'Someone shared a file with you', importance: Notifications.AndroidImportance.HIGH },
-      { id: 'draft_edited', name: 'Draft edited', description: 'Collaborator started editing a draft', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'draft_edited', name: 'Note edited', description: 'Collaborator started editing a note', importance: Notifications.AndroidImportance.HIGH },
       { id: 'calendar_invite', name: 'Calendar invite', description: 'Calendar event invitations', importance: Notifications.AndroidImportance.HIGH },
       { id: 'file_share_viewed', name: 'File share viewed', description: 'Someone viewed your shared file', importance: Notifications.AndroidImportance.DEFAULT },
       { id: 'join_request', name: 'Join request', description: 'Meeting join requests', importance: Notifications.AndroidImportance.HIGH },
@@ -448,6 +448,23 @@ export function getNotificationScreen(data: Record<string, any>): string {
       return '/notifications';
     case 'upload_link_expiring':
       return '/upload-links';
+    case 'signature_request':
+    case 'signature_invite':
+    case 'signature_reminder':
+    case 'signature_completed':
+      if (data?.token) {
+        return `/signatures/sign/token/${encodeURIComponent(String(data.token))}`;
+      }
+      if (data?.navigation_path && String(data.navigation_path).includes('signatures')) {
+        return String(data.navigation_path).startsWith('/')
+          ? String(data.navigation_path)
+          : `/${data.navigation_path}`;
+      }
+      if (data?.envelope_id ?? data?.public_id) {
+        const id = data.public_id ?? data.envelope_id;
+        return data?.action === 'sign' ? `/signatures/sign/${id}` : `/signatures/${id}`;
+      }
+      return '/signatures';
     case 'meeting_minimized':
       // Tap "In meeting" notification -> open meeting screen
       if (data?.meetingId) {

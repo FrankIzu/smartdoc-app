@@ -1,8 +1,6 @@
-import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system/legacy';
+﻿import { Feather, Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -10,32 +8,46 @@ import {
     FlatList,
     Keyboard,
     Modal,
-    Platform,
     RefreshControl,
     ScrollView,
-    Share,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
     View,
-    type ViewStyle,
+    type ViewStyle
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AiFileManagerBottomSheet from '../../components/ai-file-manager/AiFileManagerBottomSheet';
+import DeletedFolderGroups from '../../components/documents/DeletedFolderGroups';
+import DocumentsFolderBar from '../../components/documents/DocumentsFolderBar';
 import DocumentViewer from '../../components/DocumentViewer';
 import ExternalFilePicker from '../../components/ExternalFilePicker';
+import FileNameText from '../../components/FileNameText';
+import CreateFolderSheet from '../../components/folders/CreateFolderSheet';
+import FolderKebabMenu, { type FolderKebabAction } from '../../components/folders/FolderKebabMenu';
+import FolderMovePicker from '../../components/folders/FolderMovePicker';
+import RenameFolderSheet from '../../components/folders/RenameFolderSheet';
 import LoadingDots from '../../components/LoadingDots';
+import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import QuickFormViewer from '../../components/QuickFormViewer';
+import { AI_FM_ICON_COLOR } from '../../constants/aiFileManagerHelp';
+import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
+import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
+import { useFolderSystem } from '../../hooks/useFolderSystem';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
+import type { DeletedFolderGroup, FolderRowModel } from '../../types/folder';
 import { toAlertMessage } from '../../utils/alertUtils';
 import { removeFileExtension } from '../../utils/fileUtils';
+import { mapFileRowToDocument } from '../../utils/mapFileRowToDocument';
+import { shareDocumentFile } from '../../utils/shareDocumentFile';
 import { scaleStyleObject } from '../../utils/styleUtils';
-import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
+import { UploadOptionsModal } from '../components/UploadOptionsModal';
 import { useAuth } from '../context/auth';
 
 interface Document {
@@ -61,6 +73,8 @@ interface Document {
   bookmarkColor?: string;
   /** For listKind bookmark: used when sorting by size */
   bookmarkFileCount?: number;
+  /** From folder/web file API — file is in at least one locked bookmark */
+  in_locked_bookmark?: boolean;
 }
 
 interface ApiDocument {
@@ -124,6 +138,16 @@ function isBookmarkLocked(b: any): boolean {
   return false;
 }
 
+function isLockedBookmarkFile(
+  fileId: string | number | undefined | null,
+  lockedIds: Set<string>,
+  inLockedBookmark?: boolean
+): boolean {
+  if (inLockedBookmark) return true;
+  if (fileId == null || fileId === '') return false;
+  return lockedIds.has(String(fileId));
+}
+
 /** Module-level so list items keep a stable component identity (avoids remount/janky spinners). */
 const DocumentListIcon = React.memo(function DocumentListIcon({
   pending,
@@ -152,12 +176,13 @@ const DocumentListIcon = React.memo(function DocumentListIcon({
 
 export default function QuickFilesScreen() {
   const router = useRouter();
+  const openChatGD = useOpenChatGD();
   const navigation = useNavigation();
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const colors = useThemeColors();
   const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
-  const { uploadFromGallery, lastUploadTime, pendingUploads } = useFileStore();
+  const { uploadFromGallery, lastUploadTime, pendingUploads, setUploadFolderContext } = useFileStore();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadTime, setLastLoadTime] = useState<number>(0);
@@ -169,7 +194,8 @@ export default function QuickFilesScreen() {
   // This ensures workspaceId is properly read when navigating from workspace details
   // Add debounce to prevent excessive reloads, but allow immediate refresh after upload
   const lastLoadTimeRef = useRef<number>(0);
-  const RELOAD_DEBOUNCE_MS = 2000; // Don't reload if less than 2 seconds since last load
+  // Match the cache TTL — serving stale data within 30 s is better than a network round-trip on every tab switch.
+  const RELOAD_DEBOUNCE_MS = CACHE_DURATION;
   const lastUploadTimeRef = useRef<number>(0); // Track when upload happened locally
 
   const handleDocumentsHeaderBack = useCallback(() => {
@@ -182,7 +208,40 @@ export default function QuickFilesScreen() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('date');
+  const showSortOptions = useCallback(() => {
+    Alert.alert('Sort Options', 'Choose sorting option:', [
+      { text: 'Name', onPress: () => setSortBy('name') },
+      { text: 'Date', onPress: () => setSortBy('date') },
+      { text: 'Size', onPress: () => setSortBy('size') },
+      { text: 'Type', onPress: () => setSortBy('type') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, []);
   const [filterBy, setFilterBy] = useState<FilterOption>('all');
+
+  const useFolderMode = filterBy !== 'forms' && filterBy !== 'deleted';
+
+  const folderSystem = useFolderSystem({
+    workspaceId,
+    initialFolderId: params.folderId ? Number(params.folderId) : null,
+    enabled: useFolderMode,
+  });
+
+  const [showCreateFolder, setShowCreateFolder] = useState(false);
+  const [renameFolderTarget, setRenameFolderTarget] = useState<FolderRowModel | null>(null);
+  const [showFolderMovePicker, setShowFolderMovePicker] = useState(false);
+  const [moveFileIds, setMoveFileIds] = useState<number[]>([]);
+  const [moveFolderTarget, setMoveFolderTarget] = useState<FolderRowModel | null>(null);
+  const [folderMenuTarget, setFolderMenuTarget] = useState<FolderRowModel | null>(null);
+  const [showFolderKebabMenu, setShowFolderKebabMenu] = useState(false);
+  const [deletedFolderGroups, setDeletedFolderGroups] = useState<DeletedFolderGroup[]>([]);
+  const [showAiFmSheet, setShowAiFmSheet] = useState(false);
+  const [aiFmExpandNonce, setAiFmExpandNonce] = useState(0);
+  const [aiFmWorkspaceId, setAiFmWorkspaceId] = useState<number | null>(null);
+  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const folderSystemRef = useRef(folderSystem);
+  folderSystemRef.current = folderSystem;
+
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -304,6 +363,7 @@ export default function QuickFilesScreen() {
     isFormsMode: boolean;
     workspaceId?: number;
     workspaceBookmarks?: any[];
+    userId?: string | number;
   } | null>(null);
 
   /** Optimistic move-to-trash: hide these ids on every server-driven list merge until DELETE completes + refresh. */
@@ -321,6 +381,7 @@ export default function QuickFilesScreen() {
     bookmarks: any[];
     timestamp: number;
     scopeWorkspaceId?: number;
+    userId?: string | number;
   } | null>(null);
   const LOCKED_BOOKMARK_CACHE_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -339,6 +400,11 @@ export default function QuickFilesScreen() {
   // Persists locked-bookmark file IDs across renders so the filter can be applied
   // immediately on subsequent loads without waiting for the background refresh.
   const lockedFileIdsRef = React.useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    apiCacheRef.current = null;
+    lockedBookmarkCacheRef.current = null;
+  }, [user?.id]);
 
   const handleGalleryUpload = async () => {
     try {
@@ -637,7 +703,13 @@ export default function QuickFilesScreen() {
       if (!opts?.silent) setDeletedLoading(true);
       try {
         const res = await apiClient.getDeletedFiles(1, 100);
-        const list = (res as { files?: DeletedFileRow[] }).files;
+        const groups = (res as { folder_groups?: DeletedFolderGroup[] }).folder_groups;
+        setDeletedFolderGroups(Array.isArray(groups) ? groups : []);
+        const standalone = (res as { standalone_files?: DeletedFileRow[] }).standalone_files;
+        const list =
+          Array.isArray(standalone) && standalone.length > 0
+            ? standalone
+            : (res as { files?: DeletedFileRow[] }).files;
         const next = Array.isArray(list) ? list : [];
         setDeletedFiles(next);
         return next;
@@ -657,6 +729,66 @@ export default function QuickFilesScreen() {
     }
   }, [filterBy, user, loadDeletedFiles]);
 
+  // Folder-aware My Files: sync file list from useFolderSystem
+  useEffect(() => {
+    if (!useFolderMode) return;
+    const mapped = folderSystem.files
+      .filter(
+        (f) => !isLockedBookmarkFile(f.id, fileIdsInLockedBookmarks, f.in_locked_bookmark)
+      )
+      .map((f) => mapFileRowToDocument(f) as Document);
+    setDocuments(filterPendingTrash(mapped));
+    hasMoreRef.current = folderSystem.filesHasMore;
+    setHasMore(folderSystem.filesHasMore);
+    if (!folderSystem.loading) setLoading(false);
+  }, [
+    useFolderMode,
+    folderSystem.files,
+    folderSystem.filesHasMore,
+    folderSystem.loading,
+    filterPendingTrash,
+    fileIdsInLockedBookmarks,
+  ]);
+
+  useEffect(() => {
+    if (!useFolderMode) return;
+    setUploadFolderContext(
+      folderSystem.currentFolderId,
+      folderSystem.currentFolderWorkspaceId
+    );
+  }, [
+    useFolderMode,
+    folderSystem.currentFolderId,
+    folderSystem.currentFolderWorkspaceId,
+    setUploadFolderContext,
+  ]);
+
+  useEffect(() => {
+    if (useFolderMode && user) {
+      void folderSystem.loadFolderView(folderSystem.currentFolderId);
+    }
+  }, [useFolderMode, user, workspaceId]);
+
+  const handleSearchQueryChange = useCallback((text: string) => {
+    setSearchQuery(text);
+  }, []);
+
+  // Debounced server search — global across all files when query is non-empty
+  useEffect(() => {
+    if (!useFolderMode) return;
+    const q = searchQuery.trim();
+    const timer = setTimeout(() => {
+      void folderSystemRef.current.runSearch(q, q ? 'global' : 'current_folder');
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery, useFolderMode]);
+
+  const visibleFolders = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return folderSystem.folders;
+    return folderSystem.folders.filter((folder) => folder.name.toLowerCase().includes(q));
+  }, [folderSystem.folders, searchQuery]);
+
   // Memoized filtered and sorted documents for better performance
   const filteredAndSortedDocuments = useMemo(() => {
     if (filterBy === 'deleted') {
@@ -666,10 +798,13 @@ export default function QuickFilesScreen() {
     let filtered = documents;
 
     // Hide files that are in a locked bookmark (empty Set = no-op)
-    filtered = filtered.filter(doc => !fileIdsInLockedBookmarks.has(doc.id));
+    filtered = filtered.filter(
+      (doc) =>
+        !isLockedBookmarkFile(doc.id, fileIdsInLockedBookmarks, doc.in_locked_bookmark)
+    );
 
-    // Apply search filter
-    if (searchQuery.trim()) {
+    // Apply search filter (client-side only when not using folder-mode server search)
+    if (searchQuery.trim() && !useFolderMode) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(doc => 
         (doc.name?.toLowerCase() || '').includes(query) ||
@@ -786,7 +921,7 @@ export default function QuickFilesScreen() {
       });
 
     return combined;
-  }, [documents, searchQuery, filterBy, sortBy, fileIdsInLockedBookmarks, workspaceBookmarks, workspaceId]);
+  }, [documents, searchQuery, filterBy, sortBy, fileIdsInLockedBookmarks, workspaceBookmarks, workspaceId, useFolderMode]);
 
   /**
    * Fetches IDs of all files that belong to at least one locked bookmark.
@@ -801,10 +936,14 @@ export default function QuickFilesScreen() {
       !forceRefresh &&
       lockedBookmarkCacheRef.current &&
       now - lockedBookmarkCacheRef.current.timestamp < LOCKED_BOOKMARK_CACHE_MS &&
-      lockedBookmarkCacheRef.current.scopeWorkspaceId === workspaceId
+      lockedBookmarkCacheRef.current.scopeWorkspaceId === workspaceId &&
+      lockedBookmarkCacheRef.current.userId === user?.id
     ) {
+      const cachedIds = lockedBookmarkCacheRef.current.fileIds;
       setBookmarks(lockedBookmarkCacheRef.current.bookmarks);
-      return lockedBookmarkCacheRef.current.fileIds;
+      lockedFileIdsRef.current = cachedIds;
+      setFileIdsInLockedBookmarks(cachedIds);
+      return cachedIds;
     }
 
     try {
@@ -868,24 +1007,63 @@ export default function QuickFilesScreen() {
         bookmarks: allBookmarks,
         timestamp: now,
         scopeWorkspaceId: workspaceId,
+        userId: user?.id,
       };
+      lockedFileIdsRef.current = lockedFileIds;
+      setFileIdsInLockedBookmarks(lockedFileIds);
       return lockedFileIds;
     } catch {
       return new Set();
     }
-  }, [workspaceId]);
+  }, [workspaceId, user?.id]);
+
+  // Folder mode loads via getWebFiles — fetch locked-bookmark membership separately.
+  useEffect(() => {
+    if (!user || !useFolderMode) return;
+    void fetchLockedBookmarkFileIds();
+  }, [user, useFolderMode, workspaceId, fetchLockedBookmarkFileIds]);
 
   // Optimized loadDocuments function with caching
   const loadDocuments = useCallback(async (forceRefresh = false, pageToLoad = 1, append = false) => {
     if (append && (!hasMoreRef.current || loadingMoreRef.current)) return;
-    // Skip if a request is already in-flight to prevent duplicate concurrent calls
     if (isLoadingDocumentsRef.current) return;
 
-    const now = Date.now();
-    // Read filterBy from the ref so this callback never needs to be recreated when
-    // the user changes filter/search (those are applied client-side, not API-side).
     const currentFilterBy = filterByRef.current;
     const isFormsMode = currentFilterBy === 'forms';
+    const isFolderPersonalMode =
+      workspaceId == null && currentFilterBy !== 'forms' && currentFilterBy !== 'deleted';
+
+    if (isFolderPersonalMode) {
+      isLoadingDocumentsRef.current = true;
+      try {
+        if (append) {
+          loadingMoreRef.current = true;
+          setLoadingMore(true);
+          await folderSystemRef.current.loadMoreFiles();
+        } else if (forceRefresh) {
+          // Explicit force — bypass folder TTL cache.
+          setLoading(true);
+          await folderSystemRef.current.syncFromServer();
+        } else {
+          // Tab-switch / debounced reload — respect the 60-second folder cache so we
+          // don't fire a network request if the data is still fresh.
+          setLoading(true);
+          await folderSystemRef.current.loadFolderView(
+            folderSystemRef.current.currentFolderId
+          );
+        }
+      } catch (err) {
+        console.error('Folder sync failed:', err);
+      } finally {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+        setLoading(false);
+        isLoadingDocumentsRef.current = false;
+      }
+      return;
+    }
+
+    const now = Date.now();
 
     // Check ref-based cache (avoids stale-closure issues of state-based cache)
     const cache = apiCacheRef.current;
@@ -893,6 +1071,7 @@ export default function QuickFilesScreen() {
       !append &&
       !forceRefresh &&
       cache &&
+      cache.userId === user?.id &&
       now - cache.timestamp < CACHE_DURATION &&
       cache.isFormsMode === isFormsMode &&
       cache.workspaceId === workspaceId
@@ -1062,6 +1241,7 @@ export default function QuickFilesScreen() {
             isFormsMode: true,
             workspaceId,
             workspaceBookmarks: [],
+            userId: user?.id,
           };
         } else {
           setDocuments([]);
@@ -1172,6 +1352,7 @@ export default function QuickFilesScreen() {
                 workspaceId != null && Number.isFinite(workspaceId)
                   ? workspaceBookmarksPayload
                   : [],
+              userId: user?.id,
             };
           }
         } else {
@@ -1232,8 +1413,11 @@ export default function QuickFilesScreen() {
         const timeSinceLastLoad = now - lastLoadTimeRef.current;
         if (timeSinceUpload < 5000 || timeSinceLastLoad > RELOAD_DEBOUNCE_MS) {
           lastLoadTimeRef.current = now;
-          apiCacheRef.current = null;
-          loadDocuments(true);
+          const isPostUpload = timeSinceUpload < 5000;
+          // Only wipe the cache when there was a recent upload — for a normal tab-switch let the
+          // 30-second cache serve the data instantly.
+          if (isPostUpload) apiCacheRef.current = null;
+          loadDocuments(isPostUpload);
         }
       }
     }, [params.workspaceId, user, loadDocuments, lastUploadTime])
@@ -1326,6 +1510,29 @@ export default function QuickFilesScreen() {
     setRefreshing(false);
   }, [loadDocuments, loadDeletedFiles]);
 
+  const openAiFileManager = useCallback(async () => {
+    let ws = workspaceId ?? folderSystem.currentFolderWorkspaceId ?? null;
+    if (ws == null) {
+      ws = await apiClient.resolveEffectiveWorkspaceId({
+        folderId: folderSystem.currentFolderId,
+        explicitWorkspaceId: workspaceId,
+      });
+    }
+    setAiFmWorkspaceId(ws);
+    setShowAiFmSheet(true);
+    setAiFmExpandNonce((n) => n + 1);
+  }, [workspaceId, folderSystem.currentFolderId, folderSystem.currentFolderWorkspaceId]);
+
+  const onFmExecuted = useCallback(async () => {
+    if (filterByRef.current !== 'forms' && filterByRef.current !== 'deleted') {
+      await folderSystem.syncFromServer();
+    } else {
+      currentPageRef.current = 1;
+      setCurrentPage(1);
+      await loadDocuments(true, 1, false);
+    }
+  }, [folderSystem, loadDocuments]);
+
   const onEndReached = useCallback(async () => {
     if (onEndReachedCalledDuringMomentumRef.current) return;
     onEndReachedCalledDuringMomentumRef.current = true;
@@ -1368,80 +1575,67 @@ export default function QuickFilesScreen() {
   }, [user, loadDocuments]);
 
   // Polling for pending files (classification polling)
-  // Also continues polling for receipts/invoices until json_data is populated (for store name display)
-  useEffect(() => {
-    // Check if there are any pending files OR receipts/invoices without json_data
-    const hasPendingFiles = documents.some(doc => {
+  const hasPendingFiles = useMemo(() => {
+    return documents.some((doc) => {
       const isPending = doc.status === 'pending';
-      // Poll for receipt/invoice only while json_data is completely absent (null/undefined).
-      // Once the backend has written any json_data object the classification round-trip is
-      // complete; specific name fields may or may not be present depending on the receipt.
-      // Checking for individual name fields caused infinite polling for receipts that have
-      // json_data but no recognised store-name field.
-      const isReceiptOrInvoice = doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
+      const isReceiptOrInvoice =
+        doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
       const needsJsonData = isReceiptOrInvoice && !doc.json_data;
       return isPending || needsJsonData;
     });
-    
-    if (hasPendingFiles) {
-      // Start polling for file updates
-      if (!classificationPollingIntervalRef.current) {
-        console.log('🔄 Starting classification polling for pending files and receipts/invoices without json_data...');
-        classificationPollCountRef.current = 0;
-        classificationPollingIntervalRef.current = setInterval(async () => {
-          classificationPollCountRef.current += 1;
-          // Safety cap: stop after 60 polls (~3 minutes) to prevent runaway polling
-          if (classificationPollCountRef.current > 60) {
-            console.warn('⏰ Classification polling reached max poll limit (60), stopping to prevent infinite loop');
-            clearInterval(classificationPollingIntervalRef.current!);
-            classificationPollingIntervalRef.current = null;
-            return;
-          }
-          try {
-            // Reload files to check for updated file_kind and json_data
-            await loadDocuments(true); // Force refresh
-            
-            // Check current documents state after reload
-            setDocuments(currentDocs => {
-              const stillPending = currentDocs.some(doc => {
-                const isPending = doc.status === 'pending';
-                const isReceiptOrInvoice = doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
-                const needsJsonData = isReceiptOrInvoice && !doc.json_data;
-                return isPending || needsJsonData;
-              });
-              
-              if (!stillPending) {
-                // No more pending files and all receipts/invoices have json_data, stop polling
-                console.log('✅ All files processed and json_data populated, stopping classification polling');
-                if (classificationPollingIntervalRef.current) {
-                  clearInterval(classificationPollingIntervalRef.current);
-                  classificationPollingIntervalRef.current = null;
-                }
-              }
-              
-              return currentDocs; // Return unchanged, loadDocuments already updated it
-            });
-          } catch (error) {
-            console.error('Error polling for file updates:', error);
-          }
-        }, 3000); // Poll every 3 seconds
-      }
-    } else {
-      // No pending files, stop polling if it's running
+  }, [documents]);
+
+  useEffect(() => {
+    if (!hasPendingFiles) {
       if (classificationPollingIntervalRef.current) {
         console.log('🛑 No pending files, stopping classification polling');
         clearInterval(classificationPollingIntervalRef.current);
         classificationPollingIntervalRef.current = null;
       }
+      return;
     }
-    
+
+    if (classificationPollingIntervalRef.current) return;
+
+    console.log('🔄 Starting classification polling for pending files and receipts/invoices without json_data...');
+    classificationPollCountRef.current = 0;
+    classificationPollingIntervalRef.current = setInterval(async () => {
+      classificationPollCountRef.current += 1;
+      if (classificationPollCountRef.current > 60) {
+        console.warn('⏰ Classification polling reached max poll limit (60), stopping to prevent infinite loop');
+        clearInterval(classificationPollingIntervalRef.current!);
+        classificationPollingIntervalRef.current = null;
+        return;
+      }
+      try {
+        await loadDocuments(true);
+        setDocuments((currentDocs) => {
+          const stillPending = currentDocs.some((doc) => {
+            const isPending = doc.status === 'pending';
+            const isReceiptOrInvoice =
+              doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
+            const needsJsonData = isReceiptOrInvoice && !doc.json_data;
+            return isPending || needsJsonData;
+          });
+          if (!stillPending && classificationPollingIntervalRef.current) {
+            console.log('✅ All files processed and json_data populated, stopping classification polling');
+            clearInterval(classificationPollingIntervalRef.current);
+            classificationPollingIntervalRef.current = null;
+          }
+          return currentDocs;
+        });
+      } catch (pollError) {
+        console.error('Error polling for file updates:', pollError);
+      }
+    }, 3000);
+
     return () => {
       if (classificationPollingIntervalRef.current) {
         clearInterval(classificationPollingIntervalRef.current);
         classificationPollingIntervalRef.current = null;
       }
     };
-  }, [documents, loadDocuments]);
+  }, [hasPendingFiles, loadDocuments]);
 
   const handleDocumentPress = async (document: Document) => {
     if (document.listKind === 'bookmark' && document.bookmarkId != null) {
@@ -1530,120 +1724,11 @@ export default function QuickFilesScreen() {
     if (!selectedDocumentForMenu) return;
 
     try {
-      console.log('📤 Sharing document:', selectedDocumentForMenu.id, selectedDocumentForMenu.name);
-      
-      // Get file download info
-      const fileInfo = await apiClient.downloadFile(parseInt(selectedDocumentForMenu.id));
-      console.log('📤 File download info:', fileInfo);
-      
-      if (!fileInfo.url) {
-        throw new Error('Failed to get file download URL');
-      }
-      
-      // Get the filename with extension
-      const filename = fileInfo.filename || selectedDocumentForMenu.name;
-      const fileExtension = filename.split('.').pop() || 'pdf';
-      const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
-      
-      // Get cache directory (fallback to document directory if cache is not available)
-      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-      if (!cacheDir) {
-        throw new Error('Unable to access file system directories');
-      }
-      
-      // Create a local file path in the cache directory
-      const fileUri = `${cacheDir}${sanitizedFilename}`;
-      console.log('📤 Downloading file to:', fileUri);
-      
-      // Get auth token for download
-      let authHeaders = {};
-      try {
-        const { secureStorage } = await import('../../utils/storage');
-        const { STORAGE_KEYS } = await import('../../constants/Config');
-        const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-        if (token) {
-          authHeaders = { 'Authorization': `Bearer ${token}` };
-        }
-      } catch (error) {
-        console.warn('📤 Could not get auth token for download:', error);
-      }
-      
-      const urlIsSigned =
-        typeof fileInfo.url === 'string' &&
-        fileInfo.url.includes('sig=') &&
-        fileInfo.url.includes('exp=');
-      const downloadHeaders = urlIsSigned
-        ? { 'X-Platform': Platform.OS }
-        : { ...authHeaders, 'X-Platform': Platform.OS };
-
-      // Download the file (signed URLs authenticate via query string; do not send Bearer)
-      const downloadResult = await FileSystem.downloadAsync(fileInfo.url, fileUri, {
-        headers: downloadHeaders,
-      });
-      
-      console.log('📤 File downloaded to:', downloadResult.uri);
-      
-      // Check if sharing is available
-      const isAvailable = await Sharing.isAvailableAsync();
-      
-      if (isAvailable) {
-        // Share the actual file
-        await Sharing.shareAsync(downloadResult.uri, {
-          mimeType: getMimeType(fileExtension),
-          dialogTitle: `Share ${selectedDocumentForMenu.name}`,
-        });
-        console.log('📤 File shared successfully');
-      } else {
-        // Fallback to text sharing if file sharing not available
-        console.log('📤 File sharing not available, falling back to URL sharing');
-        if (Platform.OS === 'ios' || Platform.OS === 'android') {
-          await Share.share({
-            message: `Check out this document: ${selectedDocumentForMenu.name}\n\n${fileInfo.url}`,
-            url: fileInfo.url,
-            title: selectedDocumentForMenu.name,
-          });
-        } else {
-          Alert.alert('Share Link', fileInfo.url);
-        }
-      }
-      
-      // Clean up: delete the cached file after a delay
-      setTimeout(async () => {
-        try {
-          const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
-          if (fileInfo.exists) {
-            await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
-            console.log('📤 Cleaned up cached file');
-          }
-        } catch (error) {
-          console.warn('📤 Failed to clean up cached file:', error);
-        }
-      }, 60000); // Delete after 1 minute
-      
-    } catch (error: any) {
-      console.error('📤 Share error:', error);
-      Alert.alert('Error', error.message || 'Failed to share document');
+      await shareDocumentFile(selectedDocumentForMenu.id, selectedDocumentForMenu.name);
+    } catch (error: unknown) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to share document');
     }
     setShowKebabMenu(false);
-  };
-
-  const getMimeType = (extension: string): string => {
-    const mimeTypes: Record<string, string> = {
-      'pdf': 'application/pdf',
-      'doc': 'application/msword',
-      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'xls': 'application/vnd.ms-excel',
-      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'ppt': 'application/vnd.ms-powerpoint',
-      'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      'txt': 'text/plain',
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'webp': 'image/webp',
-    };
-    return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
   };
 
   const handleDeleteDocument = () => {
@@ -1754,9 +1839,11 @@ export default function QuickFilesScreen() {
 
   const handleChatDocument = () => {
     if (!selectedDocumentForMenu) return;
-    // Pass fileId, fileName (from Files screen), and workspaceId when in a workspace
-    const q = `fileId=${selectedDocumentForMenu.id}&fileName=${encodeURIComponent(selectedDocumentForMenu.name || '')}${workspaceId ? `&workspaceId=${workspaceId}` : ''}`;
-    router.push(`/(tabs)/chats?${q}`);
+    openChatGD({
+      fileId: String(selectedDocumentForMenu.id),
+      fileName: selectedDocumentForMenu.name || '',
+      ...(workspaceId ? { workspaceId: String(workspaceId) } : {}),
+    });
     setShowKebabMenu(false);
   };
   
@@ -1934,13 +2021,13 @@ export default function QuickFilesScreen() {
     
     // Check if file is editable
     if (!isEditableTextFormat(doc)) {
-      Alert.alert('Not Editable', 'This file format cannot be edited as Draft. Supported formats: .txt, .doc, .docx, .md, .log, .csv, .json');
+      Alert.alert('Not Editable', 'This file format cannot be edited as Note. Supported formats: .txt, .doc, .docx, .md, .log, .csv, .json');
       return;
     }
     
     // Check processing status
     if (doc.status === 'processing' || doc.status === 'pending') {
-      Alert.alert('File Processing', 'Please wait for the file to finish processing before editing as Draft.');
+      Alert.alert('File Processing', 'Please wait for the file to finish processing before editing as Note.');
       return;
     }
     
@@ -1950,10 +2037,10 @@ export default function QuickFilesScreen() {
         const draftId = (res as any).draft.id;
         router.push(`/drafts/edit/${draftId}`);
       } else {
-        Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to create Draft'));
+        Alert.alert('Error', toAlertMessage((res as any)?.message, 'Failed to create Note'));
       }
     } catch (e: any) {
-      Alert.alert('Error', toAlertMessage(e?.response?.data?.message ?? e?.message, 'Failed to create Draft'));
+      Alert.alert('Error', toAlertMessage(e?.response?.data?.message ?? e?.message, 'Failed to create Note'));
     }
   };
 
@@ -2086,6 +2173,32 @@ export default function QuickFilesScreen() {
     }
   };
 
+  const dismissUploadModal = useCallback(() => {
+    setShowUploadOptions(false);
+  }, []);
+
+  const handleUploadFromFilesViaModal = useCallback(async () => {
+    setShowUploadOptions(false);
+    await handleUploadFromFiles();
+  }, [handleUploadFromFiles]);
+
+  const handleUploadFromCameraViaModal = useCallback(() => {
+    setShowUploadOptions(false);
+    router.push('/scanner');
+  }, [router]);
+
+  const handleUploadFromGalleryViaModal = useCallback(async () => {
+    setShowUploadOptions(false);
+    await handleGalleryUpload();
+  }, [handleGalleryUpload]);
+
+  const handleUploadByLinkViaModal = useCallback(() => {
+    setShowUploadOptions(false);
+    router.push('/upload-by-link-code');
+  }, [router]);
+
+  const isUploading = pendingUploads.length > 0;
+
 
   const renderDocument = ({ item }: { item: Document }) => (
     <TouchableOpacity
@@ -2111,9 +2224,7 @@ export default function QuickFilesScreen() {
       />
       
       <View style={dynamicStyles.documentInfo}>
-        <Text style={dynamicStyles.documentName} numberOfLines={1} ellipsizeMode="tail">
-          {item.name}
-        </Text>
+        <FileNameText name={item.name} style={dynamicStyles.documentName} />
         <View style={dynamicStyles.documentMetaRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', flex: 1 }}>
             <Text style={dynamicStyles.documentMeta}>
@@ -2309,6 +2420,7 @@ export default function QuickFilesScreen() {
     },
     documentInfo: {
       flex: 1,
+      minWidth: 0,
     },
     documentName: {
       fontSize: 15,
@@ -2667,7 +2779,7 @@ export default function QuickFilesScreen() {
       meeting_notes: 'Meeting Notes',
       meeting_chat: 'Meeting Chat',
       meeting_summary: 'AI Summary',
-      draft: 'Draft',
+      draft: 'Note',
       spreadsheet: 'Spreadsheets',
       picture: 'Pictures',
       pending: 'Pending',
@@ -2828,6 +2940,106 @@ export default function QuickFilesScreen() {
     setShowDeletedKebabMenu(true);
   }, []);
 
+  const handleFolderMenuPress = useCallback((folder: FolderRowModel) => {
+    setFolderMenuTarget(folder);
+    setShowFolderKebabMenu(true);
+  }, []);
+
+  const handleCloseFolderKebabMenu = useCallback(() => {
+    setShowFolderKebabMenu(false);
+    setFolderMenuTarget(null);
+  }, []);
+
+  const handleFolderKebabAction = useCallback(
+    (action: FolderKebabAction, folder: FolderRowModel) => {
+      switch (action) {
+        case 'open':
+          folderSystem.openFolder(folder.id);
+          break;
+        case 'rename':
+          setRenameFolderTarget(folder);
+          break;
+        case 'move':
+          setMoveFileIds([]);
+          setMoveFolderTarget(folder);
+          setShowFolderMovePicker(true);
+          break;
+        case 'details': {
+          const lines = [
+            folder.path ? `Path: ${folder.path}` : null,
+            `Subfolders: ${folder.subfolder_count ?? 0}`,
+            `Files: ${folder.file_count ?? 0}`,
+            folder.workspace_id != null ? `Workspace: ${folder.workspace_id}` : null,
+            folder.created_at
+              ? `Created: ${new Date(folder.created_at).toLocaleString()}`
+              : null,
+          ].filter(Boolean);
+          Alert.alert(folder.name, lines.join('\n'));
+          break;
+        }
+        case 'delete':
+          Alert.alert(
+            'Delete folder?',
+            'Files in this folder will move to trash with the folder.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: () => void folderSystem.deleteFolderById(folder.id),
+              },
+            ]
+          );
+          break;
+      }
+    },
+    [folderSystem]
+  );
+
+  const handleRestoreDeletedFolder = useCallback(
+    async (folderRootId: number) => {
+      setDeletedActionId(folderRootId);
+      try {
+        const r = await apiClient.restoreFolderFromTrash(folderRootId);
+        if ((r as { success?: boolean })?.success !== false) {
+          await loadDeletedFiles();
+        } else {
+          Alert.alert('Error', (r as { message?: string })?.message || 'Restore failed');
+        }
+      } catch (e: any) {
+        Alert.alert('Error', toAlertMessage(e?.message, 'Restore failed'));
+      } finally {
+        setDeletedActionId(null);
+      }
+    },
+    [loadDeletedFiles]
+  );
+
+  const handlePermanentDeleteDeletedFolder = useCallback((folderRootId: number) => {
+    Alert.alert(
+      'Delete folder forever?',
+      'Folder structure will be removed from trash. Files stay in trash until deleted individually.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete forever',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletedActionId(folderRootId);
+            try {
+              await apiClient.permanentlyDeleteFolderFromTrash(folderRootId);
+              await loadDeletedFiles();
+            } catch (e: any) {
+              Alert.alert('Error', toAlertMessage(e?.message, 'Delete failed'));
+            } finally {
+              setDeletedActionId(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [loadDeletedFiles]);
+
   const renderDeletedFile = ({ item }: { item: DeletedFileRow }) => {
     const isRestoring =
       item.restoring === true ||
@@ -2841,10 +3053,11 @@ export default function QuickFilesScreen() {
               <ActivityIndicator size="small" color="#007AFF" />
             </View>
           ) : null}
-          <View style={[dynamicStyles.documentInfo, { flex: 1 }]}>
-            <Text style={dynamicStyles.documentName} numberOfLines={2}>
-              {item.original_filename || 'File'}
-            </Text>
+          <View style={[dynamicStyles.documentInfo, { flex: 1, minWidth: 0 }]}>
+            <FileNameText
+              name={item.original_filename || 'File'}
+              style={dynamicStyles.documentName}
+            />
             <Text style={dynamicStyles.documentMeta}>
               {isRestoring
                 ? 'Restoring…'
@@ -2872,7 +3085,11 @@ export default function QuickFilesScreen() {
   };
 
   // Loading state with bouncing dots
-  if (loading && documents.length === 0 && filterBy !== 'deleted') {
+  if (
+    (loading || (useFolderMode && folderSystem.loading)) &&
+    documents.length === 0 &&
+    filterBy !== 'deleted'
+  ) {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <TapToToggleHeaderView style={dynamicStyles.container}>
@@ -2880,14 +3097,36 @@ export default function QuickFilesScreen() {
             <View style={dynamicStyles.header}>
               <Text style={dynamicStyles.headerTitle}>Files</Text>
               <View style={dynamicStyles.headerActions}>
-                <TouchableOpacity style={dynamicStyles.headerButton}>
-                  <Ionicons name="cloud-upload" size={28} color="#007AFF" />
+                {useFolderMode ? (
+                  <TouchableOpacity
+                    style={dynamicStyles.headerButton}
+                    onPress={() => void openAiFileManager()}
+                    accessibilityLabel="AI File Manager"
+                    accessibilityRole="button"
+                  >
+                    <Feather name="cpu" size={26} color={AI_FM_ICON_COLOR} />
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={dynamicStyles.headerButton}
+                  onPress={() => setShowUploadOptions(true)}
+                  accessibilityLabel="Upload"
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="cloud-upload-outline" size={28} color={colors.primary || '#007AFF'} />
                 </TouchableOpacity>
-                <TouchableOpacity style={dynamicStyles.headerButton}>
-                  <Ionicons name="camera" size={28} color="#007AFF" />
-                </TouchableOpacity>
-                <TouchableOpacity style={dynamicStyles.headerButton}>
-                  <Ionicons name="images" size={28} color="#5856D6" />
+                <TouchableOpacity
+                  style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
+                  onPress={onRefresh}
+                  disabled={refreshing}
+                  accessibilityLabel="Refresh file list"
+                  accessibilityRole="button"
+                >
+                  <Ionicons
+                    name="refresh"
+                    size={24}
+                    color={refreshing ? '#999' : colors.primary || '#007AFF'}
+                  />
                 </TouchableOpacity>
               </View>
             </View>
@@ -2897,6 +3136,23 @@ export default function QuickFilesScreen() {
           <Text style={dynamicStyles.loadingText}>Loading your files...</Text>
           <Text style={dynamicStyles.loadingSubtext}>This will only take a moment</Text>
         </View>
+        <AiFileManagerBottomSheet
+          visible={showAiFmSheet}
+          onClose={() => setShowAiFmSheet(false)}
+          workspaceId={aiFmWorkspaceId ?? workspaceId ?? folderSystem.currentFolderWorkspaceId}
+          currentFolderId={folderSystem.currentFolderId}
+          onExecuted={onFmExecuted}
+          expandNonce={aiFmExpandNonce}
+        />
+        <UploadOptionsModal
+          visible={showUploadOptions}
+          isUploading={isUploading}
+          onDismiss={dismissUploadModal}
+          onFiles={handleUploadFromFilesViaModal}
+          onCamera={handleUploadFromCameraViaModal}
+          onGallery={handleUploadFromGalleryViaModal}
+          onLink={handleUploadByLinkViaModal}
+        />
         </TapToToggleHeaderView>
       </SafeAreaView>
     );
@@ -2906,9 +3162,11 @@ export default function QuickFilesScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <TapToToggleHeaderView style={dynamicStyles.container}>
       {/* Error message display */}
-      {error && (
+      {(error || (useFolderMode && folderSystem.error)) && (
         <View style={{ backgroundColor: '#fee2e2', padding: 12, margin: 12, borderRadius: 8 }}>
-          <Text style={{ color: '#b91c1c', fontWeight: 'bold' }}>{error}</Text>
+          <Text style={{ color: '#b91c1c', fontWeight: 'bold' }}>
+            {error || folderSystem.error}
+          </Text>
         </View>
       )}
       
@@ -2935,29 +3193,23 @@ export default function QuickFilesScreen() {
             )}
           </View>
           <View style={dynamicStyles.headerActions}>
+            {useFolderMode ? (
+              <TouchableOpacity
+                style={dynamicStyles.headerButton}
+                onPress={() => void openAiFileManager()}
+                accessibilityLabel="AI File Manager"
+                accessibilityRole="button"
+              >
+                <Feather name="cpu" size={26} color={AI_FM_ICON_COLOR} />
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={dynamicStyles.headerButton}
-              onPress={handleUploadFromFiles}
-              accessibilityLabel="Upload files"
+              onPress={() => setShowUploadOptions(true)}
+              accessibilityLabel="Upload"
               accessibilityRole="button"
             >
-              <Ionicons name="document" size={28} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={dynamicStyles.headerButton}
-              onPress={() => router.push('/scanner')}
-              accessibilityLabel="Scan document"
-              accessibilityRole="button"
-            >
-              <Ionicons name="camera" size={28} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={dynamicStyles.headerButton}
-              onPress={handleGalleryUpload}
-              accessibilityLabel="Upload from gallery"
-              accessibilityRole="button"
-            >
-              <Ionicons name="images" size={28} color="#5856D6" />
+              <Ionicons name="cloud-upload-outline" size={28} color={colors.primary || '#007AFF'} />
             </TouchableOpacity>
             <TouchableOpacity
               style={[dynamicStyles.headerButton, refreshing && dynamicStyles.refreshingButton]}
@@ -2969,7 +3221,7 @@ export default function QuickFilesScreen() {
               <Ionicons
                 name="refresh"
                 size={24}
-                color={refreshing ? "#999" : "#007AFF"}
+                color={refreshing ? '#999' : colors.primary || '#007AFF'}
               />
             </TouchableOpacity>
           </View>
@@ -2981,15 +3233,15 @@ export default function QuickFilesScreen() {
         <Ionicons name="search" size={20} color="#666" style={dynamicStyles.searchIcon} />
         <TextInput
           style={dynamicStyles.searchInput}
-          placeholder="Search files, tags, or categories..."
+          placeholder="Search files and folders..."
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchQueryChange}
           returnKeyType="search"
           onSubmitEditing={() => Keyboard.dismiss()}
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity
-            onPress={() => setSearchQuery('')}
+            onPress={() => handleSearchQueryChange('')}
             accessibilityLabel="Clear search"
             accessibilityRole="button"
           >
@@ -3013,21 +3265,12 @@ export default function QuickFilesScreen() {
         />
       </View>
 
-      {/* Sort Options — hidden for Deleted (trash) tab */}
-      {filterBy !== 'deleted' && (
+      {/* Sort Options — forms tab only (folder mode shows sort in breadcrumb bar) */}
+      {!useFolderMode && filterBy !== 'deleted' && (
       <View style={dynamicStyles.sortContainer}>
-        <Text style={dynamicStyles.sortLabel}>Sort by:</Text>
         <TouchableOpacity
           style={dynamicStyles.sortButton}
-          onPress={() => {
-            Alert.alert('Sort Options', 'Choose sorting option:', [
-              { text: 'Name', onPress: () => setSortBy('name') },
-              { text: 'Date', onPress: () => setSortBy('date') },
-              { text: 'Size', onPress: () => setSortBy('size') },
-              { text: 'Type', onPress: () => setSortBy('type') },
-              { text: 'Cancel', style: 'cancel' },
-            ]);
-          }}
+          onPress={showSortOptions}
           accessibilityLabel={`Sort by ${sortBy}`}
           accessibilityRole="button"
         >
@@ -3063,6 +3306,30 @@ export default function QuickFilesScreen() {
         onMomentumScrollBegin={() => {
           onEndReachedCalledDuringMomentumRef.current = false;
         }}
+        ListHeaderComponent={
+          filterBy === 'deleted' ? (
+            <DeletedFolderGroups
+              groups={deletedFolderGroups}
+              onRestoreFolder={handleRestoreDeletedFolder}
+              onPermanentDeleteFolder={handlePermanentDeleteDeletedFolder}
+              onRestoreFile={(id) => confirmRestoreDeleted(id)}
+              onPermanentDeleteFile={handlePermanentDeleteDeleted}
+              actionId={deletedActionId}
+            />
+          ) : useFolderMode ? (
+            <DocumentsFolderBar
+              breadcrumb={folderSystem.breadcrumb}
+              folders={visibleFolders}
+              loading={folderSystem.loading}
+              sortBy={sortBy}
+              onSortPress={showSortOptions}
+              onBreadcrumbPress={folderSystem.goToBreadcrumb}
+              onOpenFolder={folderSystem.openFolder}
+              onFolderMenuPress={handleFolderMenuPress}
+              onNewFolder={() => setShowCreateFolder(true)}
+            />
+          ) : null
+        }
         ListFooterComponent={
           filterBy === 'deleted'
             ? null
@@ -3106,10 +3373,10 @@ export default function QuickFilesScreen() {
             {!searchQuery && (
               <TouchableOpacity
                 style={dynamicStyles.uploadButton}
-                onPress={handleUploadFromFiles}
+                onPress={() => setShowUploadOptions(true)}
               >
-                <Ionicons name="document" size={20} color="#fff" />
-                <Text style={dynamicStyles.uploadButtonText}>Upload Files</Text>
+                <Ionicons name="cloud-upload-outline" size={20} color="#fff" />
+                <Text style={dynamicStyles.uploadButtonText}>Upload</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -3275,13 +3542,41 @@ export default function QuickFilesScreen() {
               <Text style={dynamicStyles.kebabMenuText}>Ask ChatGD</Text>
             </TouchableOpacity>
 
-            {!fileIdsInLockedBookmarks.has(selectedDocumentForMenu?.id ?? '') && (
+            {!isLockedBookmarkFile(
+              selectedDocumentForMenu?.id,
+              fileIdsInLockedBookmarks,
+              selectedDocumentForMenu?.in_locked_bookmark
+            ) && (
               <TouchableOpacity
                 style={dynamicStyles.kebabMenuItem}
                 onPress={handleShowBookmarkModal}
               >
                 <Ionicons name="bookmark-outline" size={20} color="#FF9500" />
                 <Text style={dynamicStyles.kebabMenuText}>Add to Bookmark</Text>
+              </TouchableOpacity>
+            )}
+
+            {useFolderMode &&
+              selectedDocumentForMenu?.listKind !== 'bookmark' &&
+              !isLockedBookmarkFile(
+                selectedDocumentForMenu?.id,
+                fileIdsInLockedBookmarks,
+                selectedDocumentForMenu?.in_locked_bookmark
+              ) && (
+              <TouchableOpacity
+                style={dynamicStyles.kebabMenuItem}
+                onPress={() => {
+                  const doc = selectedDocumentForMenu;
+                  setShowKebabMenu(false);
+                  if (doc) {
+                    setMoveFolderTarget(null);
+                    setMoveFileIds([Number(doc.id)]);
+                    setShowFolderMovePicker(true);
+                  }
+                }}
+              >
+                <Ionicons name="folder-outline" size={20} color="#007AFF" />
+                <Text style={dynamicStyles.kebabMenuText}>Move to folder</Text>
               </TouchableOpacity>
             )}
 
@@ -3307,7 +3602,7 @@ export default function QuickFilesScreen() {
               >
                 <Ionicons name="document-text-outline" size={20} color="#007AFF" />
                 <Text style={dynamicStyles.kebabMenuText}>
-                  {selectedDocumentForMenu?.file_kind?.toLowerCase() === 'draft' ? 'Edit Draft' : 'Edit as Draft'}
+                  {selectedDocumentForMenu?.file_kind?.toLowerCase() === 'draft' ? 'Edit Note' : 'Edit as Note'}
                 </Text>
               </TouchableOpacity>
             )}
@@ -3324,7 +3619,11 @@ export default function QuickFilesScreen() {
             )}
 
             {/* Rename: only for files that are not receipt or invoice, and not in a locked bookmark */}
-            {!fileIdsInLockedBookmarks.has(selectedDocumentForMenu?.id ?? '') &&
+            {!isLockedBookmarkFile(
+              selectedDocumentForMenu?.id,
+              fileIdsInLockedBookmarks,
+              selectedDocumentForMenu?.in_locked_bookmark
+            ) &&
             (() => {
               const fk = selectedDocumentForMenu?.file_kind?.toLowerCase();
               const isReceiptOrInvoice = fk === 'receipt' || fk === 'receipts' || fk === 'invoice' || fk === 'invoices';
@@ -3339,7 +3638,11 @@ export default function QuickFilesScreen() {
               </TouchableOpacity>
             )}
 
-            {!fileIdsInLockedBookmarks.has(selectedDocumentForMenu?.id ?? '') && (
+            {!isLockedBookmarkFile(
+              selectedDocumentForMenu?.id,
+              fileIdsInLockedBookmarks,
+              selectedDocumentForMenu?.in_locked_bookmark
+            ) && (
               <TouchableOpacity
                 style={dynamicStyles.kebabMenuItem}
                 onPress={() => {
@@ -3370,7 +3673,11 @@ export default function QuickFilesScreen() {
           <View style={dynamicStyles.renameModalContent} onStartShouldSetResponder={() => true}>
             <Text style={dynamicStyles.renameModalTitle}>Rename File</Text>
             {selectedDocumentForMenu ? (
-              <Text style={dynamicStyles.renameModalCurrentLabel}>Current: {selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename}</Text>
+              <FileNameText
+                name={`Current: ${selectedDocumentForMenu.name || selectedDocumentForMenu.original_filename}`}
+                style={dynamicStyles.renameModalCurrentLabel}
+                sanitize={false}
+              />
             ) : null}
             <TextInput
               style={dynamicStyles.renameModalInput}
@@ -3567,85 +3874,114 @@ export default function QuickFilesScreen() {
       </Modal>
       
       {/* Category Selection Modal */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showCategoryModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowCategoryModal(false)}
+        onClose={() => setShowCategoryModal(false)}
+        title="Select Category"
+        heightRatio={0.7}
       >
-        <View style={dynamicStyles.categoryModalOverlay}>
-          <View style={dynamicStyles.categoryModalContent}>
-            <View style={dynamicStyles.categoryModalHeader}>
-              <Text style={dynamicStyles.categoryModalTitle}>Select Category</Text>
-              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView style={dynamicStyles.categoryList}>
-              {receiptCategories.map((category) => (
-                <TouchableOpacity
-                  key={category}
-                  style={dynamicStyles.categoryModalItem}
-                  onPress={() => handleSelectCategory(category)}
-                  disabled={categorizingReceipt}
-                >
-                  <Text style={dynamicStyles.categoryItemText}>{category}</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            
-            {categorizingReceipt && (
-              <View style={dynamicStyles.categoryModalLoading}>
-                <ActivityIndicator size="large" color="#007AFF" />
-              </View>
-            )}
+        <ScrollView style={dynamicStyles.categoryList}>
+          {receiptCategories.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={dynamicStyles.categoryModalItem}
+              onPress={() => handleSelectCategory(category)}
+              disabled={categorizingReceipt}
+            >
+              <Text style={dynamicStyles.categoryItemText}>{category}</Text>
+              <Ionicons name="chevron-forward" size={20} color="#999" />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        {categorizingReceipt && (
+          <View style={dynamicStyles.categoryModalLoading}>
+            <ActivityIndicator size="large" color="#007AFF" />
           </View>
-        </View>
-      </Modal>
-      
+        )}
+      </MinimizableBottomSheet>
+
       {/* Payment Status Selection Modal */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showPaymentStatusModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowPaymentStatusModal(false)}
+        onClose={() => setShowPaymentStatusModal(false)}
+        title="Update Payment Status"
+        heightRatio={0.7}
       >
-        <View style={dynamicStyles.categoryModalOverlay}>
-          <View style={dynamicStyles.categoryModalContent}>
-            <View style={dynamicStyles.categoryModalHeader}>
-              <Text style={dynamicStyles.categoryModalTitle}>Update Payment Status</Text>
-              <TouchableOpacity
-                onPress={() => setShowPaymentStatusModal(false)}
-                disabled={updatingPaymentStatus}
-              >
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView style={dynamicStyles.categoryList}>
-              {paymentStatuses.map((status) => (
-                <TouchableOpacity
-                  key={status}
-                  style={dynamicStyles.categoryModalItem}
-                  onPress={() => handleSelectPaymentStatus(status)}
-                  disabled={updatingPaymentStatus}
-                >
-                  <Text style={dynamicStyles.categoryItemText}>{status}</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            
-            {updatingPaymentStatus && (
-              <View style={dynamicStyles.categoryModalLoading}>
-                <ActivityIndicator size="large" color="#007AFF" />
-              </View>
-            )}
+        <ScrollView style={dynamicStyles.categoryList}>
+          {paymentStatuses.map((status) => (
+            <TouchableOpacity
+              key={status}
+              style={dynamicStyles.categoryModalItem}
+              onPress={() => handleSelectPaymentStatus(status)}
+              disabled={updatingPaymentStatus}
+            >
+              <Text style={dynamicStyles.categoryItemText}>{status}</Text>
+              <Ionicons name="chevron-forward" size={20} color="#999" />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        {updatingPaymentStatus && (
+          <View style={dynamicStyles.categoryModalLoading}>
+            <ActivityIndicator size="large" color="#007AFF" />
           </View>
-        </View>
-      </Modal>
+        )}
+      </MinimizableBottomSheet>
+
+      <CreateFolderSheet
+        visible={showCreateFolder}
+        onClose={() => setShowCreateFolder(false)}
+        onSubmit={(name) => folderSystem.createFolder(name)}
+      />
+      <RenameFolderSheet
+        visible={renameFolderTarget != null}
+        initialName={renameFolderTarget?.name ?? ''}
+        onClose={() => setRenameFolderTarget(null)}
+        onSubmit={(name) =>
+          renameFolderTarget
+            ? folderSystem.renameFolderById(renameFolderTarget.id, name)
+            : Promise.resolve()
+        }
+      />
+      <FolderKebabMenu
+        visible={showFolderKebabMenu}
+        folder={folderMenuTarget}
+        onClose={handleCloseFolderKebabMenu}
+        onAction={handleFolderKebabAction}
+      />
+      <FolderMovePicker
+        visible={showFolderMovePicker}
+        onClose={() => {
+          setShowFolderMovePicker(false);
+          setMoveFileIds([]);
+          setMoveFolderTarget(null);
+        }}
+        workspaceId={folderSystem.currentFolderWorkspaceId ?? workspaceId}
+        title={moveFileIds.length ? 'Move files to' : 'Move folder to'}
+        onSelect={(folderId) => {
+          if (moveFileIds.length) {
+            void folderSystem.moveFiles(moveFileIds, folderId);
+          } else if (moveFolderTarget) {
+            void folderSystem.moveFolderById(moveFolderTarget.id, folderId);
+          }
+        }}
+      />
+      <AiFileManagerBottomSheet
+        visible={showAiFmSheet}
+        onClose={() => setShowAiFmSheet(false)}
+        workspaceId={aiFmWorkspaceId ?? workspaceId ?? folderSystem.currentFolderWorkspaceId}
+        currentFolderId={folderSystem.currentFolderId}
+        onExecuted={onFmExecuted}
+        expandNonce={aiFmExpandNonce}
+      />
+      <UploadOptionsModal
+        visible={showUploadOptions}
+        isUploading={isUploading}
+        onDismiss={dismissUploadModal}
+        onFiles={handleUploadFromFilesViaModal}
+        onCamera={handleUploadFromCameraViaModal}
+        onGallery={handleUploadFromGalleryViaModal}
+        onLink={handleUploadByLinkViaModal}
+      />
       </TapToToggleHeaderView>
     </SafeAreaView>
   );

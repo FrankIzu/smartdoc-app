@@ -1,7 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -11,7 +9,6 @@ import {
     Platform,
     RefreshControl,
     ScrollView,
-    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -20,11 +17,16 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import FileNameText from '../../components/FileNameText';
+import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
+import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { bookmarkDetailScreenKey, bookmarksListScreenKey } from '../../services/userScopedCache';
 import { formatDateToLocal } from '../../utils/timeFormatting';
 import { screenCache } from '../../utils/screenCache';
+import { shareDocumentFile } from '../../utils/shareDocumentFile';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -65,6 +67,7 @@ function getFileDisplayName(file: any): string {
 
 export default function BookmarkDetailScreen() {
   const router = useRouter();
+  const openChatGD = useOpenChatGD();
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const themeColors = useThemeColors();
@@ -113,12 +116,13 @@ export default function BookmarkDetailScreen() {
   const openAddFiles = params.addFiles === '1' || params.addFiles === true;
 
   const DETAIL_CACHE_MS = 30_000;
-  const detailCacheKey = bookmarkId ? `bookmark_detail_${bookmarkId}` : '';
+  const detailCacheKey = bookmarkId ? bookmarkDetailScreenKey(user?.id, bookmarkId) : null;
+  const listCacheKey = bookmarksListScreenKey(user?.id);
 
   const loadBookmarkDetails = async (forceRefresh = false) => {
-    if (!bookmarkId) return;
+    if (!bookmarkId || !user?.id) return;
 
-    if (!forceRefresh) {
+    if (!forceRefresh && detailCacheKey) {
       const cached = screenCache.get<{ bookmark: Bookmark; files: Document[] }>(
         detailCacheKey,
         DETAIL_CACHE_MS
@@ -176,7 +180,7 @@ export default function BookmarkDetailScreen() {
 
         // Cache both bookmark metadata and files together
         setBookmark(prev => {
-          if (prev) screenCache.set(detailCacheKey, { bookmark: prev, files: mappedFiles });
+          if (prev && detailCacheKey) screenCache.set(detailCacheKey, { bookmark: prev, files: mappedFiles });
           return prev;
         });
       }
@@ -193,13 +197,13 @@ export default function BookmarkDetailScreen() {
   // but use cache to avoid spinner on quick back-navigation.
   useFocusEffect(
     useCallback(() => {
-      if (bookmarkId) loadBookmarkDetails();
-    }, [bookmarkId])
+      if (bookmarkId && user?.id) loadBookmarkDetails();
+    }, [bookmarkId, user?.id])
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    screenCache.invalidate(detailCacheKey);
+    if (detailCacheKey) screenCache.invalidate(detailCacheKey);
     loadBookmarkDetails(true);
   };
 
@@ -217,8 +221,8 @@ export default function BookmarkDetailScreen() {
       });
 
       if (response.success) {
-        screenCache.invalidate(detailCacheKey);
-        screenCache.invalidate('bookmarks_list');
+        if (detailCacheKey) screenCache.invalidate(detailCacheKey);
+        if (listCacheKey) screenCache.invalidate(listCacheKey);
         setBookmark(prev => prev ? {
           ...prev,
           name: editName.trim(),
@@ -273,8 +277,8 @@ export default function BookmarkDetailScreen() {
       try {
         const response = await apiClient.updateBookmark(bookmark.id, { is_locked: newLocked });
         if (response.success) {
-          screenCache.invalidate(detailCacheKey);
-          screenCache.invalidate('bookmarks_list');
+          if (detailCacheKey) screenCache.invalidate(detailCacheKey);
+          if (listCacheKey) screenCache.invalidate(listCacheKey);
           setBookmark(prev => prev ? { ...prev, is_locked: newLocked } : null);
           Alert.alert('Success', newLocked ? 'Bookmark locked' : 'Bookmark unlocked');
         } else {
@@ -318,7 +322,7 @@ export default function BookmarkDetailScreen() {
             try {
               const response = await apiClient.removeFileFromBookmark(bookmark.id, parseInt(fileId));
               if (response.success) {
-                screenCache.invalidate(detailCacheKey);
+                if (detailCacheKey) screenCache.invalidate(detailCacheKey);
                 setFiles(prev => prev.filter(f => f.id !== fileId));
                 setBookmark(prev => prev ? { ...prev, file_count: prev.file_count - 1 } : null);
                 Alert.alert('Success', 'File removed from bookmark');
@@ -348,68 +352,22 @@ export default function BookmarkDetailScreen() {
     }
   };
 
-  const getMimeType = (extension: string): string => {
-    const mimeTypes: Record<string, string> = {
-      pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      txt: 'text/plain', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
-    };
-    return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
-  };
-
   const handleShareDocument = async () => {
     if (!selectedDocumentForMenu) return;
     try {
-      const fileInfo = await apiClient.downloadFile(parseInt(selectedDocumentForMenu.id));
-      if (!fileInfo.url) throw new Error('Failed to get file download URL');
-      const filename = fileInfo.filename || selectedDocumentForMenu.name;
-      const fileExtension = filename.split('.').pop() || 'pdf';
-      const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-      if (!cacheDir) throw new Error('Unable to access file system directories');
-      const fileUri = `${cacheDir}${sanitizedFilename}`;
-      let authHeaders: Record<string, string> = {};
-      try {
-        const { secureStorage } = await import('../../utils/storage');
-        const { STORAGE_KEYS } = await import('../../constants/Config');
-        const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-        if (token) authHeaders = { Authorization: `Bearer ${token}` };
-      } catch (_) {}
-      const downloadResult = await FileSystem.downloadAsync(fileInfo.url, fileUri, { headers: authHeaders });
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        await Sharing.shareAsync(downloadResult.uri, {
-          mimeType: getMimeType(fileExtension),
-          dialogTitle: `Share ${selectedDocumentForMenu.name}`,
-        });
-      } else {
-        if (Platform.OS === 'ios' || Platform.OS === 'android') {
-          await Share.share({
-            message: `Check out this document: ${selectedDocumentForMenu.name}\n\n${fileInfo.url}`,
-            url: fileInfo.url,
-            title: selectedDocumentForMenu.name,
-          });
-        } else {
-          Alert.alert('Share Link', fileInfo.url);
-        }
-      }
-      setTimeout(async () => {
-        try {
-          const info = await FileSystem.getInfoAsync(downloadResult.uri);
-          if (info.exists) await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
-        } catch (_) {}
-      }, 60000);
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to share document');
+      await shareDocumentFile(selectedDocumentForMenu.id, selectedDocumentForMenu.name);
+    } catch (error: unknown) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to share document');
     }
     setShowKebabMenu(false);
   };
 
   const handleChatDocument = () => {
     if (!selectedDocumentForMenu) return;
-    const q = `fileId=${selectedDocumentForMenu.id}&fileName=${encodeURIComponent(selectedDocumentForMenu.name || '')}`;
-    router.push(`/(tabs)/chats?${q}`);
+    openChatGD({
+      fileId: String(selectedDocumentForMenu.id),
+      fileName: selectedDocumentForMenu.name || '',
+    });
     setShowKebabMenu(false);
   };
 
@@ -593,7 +551,7 @@ export default function BookmarkDetailScreen() {
       
       if (response.success) {
         // Reload bookmark details to get updated file list
-        screenCache.invalidate(detailCacheKey);
+        if (detailCacheKey) screenCache.invalidate(detailCacheKey);
         await loadBookmarkDetails(true);
         setSelectedFiles(new Set());
         setShowAddFilesModal(false);
@@ -748,6 +706,7 @@ export default function BookmarkDetailScreen() {
     },
     fileDetails: {
       flex: 1,
+      minWidth: 0,
     },
     fileName: {
       fontSize: 16,
@@ -974,7 +933,7 @@ export default function BookmarkDetailScreen() {
     >
       <View style={dynamicStyles.fileInfo}>
         <View style={dynamicStyles.fileDetails}>
-          <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
+          <FileNameText name={item.name} style={dynamicStyles.fileName} />
           <Text style={dynamicStyles.fileMeta}>
             {[item.category || item.type, item.created_at && formatDateToLocal(item.created_at)].filter(Boolean).join(' • ')}
           </Text>
@@ -1002,7 +961,7 @@ export default function BookmarkDetailScreen() {
     >
       <View style={dynamicStyles.fileInfo}>
         <View style={dynamicStyles.fileDetails}>
-          <Text style={dynamicStyles.fileName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
+          <FileNameText name={item.name} style={dynamicStyles.fileName} />
           <Text style={dynamicStyles.fileMeta}>
             {[item.category || item.type, item.created_at && formatDateToLocal(item.created_at)].filter(Boolean).join(' • ')}
           </Text>
@@ -1270,82 +1229,57 @@ export default function BookmarkDetailScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Category Selection Modal */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showCategoryModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowCategoryModal(false)}
+        onClose={() => setShowCategoryModal(false)}
+        title="Select Category"
+        heightRatio={0.7}
       >
-        <View style={dynamicStyles.categoryModalOverlay}>
-          <View style={dynamicStyles.categoryModalContent}>
-            <View style={dynamicStyles.categoryModalHeader}>
-              <Text style={dynamicStyles.categoryModalTitle}>Select Category</Text>
-              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
-                <Ionicons name="close" size={24} color={themeColors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={dynamicStyles.categoryList}>
-              {receiptCategories.map((category) => (
-                <TouchableOpacity
-                  key={category}
-                  style={dynamicStyles.categoryModalItem}
-                  onPress={() => handleSelectCategory(category)}
-                  disabled={categorizingReceipt}
-                >
-                  <Text style={dynamicStyles.categoryItemText}>{category}</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            {categorizingReceipt && (
-              <View style={dynamicStyles.categoryModalLoading}>
-                <ActivityIndicator size="large" color="#007AFF" />
-              </View>
-            )}
+        <ScrollView style={dynamicStyles.categoryList}>
+          {receiptCategories.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={dynamicStyles.categoryModalItem}
+              onPress={() => handleSelectCategory(category)}
+              disabled={categorizingReceipt}
+            >
+              <Text style={dynamicStyles.categoryItemText}>{category}</Text>
+              <Ionicons name="chevron-forward" size={20} color="#999" />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        {categorizingReceipt && (
+          <View style={dynamicStyles.categoryModalLoading}>
+            <ActivityIndicator size="large" color="#007AFF" />
           </View>
-        </View>
-      </Modal>
+        )}
+      </MinimizableBottomSheet>
 
-      {/* Payment Status Selection Modal */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showPaymentStatusModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowPaymentStatusModal(false)}
+        onClose={() => setShowPaymentStatusModal(false)}
+        title="Update Payment Status"
+        heightRatio={0.7}
       >
-        <View style={dynamicStyles.categoryModalOverlay}>
-          <View style={dynamicStyles.categoryModalContent}>
-            <View style={dynamicStyles.categoryModalHeader}>
-              <Text style={dynamicStyles.categoryModalTitle}>Update Payment Status</Text>
-              <TouchableOpacity
-                onPress={() => setShowPaymentStatusModal(false)}
-                disabled={updatingPaymentStatus}
-              >
-                <Ionicons name="close" size={24} color={themeColors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={dynamicStyles.categoryList}>
-              {paymentStatuses.map((status) => (
-                <TouchableOpacity
-                  key={status}
-                  style={dynamicStyles.categoryModalItem}
-                  onPress={() => handleSelectPaymentStatus(status)}
-                  disabled={updatingPaymentStatus}
-                >
-                  <Text style={dynamicStyles.categoryItemText}>{status}</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            {updatingPaymentStatus && (
-              <View style={dynamicStyles.categoryModalLoading}>
-                <ActivityIndicator size="large" color="#007AFF" />
-              </View>
-            )}
+        <ScrollView style={dynamicStyles.categoryList}>
+          {paymentStatuses.map((status) => (
+            <TouchableOpacity
+              key={status}
+              style={dynamicStyles.categoryModalItem}
+              onPress={() => handleSelectPaymentStatus(status)}
+              disabled={updatingPaymentStatus}
+            >
+              <Text style={dynamicStyles.categoryItemText}>{status}</Text>
+              <Ionicons name="chevron-forward" size={20} color="#999" />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        {updatingPaymentStatus && (
+          <View style={dynamicStyles.categoryModalLoading}>
+            <ActivityIndicator size="large" color="#007AFF" />
           </View>
-        </View>
-      </Modal>
+        )}
+      </MinimizableBottomSheet>
 
       {/* Rename File Modal */}
       <Modal

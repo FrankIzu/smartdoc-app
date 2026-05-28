@@ -1,11 +1,17 @@
 import axios, { AxiosInstance } from 'axios';
 import Constants from 'expo-constants';
-import { AppState, AppStateStatus, Platform } from 'react-native';
+import { AppState, Platform, type AppStateStatus } from 'react-native';
 // @ts-ignore - react-native-fetch-api provides true ReadableStream support
 import { fetch as streamingFetch } from 'react-native-fetch-api';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
 import { createSmoothProgressEmitter } from './uploadProgressSmooth';
+import {
+  isAppBackgrounded,
+  type UploadRetryCallbacks,
+  waitForAppActive,
+  withUploadForegroundRetry,
+} from './uploadResilience';
 
 // API response structure matching backend
 interface ApiResponse<T = any> {
@@ -235,7 +241,22 @@ const MOBILE_ENDPOINTS = {
 
 // Short-lived cache for meeting assets to avoid duplicate requests and timeouts when list + details both fetch
 const MEETING_ASSETS_CACHE_MS = 45000; // 45 seconds
-let meetingAssetsCache: { at: number; response: ApiResponse } | null = null;
+let meetingAssetsCache: { at: number; userId: string | null; response: ApiResponse } | null = null;
+
+export function clearMeetingAssetsCache(): void {
+  meetingAssetsCache = null;
+}
+
+async function currentCachedUserId(): Promise<string | null> {
+  try {
+    const raw = await secureStorage.getItem('user');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { id?: string | number };
+    return parsed?.id != null ? String(parsed.id) : null;
+  } catch {
+    return null;
+  }
+}
 
 // Main API Service Class
 class ApiService {
@@ -715,6 +736,112 @@ class ApiService {
     }
   }
 
+  /** Mobile upload returns task_id only — resolve the created file row by name after processing. */
+  private normalizeUploadBasename(filename: string): string {
+    let name = filename.trim();
+    try {
+      name = decodeURIComponent(name);
+    } catch {
+      // keep raw if not valid URI encoding
+    }
+    return name.split(/[/\\]/).pop()?.toLowerCase() || '';
+  }
+
+  private listFilesFromApiResponse(res: ApiResponse): Array<{
+    id?: number;
+    original_filename?: string;
+    filename?: string;
+    name?: string;
+    created_at?: string;
+  }> {
+    if (Array.isArray(res.files)) return res.files;
+    if (Array.isArray(res.data)) return res.data as ApiResponse[];
+    const nested = (res.data as { files?: unknown[] } | undefined)?.files;
+    return Array.isArray(nested) ? (nested as ApiResponse[]) : [];
+  }
+
+  extractFileIdFromUploadProgress(
+    progressData: unknown,
+    filename?: string,
+  ): number | undefined {
+    const data = progressData as {
+      uploaded_files?: Array<{ id?: number; filename?: string }>;
+      files?: Array<{ id?: number; filename?: string; original_filename?: string }>;
+    };
+    const uploaded =
+      data?.uploaded_files ??
+      data?.files?.filter((f) => f?.id).map((f) => ({
+        id: f.id,
+        filename: f.filename || f.original_filename,
+      }));
+    if (!Array.isArray(uploaded) || !uploaded.length) return undefined;
+
+    const target = filename ? this.normalizeUploadBasename(filename) : '';
+    if (target) {
+      for (const item of uploaded) {
+        const name = this.normalizeUploadBasename(item.filename || '');
+        if (item.id && (name === target || name.includes(target) || target.includes(name))) {
+          return item.id;
+        }
+      }
+    }
+    return uploaded[0]?.id;
+  }
+
+  async lookupUploadedFileByName(
+    filename: string,
+    maxWaitMs = 90000,
+    uploadedAfterMs?: number,
+  ): Promise<number | undefined> {
+    const target = this.normalizeUploadBasename(filename);
+    if (!target) return undefined;
+
+    const since = uploadedAfterMs ?? Date.now() - 180000;
+    const deadline = Date.now() + maxWaitMs;
+    const basename = filename.split(/[/\\]/).pop() || filename;
+
+    while (Date.now() < deadline) {
+      try {
+        const queries = [...new Set([basename, target].filter(Boolean))];
+        for (const q of queries) {
+          const res = await this.getDocuments(1, 50, q, undefined, undefined, true, false, 20000);
+          for (const f of this.listFilesFromApiResponse(res)) {
+            if (!f.id) continue;
+            const names = [f.original_filename, f.filename, f.name].map((n) =>
+              this.normalizeUploadBasename(n || ''),
+            );
+            if (names.some((n) => n === target || (n && target && (n.includes(target) || target.includes(n))))) {
+              return f.id;
+            }
+          }
+        }
+
+        const recent = await this.getDocuments(1, 25, undefined, undefined, undefined, true, false, 20000);
+        const candidates = this.listFilesFromApiResponse(recent).filter((f) => {
+          if (!f.id) return false;
+          if (!f.created_at) return true;
+          return new Date(f.created_at).getTime() >= since - 15000;
+        });
+        const named = candidates.filter((f) => {
+          const names = [f.original_filename, f.filename, f.name].map((n) =>
+            this.normalizeUploadBasename(n || ''),
+          );
+          return names.some((n) => n === target || (n && target && (n.includes(target) || target.includes(n))));
+        });
+        if (named.length >= 1) {
+          named.sort(
+            (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
+          );
+          return named[0].id;
+        }
+      } catch {
+        // File list may lag behind processing completion — retry.
+      }
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    return undefined;
+  }
+
   /**
    * Upload file - backend automatically encrypts files on save
    * All file operations go through backend encryption class
@@ -766,6 +893,27 @@ class ApiService {
     return new Promise<ApiResponse>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       let lastReported = 0;
+      let settled = false;
+      let abortedForBackground = false;
+
+      const finish = (handler: () => void) => {
+        if (settled) return;
+        settled = true;
+        appStateSub.remove();
+        handler();
+      };
+
+      const appStateSub = AppState.addEventListener('change', (next: AppStateStatus) => {
+        if (settled) return;
+        if (next === 'background' || next === 'inactive') {
+          abortedForBackground = true;
+          try {
+            xhr.abort();
+          } catch {
+            // ignore
+          }
+        }
+      });
 
       xhr.upload.addEventListener('loadstart', () => {
         if (onProgress) onProgress(Math.max(lastReported, 1));
@@ -778,7 +926,6 @@ class ApiService {
           lastReported = Math.max(lastReported, progress);
           onProgress(lastReported);
         } else if (event.loaded > 0) {
-          // RN often omits total — map loaded bytes to a soft 5–92% range
           const soft = Math.min(92, 5 + Math.log10(event.loaded + 1) * 18);
           lastReported = Math.max(lastReported, soft);
           onProgress(lastReported);
@@ -790,9 +937,9 @@ class ApiService {
           try {
             const data = JSON.parse(xhr.responseText);
             console.log('✅ Upload successful (XHR)');
-            resolve(data);
+            finish(() => resolve(data));
           } catch {
-            reject(new Error('Invalid JSON response from server'));
+            finish(() => reject(new Error('Invalid JSON response from server')));
           }
         } else {
           let errData: any = {};
@@ -801,23 +948,30 @@ class ApiService {
           } catch {
             errData = { message: xhr.statusText };
           }
-          reject(new Error(errData.message || `Upload failed with status ${xhr.status}`));
+          finish(() => reject(new Error(errData.message || `Upload failed with status ${xhr.status}`)));
         }
+      };
+
+      xhr.onabort = () => {
+        if (abortedForBackground) {
+          finish(() => reject(new Error('Upload paused (app backgrounded)')));
+          return;
+        }
+        finish(() => reject(new Error('Upload aborted')));
       };
 
       xhr.onerror = () => {
         console.error('❌ Upload failed (XHR network error)');
-        reject(new Error('Upload failed (network error)'));
+        finish(() => reject(new Error('Upload failed (XHR network error)')));
       };
       xhr.ontimeout = () => {
         console.error('❌ Upload timed out (XHR)');
-        reject(new Error('Upload timed out'));
+        finish(() => reject(new Error('Upload timed out (XHR)')));
       };
 
       xhr.open('POST', uploadUrl);
-      xhr.timeout = 120000;
+      xhr.timeout = 300000;
 
-      // Do NOT set Content-Type — XHR will set multipart/form-data with boundary automatically
       if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       if (deviceToken) xhr.setRequestHeader('X-Device-Token', deviceToken);
       xhr.setRequestHeader('X-Platform', 'mobile');
@@ -830,30 +984,29 @@ class ApiService {
     });
   }
 
-  async getUploadProgress(taskId: string): Promise<ApiResponse> {
+  async getUploadProgress(taskId: string, opts?: { quiet?: boolean }): Promise<ApiResponse> {
     try {
-      console.log(`🔄 Checking upload progress for task: ${taskId}`);
+      if (!opts?.quiet) {
+        console.log(`🔄 Checking upload progress for task: ${taskId}`);
+      }
       const response = await this.client.get(`/api/v1/mobile/progress/${taskId}`, {
         timeout: 10000 // 10 second timeout for progress requests
       });
-      console.log(`📊 Progress response for ${taskId}:`, response.data);
+      if (!opts?.quiet) {
+        console.log(`📊 Progress response for ${taskId}:`, response.data);
+      }
       return response.data;
     } catch (error: any) {
-      // console.error('❌ Failed to get upload progress:', error);
-      // console.error('❌ Error details:', {
-      //   status: error.response?.status,
-      //   statusText: error.response?.statusText,
-      //   data: error.response?.data,
-      //   message: error.message
-      // });
       throw new Error(error.response?.data?.message || 'Failed to get upload progress');
     }
   }
 
   async uploadFileWithProgressPolling(
     file: FormData, 
-    onProgress?: (progress: number, message?: string, phase?: string) => void
+    onProgress?: (progress: number, message?: string, phase?: string) => void,
+    options?: { filename?: string; uploadStartedAt?: number },
   ): Promise<ApiResponse> {
+    const uploadStartedAt = options?.uploadStartedAt ?? Date.now();
     const smoother = createSmoothProgressEmitter(
       (p, m, ph) => onProgress?.(p, m, ph),
       { uploadPhaseMax: 40, tickMs: 100 }
@@ -875,81 +1028,231 @@ class ApiService {
       console.log('🔄 Starting upload with progress polling (smoothed)...');
 
       // 0–40%: network upload (XHR may report rarely on RN — smoother crawls the gap)
-      const uploadResponse = await this.uploadFile(file, (networkProgress) => {
-        smoother.setTarget(networkProgress * 0.4, 'Uploading file...', 'upload');
-      });
+      const uploadResponse = await this.uploadFileWithRetry(
+        file,
+        5,
+        (networkProgress) => {
+          smoother.setTarget(networkProgress * 0.4, 'Uploading file...', 'upload');
+        },
+        {
+          onSuspended: () => smoother.setMessage('Waiting — return to app to continue', 'upload'),
+          onResumed: () => smoother.setMessage('Uploading file...', 'upload'),
+        },
+      );
       // HTTP finished — anchor at end of upload phase while we wait for task / polling
       smoother.setTarget(40, 'Processing on server...', 'processing');
 
       const taskId = (uploadResponse as any).task_id;
+
+      const enrichWithFileId = async (
+        base: ApiResponse,
+        progressData?: unknown,
+      ): Promise<ApiResponse> => {
+        const existing = (base as { file?: { id?: number } }).file?.id;
+        if (existing) return base;
+
+        const fromProgress = progressData
+          ? this.extractFileIdFromUploadProgress(progressData, options?.filename)
+          : undefined;
+        if (fromProgress) return { ...base, file: { id: fromProgress } };
+
+        if (!options?.filename) return base;
+        onProgress?.(undefined as unknown as number, 'Locating uploaded file...', 'processing');
+        const fileId = await this.lookupUploadedFileByName(
+          options.filename,
+          90000,
+          uploadStartedAt,
+        );
+        if (!fileId) return base;
+        return { ...base, file: { id: fileId } };
+      };
+
       if (!taskId) {
         console.warn('⚠️ No task_id in upload response, cannot poll progress');
         await settleAndStop('Upload completed', 'completed');
-        return uploadResponse;
+        return await enrichWithFileId(uploadResponse);
       }
 
       console.log(`📋 Got task_id: ${taskId}, starting progress polling...`);
 
       // 40–100%: server-side processing (map backend 0–100 → 40–100)
-      return await new Promise<ApiResponse>((resolve) => {
-        const pollInterval = 200;
+      return await new Promise<ApiResponse>((resolve, reject) => {
         const maxPollTime = 300000;
         const startTime = Date.now();
+        let settled = false;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
+        let lastServerProgress = -1;
+        let lastStatus = '';
+        let lastProgressChangeAt = Date.now();
+        let pollDelayMs = 500;
+        let lastLookupAttemptAt = 0;
+        let loggedPollSummary = false;
+
+        const finish = async (
+          outcome: 'resolve' | 'reject',
+          payload?: ApiResponse | Error,
+          progressData?: unknown,
+          settleMsg?: string,
+          settlePhase?: string,
+        ) => {
+          if (settled) return;
+          settled = true;
+          if (pollTimer) clearTimeout(pollTimer);
+          appStateSub.remove();
+          if (settleMsg && settlePhase) {
+            await settleAndStop(settleMsg, settlePhase);
+          } else {
+            smoother.stop();
+          }
+          if (outcome === 'reject') {
+            reject(payload instanceof Error ? payload : new Error('Upload processing failed'));
+            return;
+          }
+          const base = (payload ?? uploadResponse) as ApiResponse;
+          resolve(await enrichWithFileId({ ...base, task_id: taskId }, progressData));
+        };
+
+        const schedulePoll = (delayMs: number) => {
+          if (settled) return;
+          if (pollTimer) clearTimeout(pollTimer);
+          pollTimer = setTimeout(() => {
+            void pollProgress();
+          }, delayMs);
+        };
+
+        const tryEarlyCompletion = async (progressData: unknown): Promise<boolean> => {
+          const fileId = this.extractFileIdFromUploadProgress(progressData, options?.filename);
+          if (fileId) {
+            await finish('resolve', uploadResponse, progressData, 'Processing complete', 'completed');
+            return true;
+          }
+          if (!options?.filename) return false;
+          const stuckMs = Date.now() - lastProgressChangeAt;
+          if (stuckMs < 30000 || Date.now() - lastLookupAttemptAt < 15000) return false;
+          lastLookupAttemptAt = Date.now();
+          smoother.setMessage('Locating uploaded file...', 'processing');
+          const lookedUp = await this.lookupUploadedFileByName(
+            options.filename,
+            12000,
+            uploadStartedAt,
+          );
+          if (lookedUp) {
+            await finish(
+              'resolve',
+              { ...uploadResponse, file: { id: lookedUp } },
+              progressData,
+              'Processing complete',
+              'completed',
+            );
+            return true;
+          }
+          return false;
+        };
+
+        const appStateSub = AppState.addEventListener('change', (next: AppStateStatus) => {
+          if (settled) return;
+          if (next === 'background' || next === 'inactive') {
+            pollDelayMs = Math.max(pollDelayMs, 4000);
+            smoother.setMessage('Processing paused — return to app', 'processing');
+          } else if (next === 'active') {
+            pollDelayMs = 500;
+            smoother.setMessage('Processing on server...', 'processing');
+            schedulePoll(100);
+          }
+        });
 
         const pollProgress = async (): Promise<void> => {
+          if (settled) return;
+          if (isAppBackgrounded()) {
+            pollDelayMs = Math.max(pollDelayMs, 4000);
+            schedulePoll(pollDelayMs);
+            return;
+          }
+
           try {
-            const progressResponse = await this.getUploadProgress(taskId);
+            const quiet = lastServerProgress >= 0 && Date.now() - lastProgressChangeAt > 5000;
+            const progressResponse = await this.getUploadProgress(taskId, { quiet });
 
             if (progressResponse.success && progressResponse.data) {
-              const { progress, status, message, phase } = progressResponse.data;
-              const serverProgress = Math.min(100, Math.max(0, progress));
+              const progressData = progressResponse.data;
+              const { progress, status, message, phase } = progressData;
+              const serverProgress = Math.min(100, Math.max(0, progress ?? 0));
+              const statusStr = String(status ?? '');
+
+              if (serverProgress !== lastServerProgress || statusStr !== lastStatus) {
+                lastServerProgress = serverProgress;
+                lastStatus = statusStr;
+                lastProgressChangeAt = Date.now();
+                pollDelayMs = 500;
+                loggedPollSummary = false;
+              } else {
+                const stuckMs = Date.now() - lastProgressChangeAt;
+                if (stuckMs > 5000) {
+                  pollDelayMs = Math.min(4000, pollDelayMs + 250);
+                }
+                if (!loggedPollSummary) {
+                  console.log(
+                    `📊 Upload task ${taskId} still ${statusStr} at ${serverProgress}% — backing off polls`,
+                  );
+                  loggedPollSummary = true;
+                }
+              }
+
               const mapped =
-                status === 'completed' || serverProgress >= 100
+                statusStr === 'completed'
                   ? 100
                   : 40 + serverProgress * 0.6;
 
               smoother.setTarget(
                 mapped,
                 message || 'Processing...',
-                typeof phase === 'string' ? phase : 'processing'
+                typeof phase === 'string' ? phase : 'processing',
               );
 
-              if (status === 'completed' || status === 'error' || mapped >= 100) {
-                const doneMsg =
-                  status === 'error' ? message || 'Processing finished with errors' : 'Processing complete';
-                await settleAndStop(doneMsg, 'completed');
-                resolve(uploadResponse);
+              if (statusStr === 'error') {
+                await finish(
+                  'reject',
+                  new Error(message || 'Upload processing failed'),
+                  progressData,
+                  message || 'Processing failed',
+                  'error',
+                );
                 return;
               }
 
+              if (statusStr === 'completed') {
+                await finish('resolve', uploadResponse, progressData, 'Processing complete', 'completed');
+                return;
+              }
+
+              if (await tryEarlyCompletion(progressData)) return;
+
               if (Date.now() - startTime < maxPollTime) {
-                setTimeout(pollProgress, pollInterval);
+                schedulePoll(pollDelayMs);
               } else {
                 console.warn('⚠️ Progress polling timeout reached');
-                await settleAndStop('Processing timeout', 'timeout');
-                resolve(uploadResponse);
+                await finish('resolve', uploadResponse, progressData, 'Processing timeout', 'timeout');
               }
             } else {
               if (!progressResponse.success && progressResponse.message?.includes('not found')) {
                 smoother.setTarget(42, 'Processing started...', 'processing');
               }
               if (Date.now() - startTime < maxPollTime) {
-                setTimeout(pollProgress, pollInterval);
+                schedulePoll(Math.max(pollDelayMs, 1000));
               } else {
-                await settleAndStop('Processing complete', 'completed');
-                resolve(uploadResponse);
+                await finish('resolve', uploadResponse, undefined, 'Processing complete', 'completed');
               }
             }
           } catch {
             if (Date.now() - startTime < maxPollTime) {
-              setTimeout(pollProgress, pollInterval);
+              schedulePoll(Math.max(pollDelayMs, 1500));
             } else {
-              void settleAndStop('Processing complete', 'completed').then(() => resolve(uploadResponse));
+              await finish('resolve', uploadResponse, undefined, 'Processing complete', 'completed');
             }
           }
         };
 
-        setTimeout(pollProgress, 50);
+        schedulePoll(50);
       });
     } catch (error: any) {
       smoother.stop();
@@ -1055,22 +1358,94 @@ class ApiService {
         days_remaining?: number | null;
         lifecycle_state?: string;
       }>;
+      folder_groups?: import('../types/folder').DeletedFolderGroup[];
+      standalone_files?: import('../types/folder').FileRowModel[];
       pagination?: { page: number; per_page: number; total: number; has_more: boolean };
       retention_days?: number;
     }
   > {
     try {
-      const response = await this.client.get('/api/v1/web/files/deleted', {
-        params: { page, per_page: perPage },
-      });
-      return response.data;
+      const { getDeletedFilesWithFolders } = await import('./folderApi');
+      return await getDeletedFilesWithFolders(this.client, page, perPage);
     } catch (error: any) {
       return {
         success: false,
         files: [],
+        folder_groups: [],
+        standalone_files: [],
         message: error.response?.data?.message || 'Failed to load deleted files',
       };
     }
+  }
+
+  // ==================== FOLDERS (web endpoints, Bearer auth) ====================
+
+  async resolveEffectiveWorkspaceId(options?: {
+    folderId?: number | null;
+    explicitWorkspaceId?: number;
+  }): Promise<number | null> {
+    const { resolveEffectiveWorkspaceId: resolve } = await import('./folderApi');
+    return resolve(this.client, options);
+  }
+
+  async getWebFiles(params: import('../types/folder').GetWebFilesParams) {
+    const { getWebFiles: fetch } = await import('./folderApi');
+    return fetch(this.client, params);
+  }
+
+  async listFolders(options?: {
+    parentId?: number | null;
+    workspaceId?: number;
+    cursor?: string;
+    limit?: number;
+    signal?: AbortSignal;
+  }) {
+    const { listFolders: list } = await import('./folderApi');
+    return list(this.client, options);
+  }
+
+  async getFolderDetail(folderId: number, signal?: AbortSignal) {
+    const { getFolder } = await import('./folderApi');
+    return getFolder(this.client, folderId, signal);
+  }
+
+  async createFolder(body: {
+    name: string;
+    workspace_id: number;
+    parent_folder_id?: number | null;
+  }) {
+    const { createFolder: create } = await import('./folderApi');
+    return create(this.client, body);
+  }
+
+  async renameFolder(folderId: number, name: string) {
+    const { renameFolder: rename } = await import('./folderApi');
+    return rename(this.client, folderId, name);
+  }
+
+  async deleteFolderById(folderId: number) {
+    const { deleteFolder } = await import('./folderApi');
+    return deleteFolder(this.client, folderId);
+  }
+
+  async moveFolderToParent(folderId: number, parentFolderId: number | null) {
+    const { moveFolder } = await import('./folderApi');
+    return moveFolder(this.client, folderId, parentFolderId);
+  }
+
+  async moveFilesToFolder(fileIds: number[], folderId?: number | null) {
+    const { moveFilesToFolder: move } = await import('./folderApi');
+    return move(this.client, fileIds, folderId);
+  }
+
+  async restoreFolderFromTrash(folderId: number) {
+    const { restoreFolder } = await import('./folderApi');
+    return restoreFolder(this.client, folderId);
+  }
+
+  async permanentlyDeleteFolderFromTrash(folderId: number) {
+    const { permanentlyDeleteFolder } = await import('./folderApi');
+    return permanentlyDeleteFolder(this.client, folderId);
   }
 
   /** Restore from trash. POST /api/v1/web/files/:id/trash-restore (may return 202) */
@@ -1276,36 +1651,17 @@ class ApiService {
   async uploadFileWithRetry(
     file: FormData,
     maxRetries: number = 3,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number) => void,
+    retryCallbacks?: UploadRetryCallbacks,
   ): Promise<ApiResponse> {
-    let lastError: any;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`🔄 [RETRY] Upload attempt ${attempt}/${maxRetries}`);
-        return await this.uploadFile(file, onProgress);
-      } catch (error: any) {
-        lastError = error;
-        const isNetworkError = 
-          error.message?.includes('Network') ||
-          error.message?.includes('timeout') ||
-          error.message?.includes('ECONNRESET') ||
-          error.message?.includes('ETIMEDOUT');
-        
-        if (attempt < maxRetries && isNetworkError) {
-          // Exponential backoff: 2s, 4s, 8s
-          const delay = Math.pow(2, attempt) * 1000;
-          console.log(`⏳ [RETRY] Waiting ${delay}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
-        }
-        
-        // Last attempt or non-network error - throw
-        throw error;
-      }
-    }
-    
-    throw lastError;
+    return withUploadForegroundRetry(
+      () => this.uploadFile(file, onProgress),
+      {
+        maxForegroundRetries: maxRetries,
+        onSuspended: retryCallbacks?.onSuspended,
+        onResumed: retryCallbacks?.onResumed,
+      },
+    );
   }
 
   /**
@@ -1367,37 +1723,8 @@ class ApiService {
         console.warn('⚠️ [CHUNKED] Could not get upload status, starting fresh');
       }
       
-      // Step 3: Upload chunks (with parallel support and AppState monitoring)
+      // Step 3: Upload chunks (with parallel support; resume after app background)
       let isPaused = false;
-      let isCancelled = false;
-      let appStatePaused = false;
-      
-      // AppState monitoring - pause uploads when app goes to background
-      const appStateSubscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
-        if (nextAppState === 'background' || nextAppState === 'inactive') {
-          if (!appStatePaused) {
-            console.log('📱 [CHUNKED] App went to background, pausing upload...');
-            appStatePaused = true;
-            isPaused = true;
-            onPause?.();
-            // Pause on backend
-            this.pauseUpload(uploadId).catch(err => {
-              console.warn('⚠️ [CHUNKED] Failed to pause upload on backend:', err);
-            });
-          }
-        } else if (nextAppState === 'active') {
-          if (appStatePaused) {
-            console.log('📱 [CHUNKED] App returned to foreground, resuming upload...');
-            appStatePaused = false;
-            isPaused = false;
-            onResume?.();
-            // Resume on backend
-            this.resumeUpload(uploadId).catch(err => {
-              console.warn('⚠️ [CHUNKED] Failed to resume upload on backend:', err);
-            });
-          }
-        }
-      });
       
       try {
         // Prepare chunks to upload (skip already uploaded)
@@ -1418,17 +1745,17 @@ class ApiService {
             throw new Error('Upload cancelled');
           }
           
-          // Check if paused (manual or AppState)
+          // Check if manually paused
           while (isPaused && !signal?.aborted) {
             await new Promise(resolve => setTimeout(resolve, 500));
             try {
               const status = await this.getUploadStatus(uploadId);
-              if (!status.paused && !appStatePaused) {
+              if (!status.paused) {
                 isPaused = false;
                 onResume?.();
                 console.log('▶️ [CHUNKED] Upload resumed');
               }
-            } catch (e) {
+            } catch {
               // Ignore status check errors
             }
           }
@@ -1468,6 +1795,17 @@ class ApiService {
               uploadedChunks.add(chunkIndex);
               console.log(`✅ [CHUNKED] Chunk ${chunkIndex + 1}/${totalChunks} uploaded`);
             } catch (chunkError: any) {
+              if (isAppBackgrounded()) {
+                onPause?.();
+                onProgress?.(
+                  Math.round((uploadedChunks.size / validatedTotalChunks) * 100),
+                  'Waiting — return to app to continue',
+                  'upload',
+                );
+                await waitForAppActive();
+                onResume?.();
+                continue;
+              }
               retryCount++;
               if (retryCount >= maxChunkRetries) {
                 throw new Error(`Failed to upload chunk ${chunkIndex + 1} after ${maxChunkRetries} attempts: ${chunkError.message}`);
@@ -1494,12 +1832,12 @@ class ApiService {
             await new Promise(resolve => setTimeout(resolve, 500));
             try {
               const status = await this.getUploadStatus(uploadId);
-              if (!status.paused && !appStatePaused) {
+              if (!status.paused) {
                 isPaused = false;
                 onResume?.();
                 console.log('▶️ [CHUNKED] Upload resumed');
               }
-            } catch (e) {
+            } catch {
               // Ignore status check errors
             }
           }
@@ -1520,8 +1858,7 @@ class ApiService {
           onProgress?.(progress, `Uploaded ${uploadedChunks.size}/${validatedTotalChunks} chunks`, 'upload');
         }
       } finally {
-        // Clean up AppState listener
-        appStateSubscription.remove();
+        // no-op
       }
       
       // Step 4: Complete upload
@@ -3772,7 +4109,67 @@ class ApiService {
 
   // ==================== MOBILE DOCUMENTS ====================
 
-  async getDocuments(page = 1, perPage = 20, search?: string, category?: string, workspaceId?: number, onlyOwn = false, metadataOnly = false, requestTimeoutMs?: number, signal?: AbortSignal): Promise<ApiResponse> {
+  async getDocuments(
+    page = 1,
+    perPage = 20,
+    search?: string,
+    category?: string,
+    workspaceId?: number,
+    onlyOwn = false,
+    metadataOnly = false,
+    requestTimeoutMs?: number,
+    signal?: AbortSignal,
+    folderOptions?: {
+      folderId?: number | null;
+      scope?: import('../types/folder').FileListScope;
+      folderAware?: boolean;
+    }
+  ): Promise<ApiResponse> {
+    const useFolderApi =
+      folderOptions?.folderAware === true ||
+      folderOptions?.folderId !== undefined ||
+      (folderOptions?.scope != null && folderOptions.scope !== 'current_folder');
+
+    if (useFolderApi && workspaceId == null) {
+      try {
+        const folderId = folderOptions?.folderId ?? null;
+        const res = await this.getWebFiles({
+          folderId,
+          workspaceId,
+          search,
+          scope: folderOptions?.scope ?? 'current_folder',
+          page,
+          perPage,
+          fileKind: category,
+          signal,
+        });
+        let files = res.files;
+        if (category) {
+          const cat = category.toLowerCase();
+          files = files.filter(
+            (f) => (f.file_kind || '').toString().toLowerCase() === cat
+          );
+        }
+        return {
+          success: res.success,
+          data: files,
+          files,
+          pagination: res.pagination,
+        };
+      } catch (error: any) {
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+          return {
+            success: true,
+            timedOut: true,
+            data: [],
+            files: [],
+            pagination: { page, per_page: perPage, total: 0, has_more: false },
+          };
+        }
+        console.warn('📁 API: Web folder-aware files failed, falling back to mobile:', error.message);
+      }
+    }
+
     try {
       // Mobile app should use mobile endpoints, not web endpoints
       // Use the mobile files endpoint which supports workspace_id and only_own parameters
@@ -4929,7 +5326,13 @@ class ApiService {
 
   async getMeetingAssets(): Promise<ApiResponse> {
     const now = Date.now();
-    if (meetingAssetsCache && now - meetingAssetsCache.at < MEETING_ASSETS_CACHE_MS && meetingAssetsCache.response?.success) {
+    const userId = await currentCachedUserId();
+    if (
+      meetingAssetsCache &&
+      meetingAssetsCache.userId === userId &&
+      now - meetingAssetsCache.at < MEETING_ASSETS_CACHE_MS &&
+      meetingAssetsCache.response?.success
+    ) {
       console.log('📁 Meeting assets served from cache');
       return meetingAssetsCache.response;
     }
@@ -4941,7 +5344,7 @@ class ApiService {
       console.log('📁 Meeting assets response:', response.data);
       const data = response.data as ApiResponse;
       if (data?.success) {
-        meetingAssetsCache = { at: now, response: data };
+        meetingAssetsCache = { at: now, userId, response: data };
       }
       return data;
     } catch (error: any) {
@@ -4949,7 +5352,10 @@ class ApiService {
       // On timeout, return cached data if we have it (e.g. from list screen)
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         console.warn('⚠️ Meeting assets request timed out (non-critical)');
-        if (meetingAssetsCache?.response?.success) {
+        if (
+          meetingAssetsCache?.userId === userId &&
+          meetingAssetsCache?.response?.success
+        ) {
           console.log('📁 Returning cached meeting assets after timeout');
           return meetingAssetsCache.response;
         }
@@ -5080,6 +5486,63 @@ class ApiService {
       // Don't throw - error logging should be non-blocking
       console.warn('Failed to log error to backend:', logError);
     }
+  }
+
+  // ==================== AI FILE MANAGER (web endpoints, Bearer auth) ====================
+
+  async getAiFileManagerConfig() {
+    const { getAiFileManagerConfig: fetch } = await import('./aiFileManagerApi');
+    return fetch(this.client);
+  }
+
+  async postAiFileManagerPlan(body: import('../types/aiFileManager').PlanRequestBody) {
+    const { postAiFileManagerPlan: post } = await import('./aiFileManagerApi');
+    return post(this.client, body);
+  }
+
+  async postAiFileManagerExecute(body: import('../types/aiFileManager').ExecuteRequestBody) {
+    const { postAiFileManagerExecute: post } = await import('./aiFileManagerApi');
+    return post(this.client, body);
+  }
+
+  async postAiFileManagerSchedule(body: import('../types/aiFileManager').ScheduleRequestBody) {
+    const { postAiFileManagerSchedule: post } = await import('./aiFileManagerApi');
+    return post(this.client, body);
+  }
+
+  async getAiFileManagerHistory(limit = 50) {
+    const { getAiFileManagerHistory: fetch } = await import('./aiFileManagerApi');
+    return fetch(this.client, limit);
+  }
+
+  async abandonAiFileManagerHistory(historyId: number) {
+    const { abandonAiFileManagerHistory: abandon } = await import('./aiFileManagerApi');
+    return abandon(this.client, historyId);
+  }
+
+  async deleteAiFileManagerHistory(historyId: number) {
+    const { deleteAiFileManagerHistory: del } = await import('./aiFileManagerApi');
+    return del(this.client, historyId);
+  }
+
+  async undoAiFileManagerHistory(historyId: number) {
+    const { undoAiFileManagerHistory: undo } = await import('./aiFileManagerApi');
+    return undo(this.client, historyId);
+  }
+
+  async getAiFileManagerScheduled() {
+    const { getAiFileManagerScheduled: fetch } = await import('./aiFileManagerApi');
+    return fetch(this.client);
+  }
+
+  async patchAiFileManagerScheduled(id: number, status: 'active' | 'paused') {
+    const { patchAiFileManagerScheduled: patch } = await import('./aiFileManagerApi');
+    return patch(this.client, id, status);
+  }
+
+  async deleteAiFileManagerScheduled(id: number) {
+    const { deleteAiFileManagerScheduled: del } = await import('./aiFileManagerApi');
+    return del(this.client, id);
   }
 
   // ==================== CONFIGURATION ====================

@@ -137,6 +137,7 @@ const baseExpo = {
     "./plugins/android-disable-release-lint",
     "./plugins/ios-pip",
     "expo-dev-client",
+    "expo-font",
     "expo-router",
     "expo-web-browser",
     [

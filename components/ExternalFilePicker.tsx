@@ -11,6 +11,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import FileNameText from './FileNameText';
 import { ExternalFile, externalFileService } from '../services/externalFileServices';
 
 interface ExternalFilePickerProps {
@@ -252,9 +253,7 @@ export function ExternalFilePicker({
           />
         </View>
         <View style={styles.fileDetails}>
-          <Text style={styles.fileName} numberOfLines={2}>
-            {item.name}
-          </Text>
+          <FileNameText name={item.name} style={styles.fileName} />
           {!externalFileService.isFolder(item) && item.size && (
             <Text style={styles.fileSize}>
               {externalFileService.formatFileSize(item.size)}
@@ -411,6 +410,7 @@ const styles = StyleSheet.create({
   },
   fileDetails: {
     flex: 1,
+    minWidth: 0,
   },
   fileName: {
     fontSize: 16,

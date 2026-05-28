@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+﻿import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import FileNameText from '../../components/FileNameText';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { toAlertMessage } from '../../utils/alertUtils';
@@ -291,7 +292,7 @@ export default function DraftsDeletedAndSharedScreen() {
       const label = raw.length > 80 ? `${raw.slice(0, 77)}…` : raw;
       Alert.alert(
         'Restore this note?',
-        `“${label}” will be added back to your drafts. This might take a few minutes to complete — you can leave this page.`,
+        `“${label}” will be added back to your notes. This might take a few minutes to complete — you can leave this page.`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Restore', onPress: () => void performRestoreDraft(fileId) },
@@ -490,7 +491,7 @@ export default function DraftsDeletedAndSharedScreen() {
         <View style={dynamicStyles.headerTitleWrap}>
           <Text style={dynamicStyles.headerTitle}>Deleted & shared</Text>
           <Text style={dynamicStyles.headerSubtitle}>
-            Drafts in your account trash · invitations to co-edit notes
+            Notes in your account trash · invitations to co-edit notes
           </Text>
         </View>
       </View>
@@ -508,14 +509,14 @@ export default function DraftsDeletedAndSharedScreen() {
             extraData={`${draftTrashActionId}-${trashedDrafts.map((d) => `${d.id}:${d.restoring ? 1 : 0}`).join(',')}`}
             ListHeaderComponent={
               <View style={dynamicStyles.section}>
-                <Text style={dynamicStyles.sectionTitle}>Deleted drafts</Text>
+                <Text style={dynamicStyles.sectionTitle}>Deleted notes</Text>
               </View>
             }
             ListEmptyComponent={
               <View style={dynamicStyles.empty}>
                 <Ionicons name="trash-outline" size={40} color={colors.textSecondary} style={{ marginBottom: 8 }} />
                 <Text style={dynamicStyles.emptyText}>
-                  No draft notes in trash. Deleted drafts appear here until restored or permanently removed.
+                  No draft notes in trash. Deleted notes appear here until restored or permanently removed.
                 </Text>
               </View>
             }
@@ -539,9 +540,10 @@ export default function DraftsDeletedAndSharedScreen() {
                       </View>
                     ) : null}
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={dynamicStyles.rowTitle} numberOfLines={2}>
-                        {stripExtension(d.original_filename)}
-                      </Text>
+                      <FileNameText
+                        name={stripExtension(d.original_filename)}
+                        style={dynamicStyles.rowTitle}
+                      />
                       <Text style={dynamicStyles.rowMeta}>
                         {isRestoring
                           ? 'Restoring…'
@@ -565,7 +567,7 @@ export default function DraftsDeletedAndSharedScreen() {
                       style={[dynamicStyles.kebabButton, showBusy && { opacity: 0.4 }]}
                       onPress={() => handleOpenTrashedKebab(d)}
                       disabled={showBusy}
-                      accessibilityLabel="Deleted draft actions"
+                      accessibilityLabel="Deleted note actions"
                       accessibilityRole="button"
                     >
                       <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
@@ -584,18 +586,19 @@ export default function DraftsDeletedAndSharedScreen() {
           />
           <View style={{ paddingBottom: 32, backgroundColor: colors.background }}>
             <View style={dynamicStyles.section}>
-              <Text style={dynamicStyles.sectionTitle}>Shared with you (drafts)</Text>
+              <Text style={dynamicStyles.sectionTitle}>Shared with you (notes)</Text>
               {invites.length === 0 ? (
                 <View style={dynamicStyles.empty}>
                   <Ionicons name="people-outline" size={40} color={colors.textSecondary} style={{ marginBottom: 8 }} />
-                  <Text style={dynamicStyles.emptyText}>No pending draft invitations.</Text>
+                  <Text style={dynamicStyles.emptyText}>No pending note invitations.</Text>
                 </View>
               ) : (
                 invites.map((inv) => (
                   <View key={inv.share_id} style={dynamicStyles.card}>
-                    <Text style={dynamicStyles.rowTitle} numberOfLines={2}>
-                      {stripExtension(inv.file_name)}
-                    </Text>
+                    <FileNameText
+                      name={stripExtension(inv.file_name)}
+                      style={dynamicStyles.rowTitle}
+                    />
                     <Text style={dynamicStyles.rowMeta}>
                       From {inv.inviter_name || 'Someone'}
                       {inv.created_at

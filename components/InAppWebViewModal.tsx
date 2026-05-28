@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -11,8 +10,8 @@ import {
 import { WebView } from 'react-native-webview';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
+import MinimizableBottomSheet from './MinimizableBottomSheet';
 
-/** Same host + port as API → send Bearer on first request (masked view, other API pages in WebView). */
 export function isApiBaseUrl(targetUrl: string): boolean {
   try {
     const api = new URL(API_BASE_URL);
@@ -43,10 +42,6 @@ export interface InAppWebViewModalProps {
   onClose: () => void;
 }
 
-/**
- * Opens arbitrary http(s) links inside the app so users are not kicked to Safari/Chrome
- * (where API links would lack auth cookies). API host requests reuse the mobile Bearer token.
- */
 export default function InAppWebViewModal({
   visible,
   url,
@@ -96,53 +91,53 @@ export default function InAppWebViewModal({
   if (!visible || !url) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Dismiss" />
-        <View style={[styles.sheet, { height: sheetHeight }]} onStartShouldSetResponder={() => true}>
-          <View style={styles.header}>
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-            <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button">
-              <Text style={styles.close}>Close</Text>
+    <MinimizableBottomSheet
+      visible={visible}
+      onClose={onClose}
+      sheetHeight={sheetHeight}
+      renderHeader={({ minimized, onMinimize, onExpand, onClose: closeSheet }) => (
+        <View style={styles.header}>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          <View style={styles.headerActions}>
+            {minimized ? (
+              <Pressable onPress={onExpand} hitSlop={12} accessibilityRole="button">
+                <Text style={styles.linkClose}>Expand</Text>
+              </Pressable>
+            ) : (
+              <Pressable onPress={onMinimize} hitSlop={12} accessibilityRole="button">
+                <Text style={styles.linkClose}>Minimize</Text>
+              </Pressable>
+            )}
+            <Pressable onPress={closeSheet} hitSlop={12} accessibilityRole="button">
+              <Text style={styles.linkClose}>Close</Text>
             </Pressable>
           </View>
-          {!ready ? (
-            <View style={styles.loading}>
-              <ActivityIndicator size="large" color="#007AFF" />
-            </View>
-          ) : (
-            <WebView
-              key={webKey}
-              source={source}
-              style={styles.web}
-              originWhitelist={['*']}
-              scalesPageToFit
-              startInLoadingState
-              allowsInlineMediaPlayback
-              mediaPlaybackRequiresUserAction={false}
-            />
-          )}
         </View>
-      </View>
-    </Modal>
+      )}
+    >
+      {!ready ? (
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color="#007AFF" />
+        </View>
+      ) : (
+        <WebView
+          key={webKey}
+          source={source}
+          style={styles.web}
+          originWhitelist={['*']}
+          scalesPageToFit
+          startInLoadingState
+          allowsInlineMediaPlayback
+          mediaPlaybackRequiresUserAction={false}
+        />
+      )}
+    </MinimizableBottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 14,
-    borderTopRightRadius: 14,
-    overflow: 'hidden',
-    width: '100%',
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -152,8 +147,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#ddd',
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   title: { flex: 1, fontSize: 16, fontWeight: '600', marginRight: 8 },
-  close: { color: '#007AFF', fontSize: 16 },
+  linkClose: { color: '#007AFF', fontSize: 16 },
   web: { flex: 1, width: '100%', backgroundColor: '#fff' },
   loading: {
     flex: 1,

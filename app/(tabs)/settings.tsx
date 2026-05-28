@@ -23,6 +23,7 @@ import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityCon
 import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
+import { userProfileScreenKey } from '../../services/userScopedCache';
 import deviceSecurityService from '../../services/deviceSecurity';
 import {
   DEFAULT_HOME_SCREEN_OPTIONS,
@@ -110,7 +111,7 @@ interface DeviceFingerprint {
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { signOut, user: authUser } = useAuth();
   const { user, logout } = useEnhanced2FAAuth();
   const { theme, setTheme } = useTheme();
   const colors = useThemeColors();
@@ -202,12 +203,13 @@ export default function SettingsScreen() {
     }, [])
   );
 
-  const SETTINGS_CACHE_KEY = 'user_profile';
+  const scopedUserId = authUser?.id ?? user?.id;
   const SETTINGS_CACHE_MS = 5 * 60_000; // 5-minute TTL — profile rarely changes
+  const settingsCacheKey = userProfileScreenKey(scopedUserId);
 
   const loadSettings = async (forceRefresh = false) => {
-    if (!forceRefresh) {
-      const cached = screenCache.get<UserProfile>(SETTINGS_CACHE_KEY, SETTINGS_CACHE_MS);
+    if (!forceRefresh && settingsCacheKey) {
+      const cached = screenCache.get<UserProfile>(settingsCacheKey, SETTINGS_CACHE_MS);
       if (cached) {
         setProfile(cached);
       }
@@ -271,7 +273,7 @@ export default function SettingsScreen() {
           created_at: userData.created_at || new Date().toISOString(),
         };
         setProfile(profileData);
-        screenCache.set(SETTINGS_CACHE_KEY, profileData);
+        if (settingsCacheKey) screenCache.set(settingsCacheKey, profileData);
       }
 
       let resolvedForServer: WebDefaultHomePath | null = MOBILE_MAIN_HOME_WEB_ALIAS;

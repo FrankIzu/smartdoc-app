@@ -24,6 +24,10 @@ interface FileStore extends FileState {
   isImagePickerOpen: boolean;
   lastUploadTime: number; // Track when upload happened for immediate refresh
   pendingUploads: PendingUpload[]; // Optimistic placeholder rows shown in the file list immediately
+  /** Target folder for next upload (My Files folder context) */
+  uploadFolderId: number | null;
+  uploadWorkspaceId: number | null;
+  setUploadFolderContext: (folderId: number | null, workspaceId: number | null) => void;
   
   // Actions
   fetchFiles: (page?: number, search?: string, category?: string) => Promise<void>;
@@ -58,6 +62,12 @@ export const useFileStore = create<FileStore>((set, get) => ({
   isImagePickerOpen: false,
   lastUploadTime: 0,
   pendingUploads: [],
+  uploadFolderId: null,
+  uploadWorkspaceId: null,
+
+  setUploadFolderContext: (folderId, workspaceId) => {
+    set({ uploadFolderId: folderId, uploadWorkspaceId: workspaceId });
+  },
 
   // Actions
   fetchFiles: async (page = 1, search?, category?) => {
@@ -188,6 +198,14 @@ export const useFileStore = create<FileStore>((set, get) => ({
           type: fileToUpload.type || 'image/jpeg',
           name: fileToUpload.name || `image_${Date.now()}.jpg`,
         } as any);
+
+        const { uploadFolderId, uploadWorkspaceId } = get();
+        if (uploadFolderId != null) {
+          formData.append('folder_id', String(uploadFolderId));
+        }
+        if (uploadWorkspaceId != null) {
+          formData.append('workspace_id', String(uploadWorkspaceId));
+        }
         
         console.log('📤 FormData created, starting upload...');
         

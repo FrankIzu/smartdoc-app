@@ -1,24 +1,46 @@
 /**
  * Shared TTL cache keys for workspace-scoped mobile data (members, activities, files sheet).
- * Keeps keys consistent across workspace detail, chats participant picker, etc.
+ * Keys include the authenticated user id so accounts never share cached workspace data.
  */
+import {
+  workspaceActivitiesScreenKey,
+  workspaceDetailScreenKey,
+  workspaceFilesSheetScreenKey,
+  workspaceMembersScreenKey,
+  workspacesListScreenKey,
+} from '../services/userScopedCache';
 import { screenCache } from './screenCache';
 
 export const WORKSPACE_MEMBERS_CACHE_MS = 60_000;
 export const WORKSPACE_ACTIVITIES_CACHE_MS = 60_000;
 export const WORKSPACE_FILES_SHEET_CACHE_MS = 45_000;
 
-export function workspaceMembersCacheKey(workspaceId: number): string {
-  return `workspace_members_${workspaceId}`;
+export function workspaceMembersCacheKey(
+  userId: string | number | null | undefined,
+  workspaceId: number,
+): string | null {
+  return workspaceMembersScreenKey(userId, workspaceId);
 }
 
-export function workspaceActivitiesCacheKey(workspaceId: number): string {
-  return `workspace_activities_${workspaceId}`;
+export function workspaceActivitiesCacheKey(
+  userId: string | number | null | undefined,
+  workspaceId: number,
+): string | null {
+  return workspaceActivitiesScreenKey(userId, workspaceId);
 }
 
-/** First page of workspace files bottom sheet (offset 0). */
-export function workspaceFilesSheetFirstPageKey(workspaceId: number): string {
-  return `workspace_files_sheet_${workspaceId}`;
+export function workspaceFilesSheetFirstPageKey(
+  userId: string | number | null | undefined,
+  workspaceId: number,
+): string | null {
+  return workspaceFilesSheetScreenKey(userId, workspaceId);
+}
+
+export function workspaceDetailCacheKey(
+  userId: string | number | null | undefined,
+  routeId: string,
+): string | null {
+  return workspaceDetailScreenKey(userId, routeId);
 }
 
 export interface WorkspaceMembersCachePayload {
@@ -31,7 +53,6 @@ export interface WorkspaceActivitiesCachePayload {
 }
 
 export interface WorkspaceFilesSheetCachePayload {
-  /** Prefer slim rows `{ bookmark_id, bookmark_name, file_count }` — avoid caching nested bookmark `files`. */
   bookmarks: any[];
   files: any[];
   hasMore: boolean;
@@ -40,13 +61,18 @@ export interface WorkspaceFilesSheetCachePayload {
 
 /** Call after member/invite/workspace mutations so all workspace slices stay consistent. */
 export function invalidateWorkspaceScreenCaches(
+  userId: string | number | null | undefined,
   routeId: string,
-  workspaceNumericId: number
+  workspaceNumericId: number,
 ): void {
-  screenCache.invalidate(`workspace_detail_${routeId}`);
-  screenCache.invalidate(workspaceMembersCacheKey(workspaceNumericId));
-  screenCache.invalidate(workspaceActivitiesCacheKey(workspaceNumericId));
-  screenCache.invalidate(workspaceFilesSheetFirstPageKey(workspaceNumericId));
-  // Workspace list tab uses member_count / roles; refresh when this workspace changes.
-  screenCache.invalidate('workspaces_list');
+  const detail = workspaceDetailScreenKey(userId, routeId);
+  const members = workspaceMembersScreenKey(userId, workspaceNumericId);
+  const activities = workspaceActivitiesScreenKey(userId, workspaceNumericId);
+  const files = workspaceFilesSheetScreenKey(userId, workspaceNumericId);
+  const list = workspacesListScreenKey(userId);
+  if (detail) screenCache.invalidate(detail);
+  if (members) screenCache.invalidate(members);
+  if (activities) screenCache.invalidate(activities);
+  if (files) screenCache.invalidate(files);
+  if (list) screenCache.invalidate(list);
 }

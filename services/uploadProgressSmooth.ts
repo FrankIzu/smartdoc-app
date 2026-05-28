@@ -13,6 +13,7 @@ export function createSmoothProgressEmitter(
   let target = 0;
   let lastMsg = 'Preparing upload...';
   let lastPhase = 'upload';
+  let lastEmitted = -1;
   let timer: ReturnType<typeof setInterval> | null = null;
 
   function tick() {
@@ -24,6 +25,8 @@ export function createSmoothProgressEmitter(
       displayed = Math.min(displayed + 0.14, uploadPhaseMax - 0.15);
     }
     const rounded = Math.round(displayed * 10) / 10;
+    if (rounded === lastEmitted) return;
+    lastEmitted = rounded;
     emit(rounded, lastMsg, lastPhase);
   }
 
@@ -32,6 +35,18 @@ export function createSmoothProgressEmitter(
     target = Math.max(target, clamped);
     if (msg !== undefined) lastMsg = msg;
     if (phase !== undefined) lastPhase = phase;
+  }
+
+  function setMessage(msg: string, phase?: string) {
+    const msgChanged = msg !== lastMsg;
+    const phaseChanged = phase !== undefined && phase !== lastPhase;
+    lastMsg = msg;
+    if (phase !== undefined) lastPhase = phase;
+    if (msgChanged || phaseChanged) {
+      const rounded = Math.round(displayed * 10) / 10;
+      emit(rounded, lastMsg, lastPhase);
+      lastEmitted = rounded;
+    }
   }
 
   function start() {
@@ -46,5 +61,5 @@ export function createSmoothProgressEmitter(
     }
   }
 
-  return { setTarget, start, stop };
+  return { setTarget, setMessage, start, stop };
 }

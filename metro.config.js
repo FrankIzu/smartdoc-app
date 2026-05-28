@@ -3,15 +3,26 @@ const path = require('path');
 const fs = require('fs');
 
 // Use the current directory as project root
-// EAS Build places the project in /home/expo/workingdir/build/
-// and index.js should be there
 const projectRoot = __dirname;
 const watchFolders = [projectRoot];
+const isWindows = process.platform === 'win32';
 
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(projectRoot);
 config.watchFolders = watchFolders;
 config.projectRoot = projectRoot;
+
+// Windows: native/watchman watchers often fail or time out on large monorepos.
+if (isWindows) {
+  config.resolver.useWatchman = false;
+  config.watcher = {
+    ...config.watcher,
+    healthCheck: {
+      ...(config.watcher?.healthCheck ?? {}),
+      enabled: false,
+    },
+  };
+}
 
 // Note: The issue is that expo export:embed passes absolute paths to Metro's _resolveRelativePath
 // which expects relative paths. This is a known issue with Expo Router + EAS Build.
@@ -165,21 +176,27 @@ config.resolver = {
   // This reduces the number of files Metro needs to watch
   // NOTE: We're IN /home/expo/workingdir/build/ on EAS, so don't block */build/*
   blockList: [
-    // Exclude large directories that don't need to be watched
-    /.*\/node_modules\/.*\/node_modules\/.*/,
-    /.*\/\.git\/.*/,
-    // Don't block dist/ in node_modules - needed for abort-controller, whatwg-fetch, etc.
-    // Only block dist/ in project root (build artifacts)
-    /^(?!.*\/node_modules\/).*\/dist\/.*/,
-    // /.*\/build\/.*/, // Don't block build/ since we're in it on EAS
-    /.*\/\.expo\/.*/,
-    /.*\/android\/build\/.*/,
-    /.*\/ios\/build\/.*/,
-    /.*\/data\/.*/,
-    /.*\/_project_cleanup\/.*/,
-    /.*\/_temp_disabled\/.*/,
-    /.*\/venv\/.*/,
-    /.*\/manager-francis\/.*/,
+    // Exclude large non-app directories from Metro crawl/watch (critical on Windows)
+    /.*[/\\]manager-francis[/\\].*/,
+    /.*[/\\]venv[/\\].*/,
+    /.*[/\\]\.venv[/\\].*/,
+    /.*[/\\]data[/\\].*/,
+    /.*[/\\]faiss_backups[/\\].*/,
+    /.*[/\\]test-export(?:-android)?[/\\].*/,
+    /.*[/\\]dev-files[/\\].*/,
+    /.*[/\\]storage[/\\].*/,
+    /.*[/\\]db_scripts[/\\].*/,
+    /.*[/\\]ipa-extract[/\\].*/,
+    /.*[/\\]app-backup[/\\].*/,
+    /.*[/\\]_project_cleanup[/\\].*/,
+    /.*[/\\]_temp_disabled[/\\].*/,
+    /.*[/\\]node_modules[/\\].*[/\\]node_modules[/\\].*/,
+    /.*[/\\]node_modules[/\\]@types[/\\]\..*/,
+    /.*[/\\]\.git[/\\].*/,
+    /^(?!.*[/\\]node_modules[/\\]).*[/\\]dist[/\\].*/,
+    /.*[/\\]\.expo[/\\].*/,
+    /.*[/\\]android[/\\]build[/\\].*/,
+    /.*[/\\]ios[/\\]build[/\\].*/,
   ],
 };
 

@@ -1,12 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const KEYS = {
-  DRAFTS_LIST: 'drafts_cache_list',
-  DRAFT_CONTENT: (id: number | string) => `drafts_cache_content_${id}`,
-  PENDING_SAVES: 'drafts_cache_pending_saves',
-  PENDING_RENAMES: 'drafts_cache_pending_renames',
-  PENDING_CREATES: 'drafts_cache_pending_creates',
-};
+import {
+  draftsContentStorageKey,
+  draftsListStorageKey,
+  draftsPendingCreatesKey,
+  draftsPendingRenamesKey,
+  draftsPendingSavesKey,
+} from '../services/userScopedCache';
 
 export interface CachedDraftMeta {
   id: number;
@@ -68,111 +67,137 @@ export const draftsCache = {
     return Number(id) < 0;
   },
 
-  async getDraftsList(): Promise<CachedDraftMeta[] | null> {
+  async getDraftsList(userId: string | number): Promise<CachedDraftMeta[] | null> {
     try {
-      const raw = await AsyncStorage.getItem(KEYS.DRAFTS_LIST);
+      const key = draftsListStorageKey(userId);
+      if (!key) return null;
+      const raw = await AsyncStorage.getItem(key);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
     }
   },
 
-  async saveDraftsList(drafts: CachedDraftMeta[]): Promise<void> {
+  async saveDraftsList(userId: string | number, drafts: CachedDraftMeta[]): Promise<void> {
     try {
-      await AsyncStorage.setItem(KEYS.DRAFTS_LIST, JSON.stringify(drafts));
+      const key = draftsListStorageKey(userId);
+      if (!key) return;
+      await AsyncStorage.setItem(key, JSON.stringify(drafts));
     } catch {}
   },
 
-  async removeFromDraftsList(id: number): Promise<void> {
+  async removeFromDraftsList(userId: string | number, id: number): Promise<void> {
     try {
-      const list = await this.getDraftsList();
+      const list = await this.getDraftsList(userId);
       if (!list) return;
       const filtered = list.filter(d => d.id !== id);
-      await this.saveDraftsList(filtered);
+      await this.saveDraftsList(userId, filtered);
     } catch {}
   },
 
-  async getDraftContent(id: number): Promise<CachedDraftContent | null> {
+  async getDraftContent(userId: string | number, id: number): Promise<CachedDraftContent | null> {
     try {
-      const raw = await AsyncStorage.getItem(KEYS.DRAFT_CONTENT(id));
+      const key = draftsContentStorageKey(userId, id);
+      if (!key) return null;
+      const raw = await AsyncStorage.getItem(key);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
     }
   },
 
-  async saveDraftContent(id: number, data: Omit<CachedDraftContent, 'cached_at'>): Promise<void> {
+  async saveDraftContent(
+    userId: string | number,
+    id: number,
+    data: Omit<CachedDraftContent, 'cached_at'>,
+  ): Promise<void> {
     try {
+      const key = draftsContentStorageKey(userId, id);
+      if (!key) return;
       await AsyncStorage.setItem(
-        KEYS.DRAFT_CONTENT(id),
+        key,
         JSON.stringify({ ...data, cached_at: Date.now() })
       );
     } catch {}
   },
 
-  async deleteDraftContent(id: number): Promise<void> {
+  async deleteDraftContent(userId: string | number, id: number): Promise<void> {
     try {
-      await AsyncStorage.removeItem(KEYS.DRAFT_CONTENT(id));
+      const key = draftsContentStorageKey(userId, id);
+      if (!key) return;
+      await AsyncStorage.removeItem(key);
     } catch {}
   },
 
-  async updateCachedMeta(id: number, patch: Partial<CachedDraftMeta>): Promise<void> {
+  async updateCachedMeta(
+    userId: string | number,
+    id: number,
+    patch: Partial<CachedDraftMeta>,
+  ): Promise<void> {
     try {
-      const list = await this.getDraftsList();
+      const list = await this.getDraftsList(userId);
       if (!list) return;
       const updated = list.map(d => (d.id === id ? { ...d, ...patch } : d));
-      await this.saveDraftsList(updated);
+      await this.saveDraftsList(userId, updated);
     } catch {}
   },
 
-  async updateCachedFilename(id: number, filename: string): Promise<void> {
+  async updateCachedFilename(userId: string | number, id: number, filename: string): Promise<void> {
     try {
-      const content = await this.getDraftContent(id);
+      const content = await this.getDraftContent(userId, id);
       if (content) {
-        await this.saveDraftContent(id, { ...content, filename });
+        await this.saveDraftContent(userId, id, { ...content, filename });
       }
-      await this.updateCachedMeta(id, { original_filename: filename });
+      await this.updateCachedMeta(userId, id, { original_filename: filename });
     } catch {}
   },
 
-  async getPendingSaves(): Promise<PendingSave[]> {
+  async getPendingSaves(userId: string | number): Promise<PendingSave[]> {
     try {
-      const raw = await AsyncStorage.getItem(KEYS.PENDING_SAVES);
+      const key = draftsPendingSavesKey(userId);
+      if (!key) return [];
+      const raw = await AsyncStorage.getItem(key);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
     }
   },
 
-  async addPendingSave(save: Omit<PendingSave, 'queued_at'>): Promise<void> {
+  async addPendingSave(userId: string | number, save: Omit<PendingSave, 'queued_at'>): Promise<void> {
     try {
-      const existing = await this.getPendingSaves();
+      const key = draftsPendingSavesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingSaves(userId);
       const filtered = existing.filter(s => s.id !== save.id);
       filtered.push({ ...save, queued_at: Date.now() });
-      await AsyncStorage.setItem(KEYS.PENDING_SAVES, JSON.stringify(filtered));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
   },
 
-  async removePendingSave(id: number): Promise<void> {
+  async removePendingSave(userId: string | number, id: number): Promise<void> {
     try {
-      const existing = await this.getPendingSaves();
+      const key = draftsPendingSavesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingSaves(userId);
       const filtered = existing.filter(s => s.id !== id);
-      await AsyncStorage.setItem(KEYS.PENDING_SAVES, JSON.stringify(filtered));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
   },
 
-  async hasPendingSave(id: number): Promise<boolean> {
+  async hasPendingSave(userId: string | number, id: number): Promise<boolean> {
     try {
-      const existing = await this.getPendingSaves();
+      const existing = await this.getPendingSaves(userId);
       return existing.some(s => s.id === id);
     } catch {
       return false;
     }
   },
 
-  async remapPendingSaves(localId: number, serverId: number): Promise<void> {
+  async remapPendingSaves(userId: string | number, localId: number, serverId: number): Promise<void> {
     try {
-      const existing = await this.getPendingSaves();
+      const key = draftsPendingSavesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingSaves(userId);
       const remapped = existing.map(s => (s.id === localId ? { ...s, id: serverId } : s));
       const deduped: PendingSave[] = [];
       const seen = new Set<number>();
@@ -182,39 +207,47 @@ export const draftsCache = {
         seen.add(item.id);
         deduped.unshift(item);
       }
-      await AsyncStorage.setItem(KEYS.PENDING_SAVES, JSON.stringify(deduped));
+      await AsyncStorage.setItem(key, JSON.stringify(deduped));
     } catch {}
   },
 
-  async getPendingRenames(): Promise<PendingRename[]> {
+  async getPendingRenames(userId: string | number): Promise<PendingRename[]> {
     try {
-      const raw = await AsyncStorage.getItem(KEYS.PENDING_RENAMES);
+      const key = draftsPendingRenamesKey(userId);
+      if (!key) return [];
+      const raw = await AsyncStorage.getItem(key);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
     }
   },
 
-  async addPendingRename(rename: Omit<PendingRename, 'queued_at'>): Promise<void> {
+  async addPendingRename(userId: string | number, rename: Omit<PendingRename, 'queued_at'>): Promise<void> {
     try {
-      const existing = await this.getPendingRenames();
+      const key = draftsPendingRenamesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingRenames(userId);
       const filtered = existing.filter(r => r.id !== rename.id);
       filtered.push({ ...rename, queued_at: Date.now() });
-      await AsyncStorage.setItem(KEYS.PENDING_RENAMES, JSON.stringify(filtered));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
   },
 
-  async removePendingRename(id: number): Promise<void> {
+  async removePendingRename(userId: string | number, id: number): Promise<void> {
     try {
-      const existing = await this.getPendingRenames();
+      const key = draftsPendingRenamesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingRenames(userId);
       const filtered = existing.filter(r => r.id !== id);
-      await AsyncStorage.setItem(KEYS.PENDING_RENAMES, JSON.stringify(filtered));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
   },
 
-  async remapPendingRenames(localId: number, serverId: number): Promise<void> {
+  async remapPendingRenames(userId: string | number, localId: number, serverId: number): Promise<void> {
     try {
-      const existing = await this.getPendingRenames();
+      const key = draftsPendingRenamesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingRenames(userId);
       const remapped = existing.map(r => (r.id === localId ? { ...r, id: serverId } : r));
       const deduped: PendingRename[] = [];
       const seen = new Set<number>();
@@ -224,41 +257,53 @@ export const draftsCache = {
         seen.add(item.id);
         deduped.unshift(item);
       }
-      await AsyncStorage.setItem(KEYS.PENDING_RENAMES, JSON.stringify(deduped));
+      await AsyncStorage.setItem(key, JSON.stringify(deduped));
     } catch {}
   },
 
-  async getPendingCreates(): Promise<PendingCreate[]> {
+  async getPendingCreates(userId: string | number): Promise<PendingCreate[]> {
     try {
-      const raw = await AsyncStorage.getItem(KEYS.PENDING_CREATES);
+      const key = draftsPendingCreatesKey(userId);
+      if (!key) return [];
+      const raw = await AsyncStorage.getItem(key);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
     }
   },
 
-  async addPendingCreate(create: Omit<PendingCreate, 'queued_at'>): Promise<void> {
+  async addPendingCreate(userId: string | number, create: Omit<PendingCreate, 'queued_at'>): Promise<void> {
     try {
-      const existing = await this.getPendingCreates();
+      const key = draftsPendingCreatesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingCreates(userId);
       const filtered = existing.filter(c => c.localId !== create.localId);
       filtered.push({ ...create, queued_at: Date.now() });
-      await AsyncStorage.setItem(KEYS.PENDING_CREATES, JSON.stringify(filtered));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
   },
 
-  async updatePendingCreate(localId: number, patch: Partial<Omit<PendingCreate, 'localId' | 'queued_at'>>): Promise<void> {
+  async updatePendingCreate(
+    userId: string | number,
+    localId: number,
+    patch: Partial<Omit<PendingCreate, 'localId' | 'queued_at'>>,
+  ): Promise<void> {
     try {
-      const existing = await this.getPendingCreates();
+      const key = draftsPendingCreatesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingCreates(userId);
       const updated = existing.map(c => (c.localId === localId ? { ...c, ...patch } : c));
-      await AsyncStorage.setItem(KEYS.PENDING_CREATES, JSON.stringify(updated));
+      await AsyncStorage.setItem(key, JSON.stringify(updated));
     } catch {}
   },
 
-  async removePendingCreate(localId: number): Promise<void> {
+  async removePendingCreate(userId: string | number, localId: number): Promise<void> {
     try {
-      const existing = await this.getPendingCreates();
+      const key = draftsPendingCreatesKey(userId);
+      if (!key) return;
+      const existing = await this.getPendingCreates(userId);
       const filtered = existing.filter(c => c.localId !== localId);
-      await AsyncStorage.setItem(KEYS.PENDING_CREATES, JSON.stringify(filtered));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
   },
 };

@@ -10,7 +10,6 @@ import {
     Dimensions,
     Keyboard,
     KeyboardAvoidingView,
-    Modal,
     Platform,
     RefreshControl,
     ScrollView,
@@ -23,6 +22,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import DocumentViewer from '../../components/DocumentViewer';
+import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient, type WebAnalysisDownloadReportBody } from '../../services/api';
 import { useFileStore } from '../../stores/fileStore';
@@ -982,7 +982,18 @@ export default function AnalyticsDashboard() {
           try {
             console.log('📊 Fallback: Fetching receipts from mobile files endpoint...');
             // Use reasonable limit (backend caps per_page at 100); paginate if more needed
-            const filesResponse = await apiClient.getDocuments(1, FINANCIALS_FALLBACK_FETCH_SIZE, undefined, 'receipts');
+            const filesResponse = await apiClient.getDocuments(
+              1,
+              FINANCIALS_FALLBACK_FETCH_SIZE,
+              undefined,
+              'receipts',
+              undefined,
+              false,
+              false,
+              undefined,
+              undefined,
+              { folderId: null, folderAware: true, scope: 'global' }
+            );
             if (filesResponse && filesResponse.success) {
               const allFiles = filesResponse.files || filesResponse.data?.files || filesResponse.data || [];
               let receiptFiles = allFiles
@@ -1099,7 +1110,18 @@ export default function AnalyticsDashboard() {
           try {
             console.log('📊 Fetching invoices from files endpoint to get invoice IDs...');
             // Use reasonable limit (backend caps per_page at 100)
-            const invoicesResponse = await apiClient.getDocuments(1, FINANCIALS_FALLBACK_FETCH_SIZE, undefined, 'invoices');
+            const invoicesResponse = await apiClient.getDocuments(
+              1,
+              FINANCIALS_FALLBACK_FETCH_SIZE,
+              undefined,
+              'invoices',
+              undefined,
+              false,
+              false,
+              undefined,
+              undefined,
+              { folderId: null, folderAware: true, scope: 'global' }
+            );
             console.log('📊 Invoices response:', {
               success: invoicesResponse?.success,
               count: invoicesResponse?.files?.length || invoicesResponse?.data?.files?.length || 0
@@ -2835,101 +2857,68 @@ export default function AnalyticsDashboard() {
         />
       )}
       
-      {/* Receipt Category Filter Modal - filter dashboard by category */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showReceiptCategoryFilterModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowReceiptCategoryFilterModal(false)}
+        onClose={() => setShowReceiptCategoryFilterModal(false)}
+        title="Filter by Category"
+        heightRatio={0.7}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, themeStyles.modalContent]}>
-            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
-              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Filter by Category</Text>
-              <TouchableOpacity onPress={() => setShowReceiptCategoryFilterModal(false)}>
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.categoryList}>
-              {receiptCategoryFilterOptions.map((category) => (
-                <TouchableOpacity
-                  key={category}
-                  style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
-                  onPress={() => {
-                    setSelectedCategory(category);
-                    setShowReceiptCategoryFilterModal(false);
-                  }}
-                >
-                  <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
-                  {selectedCategory === category && <Ionicons name="checkmark" size={20} color={colors.primary} />}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Category Selection Modal */}
-      <Modal
-        visible={showCategoryModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowCategoryModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, themeStyles.modalContent]}>
-            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
-              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Select Category</Text>
-              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView style={styles.categoryList}>
-              {receiptCategories.map((category) => (
-                <TouchableOpacity
-                  key={category}
-                  style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
-                  onPress={() => handleSelectCategory(category)}
-                  disabled={categorizingReceipt}
-                >
-                  <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
-                  <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            
-            {categorizingReceipt && (
-              <View style={[styles.modalLoading, themeStyles.modalLoading]}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* Edit Receipt/Invoice Modal - store name, date, amount, category (same endpoint as web) */}
-      <Modal
-        visible={showEditModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={handleCloseEdit}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, styles.editModalContent, themeStyles.modalContent]}>
-            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
-              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>{editType === 'invoice' ? 'Edit Invoice' : 'Correct Data'}</Text>
-              <TouchableOpacity onPress={handleCloseEdit} disabled={savingEdit}>
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView
-              style={styles.editFormScroll}
-              contentContainerStyle={styles.editFormScrollContent}
-              keyboardShouldPersistTaps="handled"
-              bounces={true}
-              overScrollMode="always"
+        <ScrollView style={styles.categoryList}>
+          {receiptCategoryFilterOptions.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
+              onPress={() => {
+                setSelectedCategory(category);
+                setShowReceiptCategoryFilterModal(false);
+              }}
             >
+              <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
+              {selectedCategory === category && <Ionicons name="checkmark" size={20} color={colors.primary} />}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </MinimizableBottomSheet>
+
+      <MinimizableBottomSheet
+        visible={showCategoryModal}
+        onClose={() => setShowCategoryModal(false)}
+        title="Select Category"
+        heightRatio={0.7}
+      >
+        <ScrollView style={styles.categoryList}>
+          {receiptCategories.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
+              onPress={() => handleSelectCategory(category)}
+              disabled={categorizingReceipt}
+            >
+              <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
+              <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        {categorizingReceipt && (
+          <View style={[styles.modalLoading, themeStyles.modalLoading]}>
+            <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        )}
+      </MinimizableBottomSheet>
+
+      <MinimizableBottomSheet
+        visible={showEditModal}
+        onClose={handleCloseEdit}
+        title={editType === 'invoice' ? 'Edit Invoice' : 'Correct Data'}
+        heightRatio={0.85}
+      >
+        <ScrollView
+          style={styles.editFormScroll}
+          contentContainerStyle={styles.editFormScrollContent}
+          keyboardShouldPersistTaps="handled"
+          bounces={true}
+          overScrollMode="always"
+        >
               <View style={styles.editFormRow}>
                 <Text style={[styles.editFormLabel, themeStyles.editFormLabel]}>{editType === 'invoice' ? 'Vendor name' : 'Store name'}</Text>
                 <TextInput
@@ -3004,74 +2993,55 @@ export default function AnalyticsDashboard() {
                   ))}
                 </View>
               </View>
-            </ScrollView>
-            <View style={[styles.editFormActions, themeStyles.editFormActions]}>
-              <TouchableOpacity
-                style={[styles.editFormButton, styles.editFormButtonCancel, themeStyles.editFormButtonCancel]}
-                onPress={handleCloseEdit}
-                disabled={savingEdit}
-              >
-                <Text style={[styles.editFormButtonTextCancel, themeStyles.editFormButtonTextCancel]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.editFormButton, styles.editFormButtonSave]}
-                onPress={handleConfirmSave}
-                disabled={savingEdit}
-              >
-                {savingEdit ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.editFormButtonText}>Save</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Edit form date - iOS: Spinner modal (same as Schedule Meeting) */}
-      {showEditDatePicker && Platform.OS === 'ios' && (
-        <Modal
-          visible={showEditDatePicker}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={handleEditDatePickerDone}
-        >
+          </ScrollView>
+        <View style={[styles.editFormActions, themeStyles.editFormActions]}>
           <TouchableOpacity
-            style={styles.pickerModalOverlay}
-            activeOpacity={1}
-            onPress={handleEditDatePickerDone}
+            style={[styles.editFormButton, styles.editFormButtonCancel, themeStyles.editFormButtonCancel]}
+            onPress={handleCloseEdit}
+            disabled={savingEdit}
           >
-            <TouchableOpacity
-              style={[styles.pickerModalContainer, themeStyles.pickerModalContainer]}
-              activeOpacity={1}
-              onPress={(e) => e.stopPropagation()}
-            >
-              <View style={[styles.pickerModalHeader, themeStyles.pickerModalHeader]}>
-                <TouchableOpacity onPress={handleEditDatePickerDone}>
-                  <Text style={[styles.pickerModalCancelButton, themeStyles.pickerModalCancelButton]}>Cancel</Text>
-                </TouchableOpacity>
-                <Text style={[styles.pickerModalTitle, themeStyles.pickerModalTitle]}>Select date</Text>
-                <TouchableOpacity onPress={() => { setShowEditDatePicker(false); setTimeout(() => setShowEditModal(true), 0); }}>
-                  <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
-                <DateTimePicker
-                  value={getValidDate(editDatePickerValue)}
-                  mode="date"
-                  display="spinner"
-                  minimumDate={filterDateMin}
-                  maximumDate={filterDateMax}
-                  onChange={handleEditDateChange}
-                  style={styles.pickerModalDatePicker}
-                  textColor={colors.text}
-                  accentColor={colors.primary}
-                />
-              </View>
-            </TouchableOpacity>
+            <Text style={[styles.editFormButtonTextCancel, themeStyles.editFormButtonTextCancel]}>Cancel</Text>
           </TouchableOpacity>
-        </Modal>
+          <TouchableOpacity
+            style={[styles.editFormButton, styles.editFormButtonSave]}
+            onPress={handleConfirmSave}
+            disabled={savingEdit}
+          >
+            {savingEdit ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.editFormButtonText}>Save</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </MinimizableBottomSheet>
+
+      {showEditDatePicker && Platform.OS === 'ios' && (
+        <MinimizableBottomSheet
+          visible={showEditDatePicker}
+          onClose={handleEditDatePickerDone}
+          title="Select date"
+          sheetHeight={320}
+          headerRight={() => (
+            <TouchableOpacity onPress={() => { setShowEditDatePicker(false); setTimeout(() => setShowEditModal(true), 0); }}>
+              <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
+            </TouchableOpacity>
+          )}
+        >
+          <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
+            <DateTimePicker
+              value={getValidDate(editDatePickerValue)}
+              mode="date"
+              display="spinner"
+              minimumDate={filterDateMin}
+              maximumDate={filterDateMax}
+              onChange={handleEditDateChange}
+              style={styles.pickerModalDatePicker}
+              textColor={colors.text}
+              accentColor={colors.primary}
+            />
+          </View>
+        </MinimizableBottomSheet>
       )}
       {/* Edit form date - Android: Native calendar */}
       {showEditDatePicker && Platform.OS !== 'ios' && (
@@ -3085,92 +3055,52 @@ export default function AnalyticsDashboard() {
         />
       )}
       
-      {/* Payment Status Selection Modal */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showPaymentStatusModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowPaymentStatusModal(false)}
+        onClose={() => setShowPaymentStatusModal(false)}
+        title="Update Payment Status"
+        heightRatio={0.7}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, themeStyles.modalContent]}>
-            <View style={[styles.modalHeader, themeStyles.modalHeader]}>
-              <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Update Payment Status</Text>
-              <TouchableOpacity 
-                onPress={() => setShowPaymentStatusModal(false)}
-                disabled={updatingPaymentStatus}
-              >
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView style={styles.categoryList}>
-              {paymentStatuses.map((status) => (
-                <TouchableOpacity
-                  key={status}
-                  style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
-                  onPress={() => handleSelectPaymentStatus(status)}
-                  disabled={updatingPaymentStatus}
-                >
-                  <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{status}</Text>
-                  <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            
-            {updatingPaymentStatus && (
-              <View style={[styles.modalLoading, themeStyles.modalLoading]}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            )}
+        <ScrollView style={styles.categoryList}>
+          {paymentStatuses.map((status) => (
+            <TouchableOpacity
+              key={status}
+              style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
+              onPress={() => handleSelectPaymentStatus(status)}
+              disabled={updatingPaymentStatus}
+            >
+              <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{status}</Text>
+              <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        {updatingPaymentStatus && (
+          <View style={[styles.modalLoading, themeStyles.modalLoading]}>
+            <ActivityIndicator size="large" color={colors.primary} />
           </View>
-        </View>
-      </Modal>
+        )}
+      </MinimizableBottomSheet>
       
-      {/* Advanced Filter Modal - KeyboardAvoidingView so content is not covered by keyboard */}
-      <Modal
+      <MinimizableBottomSheet
         visible={showAdvancedFilterModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => {
+        onClose={() => {
           Keyboard.dismiss();
           setShowAdvancedFilterModal(false);
         }}
-        statusBarTranslucent
+        title="Advanced Filters"
+        heightRatio={0.92}
       >
-        {showAdvancedFilterModal && (
-        <View style={styles.filterModalOverlay}>
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              Keyboard.dismiss();
-              setShowAdvancedFilterModal(false);
-            }}
-          />
-          <KeyboardAvoidingView
-            style={styles.filterModalKeyboardAvoid}
-            behavior="padding"
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior="padding"
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+        >
+          <ScrollView
+            style={styles.filterModalScroll}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.filterModalScrollContent}
+            showsVerticalScrollIndicator={false}
           >
-            <View style={[styles.filterModalContentBox, themeStyles.filterModalContentBox]}>
-              <View style={[styles.modalHeader, themeStyles.modalHeader]}>
-                <Text style={[styles.modalTitle, themeStyles.modalTitle]}>Advanced Filters</Text>
-                <TouchableOpacity onPress={() => {
-                  // Dismiss keyboard before closing
-                  Keyboard.dismiss();
-                  setTimeout(() => setShowAdvancedFilterModal(false), 100);
-                }}>
-                  <Ionicons name="close" size={24} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-              
-              <ScrollView
-                style={styles.filterModalScroll}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.filterModalScrollContent}
-                showsVerticalScrollIndicator={false}
-              >
               {/* Date Range Section - same date picker trigger style as Schedule Meeting */}
               <View style={styles.filterSection}>
                 <Text style={[styles.filterSectionTitle, themeStyles.filterSectionTitle]}>Date Range</Text>
@@ -3359,19 +3289,13 @@ export default function AnalyticsDashboard() {
                 </TouchableOpacity>
               </View>
             </ScrollView>
-          </View>
-          </KeyboardAvoidingView>
-        </View>
-        )}
-      </Modal>
+        </KeyboardAvoidingView>
+      </MinimizableBottomSheet>
 
-      {/* From Date - iOS: Spinner modal (same as Schedule Meeting); only one modal at a time to avoid freeze */}
       {showDateFromPicker && Platform.OS === 'ios' && (
-        <Modal
+        <MinimizableBottomSheet
           visible={showDateFromPicker}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => {
+          onClose={() => {
             fromPickerForDraftRef.current = false;
             datePickerEditingDraftRef.current = null;
             setShowDateFromPicker(false);
@@ -3380,58 +3304,28 @@ export default function AnalyticsDashboard() {
               setTimeout(() => setShowAdvancedFilterModal(true), 100);
             }
           }}
-        >
-          <TouchableOpacity
-            style={styles.pickerModalOverlay}
-            activeOpacity={1}
-            onPress={() => {
-              fromPickerForDraftRef.current = false;
-              datePickerEditingDraftRef.current = null;
-              setShowDateFromPicker(false);
-              if (reopenAdvancedFilterAfterDatePicker) {
-                setReopenAdvancedFilterAfterDatePicker(false);
-                setTimeout(() => setShowAdvancedFilterModal(true), 100);
-              }
-            }}
-          >
-            <TouchableOpacity
-              style={[styles.pickerModalContainer, themeStyles.pickerModalContainer]}
-              activeOpacity={1}
-              onPress={(e) => e.stopPropagation()}
-            >
-              <View style={[styles.pickerModalHeader, themeStyles.pickerModalHeader]}>
-                <TouchableOpacity onPress={() => {
-                  fromPickerForDraftRef.current = false;
-                  datePickerEditingDraftRef.current = null;
-                  setShowDateFromPicker(false);
-                  if (reopenAdvancedFilterAfterDatePicker) {
-                    setReopenAdvancedFilterAfterDatePicker(false);
-                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
-                  }
-                }}>
-                  <Text style={[styles.pickerModalCancelButton, themeStyles.pickerModalCancelButton]}>Cancel</Text>
-                </TouchableOpacity>
-                <Text style={[styles.pickerModalTitle, themeStyles.pickerModalTitle]}>Select date</Text>
-                <TouchableOpacity onPress={handleDateFromPickerDone}>
-                  <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
-                <DateTimePicker
-                  value={getValidDate(dateFromPickerValue)}
-                  mode="date"
-                  display="spinner"
-                  onChange={handleDateFromChange}
-                  minimumDate={filterDateMin}
-                  maximumDate={filterDateMax}
-                  style={styles.pickerModalDatePicker}
-                  textColor={colors.text}
-                  accentColor={colors.primary}
-                />
-              </View>
+          title="Select date"
+          sheetHeight={320}
+          headerRight={() => (
+            <TouchableOpacity onPress={handleDateFromPickerDone}>
+              <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
             </TouchableOpacity>
-          </TouchableOpacity>
-        </Modal>
+          )}
+        >
+          <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
+            <DateTimePicker
+              value={getValidDate(dateFromPickerValue)}
+              mode="date"
+              display="spinner"
+              onChange={handleDateFromChange}
+              minimumDate={filterDateMin}
+              maximumDate={filterDateMax}
+              style={styles.pickerModalDatePicker}
+              textColor={colors.text}
+              accentColor={colors.primary}
+            />
+          </View>
+        </MinimizableBottomSheet>
       )}
       {/* From Date - Android: Native calendar */}
       {showDateFromPicker && Platform.OS !== 'ios' && (
@@ -3445,13 +3339,10 @@ export default function AnalyticsDashboard() {
         />
       )}
 
-      {/* To Date - iOS: Spinner modal (same as Schedule Meeting); only one modal at a time to avoid freeze */}
       {showDateToPicker && Platform.OS === 'ios' && (
-        <Modal
+        <MinimizableBottomSheet
           visible={showDateToPicker}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => {
+          onClose={() => {
             toPickerForDraftRef.current = false;
             datePickerEditingDraftRef.current = null;
             setShowDateToPicker(false);
@@ -3460,58 +3351,28 @@ export default function AnalyticsDashboard() {
               setTimeout(() => setShowAdvancedFilterModal(true), 100);
             }
           }}
-        >
-          <TouchableOpacity
-            style={styles.pickerModalOverlay}
-            activeOpacity={1}
-            onPress={() => {
-              toPickerForDraftRef.current = false;
-              datePickerEditingDraftRef.current = null;
-              setShowDateToPicker(false);
-              if (reopenAdvancedFilterAfterDatePicker) {
-                setReopenAdvancedFilterAfterDatePicker(false);
-                setTimeout(() => setShowAdvancedFilterModal(true), 100);
-              }
-            }}
-          >
-            <TouchableOpacity
-              style={[styles.pickerModalContainer, themeStyles.pickerModalContainer]}
-              activeOpacity={1}
-              onPress={(e) => e.stopPropagation()}
-            >
-              <View style={[styles.pickerModalHeader, themeStyles.pickerModalHeader]}>
-                <TouchableOpacity onPress={() => {
-                  toPickerForDraftRef.current = false;
-                  datePickerEditingDraftRef.current = null;
-                  setShowDateToPicker(false);
-                  if (reopenAdvancedFilterAfterDatePicker) {
-                    setReopenAdvancedFilterAfterDatePicker(false);
-                    setTimeout(() => setShowAdvancedFilterModal(true), 100);
-                  }
-                }}>
-                  <Text style={[styles.pickerModalCancelButton, themeStyles.pickerModalCancelButton]}>Cancel</Text>
-                </TouchableOpacity>
-                <Text style={[styles.pickerModalTitle, themeStyles.pickerModalTitle]}>Select date</Text>
-                <TouchableOpacity onPress={handleDateToPickerDone}>
-                  <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
-                <DateTimePicker
-                  value={getValidDate(dateToPickerValue)}
-                  mode="date"
-                  display="spinner"
-                  onChange={handleDateToChange}
-                  minimumDate={getValidDate(dateFromPickerValue)}
-                  maximumDate={filterDateMax}
-                  style={styles.pickerModalDatePicker}
-                  textColor={colors.text}
-                  accentColor={colors.primary}
-                />
-              </View>
+          title="Select date"
+          sheetHeight={320}
+          headerRight={() => (
+            <TouchableOpacity onPress={handleDateToPickerDone}>
+              <Text style={[styles.doneButton, themeStyles.doneButton]}>Done</Text>
             </TouchableOpacity>
-          </TouchableOpacity>
-        </Modal>
+          )}
+        >
+          <View style={[styles.pickerModalContent, themeStyles.pickerModalContent]}>
+            <DateTimePicker
+              value={getValidDate(dateToPickerValue)}
+              mode="date"
+              display="spinner"
+              onChange={handleDateToChange}
+              minimumDate={getValidDate(dateFromPickerValue)}
+              maximumDate={filterDateMax}
+              style={styles.pickerModalDatePicker}
+              textColor={colors.text}
+              accentColor={colors.primary}
+            />
+          </View>
+        </MinimizableBottomSheet>
       )}
       {/* To Date - Android: Native calendar */}
       {showDateToPicker && Platform.OS !== 'ios' && (

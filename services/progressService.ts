@@ -27,6 +27,8 @@ interface ProgressStore {
   updateProgress: (id: string, updates: Partial<ProgressData>) => void;
   removeProgress: (id: string) => void;
   clearAllProgress: () => void;
+  /** Drop in-progress rows left over from backgrounded/orphaned uploads. */
+  cleanupStaleProgress: (maxAgeMs?: number) => void;
   
   // Batch operations
   setProgressData: (data: ProgressData[]) => void;
@@ -66,7 +68,6 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
   },
 
   updateProgress: (id, updates) => {
-    console.log(`📊 Updating progress item: ${id}`, updates);
     set((state) => ({
       progressData: state.progressData.map((item) =>
         item.id === id ? { ...item, ...updates } : item
@@ -98,6 +99,20 @@ export const useProgressStore = create<ProgressStore>((set, get) => ({
 
   clearAllProgress: () => {
     set({ progressData: [], visible: false, minimized: false });
+  },
+
+  cleanupStaleProgress: (maxAgeMs = 8 * 60 * 1000) => {
+    const now = Date.now();
+    set((state) => {
+      const progressData = state.progressData.filter((item) => {
+        if (item.status !== 'in-progress' && item.status !== 'pending') return true;
+        return now - (item.timestamp ?? 0) < maxAgeMs;
+      });
+      return {
+        progressData,
+        visible: progressData.length > 0 ? state.visible : false,
+      };
+    });
   },
 
   setProgressData: (data) => {

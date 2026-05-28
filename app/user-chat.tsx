@@ -4,7 +4,7 @@ import 'react-native-url-polyfill/auto';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AccessibilityInfo,
     ActivityIndicator,
@@ -28,11 +28,12 @@ import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useLimitError } from '../contexts/LimitErrorContext';
-import { useAuth } from './context/auth';
+import { userChatFavoritesStorageKey } from '../services/userScopedCache';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService as api } from '../services/api';
 import { secureStorage } from '../utils/storage';
 import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
+import { useAuth } from './context/auth';
 
 interface ChatParticipant {
   id: number;
@@ -58,8 +59,7 @@ interface Chat {
   workspace?: Workspace;
 }
 
-// Storage key for persisting favorite chats
-const FAVORITE_CHATS_KEY = '@grabdocs_user_chat_favorites';
+// Storage key helpers scoped per authenticated user
 const USER_CHAT_INPUT_MIN_HEIGHT = 40;
 const USER_CHAT_INPUT_MAX_HEIGHT = 64;
 
@@ -83,6 +83,12 @@ export default function UserChatScreen() {
   const insets = useSafeAreaInsets();
   const { user: authUser } = useAuth();
   const { showLimitError } = useLimitError();
+
+  const persistFavoriteChats = useCallback(async (ids: Set<number>) => {
+    const key = userChatFavoritesStorageKey(authUser?.id);
+    if (!key) return;
+    await AsyncStorage.setItem(key, JSON.stringify(Array.from(ids)));
+  }, [authUser?.id]);
 
   const USER_CHAT_PAGE_SIZE = 20;
 
@@ -443,12 +449,17 @@ export default function UserChatScreen() {
     loadChats();
     loadWorkspaces();
     loadFavorites();
-  }, []);
+  }, [authUser?.id]);
 
   // Load favorites from storage
   const loadFavorites = async () => {
     try {
-      const stored = await AsyncStorage.getItem(FAVORITE_CHATS_KEY);
+      const key = userChatFavoritesStorageKey(authUser?.id);
+      if (!key) {
+        setFavoriteChatIds(new Set());
+        return;
+      }
+      const stored = await AsyncStorage.getItem(key);
       if (stored) {
         const favoriteIds = JSON.parse(stored);
         setFavoriteChatIds(new Set(favoriteIds));
@@ -628,7 +639,7 @@ export default function UserChatScreen() {
           rawChats.forEach((c: any) => {
             if (c.is_favorite) next.add(Number(c.id));
           });
-          AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(next)));
+          persistFavoriteChats(next);
           return next;
         });
       }
@@ -659,7 +670,7 @@ export default function UserChatScreen() {
           rawChats.forEach((c: any) => {
             if (c.is_favorite) next.add(Number(c.id));
           });
-          AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(next)));
+          persistFavoriteChats(next);
           return next;
         });
       }
@@ -1146,7 +1157,7 @@ export default function UserChatScreen() {
       } else {
         newFavorites.delete(chatId);
       }
-      await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+      await persistFavoriteChats(newFavorites);
       setFavoriteChatIds(newFavorites);
 
       setMenuChatId(null);
@@ -1188,7 +1199,7 @@ export default function UserChatScreen() {
                   if (favoriteChatIds.has(chatId)) {
                     const newFavorites = new Set(favoriteChatIds);
                     newFavorites.delete(chatId);
-                    await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+                    await persistFavoriteChats(newFavorites);
                     setFavoriteChatIds(newFavorites);
                   }
                   
@@ -1218,7 +1229,7 @@ export default function UserChatScreen() {
                   if (favoriteChatIds.has(chatId)) {
                     const newFavorites = new Set(favoriteChatIds);
                     newFavorites.delete(chatId);
-                    await AsyncStorage.setItem(FAVORITE_CHATS_KEY, JSON.stringify(Array.from(newFavorites)));
+                    await persistFavoriteChats(newFavorites);
                     setFavoriteChatIds(newFavorites);
                   }
                   
