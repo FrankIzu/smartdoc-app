@@ -250,7 +250,34 @@ export async function resolveDefaultHomeWebPath(loginUser?: unknown): Promise<We
 export type PostLoginRouter = {
   replace: (href: Href) => void;
   push: (href: Href) => void;
+  dismissAll?: () => void;
+  canDismiss?: () => boolean;
+  dismissTo?: (href: Href) => void;
 };
+
+/** Pop nested auth screens (e.g. sign-in → OTP) before leaving the auth stack. */
+function clearAuthStackBeforeMainApp(router: PostLoginRouter): void {
+  while (router.canDismiss?.()) {
+    router.dismissAll?.();
+  }
+}
+
+/** Replace must commit before a follow-up push; push was racing and left login under the stack. */
+function afterRootNavigationSettles(fn: () => void): void {
+  queueMicrotask(() => {
+    requestAnimationFrame(() => {
+      InteractionManager.runAfterInteractions(fn);
+    });
+  });
+}
+
+function landOnMainTabs(router: PostLoginRouter): void {
+  if (router.dismissTo) {
+    router.dismissTo('/(tabs)');
+    return;
+  }
+  router.replace('/(tabs)');
+}
 
 /** Cold start: user lands here then immediately routes into the shell — never rely on Redirect to a tab leaf. */
 export async function bootstrapAuthenticatedNavigation(router: PostLoginRouter): Promise<void> {
@@ -258,23 +285,27 @@ export async function bootstrapAuthenticatedNavigation(router: PostLoginRouter):
     const webPath = await resolveDefaultHomeWebPath();
     navigateTabsThenDefaultHome(router, webPath);
   } catch {
-    router.replace('/(tabs)');
+    clearAuthStackBeforeMainApp(router);
+    landOnMainTabs(router);
   }
 }
 
 /**
  * Land on tabs home first so the stack can pop back to the main dashboard; then optionally push the chosen tab/screen.
+ * Clears the auth stack first so back from the default-home screen never returns to sign-in.
  */
 export function navigateTabsThenDefaultHome(router: PostLoginRouter, webPath: string): void {
   const normalized = normalizeWebDefaultHomePath(webPath);
-  router.replace('/(tabs)');
+  clearAuthStackBeforeMainApp(router);
+
   if (isMobileMainHomePath(normalized)) {
+    landOnMainTabs(router);
     return;
   }
+
   const href = expoHrefForWebDefaultHome(normalized);
-  requestAnimationFrame(() => {
-    InteractionManager.runAfterInteractions(() => {
-      router.push(href);
-    });
+  landOnMainTabs(router);
+  afterRootNavigationSettles(() => {
+    router.push(href);
   });
 }
