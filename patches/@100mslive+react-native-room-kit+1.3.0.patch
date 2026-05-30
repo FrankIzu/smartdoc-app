@@ -1,5 +1,27 @@
+diff --git a/node_modules/@100mslive/react-native-room-kit/src/components/Preview.tsx b/node_modules/@100mslive/react-native-room-kit/src/components/Preview.tsx
+index e1545ce..483ead6 100644
+--- a/node_modules/@100mslive/react-native-room-kit/src/components/Preview.tsx
++++ b/node_modules/@100mslive/react-native-room-kit/src/components/Preview.tsx
+@@ -87,11 +87,12 @@ export const Preview = ({
+ 
+   useEffect(() => {
+     async function setupAudioVideoOnPreview() {
+-      // TODO: rectify the below issue,
+-      // false means audio/video is enabled, true means audio/video is disabled
+-      // it should have been true means audio/video is enabled, false means audio/video is disabled
+-      await hmsActions.setLocalAudioEnabled(false);
+-      await hmsActions.setLocalVideoEnabled(false);
++      // In this HMS SDK the `enable` param is inverted relative to its name:
++      //   setLocalAudioEnabled(false) → unmutes (enables) audio
++      //   setLocalAudioEnabled(true)  → mutes  (disables) audio
++      // Pass `true` here so both tracks start muted/off on the prejoin screen.
++      await hmsActions.setLocalAudioEnabled(true);
++      await hmsActions.setLocalVideoEnabled(true);
+     }
+     setupAudioVideoOnPreview().then((r) => console.log(r));
+   }, []);
 diff --git a/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts b/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts
-index 9805ef5..7129179 100644
+index 9805ef5..a7a9d85 100644
 --- a/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts
 +++ b/node_modules/@100mslive/react-native-room-kit/src/hooks-sdk.ts
 @@ -16,6 +16,7 @@ import {
