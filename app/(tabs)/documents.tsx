@@ -44,6 +44,7 @@ import { toAlertMessage } from '../../utils/alertUtils';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { mapFileRowToDocument } from '../../utils/mapFileRowToDocument';
 import { shareDocumentFile } from '../../utils/shareDocumentFile';
+import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
 import { scaleStyleObject } from '../../utils/styleUtils';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
@@ -2514,22 +2515,13 @@ export default function QuickFilesScreen() {
       padding: 6,
       marginLeft: 6,
     },
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    modalOverlay: modalScrimOverlayStyle(colors.isDark, {
       justifyContent: 'center',
       alignItems: 'center',
-    },
+    }),
     kebabMenuContainer: {
-      backgroundColor: colors.card,
-      borderRadius: 12,
+      ...floatingDialogSurfaceStyle(colors, colors.isDark, { minWidth: 150 }),
       padding: 8,
-      minWidth: 150,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.25,
-      shadowRadius: 8,
-      elevation: 8,
     },
     kebabMenuItem: {
       flexDirection: 'row',

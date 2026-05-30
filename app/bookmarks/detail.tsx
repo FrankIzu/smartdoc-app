@@ -27,6 +27,7 @@ import { bookmarkDetailScreenKey, bookmarksListScreenKey } from '../../services/
 import { formatDateToLocal } from '../../utils/timeFormatting';
 import { screenCache } from '../../utils/screenCache';
 import { shareDocumentFile } from '../../utils/shareDocumentFile';
+import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -727,22 +728,13 @@ export default function BookmarkDetailScreen() {
       padding: 6,
       marginLeft: 6,
     },
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    modalOverlay: modalScrimOverlayStyle(themeColors.isDark, {
       justifyContent: 'center',
       alignItems: 'center',
-    },
+    }),
     kebabMenuContainer: {
-      backgroundColor: themeColors.card,
-      borderRadius: 12,
+      ...floatingDialogSurfaceStyle(themeColors, themeColors.isDark, { minWidth: 150 }),
       padding: 8,
-      minWidth: 150,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.25,
-      shadowRadius: 8,
-      elevation: 8,
     },
     kebabMenuItem: {
       flexDirection: 'row',

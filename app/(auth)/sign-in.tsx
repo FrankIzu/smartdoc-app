@@ -19,10 +19,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GoogleLogo } from '../../components/GoogleLogo';
 import { API_BASE_URL } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
-import { useThemeColors } from '../../hooks/useThemeColors';
+import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
 
 export default function SignInScreen() {
@@ -39,11 +40,14 @@ export default function SignInScreen() {
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  // Android fallback: Chrome Custom Tab dismisses before the Linking event fires,
+  // so we wait here for AuthContext to set the user via the deep link.
+  const [waitingForGoogleDeepLink, setWaitingForGoogleDeepLink] = useState(false);
   const insets = useSafeAreaInsets();
 
   // Use regular auth for normal login, Enhanced2FA only for biometric
   // Note: We use local isSubmitting for the button so the screen doesn't unmount on login (auth loading would hide entire app)
-  const { signIn, loading: authLoading, setUserFromExternal } = useAuth();
+  const { signIn, user, loading: authLoading, setUserFromExternal } = useAuth();
   const loading = authLoading || isSubmitting || googleLoading;
   const { loginWithBiometric } = useEnhanced2FAAuth();
 
@@ -52,6 +56,29 @@ export default function SignInScreen() {
     checkBiometricAvailability();
     checkAppleSignInAvailability();
   }, []);
+
+  // Android Google OAuth: AuthContext sets user via Linking deep link after Chrome Custom Tab
+  // closes. When user becomes set while we are waiting, navigate to the home screen.
+  useEffect(() => {
+    if (!waitingForGoogleDeepLink || !user?.id) return;
+    setWaitingForGoogleDeepLink(false);
+    setGoogleLoading(false);
+    void (async () => {
+      const webPath = await resolveDefaultHomeWebPath();
+      navigateTabsThenDefaultHome(router, webPath);
+    })();
+  }, [waitingForGoogleDeepLink, user?.id, router]);
+
+  // If Android deep link never arrives (user closed tab, or OAuth failed), stop spinning.
+  useEffect(() => {
+    if (!waitingForGoogleDeepLink) return;
+    const timeout = setTimeout(() => {
+      setWaitingForGoogleDeepLink(false);
+      setGoogleLoading(false);
+      setError('Google sign-in did not complete. Please try again.');
+    }, 60000);
+    return () => clearTimeout(timeout);
+  }, [waitingForGoogleDeepLink]);
 
   const checkAppleSignInAvailability = async () => {
     if (Platform.OS === 'ios') {
@@ -320,14 +347,46 @@ export default function SignInScreen() {
 
   // Handle Google Sign-In
   const handleGoogleSignIn = async () => {
+    let deepLinkHandled = false;
     try {
       setError('');
       setGoogleLoading(true);
 
       const googleResult = await googleAuthService.signInWithGoogle();
 
-      // Native: OAuth continues in the browser; session is completed via grabdocs://login-success (AuthContext).
+      // Native backend flow: openAuthSessionAsync returned the redirect URL synchronously.
+      // Exchange the session token for a JWT and navigate — no Linking event or login-success
+      // screen required, so the transition is immediate and reliable.
+      if (googleResult.completedViaDeepLink && googleResult.loginToken) {
+        deepLinkHandled = true;
+        const exchangeResult = await apiService.exchangeGoogleOAuthToken(googleResult.loginToken);
+        if (!exchangeResult.success || !exchangeResult.user) {
+          deepLinkHandled = false;
+          setError('Google sign-in failed. Please try again.');
+          return;
+        }
+        const u = exchangeResult.user;
+        const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
+        const userData = {
+          id: String(u.id),
+          email: u.email || '',
+          name,
+          first_name: u.firstName ?? undefined,
+          last_name: u.lastName ?? undefined,
+          username: u.username ?? undefined,
+        };
+        await setUserFromExternal(userData, (exchangeResult as any).token || undefined);
+        const webPath = await resolveDefaultHomeWebPath();
+        navigateTabsThenDefaultHome(router, webPath);
+        return;
+      }
+
+      // Android fallback: Chrome Custom Tab fired the deep link via Linking and then dismissed.
+      // AuthContext.handleOAuthDeepLink will exchange the token and set the user; the useEffect
+      // above watches for that and triggers navigation. Keep the spinner visible while waiting.
       if (googleResult.completedViaDeepLink) {
+        deepLinkHandled = true;
+        setWaitingForGoogleDeepLink(true);
         return;
       }
 
@@ -383,8 +442,12 @@ export default function SignInScreen() {
     } catch (error: any) {
       console.error('Google sign-in error:', error);
       setError(error.message || 'Google sign-in failed');
+      deepLinkHandled = false;
     } finally {
-      setGoogleLoading(false);
+      // Keep loading spinner while navigating to avoid flash; cleared once navigation completes.
+      if (!deepLinkHandled) {
+        setGoogleLoading(false);
+      }
     }
   };
 

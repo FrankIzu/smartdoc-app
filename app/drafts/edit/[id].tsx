@@ -1,4 +1,4 @@
-﻿import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -19,7 +19,6 @@ import {
     TextInput,
     TouchableOpacity,
     TouchableWithoutFeedback,
-    useColorScheme,
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,6 +36,12 @@ import { useOpenChatGD } from '../../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiClient } from '../../../services/api';
 import { toAlertMessage } from '../../../utils/alertUtils';
+import {
+  anchoredPopoverCardStyle,
+  anchoredPopoverOverlayStyle,
+  floatingDialogSurfaceStyle,
+  modalScrimOverlayStyle,
+} from '../../../utils/dialogSurfaceStyles';
 import { draftsCache, isNetworkError } from '../../../utils/draftsCache';
 import { secureStorage } from '../../../utils/storage';
 import { AnimatedHeaderContainer } from '../../components/AnimatedHeaderContainer';
@@ -194,8 +199,7 @@ export default function DraftEditScreen() {
   const { user } = useAuth();
   const userId = user?.id;
   const colors = useThemeColors();
-  const colorScheme = useColorScheme();
-  const isDarkMode = colorScheme === 'dark';
+  const isDarkMode = colors.isDark;
   const { isDark, setTheme } = useTheme();
   const draftId = id ? parseInt(id, 10) : NaN;
   const { toggleHeader, toggleEnabled, showHeader } = useHeaderVisibility();
@@ -1175,7 +1179,7 @@ export default function DraftEditScreen() {
         ? `${others[0].name} and ${others[1].name} are editing`
         : `${others.length} people are editing`;
 
-  const editorMoreButtonRef = useRef<TouchableOpacity>(null);
+  const editorMoreButtonRef = useRef<View>(null);
   const [editorMenuVisible, setEditorMenuVisible] = useState(false);
   const [editorMenuAnchor, setEditorMenuAnchor] = useState({ top: 0, right: 0 });
 
@@ -1363,15 +1367,13 @@ export default function DraftEditScreen() {
       textAlignVertical: 'top',
       minHeight: 200,
     },
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.5)',
+    modalOverlay: modalScrimOverlayStyle(isDarkMode, {
       justifyContent: 'center',
       alignItems: 'center',
       padding: 20,
-    },
+    }),
     modalBox: {
-      backgroundColor: colors.card,
+      ...floatingDialogSurfaceStyle(colors, isDarkMode),
       borderRadius: 12,
       padding: 0,
       minWidth: 280,
@@ -1382,7 +1384,7 @@ export default function DraftEditScreen() {
       borderTopRightRadius: 16,
     },
     modalBoxCompact: {
-      backgroundColor: colors.card,
+      ...floatingDialogSurfaceStyle(colors, isDarkMode),
       borderRadius: 12,
       padding: 0,
       minWidth: 320,
@@ -1501,21 +1503,8 @@ export default function DraftEditScreen() {
     shareLinkRevokeBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: '#FF3B30' },
     shareLinkRevokeBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
     shareLinkDeleteBtn: { padding: 6, borderRadius: 6, backgroundColor: '#FF3B30' },
-    popoverOverlay: { flex: 1 },
-    popoverCard: {
-      position: 'absolute',
-      backgroundColor: colors.card,
-      borderRadius: 13,
-      minWidth: 210,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: isDarkMode ? 0.5 : 0.18,
-      shadowRadius: 12,
-      elevation: 10,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      overflow: 'hidden',
-    },
+    popoverOverlay: anchoredPopoverOverlayStyle(isDarkMode),
+    popoverCard: anchoredPopoverCardStyle(colors, isDarkMode),
     popoverItem: {
       flexDirection: 'row',
       alignItems: 'center',

@@ -1,4 +1,4 @@
-﻿import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -17,6 +17,7 @@ import FileNameText from '../../components/FileNameText';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { toAlertMessage } from '../../utils/alertUtils';
+import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
 import { useAuth } from '../context/auth';
 
 type FileInviteRow = {
@@ -430,22 +431,13 @@ export default function DraftsDeletedAndSharedScreen() {
         actionText: { fontSize: 14, fontWeight: '600', color: '#fff' },
         rejectText: { fontSize: 14, fontWeight: '600', color: colors.text },
         kebabButton: { padding: 6, marginLeft: 6 },
-        modalOverlay: {
-          flex: 1,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        modalOverlay: modalScrimOverlayStyle(colors.isDark, {
           justifyContent: 'center',
           alignItems: 'center',
-        },
+        }),
         kebabMenuContainer: {
-          backgroundColor: colors.card,
-          borderRadius: 12,
+          ...floatingDialogSurfaceStyle(colors, colors.isDark, { minWidth: 180 }),
           padding: 8,
-          minWidth: 180,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.25,
-          shadowRadius: 8,
-          elevation: 8,
         },
         kebabMenuItem: {
           flexDirection: 'row',

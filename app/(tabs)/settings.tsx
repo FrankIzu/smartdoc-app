@@ -39,6 +39,12 @@ import {
   WebDefaultHomePath,
 } from '../../utils/defaultHomePath';
 import { screenCache } from '../../utils/screenCache';
+import {
+  dialogSurfaceBorder,
+  dialogSurfaceShadow,
+  floatingDialogSurfaceStyle,
+  modalScrimOverlayStyle,
+} from '../../utils/dialogSurfaceStyles';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
@@ -961,18 +967,16 @@ export default function SettingsScreen() {
       color: '#007AFF',
       fontWeight: '600',
     },
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.5)',
+    modalOverlay: modalScrimOverlayStyle(colors.isDark, {
       justifyContent: 'center',
       alignItems: 'center',
       padding: 24,
-    },
+    }),
     modalCard: {
+      ...floatingDialogSurfaceStyle(colors, colors.isDark, { borderRadius: 16 }),
       width: '100%',
       maxWidth: 340,
       padding: 24,
-      borderRadius: 16,
     },
     pinInput: {
       paddingVertical: 12,
@@ -1049,6 +1053,8 @@ export default function SettingsScreen() {
       padding: 16,
       borderRadius: 16,
       backgroundColor: colors.sectionBackground,
+      ...dialogSurfaceBorder(colors.isDark, colors.border),
+      ...dialogSurfaceShadow(colors.isDark),
     },
     defaultHomeModalTitle: {
       fontSize: scaledFontSize(18),

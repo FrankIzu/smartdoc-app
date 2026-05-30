@@ -63,6 +63,11 @@ import {
     sortCalendarEventsByStartDesc,
 } from '../../utils/calendarTime';
 import { openMapsForLocationLabel } from '../../utils/openMapsQuery';
+import {
+  dialogSurfaceBorder,
+  dialogSurfaceShadow,
+  modalScrimOverlayStyle,
+} from '../../utils/dialogSurfaceStyles';
 import { useAuth } from '../context/auth';
 import { CalendarOAuthWebView } from './components/CalendarOAuthWebView';
 import { CalendarReachPill } from './components/CalendarReachIndicator';
@@ -1062,13 +1067,16 @@ export default function CalendarHomeScreen() {
         memberSuggestName: { color: colors.text, fontSize: 15 },
         memberSuggestEmail: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
         modalWrap: { flex: 1, justifyContent: 'center', paddingHorizontal: 24 },
-        modalBackdropPressable: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
+        modalBackdropPressable: {
+          ...StyleSheet.absoluteFillObject,
+          ...(colors.isDark ? { backgroundColor: 'rgba(0,0,0,0.5)' } : { backgroundColor: 'rgba(0,0,0,0.45)' }),
+        },
         modalCard: {
           borderRadius: 14,
           padding: 20,
-          borderWidth: 1,
           backgroundColor: colors.surface,
-          borderColor: colors.border,
+          ...dialogSurfaceBorder(colors.isDark, colors.border),
+          ...dialogSurfaceShadow(colors.isDark),
         },
         modalTitle: {
           fontSize: 17,

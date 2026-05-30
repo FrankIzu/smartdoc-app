@@ -1,8 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { useColorScheme } from 'react-native';
-import { useDelayedOfflineBanner } from '../../hooks/useDelayedOfflineBanner';
 import {
     ActivityIndicator,
     Alert,
@@ -22,9 +20,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import FileNameText from '../../components/FileNameText';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
+import { useDelayedOfflineBanner } from '../../hooks/useDelayedOfflineBanner';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { toAlertMessage } from '../../utils/alertUtils';
+import {
+  anchoredPopoverCardStyle,
+  anchoredPopoverOverlayStyle,
+} from '../../utils/dialogSurfaceStyles';
 import { CachedDraftMeta, draftsCache, isNetworkError } from '../../utils/draftsCache';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
@@ -101,7 +104,7 @@ export default function DraftsListScreen() {
   const openChatGD = useOpenChatGD();
   const { user } = useAuth();
   const colors = useThemeColors();
-  const isDarkMode = useColorScheme() === 'dark';
+  const isDarkMode = colors.isDark;
   const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
   const [drafts, setDrafts] = useState<DraftItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,7 +114,7 @@ export default function DraftsListScreen() {
   const [isOffline, setIsOffline] = useState(false);
   const { offlineBannerVisible, showOfflineBannerAfterDelay } = useDelayedOfflineBanner(isOffline);
   const draftSwipeRefs = useRef<Map<number, Swipeable>>(new Map());
-  const moreButtonRef = useRef<TouchableOpacity>(null);
+  const moreButtonRef = useRef<View>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState({ top: 0, right: 0 });
   const userId = user?.id;
@@ -514,21 +517,8 @@ export default function DraftsListScreen() {
       gap: 6,
     },
     emptyNewBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-    popoverOverlay: { flex: 1 },
-    popoverCard: {
-      position: 'absolute',
-      backgroundColor: colors.card,
-      borderRadius: 13,
-      minWidth: 210,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: isDarkMode ? 0.5 : 0.18,
-      shadowRadius: 12,
-      elevation: 10,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      overflow: 'hidden',
-    },
+    popoverOverlay: anchoredPopoverOverlayStyle(isDarkMode),
+    popoverCard: anchoredPopoverCardStyle(colors, isDarkMode),
     popoverItem: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -712,7 +702,6 @@ export default function DraftsListScreen() {
                           <FileNameText
                             name={stripExtension(draft.original_filename)}
                             style={dynamicStyles.itemTitle}
-                            numberOfLines={1}
                           />
                           <Text style={dynamicStyles.itemSubtitle} numberOfLines={1}>
                             {formatItemDate(draft, key)}

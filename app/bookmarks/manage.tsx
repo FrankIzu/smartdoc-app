@@ -20,6 +20,7 @@ import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { apiClient } from '../../services/api';
 import { bookmarksListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
+import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
 import { useAuth } from '../context/auth';
 
 interface Bookmark {
@@ -371,20 +372,18 @@ export default function ManageBookmarksScreen() {
     deleteButton: {
       padding: 4,
     },
-    modalOverlay: {
+    modalOverlay: modalScrimOverlayStyle(colors.isDark, {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
       justifyContent: 'center',
       alignItems: 'center',
       padding: 16,
-    },
+    }),
     modalContainer: {
-      backgroundColor: colors.card,
-      borderRadius: 12,
+      ...floatingDialogSurfaceStyle(colors, colors.isDark),
       width: '100%',
       maxWidth: 400,
     },

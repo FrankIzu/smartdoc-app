@@ -27,8 +27,10 @@ interface GoogleAuthResult {
   accessToken?: string;
   idToken?: string;
   error?: string;
-  /** True when native app opened backend OAuth URL; completion happens via grabdocs://login-success deep link. */
+  /** True when native app opened backend OAuth URL via openAuthSessionAsync; loginToken contains the session token to exchange. */
   completedViaDeepLink?: boolean;
+  /** Session token extracted from the grabdocs://login-success redirect; exchange for a JWT via /api/v1/web/oauth/exchange-token. */
+  loginToken?: string;
 }
 
 interface MobileGoogleLoginResponse {
@@ -128,8 +130,15 @@ class GoogleAuthService {
 
   /**
    * Native (Android/iOS): Use backend-issued auth URL (no PKCE) so the backend can exchange
-   * the code. App opens the URL in browser; backend redirects to grabdocs://login-success
-   * and the app handles that via deep link in AuthContext.
+   * the code. Opens the browser via openAuthSessionAsync which behaves differently per platform:
+   *
+   *  iOS  — uses ASWebAuthenticationSession: intercepts the grabdocs:// redirect internally
+   *          and returns { type: 'success', url }. Linking event does NOT fire.
+   *          → loginToken is extracted here; sign-in.tsx exchanges it inline (no race).
+   *
+   *  Android — uses Chrome Custom Tab: when grabdocs:// fires, the OS routes it to the app
+   *            via intent (Linking event DOES fire) and the tab dismisses, returning
+   *            { type: 'dismiss' }. loginToken is absent; sign-in.tsx watches user state.
    */
   private async signInWithGoogleNativeBackendFlow(): Promise<GoogleAuthResult> {
     const res = await fetch(`${API_BASE_URL}/api/v1/web/auth/google-url`);
@@ -139,9 +148,35 @@ class GoogleAuthService {
       console.error('Google auth URL fetch failed:', err);
       return { success: false, error: err };
     }
-    await WebBrowser.openBrowserAsync(data.url);
-    // Completion happens via grabdocs://login-success deep link; AuthContext handles it.
-    return { success: true, completedViaDeepLink: true };
+
+    WebBrowser.maybeCompleteAuthSession();
+
+    const browserResult = await WebBrowser.openAuthSessionAsync(data.url, 'grabdocs://');
+
+    // iOS success path: ASWebAuthenticationSession intercepted the redirect URL directly.
+    if (browserResult.type === 'success' && browserResult.url) {
+      let loginToken: string | null = null;
+      try {
+        loginToken = new URL(browserResult.url).searchParams.get('token');
+      } catch {
+        return { success: false, error: 'Invalid redirect URL' };
+      }
+      if (!loginToken) {
+        return { success: false, error: 'No authentication token in redirect' };
+      }
+      // Return token to sign-in.tsx for immediate inline exchange — no Linking event needed.
+      return { success: true, completedViaDeepLink: true, loginToken };
+    }
+
+    // Android dismiss path: Chrome Custom Tab closed after deep link fired.
+    // The grabdocs:// URL is delivered via Linking.addEventListener → AuthContext handles it.
+    // Return completedViaDeepLink without loginToken so sign-in.tsx waits for user state.
+    if (browserResult.type === 'dismiss') {
+      return { success: true, completedViaDeepLink: true };
+    }
+
+    // Explicit user cancel (both platforms) or unexpected failure.
+    return { success: false, error: 'User cancelled' };
   }
 
   async signInWithGoogle(): Promise<GoogleAuthResult> {

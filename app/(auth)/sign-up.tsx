@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { Link, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GoogleLogo } from '../../components/GoogleLogo';
@@ -10,8 +10,10 @@ import { Colors } from '../../constants/Colors';
 import { STORAGE_KEYS } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { appleAuthService } from '../../services/appleAuth';
+import { apiService } from '../../services/api';
 import { googleAuthService } from '../../services/googleAuth';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
+import { useAuth } from '../context/auth';
 
 const isAndroid = Platform.OS === 'android';
 
@@ -27,17 +29,42 @@ export default function SignUpScreen() {
   const [agreeToTerms, setAgreeToTerms] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [waitingForGoogleDeepLink, setWaitingForGoogleDeepLink] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
   const insets = useSafeAreaInsets();
+  const { user, setUserFromExternal } = useAuth();
+  const loading = isLoading || googleLoading;
 
   // Check Apple Sign In availability on mount
-  React.useEffect(() => {
+  useEffect(() => {
     if (Platform.OS === 'ios') {
       appleAuthService.isAvailableAsync().then(setAppleSignInAvailable);
     }
   }, []);
+
+  // Android Google OAuth: AuthContext sets user via Linking deep link after Chrome Custom Tab closes.
+  useEffect(() => {
+    if (!waitingForGoogleDeepLink || !user?.id) return;
+    setWaitingForGoogleDeepLink(false);
+    setGoogleLoading(false);
+    void (async () => {
+      const webPath = await resolveDefaultHomeWebPath();
+      navigateTabsThenDefaultHome(router, webPath);
+    })();
+  }, [waitingForGoogleDeepLink, user?.id, router]);
+
+  useEffect(() => {
+    if (!waitingForGoogleDeepLink) return;
+    const timeout = setTimeout(() => {
+      setWaitingForGoogleDeepLink(false);
+      setGoogleLoading(false);
+      setError('Google sign-up did not complete. Please try again.');
+    }, 60000);
+    return () => clearTimeout(timeout);
+  }, [waitingForGoogleDeepLink]);
 
   const handleSignUp = async () => {
     try {
@@ -83,42 +110,114 @@ export default function SignUpScreen() {
   };
 
   const handleGoogleSignUp = async () => {
+    let deepLinkHandled = false;
     try {
       setError('');
-      setIsLoading(true);
 
       if (!agreeToTerms) {
         setError('Please agree to the Terms of Service and Privacy Policy before continuing');
         return;
       }
 
-      // Use Google Auth service for sign-up
-      const result = await googleAuthService.signInWithGoogleEnhanced();
-      
-      if (result.success) {
-        if (result.completedViaDeepLink) {
-          Alert.alert('Complete sign-in', 'Please complete sign-in in the browser. You\'ll return to the app when done.');
-        } else {
-          Alert.alert('Success', 'Account created with Google successfully!');
-          const webPath = await resolveDefaultHomeWebPath((result as any).user);
-          navigateTabsThenDefaultHome(router, webPath);
+      setGoogleLoading(true);
+
+      const googleResult = await googleAuthService.signInWithGoogle();
+
+      // iOS: openAuthSessionAsync returns redirect URL with session token inline.
+      if (googleResult.completedViaDeepLink && googleResult.loginToken) {
+        deepLinkHandled = true;
+        const exchangeResult = await apiService.exchangeGoogleOAuthToken(googleResult.loginToken);
+        if (!exchangeResult.success || !exchangeResult.user) {
+          deepLinkHandled = false;
+          setError('Google sign-up failed. Please try again.');
+          return;
         }
-      } else if (result.requires2FA) {
+        const u = exchangeResult.user;
+        const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
+        const userData = {
+          id: String(u.id),
+          email: u.email || '',
+          name,
+          first_name: u.firstName ?? undefined,
+          last_name: u.lastName ?? undefined,
+          username: u.username ?? undefined,
+        };
+        await setUserFromExternal(userData, (exchangeResult as any).token || undefined);
+        const webPath = await resolveDefaultHomeWebPath();
+        navigateTabsThenDefaultHome(router, webPath);
+        return;
+      }
+
+      // Android: deep link handled by AuthContext; wait for user then navigate.
+      if (googleResult.completedViaDeepLink) {
+        deepLinkHandled = true;
+        setWaitingForGoogleDeepLink(true);
+        return;
+      }
+
+      if (!googleResult.success || !googleResult.user || !googleResult.accessToken) {
+        const err = googleResult.error || '';
+        if (err === 'User cancelled' || /cancel/i.test(err)) {
+          return;
+        }
+        setError(err || 'Google sign-up failed');
+        return;
+      }
+
+      const backendResult = await googleAuthService.loginWithGoogleToBackend(
+        googleResult.user,
+        googleResult.accessToken
+      );
+
+      if (backendResult.requires2FA) {
         Alert.alert(
           '2FA Required',
-          result.message || 'Additional verification required. Please use phone verification.',
+          backendResult.message || 'Additional verification required. Please use phone verification.',
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Continue with Phone', onPress: () => router.push('/phone-login') },
           ]
         );
-      } else {
-        setError(result.message || 'Google sign-up failed');
+        return;
       }
+
+      if (!backendResult.success || !backendResult.user) {
+        setError(backendResult.message || 'Google sign-up failed');
+        return;
+      }
+
+      const backendUser = backendResult.user;
+      const fullName =
+        backendUser.first_name || backendUser.firstName
+          ? `${backendUser.first_name || backendUser.firstName || ''} ${backendUser.last_name || backendUser.lastName || ''}`.trim()
+          : '';
+      const displayName =
+        fullName || backendUser.name || backendUser.username || backendUser.email || 'Google User';
+
+      const userData = {
+        id: (backendUser.id || backendUser.user_id || '').toString(),
+        email: backendUser.email || backendUser.username || '',
+        name: displayName,
+        first_name: backendUser.first_name ?? backendUser.firstName,
+        last_name: backendUser.last_name ?? backendUser.lastName,
+        username: backendUser.username,
+      };
+
+      if (!userData.id) {
+        setError('Failed to retrieve user information. Please try again.');
+        return;
+      }
+
+      await setUserFromExternal(userData, backendResult.token);
+      const webPath = await resolveDefaultHomeWebPath(backendResult.user ?? backendUser);
+      navigateTabsThenDefaultHome(router, webPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google sign-up failed');
+      deepLinkHandled = false;
     } finally {
-      setIsLoading(false);
+      if (!deepLinkHandled) {
+        setGoogleLoading(false);
+      }
     }
   };
 
@@ -392,9 +491,9 @@ export default function SignUpScreen() {
         </View>
 
         <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
+          style={[styles.button, loading && styles.buttonDisabled]}
           onPress={handleSignUp}
-          disabled={isLoading}
+          disabled={loading}
         >
           <Text style={styles.buttonText}>
             {isLoading ? 'Creating Account...' : 'Sign Up'}
@@ -410,9 +509,9 @@ export default function SignUpScreen() {
         <View style={styles.socialSection}>
           {Platform.OS === 'android' ? (
             <TouchableOpacity
-              style={[styles.socialButtonFull, styles.googleButton, isLoading && styles.buttonDisabled]}
+              style={[styles.socialButtonFull, styles.googleButton, loading && styles.buttonDisabled]}
               onPress={handleGoogleSignUp}
-              disabled={isLoading}
+              disabled={loading}
             >
               <GoogleLogo size={20} />
               <Text style={styles.socialButtonFullText}>Sign up with Google</Text>
@@ -422,17 +521,17 @@ export default function SignUpScreen() {
               <Text style={styles.socialLabel}>Sign up with</Text>
               <View style={styles.socialRow}>
                 <TouchableOpacity
-                  style={[styles.socialButtonSquare, styles.googleButton, isLoading && styles.buttonDisabled]}
+                  style={[styles.socialButtonSquare, styles.googleButton, loading && styles.buttonDisabled]}
                   onPress={handleGoogleSignUp}
-                  disabled={isLoading}
+                  disabled={loading}
                 >
                   <GoogleLogo size={24} />
                 </TouchableOpacity>
                 {appleSignInAvailable && (
                   <TouchableOpacity
-                    style={[styles.socialButtonSquare, styles.appleButtonSquare, isLoading && styles.buttonDisabled]}
+                    style={[styles.socialButtonSquare, styles.appleButtonSquare, loading && styles.buttonDisabled]}
                     onPress={handleAppleSignUp}
-                    disabled={isLoading}
+                    disabled={loading}
                     activeOpacity={0.8}
                   >
                     <Ionicons name="logo-apple" size={24} color="#fff" />

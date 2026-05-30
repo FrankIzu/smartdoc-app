@@ -26,6 +26,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { getReachParticipantDisplayName } from '../../utils/reachDisplayName';
 import { screenCache } from '../../utils/screenCache';
+import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
 import {
   invalidateWorkspaceScreenCaches,
   workspaceActivitiesCacheKey,
@@ -796,11 +797,24 @@ export default function WorkspaceDetailsScreen() {
     memberActionButton: { padding: 4 },
     youBadge: { backgroundColor: '#E3F2FD', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
     youBadgeText: { fontSize: 12, color: '#007AFF', fontWeight: '600' },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center' },
-    kebabMenuContainer: { backgroundColor: colors.card, borderRadius: 12, padding: 8, minWidth: 200, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
+    modalOverlay: modalScrimOverlayStyle(colors.isDark, { justifyContent: 'center', alignItems: 'center' }),
+    kebabMenuContainer: {
+      ...floatingDialogSurfaceStyle(colors, colors.isDark, { minWidth: 200 }),
+      padding: 8,
+    },
     kebabMenuItem: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 12 },
     kebabMenuText: { fontSize: 16, color: colors.text },
-    actionSheetContainer: { backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, paddingBottom: 32, position: 'absolute', bottom: 0, left: 0, right: 0, shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
+    actionSheetContainer: {
+      ...floatingDialogSurfaceStyle(colors, colors.isDark, { borderRadius: 20 }),
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: 16,
+      paddingBottom: 32,
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+    },
     actionSheetItem: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
     actionSheetItemDanger: { borderBottomWidth: 0 },
     actionSheetText: { fontSize: 16, color: colors.text },

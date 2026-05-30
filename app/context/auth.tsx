@@ -4,10 +4,10 @@ import { Linking } from 'react-native';
 import { STORAGE_KEYS } from '../../constants/Config';
 import { apiService } from '../../services/api';
 import {
-  extractDefaultHomePathFromUser,
-  persistDefaultHomeWebPath,
-  reconcilePersistenceWithServerNoDefault,
-  refreshDefaultHomePathFromWebAuthCheck,
+    extractDefaultHomePathFromUser,
+    persistDefaultHomeWebPath,
+    reconcilePersistenceWithServerNoDefault,
+    refreshDefaultHomePathFromWebAuthCheck,
 } from '../../utils/defaultHomePath';
 import { secureStorage } from '../../utils/storage';
 
