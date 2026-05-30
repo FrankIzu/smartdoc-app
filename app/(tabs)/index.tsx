@@ -21,8 +21,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SignatureIcon } from '../../components/SignatureIcon';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
-import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
+import { expoHrefForWebDefaultHome } from '../../utils/defaultHomePath';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
@@ -82,7 +82,6 @@ const reachLiveDotStyles = StyleSheet.create({
 
 function DashboardScreen() {
   const router = useRouter();
-  const openChatGD = useOpenChatGD();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { user, signOut } = useAuth();
@@ -976,7 +975,7 @@ function DashboardScreen() {
               icon="chatbubbles"
               color="#AF52DE"
               subtitle="Ask a question"
-              onPress={() => openChatGD()}
+              onPress={() => router.push(expoHrefForWebDefaultHome('/upload'))}
             />
           </View>
         </View>
