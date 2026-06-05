@@ -118,10 +118,16 @@ async function writeStore(store: CalendarOfflineStore): Promise<void> {
 
 export function isCalendarFetchOfflineError(e: unknown): boolean {
   const err = e as Record<string, unknown> | undefined;
-  const msg = (err?.message ?? (err?.response as any)?.data?.message ?? '').toString().toLowerCase();
+  const status = (err?.response as { status?: number } | undefined)?.status;
+  // Gateway/proxy errors mean the network path is broken — treat as offline
+  if (status === 502 || status === 503 || status === 504 || status === 0) return true;
   const code = err?.code as string | undefined;
   const response = err?.response as { status?: number } | undefined;
   if (!response && (code === 'ERR_NETWORK' || code === 'ECONNABORTED')) return true;
+  // No response received at all
+  if (!response && (err as any)?.request) return true;
+  if ((err as any)?.isOfflineGatewayError === true) return true;
+  const msg = (err?.message ?? (err?.response as any)?.data?.message ?? '').toString().toLowerCase();
   if (
     msg.includes('network') ||
     msg.includes('err_network') ||

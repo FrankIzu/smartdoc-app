@@ -342,10 +342,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Ensure user state is cleared on any error so we never redirect to home
       setUser(null);
       throw error;
-    } finally {
-      // Only clear loading if we had set it (we no longer set it for signIn to avoid unmounting)
-      setLoading(false);
     }
+    // Note: no finally { setLoading(false) } here — signIn intentionally never sets loading=true
+    // (doing so would unmount the entire app via AuthWrapper and destroy sign-in screen state).
   };
 
   const signUp = async (email: string, password: string, name: string) => {

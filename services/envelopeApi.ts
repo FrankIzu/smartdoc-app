@@ -56,12 +56,17 @@ async function request<T = unknown>(method: string, path: string, opts: RequestO
     return res.data;
   } catch (err) {
     const ax = err as AxiosError<{ message?: string; error?: string }>;
-    const message =
+    const status = ax.response?.status;
+    // Gateway errors are effectively offline — surface a clean message instead of
+    // the raw Axios "Request failed with status code 5xx" string.
+    const isGatewayError = (ax as any).isOfflineGatewayError === true ||
+      status === 502 || status === 503 || status === 504;
+    const rawMessage =
       ax.response?.data?.message ||
       ax.response?.data?.error ||
-      ax.message ||
-      'Request failed';
-    throw new EnvelopeApiError(message, ax.response?.status, ax.response?.data);
+      (!isGatewayError ? ax.message : undefined) ||
+      (isGatewayError ? 'Unable to reach the server. Please check your connection.' : 'Request failed');
+    throw new EnvelopeApiError(rawMessage, status, ax.response?.data);
   }
 }
 

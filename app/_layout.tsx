@@ -170,8 +170,11 @@ function RootLayoutNav() {
     [router]
   );
 
-  // When user taps a notification and app was killed, listener is not registered yet — use last response
+  // When user taps a notification and app was killed, listener is not registered yet — use last response.
+  // Guard behind `user` so that unauthenticated users (e.g. just after signup before session is fully
+  // established, or after a forced logout) are never routed to /notifications instead of sign-in.
   useEffect(() => {
+    if (!user) return;
     if (
       !lastNotificationResponse ||
       lastNotificationResponse.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER
@@ -179,7 +182,7 @@ function RootLayoutNav() {
       return;
     const data = lastNotificationResponse.notification.request.content.data || {};
     navigateFromNotificationData(data as Record<string, unknown>);
-  }, [lastNotificationResponse, navigateFromNotificationData]);
+  }, [user, lastNotificationResponse, navigateFromNotificationData]);
 
   // When user taps a push notification (app already running), open the right screen
   useEffect(() => {

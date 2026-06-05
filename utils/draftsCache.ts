@@ -47,6 +47,13 @@ export interface PendingCreate {
 }
 
 function isNetworkError(e: any): boolean {
+  // Gateway/proxy errors (502, 503, 504) and no-response cases both mean the
+  // device cannot reach the server — treat them identically to a dropped connection
+  // so the app falls back to offline mode instead of showing a raw HTTP error alert.
+  const status = e?.response?.status as number | undefined;
+  if (status === 502 || status === 503 || status === 504 || status === 0) return true;
+  if (!e?.response && e?.request) return true; // request sent but no response received
+  if (e?.isOfflineGatewayError === true) return true;
   const msg = (e?.message ?? e?.response?.data?.message ?? '').toString().toLowerCase();
   return (
     msg.includes('network') ||
@@ -55,8 +62,10 @@ function isNetworkError(e: any): boolean {
     msg.includes('timeout') ||
     msg.includes('timed out') ||
     msg.includes('connection') ||
+    msg.includes('failed to connect') ||
     e?.code === 'ERR_NETWORK' ||
-    e?.code === 'ECONNREFUSED'
+    e?.code === 'ECONNREFUSED' ||
+    e?.code === 'ECONNABORTED'
   );
 }
 

@@ -396,11 +396,25 @@ class ApiService {
         //   data: error.response?.data,
         //   message: error.message
         // });
-        
+
         if (error.response?.status === 401) {
           await this.clearAuthData();
           this.onSessionExpired?.();
         }
+
+        // Gateway / proxy errors (502, 503, 504) mean the network path is broken.
+        // Tag the error so every isNetworkError / isCalendarFetchOfflineError check
+        // treats it as an offline condition instead of showing a raw HTTP alert.
+        const status: number | undefined = error.response?.status;
+        if (status === 502 || status === 503 || status === 504) {
+          error.isOfflineGatewayError = true;
+          // Replace the raw "Request failed with status code 5xx" Axios message so
+          // any catch block that forwards error.message shows something meaningful.
+          if (!error.response?.data?.message) {
+            error.message = 'Unable to reach the server. Please check your connection.';
+          }
+        }
+
         return Promise.reject(error);
       }
     );

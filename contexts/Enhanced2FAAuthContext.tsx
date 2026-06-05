@@ -776,21 +776,28 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       }
 
       if (loginResult.success && (loginResult.token || loginResult.user)) {
-        if (loginResult.token) {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, loginResult.token);
-          console.log('💾 Stored authentication token (signup)');
-        } else {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
-          console.log('💾 Stored fallback session_token (signup)');
-        }
         if (loginResult.user) {
           const u = loginResult.user;
           await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(u));
           const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
-          await secureStorage.setItem('user', JSON.stringify({ id: String(u.id), email: u.email || '', name }));
           console.log('💾 Stored user data (signup)');
+          // Use setUserFromExternal so the auth context is updated directly without
+          // re-calling checkAuth. Calling refreshSession() here was racing against the
+          // newly created session: if checkAuth returned an error (timing / cookie not yet
+          // established) forceReset() would wipe the freshly stored credentials and leave
+          // the user on a blank screen even though signup was successful.
           try {
-            await authContext.refreshSession();
+            await authContext.setUserFromExternal(
+              {
+                id: String(u.id),
+                email: u.email || '',
+                name,
+                first_name: u.first_name ?? u.firstName ?? undefined,
+                last_name: u.last_name ?? u.lastName ?? undefined,
+                username: typeof u.username === 'string' ? u.username : undefined,
+              },
+              typeof loginResult.token === 'string' ? loginResult.token : undefined,
+            );
           } catch (_) {}
         }
         setAuthState(prev => ({
