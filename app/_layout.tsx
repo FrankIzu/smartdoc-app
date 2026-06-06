@@ -59,12 +59,15 @@ SplashScreen.preventAutoHideAsync().catch((err) => {
 function RootLayoutNav() {
   const { visible, minimized, progressData, minimizeProgress, expandProgress, closeProgress } = useProgressStore();
   const { isDark } = useTheme();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { isLocked, appLockEnabled } = useAppLock();
   const router = useRouter();
   const segments = useSegments();
   const pushListenerRef = useRef<{ remove: () => void } | null>(null);
   const lastNotificationResponse = Notifications.useLastNotificationResponse();
+  // User id present when auth bootstrap finished — only auto-open notification targets on cold
+  // start with an existing session, never right after sign-in/sign-up in the same app session.
+  const coldStartAuthenticatedUserIdRef = useRef<string | null | undefined>(undefined);
 
   // Hide top bar (NetworkIndicator) on meeting screen to avoid black banner and full-screen meeting UX
   const isMeetingScreen = segments.some((s) => String(s).includes('hms-meeting-interface'));
@@ -153,6 +156,11 @@ function RootLayoutNav() {
     return () => sub.remove();
   }, [user, appLockEnabled, router]);
 
+  useEffect(() => {
+    if (authLoading || coldStartAuthenticatedUserIdRef.current !== undefined) return;
+    coldStartAuthenticatedUserIdRef.current = user?.id ?? null;
+  }, [authLoading, user?.id]);
+
   const navigateFromNotificationData = useCallback(
     (data: Record<string, unknown>) => {
       const path = getNotificationScreen(data as Record<string, any>);
@@ -170,18 +178,51 @@ function RootLayoutNav() {
     [router]
   );
 
+  // AsyncStorage key used to persist the last notification ID that was handled so that
+  // a stale lastNotificationResponse from a previous session is never re-processed after
+  // the user logs in (or after an app restart).
+  const LAST_HANDLED_NOTIF_KEY = '@grabdocs_last_handled_notif_id';
+
+  // In-memory dedup for the current session: prevents the same notification from being
+  // processed twice if React re-runs the effect (e.g. due to an unrelated state change).
+  const lastHandledNotifIdRef = useRef<string | null>(null);
+
   // When user taps a notification and app was killed, listener is not registered yet — use last response.
-  // Guard behind `user` so that unauthenticated users (e.g. just after signup before session is fully
-  // established, or after a forced logout) are never routed to /notifications instead of sign-in.
+  // Guard behind `user` so unauthenticated users are never routed to /notifications.
+  // Double-guard with in-memory + AsyncStorage dedup so a stale lastNotificationResponse
+  // from a previous session does not route the user to /notifications every time they log in.
   useEffect(() => {
     if (!user) return;
+    // Fresh login in this session (Google, email, etc.) — never hijack with stale notification state.
+    if (coldStartAuthenticatedUserIdRef.current !== user.id) return;
     if (
       !lastNotificationResponse ||
       lastNotificationResponse.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER
     )
       return;
-    const data = lastNotificationResponse.notification.request.content.data || {};
-    navigateFromNotificationData(data as Record<string, unknown>);
+
+    const notifId = lastNotificationResponse.notification.request.identifier;
+
+    // Synchronously mark as in-progress to prevent concurrent re-runs from processing twice.
+    if (lastHandledNotifIdRef.current === notifId) return;
+    lastHandledNotifIdRef.current = notifId;
+
+    void (async () => {
+      try {
+        // Cross-session check: if we already handled this notification in a previous app
+        // session it will be persisted here — skip it to avoid re-routing on login.
+        const previouslyHandledId = await AsyncStorage.getItem(LAST_HANDLED_NOTIF_KEY);
+        if (previouslyHandledId === notifId) return;
+
+        // Persist before navigating so a crash/restart doesn't re-process it.
+        await AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId);
+      } catch {
+        // Non-fatal: storage errors must not block notification routing.
+      }
+
+      const data = lastNotificationResponse.notification.request.content.data || {};
+      navigateFromNotificationData(data as Record<string, unknown>);
+    })();
   }, [user, lastNotificationResponse, navigateFromNotificationData]);
 
   // When user taps a push notification (app already running), open the right screen

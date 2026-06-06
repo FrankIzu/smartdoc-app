@@ -1,27 +1,78 @@
-import { Redirect, useRouter } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Linking, View } from 'react-native';
+import {
+  exchangeGoogleLoginToken,
+  isLoginSuccessDeepLink,
+  parseLoginSuccessToken,
+} from '../utils/googleOAuthDeepLink';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../utils/defaultHomePath';
 import { useAuth } from './context/auth';
 
 /**
- * Deep-link target: grabdocs://login-success?token=...&jwt=...&user_id=...
- * AuthContext handles the URL and sets the user; this screen is the SOLE driver of
- * post-auth navigation on Android (where openAuthSessionAsync returns {type:'dismiss'}
- * and the sign-in/sign-up screens intentionally do NOT navigate to avoid racing here).
+ * Deep-link target: grabdocs://login-success?token=...
+ * Fallback when Android did not return the token to sign-in.tsx — this screen exchanges
+ * the token itself (from route params or Linking URL) instead of waiting on AuthContext.
  */
 export default function LoginSuccessScreen() {
-  const { user } = useAuth();
+  const { user, setUserFromExternal } = useAuth();
   const router = useRouter();
-  // Increase give-up window to 10 s — token exchange on slow networks can take 2-4 s,
-  // and the old 2 s timeout was redirecting unauthenticated users to /(tabs).
+  const params = useLocalSearchParams<{ token?: string }>();
   const [giveUp, setGiveUp] = useState(false);
+  const [error, setError] = useState(false);
   const navigatedRef = useRef(false);
+  const exchangeStartedRef = useRef(false);
 
   useEffect(() => {
-    const t = setTimeout(() => setGiveUp(true), 10000);
+    const t = setTimeout(() => setGiveUp(true), 12000);
     return () => clearTimeout(t);
   }, []);
+
+  // Exchange token and establish session — do not rely on AuthContext's Linking listener.
+  useEffect(() => {
+    if (user?.id || exchangeStartedRef.current) return;
+    exchangeStartedRef.current = true;
+
+    void (async () => {
+      let loginToken = typeof params.token === 'string' ? params.token.trim() : '';
+
+      if (!loginToken) {
+        const initialUrl = await Linking.getInitialURL();
+        loginToken = parseLoginSuccessToken(initialUrl) ?? '';
+      }
+
+      if (!loginToken) {
+        // Deep link may arrive slightly after this screen mounts on Android.
+        const waitedToken = await new Promise<string>((resolve) => {
+          const timeout = setTimeout(() => {
+            sub.remove();
+            resolve('');
+          }, 1500);
+          const sub = Linking.addEventListener('url', ({ url }) => {
+            if (isLoginSuccessDeepLink(url)) {
+              clearTimeout(timeout);
+              sub.remove();
+              resolve(parseLoginSuccessToken(url) ?? '');
+            }
+          });
+        });
+        loginToken = waitedToken;
+      }
+
+      if (!loginToken) {
+        setError(true);
+        return;
+      }
+
+      const exchanged = await exchangeGoogleLoginToken(loginToken);
+      if (!exchanged) {
+        setError(true);
+        return;
+      }
+
+      await setUserFromExternal(exchanged.user, exchanged.jwt);
+    })();
+  }, [user?.id, params.token, setUserFromExternal]);
 
   useEffect(() => {
     if (!user?.id || navigatedRef.current) return;
@@ -32,18 +83,8 @@ export default function LoginSuccessScreen() {
     })();
   }, [user?.id, router]);
 
-  // Give-up fallback: token exchange never resolved — send user back to sign-in
-  // (not to /(tabs), which would show an unauthenticated dashboard).
-  if (giveUp && !user?.id) {
+  if ((giveUp && !user?.id) || error) {
     return <Redirect href="/(auth)/sign-in" />;
-  }
-
-  if (user?.id) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#151718' }}>
-        <ActivityIndicator size="large" color="#0ea5e9" />
-      </View>
-    );
   }
 
   return (

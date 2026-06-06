@@ -2,6 +2,10 @@ import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 import { API_BASE_URL, GOOGLE_CLIENT_ID } from '../constants/Config';
+import {
+  createLoginSuccessDeepLinkCapture,
+  parseLoginSuccessToken,
+} from '../utils/googleOAuthDeepLink';
 import { deviceSecurityService } from './deviceSecurity';
 
 // Google OAuth configuration
@@ -151,27 +155,35 @@ class GoogleAuthService {
 
     WebBrowser.maybeCompleteAuthSession();
 
-    const browserResult = await WebBrowser.openAuthSessionAsync(data.url, 'grabdocs://');
+    // Android: the grabdocs:// URL often fires before openAuthSessionAsync resolves.
+    // Capture it during the session instead of relying on AuthContext's Linking listener.
+    const deepLinkCapture = createLoginSuccessDeepLinkCapture();
+    let browserResult: WebBrowser.WebBrowserAuthSessionResult;
+    try {
+      browserResult = await WebBrowser.openAuthSessionAsync(data.url, 'grabdocs://');
+    } finally {
+      deepLinkCapture.stop();
+    }
+
+    const resolveLoginToken = (url: string | null | undefined): string | null =>
+      parseLoginSuccessToken(url);
 
     // iOS success path: ASWebAuthenticationSession intercepted the redirect URL directly.
     if (browserResult.type === 'success' && browserResult.url) {
-      let loginToken: string | null = null;
-      try {
-        loginToken = new URL(browserResult.url).searchParams.get('token');
-      } catch {
-        return { success: false, error: 'Invalid redirect URL' };
-      }
+      const loginToken = resolveLoginToken(browserResult.url);
       if (!loginToken) {
         return { success: false, error: 'No authentication token in redirect' };
       }
-      // Return token to sign-in.tsx for immediate inline exchange — no Linking event needed.
       return { success: true, completedViaDeepLink: true, loginToken };
     }
 
     // Android dismiss path: Chrome Custom Tab closed after deep link fired.
-    // The grabdocs:// URL is delivered via Linking.addEventListener → AuthContext handles it.
-    // Return completedViaDeepLink without loginToken so sign-in.tsx waits for user state.
+    // Token was captured by the listener active during the session.
     if (browserResult.type === 'dismiss') {
+      const loginToken = resolveLoginToken(deepLinkCapture.getCapturedUrl());
+      if (loginToken) {
+        return { success: true, completedViaDeepLink: true, loginToken };
+      }
       return { success: true, completedViaDeepLink: true };
     }
 

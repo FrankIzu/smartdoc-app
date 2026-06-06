@@ -23,6 +23,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
+import { exchangeGoogleLoginToken } from '../../utils/googleOAuthDeepLink';
 import { apiService } from '../../services/api';
 import { useAuth } from '../context/auth';
 
@@ -358,31 +359,19 @@ export default function SignInScreen() {
       // screen required, so the transition is immediate and reliable.
       if (googleResult.completedViaDeepLink && googleResult.loginToken) {
         deepLinkHandled = true;
-        const exchangeResult = await apiService.exchangeGoogleOAuthToken(googleResult.loginToken);
-        if (!exchangeResult.success || !exchangeResult.user) {
+        const exchanged = await exchangeGoogleLoginToken(googleResult.loginToken);
+        if (!exchanged) {
           deepLinkHandled = false;
           setError('Google sign-in failed. Please try again.');
           return;
         }
-        const u = exchangeResult.user;
-        const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
-        const userData = {
-          id: String(u.id),
-          email: u.email || '',
-          name,
-          first_name: u.firstName ?? undefined,
-          last_name: u.lastName ?? undefined,
-          username: u.username ?? undefined,
-        };
-        await setUserFromExternal(userData, (exchangeResult as any).token || undefined);
+        await setUserFromExternal(exchanged.user, exchanged.jwt);
         const webPath = await resolveDefaultHomeWebPath();
         navigateTabsThenDefaultHome(router, webPath);
         return;
       }
 
-      // Android fallback: Chrome Custom Tab fired the deep link via Linking and then dismissed.
-      // AuthContext.handleOAuthDeepLink will exchange the token and set the user; the useEffect
-      // above watches for that and triggers navigation. Keep the spinner visible while waiting.
+      // Rare fallback: token not captured during the OAuth session — login-success screen handles it.
       if (googleResult.completedViaDeepLink) {
         deepLinkHandled = true;
         setWaitingForGoogleDeepLink(true);

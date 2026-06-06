@@ -9,6 +9,7 @@ import {
     reconcilePersistenceWithServerNoDefault,
     refreshDefaultHomePathFromWebAuthCheck,
 } from '../../utils/defaultHomePath';
+import { exchangeGoogleLoginToken, parseLoginSuccessToken } from '../../utils/googleOAuthDeepLink';
 import { secureStorage } from '../../utils/storage';
 
 interface User {
@@ -74,21 +75,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!url || !url.startsWith('grabdocs://')) return;
     try {
       const parsed = new URL(url);
-      if (parsed.hostname === 'login-success' && parsed.searchParams.get('token')) {
-        const token = parsed.searchParams.get('token')!;
-        const result = await apiService.exchangeGoogleOAuthToken(token);
-        if (result.success && result.user) {
-          const u = result.user;
-          const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
-          const userData: User = {
-            id: String(u.id),
-            email: u.email || '',
-            name,
-            first_name: u.firstName ?? undefined,
-            last_name: u.lastName ?? undefined,
-            username: u.username ?? undefined,
-          };
-          await setUserFromExternal(userData, (result as any).token || undefined);
+      const loginToken = parseLoginSuccessToken(url);
+      if (loginToken) {
+        const exchanged = await exchangeGoogleLoginToken(loginToken);
+        if (exchanged) {
+          await setUserFromExternal(exchanged.user, exchanged.jwt);
           console.log('✅ Google OAuth deep link: session established');
         }
       } else if (parsed.hostname === 'login-error') {
