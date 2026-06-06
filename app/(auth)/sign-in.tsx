@@ -57,17 +57,16 @@ export default function SignInScreen() {
     checkAppleSignInAvailability();
   }, []);
 
-  // Android Google OAuth: AuthContext sets user via Linking deep link after Chrome Custom Tab
-  // closes. When user becomes set while we are waiting, navigate to the home screen.
+  // Android Google OAuth: AuthContext exchanges the token from the deep link and sets the user.
+  // Expo Router simultaneously routes grabdocs://login-success to login-success.tsx, which owns
+  // the actual navigation to home. This screen must NOT also navigate — doing so races with
+  // login-success.tsx and produces a black screen or broken navigation stack.
+  // We only clear the local loading state here; login-success.tsx drives the transition.
   useEffect(() => {
     if (!waitingForGoogleDeepLink || !user?.id) return;
     setWaitingForGoogleDeepLink(false);
     setGoogleLoading(false);
-    void (async () => {
-      const webPath = await resolveDefaultHomeWebPath();
-      navigateTabsThenDefaultHome(router, webPath);
-    })();
-  }, [waitingForGoogleDeepLink, user?.id, router]);
+  }, [waitingForGoogleDeepLink, user?.id]);
 
   // If Android deep link never arrives (user closed tab, or OAuth failed), stop spinning.
   useEffect(() => {
