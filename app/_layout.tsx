@@ -161,6 +161,21 @@ function RootLayoutNav() {
     coldStartAuthenticatedUserIdRef.current = user?.id ?? null;
   }, [authLoading, user?.id]);
 
+  // On logout, mark the cold-start id as "no session" (null, not undefined) so a same-session
+  // re-login is treated as a FRESH login — notification auto-open stays disabled until the next
+  // cold start. Without this, the guard below could fail open and hijack a re-login to /notifications.
+  useEffect(() => {
+    if (!user && coldStartAuthenticatedUserIdRef.current) {
+      coldStartAuthenticatedUserIdRef.current = null;
+    }
+  }, [user]);
+
+  // Latest authenticated user, readable from notification listener callbacks without re-registering.
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   const navigateFromNotificationData = useCallback(
     (data: Record<string, unknown>) => {
       const path = getNotificationScreen(data as Record<string, any>);
@@ -225,9 +240,20 @@ function RootLayoutNav() {
     })();
   }, [user, lastNotificationResponse, navigateFromNotificationData]);
 
-  // When user taps a push notification (app already running), open the right screen
+  // When user taps a push notification (app already running), open the right screen.
+  // Guards: only act for an authenticated user, only on a genuine tap (DEFAULT_ACTION_IDENTIFIER),
+  // and dedup via the same in-memory + AsyncStorage keys as the cold-start handler so a single
+  // notification is never routed twice (and a stale one can't hijack navigation).
   useEffect(() => {
     pushNotificationService.addNotificationResponseReceivedListener((response) => {
+      if (!userRef.current) return;
+      if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
+
+      const notifId = response.notification.request.identifier;
+      if (lastHandledNotifIdRef.current === notifId) return;
+      lastHandledNotifIdRef.current = notifId;
+      AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId).catch(() => {});
+
       const data = response.notification.request.content.data || {};
       navigateFromNotificationData(data as Record<string, unknown>);
     }).then((subscription) => {

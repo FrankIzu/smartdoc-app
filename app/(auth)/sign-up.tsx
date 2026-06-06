@@ -31,12 +31,11 @@ export default function SignUpScreen() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [waitingForGoogleDeepLink, setWaitingForGoogleDeepLink] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
   const insets = useSafeAreaInsets();
-  const { user, setUserFromExternal } = useAuth();
+  const { setUserFromExternal } = useAuth();
   const loading = isLoading || googleLoading;
 
   // Check Apple Sign In availability on mount
@@ -45,27 +44,6 @@ export default function SignUpScreen() {
       appleAuthService.isAvailableAsync().then(setAppleSignInAvailable);
     }
   }, []);
-
-  // Android Google OAuth: AuthContext exchanges the token from the deep link and sets the user.
-  // Expo Router simultaneously routes grabdocs://login-success to login-success.tsx, which owns
-  // the actual navigation to home. This screen must NOT also navigate — doing so races with
-  // login-success.tsx and produces a black screen or broken navigation stack.
-  // We only clear the local loading state here; login-success.tsx drives the transition.
-  useEffect(() => {
-    if (!waitingForGoogleDeepLink || !user?.id) return;
-    setWaitingForGoogleDeepLink(false);
-    setGoogleLoading(false);
-  }, [waitingForGoogleDeepLink, user?.id]);
-
-  useEffect(() => {
-    if (!waitingForGoogleDeepLink) return;
-    const timeout = setTimeout(() => {
-      setWaitingForGoogleDeepLink(false);
-      setGoogleLoading(false);
-      setError('Google sign-up did not complete. Please try again.');
-    }, 60000);
-    return () => clearTimeout(timeout);
-  }, [waitingForGoogleDeepLink]);
 
   const handleSignUp = async () => {
     try {
@@ -124,6 +102,41 @@ export default function SignUpScreen() {
 
       const googleResult = await googleAuthService.signInWithGoogle();
 
+      // Android native SDK flow: idToken obtained in-session via the native account-picker dialog.
+      // Verify it server-side and navigate synchronously — no browser, no grabdocs:// deep link.
+      if (googleResult.completedViaNativeSignIn && googleResult.idToken) {
+        deepLinkHandled = true; // keep the spinner up while we exchange + navigate
+        const sessionResult = await apiService.googleSignInWithIdToken(googleResult.idToken);
+        if (!sessionResult.success || !sessionResult.user) {
+          deepLinkHandled = false;
+          setError(sessionResult.message || 'Google sign-up failed. Please try again.');
+          return;
+        }
+        const backendUser = sessionResult.user;
+        const fullName = backendUser.firstName
+          ? `${backendUser.firstName || ''} ${backendUser.lastName || ''}`.trim()
+          : '';
+        const displayName =
+          fullName || backendUser.name || backendUser.username || backendUser.email || 'Google User';
+        const userData = {
+          id: (backendUser.id ?? '').toString(),
+          email: backendUser.email || backendUser.username || '',
+          name: displayName,
+          first_name: backendUser.firstName,
+          last_name: backendUser.lastName,
+          username: backendUser.username,
+        };
+        if (!userData.id) {
+          deepLinkHandled = false;
+          setError('Failed to retrieve user information. Please try again.');
+          return;
+        }
+        await setUserFromExternal(userData, sessionResult.token);
+        const webPath = await resolveDefaultHomeWebPath(backendUser);
+        navigateTabsThenDefaultHome(router, webPath);
+        return;
+      }
+
       // iOS: openAuthSessionAsync returns redirect URL with session token inline.
       if (googleResult.completedViaDeepLink && googleResult.loginToken) {
         deepLinkHandled = true;
@@ -139,10 +152,10 @@ export default function SignUpScreen() {
         return;
       }
 
-      // Rare fallback: token not captured during the OAuth session — login-success screen handles it.
+      // iOS: session sheet closed without returning a token (e.g. user dismissed it) — stop the
+      // spinner. Any genuine grabdocs://login-success redirect is still handled by login-success.tsx
+      // and the AuthContext deep-link listener (web/legacy).
       if (googleResult.completedViaDeepLink) {
-        deepLinkHandled = true;
-        setWaitingForGoogleDeepLink(true);
         return;
       }
 

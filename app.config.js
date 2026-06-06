@@ -5,6 +5,13 @@ const isDevProfile = process.env.EAS_BUILD_PROFILE === "development";
 
 const versions = require("./app.versions.json");
 
+// Reversed iOS OAuth client ID for @react-native-google-signin's config plugin.
+// Derived from the iOS client ID env var; falls back to a placeholder so prebuild never fails.
+const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS || "";
+const googleIosUrlScheme = googleIosClientId
+  ? `com.googleusercontent.apps.${googleIosClientId.replace(/\.apps\.googleusercontent\.com$/, "")}`
+  : "com.googleusercontent.apps.placeholder";
+
 const baseExpo = {
   name: "GrabDocs",
   slug: "grabdocs",
@@ -140,6 +147,10 @@ const baseExpo = {
     "expo-font",
     "expo-router",
     "expo-web-browser",
+    [
+      "@react-native-google-signin/google-signin",
+      { iosUrlScheme: googleIosUrlScheme },
+    ],
     [
       "expo-build-properties",
       {

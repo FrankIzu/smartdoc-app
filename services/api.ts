@@ -592,6 +592,34 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Native Google Sign-In (Android): verify a Google ID token server-side and establish a session.
+   * The native SDK returns the idToken in-session (no browser / grabdocs:// deep link), so this
+   * call is synchronous from the app's perspective and avoids the Android deep-link navigation race.
+   * Backend contract: POST { id_token } -> { success, user, token } (mobile JWT).
+   */
+  async googleSignInWithIdToken(idToken: string): Promise<{ success: boolean; user?: { id: number | string; username?: string; email?: string; firstName?: string; lastName?: string; name?: string }; token?: string; message?: string }> {
+    try {
+      const response = await this.client.post('/api/v1/web/auth/google-id-token', {
+        id_token: idToken,
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Platform': 'mobile', // Indicate this is a mobile request to get a JWT token
+        },
+        withCredentials: true,
+      });
+      return response.data;
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        'Google sign-in failed';
+      return { success: false, message };
+    }
+  }
+
   async testConnectivity(): Promise<ApiResponse> {
     try {
       const response = await this.client.get('/api/v1/mobile/health');

@@ -475,7 +475,9 @@ export function getNotificationScreen(data: Record<string, any>): string {
       }
       return '/quick-reach/hms-meeting-interface';
     default:
-      return '/notifications';
+      // Unknown/missing type: land on Home rather than the notifications inbox so an unexpected
+      // payload can never strand the user on /notifications (outside the tabs, no bottom nav).
+      return '/(tabs)';
   }
 }
 

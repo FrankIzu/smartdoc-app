@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
+    StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
@@ -39,96 +40,100 @@ export default function HelpScreen() {
     message: ''
   });
 
-  const dynamicStyles = {
-    container: {
-      flex: 1,
-      backgroundColor: colors.background
-    },
-    content: {
-      flex: 1,
-      padding: 16
-    },
-    section: {
-      backgroundColor: colors.cardBackground,
-      borderRadius: 12,
-      padding: 12,
-      marginBottom: 12
-    },
-    sectionTitle: {
-      fontSize: 18,
-      fontWeight: '600',
-      color: colors.text,
-      marginBottom: 8
-    },
-    label: {
-      fontSize: 14,
-      fontWeight: '500',
-      color: colors.textSecondary,
-      marginBottom: 6
-    },
-    input: {
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      fontSize: 16,
-      color: colors.text,
-      backgroundColor: colors.inputBackground,
-      minHeight: 44
-    },
-    textArea: {
-      minHeight: 120,
-      textAlignVertical: 'top',
-      paddingTop: 12
-    },
-    categoryContainer: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6
-    },
-    categoryButton: {
-      paddingHorizontal: 14,
-      paddingVertical: 6,
-      borderRadius: 20,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.inputBackground
-    },
-    categoryButtonSelected: {
-      backgroundColor: '#007AFF',
-      borderColor: '#007AFF'
-    },
-    categoryButtonText: {
-      fontSize: 14,
-      color: colors.text
-    },
-    categoryButtonTextSelected: {
-      color: '#fff',
-      fontWeight: '600'
-    },
-    submitButton: {
-      backgroundColor: '#007AFF',
-      paddingVertical: 14,
-      borderRadius: 8,
-      alignItems: 'center',
-      marginTop: 4
-    },
-    submitButtonDisabled: {
-      backgroundColor: '#c6c6c6'
-    },
-    submitButtonText: {
-      color: '#fff',
-      fontSize: 16,
-      fontWeight: '600'
-    },
-    infoText: {
-      fontSize: 14,
-      color: colors.textSecondary,
-      marginTop: 4,
-      lineHeight: 20
-    }
-  };
+  const dynamicStyles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          flex: 1,
+          backgroundColor: colors.background,
+        },
+        content: {
+          flex: 1,
+          padding: 16,
+        },
+        section: {
+          backgroundColor: colors.card,
+          borderRadius: 12,
+          padding: 12,
+          marginBottom: 12,
+        },
+        sectionTitle: {
+          fontSize: 18,
+          fontWeight: '600',
+          color: colors.text,
+          marginBottom: 8,
+        },
+        label: {
+          fontSize: 14,
+          fontWeight: '500',
+          color: colors.textSecondary,
+          marginBottom: 6,
+        },
+        input: {
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 8,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          fontSize: 16,
+          color: colors.text,
+          backgroundColor: colors.inputBackground,
+          minHeight: 44,
+        },
+        textArea: {
+          minHeight: 120,
+          textAlignVertical: 'top',
+          paddingTop: 12,
+        },
+        categoryContainer: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 6,
+        },
+        categoryButton: {
+          paddingHorizontal: 14,
+          paddingVertical: 6,
+          borderRadius: 20,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.inputBackground,
+        },
+        categoryButtonSelected: {
+          backgroundColor: '#007AFF',
+          borderColor: '#007AFF',
+        },
+        categoryButtonText: {
+          fontSize: 14,
+          color: colors.text,
+        },
+        categoryButtonTextSelected: {
+          color: '#fff',
+          fontWeight: '600',
+        },
+        submitButton: {
+          backgroundColor: '#007AFF',
+          paddingVertical: 14,
+          borderRadius: 8,
+          alignItems: 'center',
+          marginTop: 4,
+        },
+        submitButtonDisabled: {
+          backgroundColor: '#c6c6c6',
+        },
+        submitButtonText: {
+          color: '#fff',
+          fontSize: 16,
+          fontWeight: '600',
+        },
+        infoText: {
+          fontSize: 14,
+          color: colors.textSecondary,
+          marginTop: 4,
+          lineHeight: 20,
+        },
+      }),
+    [colors]
+  );
 
   const handleSubmit = async () => {
     // Validate required fields

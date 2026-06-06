@@ -1,7 +1,18 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
-import { API_BASE_URL, GOOGLE_CLIENT_ID } from '../constants/Config';
+import {
+  GoogleSignin,
+  isErrorWithCode,
+  isSuccessResponse,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
+import {
+  API_BASE_URL,
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_ID_IOS,
+  GOOGLE_CLIENT_ID_WEB,
+} from '../constants/Config';
 import {
   createLoginSuccessDeepLinkCapture,
   parseLoginSuccessToken,
@@ -35,6 +46,10 @@ interface GoogleAuthResult {
   completedViaDeepLink?: boolean;
   /** Session token extracted from the grabdocs://login-success redirect; exchange for a JWT via /api/v1/web/oauth/exchange-token. */
   loginToken?: string;
+  /** True when the native Google Sign-In SDK completed in-session (Android); idToken is sent to the backend to establish a session. */
+  completedViaNativeSignIn?: boolean;
+  /** Server auth code from the native SDK (offlineAccess) — optional; backend may use it for refresh tokens. */
+  serverAuthCode?: string;
 }
 
 interface MobileGoogleLoginResponse {
@@ -132,6 +147,77 @@ class GoogleAuthService {
 
   // ==================== GOOGLE SIGN-IN FLOW ====================
 
+  private googleSigninConfigured = false;
+
+  /** Configure the native Google Sign-In SDK once. webClientId is required to receive an idToken. */
+  private ensureGoogleSigninConfigured(): void {
+    if (this.googleSigninConfigured) return;
+    GoogleSignin.configure({
+      webClientId: GOOGLE_CLIENT_ID_WEB,
+      iosClientId: GOOGLE_CLIENT_ID_IOS || undefined,
+      offlineAccess: true, // returns serverAuthCode so the backend can obtain a refresh token if needed
+      scopes: ['openid', 'profile', 'email'],
+    });
+    this.googleSigninConfigured = true;
+  }
+
+  /**
+   * Android: native Google Sign-In SDK. Opens the native account-picker dialog and returns an
+   * idToken in-session — no browser, no grabdocs:// deep link, so the post-login navigation race
+   * that stranded Android users on /notifications cannot happen. The idToken is sent to the backend
+   * (apiService.googleSignInWithIdToken) to establish the session.
+   */
+  private async signInWithGoogleNativeSdk(): Promise<GoogleAuthResult> {
+    try {
+      this.ensureGoogleSigninConfigured();
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+
+      const response = await GoogleSignin.signIn();
+      if (!isSuccessResponse(response)) {
+        // User dismissed the native dialog.
+        return { success: false, error: 'User cancelled' };
+      }
+
+      const { idToken, serverAuthCode, user } = response.data;
+      if (!idToken) {
+        return { success: false, error: 'No ID token returned from Google' };
+      }
+
+      return {
+        success: true,
+        completedViaNativeSignIn: true,
+        idToken,
+        serverAuthCode: serverAuthCode ?? undefined,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name ?? '',
+          given_name: user.givenName ?? '',
+          family_name: user.familyName ?? '',
+          picture: user.photo ?? '',
+          verified_email: true,
+        },
+      };
+    } catch (error) {
+      if (isErrorWithCode(error)) {
+        if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+          return { success: false, error: 'User cancelled' };
+        }
+        if (error.code === statusCodes.IN_PROGRESS) {
+          return { success: false, error: 'Sign-in already in progress' };
+        }
+        if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+          return { success: false, error: 'Google Play Services not available or outdated' };
+        }
+      }
+      console.error('Native Google Sign-In error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Google sign-in failed',
+      };
+    }
+  }
+
   /**
    * Native (Android/iOS): Use backend-issued auth URL (no PKCE) so the backend can exchange
    * the code. Opens the browser via openAuthSessionAsync which behaves differently per platform:
@@ -201,8 +287,13 @@ class GoogleAuthService {
         };
       }
 
-      // Native: use backend-issued URL (no PKCE) so backend can exchange the code
-      if (Platform.OS === 'android' || Platform.OS === 'ios') {
+      // Android: native Google Sign-In SDK (dialog from button, in-session idToken, no deep-link race).
+      if (Platform.OS === 'android') {
+        return this.signInWithGoogleNativeSdk();
+      }
+
+      // iOS: keep the working ASWebAuthenticationSession backend flow (intercepts the redirect in-session).
+      if (Platform.OS === 'ios') {
         return this.signInWithGoogleNativeBackendFlow();
       }
 
@@ -477,10 +568,18 @@ class GoogleAuthService {
     try {
       // Clear any cached auth state
       this.request = null;
-      
-      // Revoke tokens if available
-      // Note: In a real implementation, you might want to store and revoke tokens
-      
+
+      // Sign out of the native SDK (Android) so the account picker is shown on next sign-in
+      // and a different account can be chosen. No-op if never signed in natively.
+      if (Platform.OS === 'android') {
+        try {
+          this.ensureGoogleSigninConfigured();
+          await GoogleSignin.signOut();
+        } catch (nativeErr) {
+          console.warn('Native Google sign-out skipped:', nativeErr);
+        }
+      }
+
       console.log('Google sign-out completed');
     } catch (error) {
       console.error('Google sign-out error:', error);
