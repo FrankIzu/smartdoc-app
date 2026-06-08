@@ -10,11 +10,23 @@ export interface ReachParticipantLike {
   email?: string;
 }
 
+/**
+ * Generic param values that should never be treated as a real display name.
+ * These are fallback strings that may have been baked into a navigation URL
+ * when the auth profile was not yet available — prefer the live user profile instead.
+ */
+const GENERIC_PARAM_FALLBACKS = new Set([
+  'mobile user',
+  'guest',
+  'participant',
+  'user',
+]);
+
 /** Display name for Reach / HMS when API user has no single `name` field. */
 export function getReachParticipantDisplayName(
   user: ReachParticipantLike | null | undefined
 ): string {
-  if (!user) return 'Mobile User';
+  if (!user) return '';
 
   const name = typeof user.name === 'string' ? user.name.trim() : '';
   const first = (user.first_name || '').trim();
@@ -30,7 +42,7 @@ export function getReachParticipantDisplayName(
     username ||
     localPart ||
     email ||
-    'Mobile User'
+    ''
   );
 }
 
@@ -52,7 +64,9 @@ export function resolveReachDisplayName(
   const raw = Array.isArray(paramUserName) ? paramUserName[0] : paramUserName;
   const fromParam =
     typeof raw === 'string' ? sanitizeReachDisplayName(raw) : '';
-  return fromParam || getReachParticipantDisplayName(user);
+  const paramIsGeneric = GENERIC_PARAM_FALLBACKS.has(fromParam.toLowerCase());
+  const fromUser = getReachParticipantDisplayName(user);
+  return (paramIsGeneric ? '' : fromParam) || fromUser || fromParam || 'Guest';
 }
 
 const warnedHmsMissingUserName = new Set<string>();
@@ -77,5 +91,7 @@ export function getHmsDisplayUserName(
       );
     }
   }
-  return fromParam || getReachParticipantDisplayName(user);
+  const paramIsGeneric = GENERIC_PARAM_FALLBACKS.has(fromParam.toLowerCase());
+  const fromUser = getReachParticipantDisplayName(user);
+  return (paramIsGeneric ? '' : fromParam) || fromUser || fromParam || 'Guest';
 }

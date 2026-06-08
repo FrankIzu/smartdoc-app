@@ -52,7 +52,7 @@ export default function JoinMeetingScreen() {
   const params = useLocalSearchParams<{ meeting_id?: string; passcode?: string; passcode_token?: string }>();
   const meetingId = params.meeting_id?.trim() || '';
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   const [checkState, setCheckState] = useState<CheckState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -139,8 +139,9 @@ export default function JoinMeetingScreen() {
     };
   }, [meetingId]);
 
-  // Pre-check when we have meetingId, restore has run, and not already in form/waiting
+  // Pre-check when we have meetingId, restore has run, auth has hydrated, and not already in form/waiting
   useEffect(() => {
+    if (authLoading) return; // wait for auth to finish restoring from storage before reading user
     if (!meetingId || !restoreDone || checkState === 'form' || checkState === 'waiting' || checkState === 'timeout' || checkState === 'rejected') {
       return;
     }
@@ -223,7 +224,7 @@ export default function JoinMeetingScreen() {
     };
 
     runPreCheck();
-  }, [meetingId, params.passcode_token, router, checkState, restoreDone, user]);
+  }, [meetingId, params.passcode_token, router, checkState, restoreDone, user, authLoading]);
 
   const navigateToMeeting = useCallback(() => {
     if (hasNavigatedRef.current || !isMountedRef.current) return;
