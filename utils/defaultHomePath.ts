@@ -255,10 +255,22 @@ export type PostLoginRouter = {
   dismissTo?: (href: Href) => void;
 };
 
-/** Pop nested auth screens (e.g. sign-in → OTP) before leaving the auth stack. */
+/**
+ * Pop nested auth screens (e.g. sign-in → OTP) before leaving the auth stack.
+ *
+ * `dismissAll()` removes every stacked screen in a single call, so it must NOT be
+ * looped: `router.canDismiss()` reflects navigation state that only updates on the
+ * next render, so a `while (canDismiss()) dismissAll()` loop never observes the
+ * dismissal within the same tick and spins forever — freezing the JS thread and
+ * stranding the user on the OTP screen even though sign-in already succeeded.
+ */
 function clearAuthStackBeforeMainApp(router: PostLoginRouter): void {
-  while (router.canDismiss?.()) {
-    router.dismissAll?.();
+  try {
+    if (router.canDismiss?.()) {
+      router.dismissAll?.();
+    }
+  } catch {
+    // dismissAll throws if there is nothing to dismiss — safe to ignore.
   }
 }
 
@@ -273,8 +285,13 @@ function afterRootNavigationSettles(fn: () => void): void {
 
 function landOnMainTabs(router: PostLoginRouter): void {
   if (router.dismissTo) {
-    router.dismissTo('/(tabs)');
-    return;
+    try {
+      router.dismissTo('/(tabs)');
+      return;
+    } catch {
+      // dismissTo throws when (tabs) is not in the current navigation history
+      // (e.g. navigating from the (auth) stack). Fall through to replace.
+    }
   }
   router.replace('/(tabs)');
 }

@@ -1,12 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
+    Animated,
     KeyboardAvoidingView,
     Platform,
+    Pressable,
     StyleSheet,
     Switch,
     Text,
@@ -28,12 +28,10 @@ interface OtpVerificationParams {
   userEmail?: string;
   userPhone?: string;
   preferredAuthMethod?: 'email' | 'phone';
-  // Store password temporarily for completing login after OTP (in memory only)
   tempPassword?: string;
-  rememberDevice?: string; // 'true' or 'false' as string (router params are strings)
+  rememberDevice?: string;
 }
 
-/** Map /login `user` or auth-check `data` into stored user shape. */
 function buildUserDataFromMobileLoginUser(
   user: Record<string, unknown> | null | undefined,
   fallbackEmail: string,
@@ -72,158 +70,92 @@ function buildUserDataFromAuthCheckData(
   return { id: String(data.id), name, email };
 }
 
+const OTP_LENGTH = 6;
+
 export default function OtpVerificationScreen() {
   const router = useRouter();
   const palette = useThemeColors();
   const params = useLocalSearchParams<OtpVerificationParams>();
-  const { refreshSession } = useAuth(); // Get auth context to refresh session after login
-  
+  const { setUserFromExternal } = useAuth();
+
   const continueToMainApp = async (loginUser?: unknown) => {
-    await refreshSession();
-    const webPath = await resolveDefaultHomeWebPath(loginUser);
-    navigateTabsThenDefaultHome(router, webPath);
+    try {
+      const webPath = await resolveDefaultHomeWebPath(loginUser);
+      navigateTabsThenDefaultHome(router, webPath);
+    } catch (err) {
+      console.warn('OTP: navigation error, using replace fallback:', err);
+      try {
+        router.replace('/(tabs)');
+      } catch (e2) {
+        console.error('OTP: replace fallback also failed:', e2);
+      }
+    }
   };
-  
-  const [otpCode, setOtpCode] = useState(['', '', '', '', '', '']);
+
+  const [otpValue, setOtpValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [timeLeft, setTimeLeft] = useState(parseInt(params.expiresIn || '600'));
   const [isResending, setIsResending] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const [trustDevice, setTrustDevice] = useState(
     params.rememberDevice === 'true' || params.rememberDevice === true
   );
-  
-  const inputRefs = useRef<Array<TextInput | null>>([]);
 
-  // Countdown timer
+  const hiddenInputRef = useRef<TextInput>(null);
+  const cursorAnim = useRef(new Animated.Value(1)).current;
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+
+  // Blinking cursor animation
   useEffect(() => {
-    if (timeLeft <= 0) return;
-    
-    const timer = setInterval(() => {
-      setTimeLeft(prev => prev - 1);
-    }, 1000);
-    
-    return () => clearInterval(timer);
-  }, [timeLeft]);
+    const blink = Animated.loop(
+      Animated.sequence([
+        Animated.timing(cursorAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
+        Animated.timing(cursorAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+      ])
+    );
+    blink.start();
+    return () => blink.stop();
+  }, [cursorAnim]);
 
+  // Shake animation for errors
+  const triggerShake = useCallback(() => {
+    shakeAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 6, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -6, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
+    ]).start();
+  }, [shakeAnim]);
+
+  // Auto-focus on mount
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      setTimeout(() => inputRefs.current[0]?.focus(), 250);
+      setTimeout(() => hiddenInputRef.current?.focus(), 250);
     });
     return () => cancelAnimationFrame(id);
   }, []);
 
-  // Monitor clipboard for OTP codes (for email codes)
-  // Note: This is a fallback for email codes. SMS codes are handled by autofill input.
+  // Countdown timer
   useEffect(() => {
-    if (params.method === 'email') {
-      let lastClipboardText = '';
-      
-      const checkClipboard = async () => {
-        try {
-          const clipboardText = await Clipboard.getStringAsync();
-          
-          // Only process if clipboard content changed
-          if (clipboardText === lastClipboardText) {
-            return;
-          }
-          lastClipboardText = clipboardText;
-          
-          // Look for 6-digit code patterns (more specific patterns)
-          // Match codes that might appear in email notifications
-          const codePatterns = [
-            /\b(\d{6})\b/, // Simple 6-digit code
-            /code[:\s]+(\d{6})/i, // "code: 123456" or "code 123456"
-            /verification[:\s]+code[:\s]+(\d{6})/i, // "verification code: 123456"
-            /(\d{6})[^\d]/, // 6 digits followed by non-digit
-          ];
-          
-          for (const pattern of codePatterns) {
-            const codeMatch = clipboardText.match(pattern);
-            if (codeMatch) {
-              const code = codeMatch[1];
-              // Check if it's a valid OTP (all digits, exactly 6)
-              if (/^\d{6}$/.test(code)) {
-                // Only use if OTP inputs are empty or partially filled
-                const currentCode = otpCode.join('');
-                if (currentCode.length < 6) {
-                  console.log('📋 Detected OTP code from clipboard:', code);
-                  // Distribute code to inputs
-                  const newOtp: string[] = ['', '', '', '', '', ''];
-                  code
-                    .split('')
-                    .slice(0, 6)
-                    .forEach((ch, i) => {
-                      newOtp[i] = ch;
-                    });
-                  setOtpCode(newOtp);
-                  // Auto-verify if all digits are filled
-                  if (code.length === 6) {
-                    setTimeout(() => {
-                      // Call handleVerifyOtp directly - it's stable enough for this use case
-                      const finalCode = code;
-                      if (finalCode.length === 6) {
-                        // Trigger verification by setting state and calling the handler
-                        handleVerifyOtp(finalCode);
-                      }
-                    }, 300);
-                  }
-                  break; // Found a valid code, stop checking
-                }
-              }
-            }
-          }
-        } catch (error) {
-          // Silently ignore clipboard errors
-        }
-      };
+    if (timeLeft <= 0) return;
+    const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+    return () => clearInterval(timer);
+  }, [timeLeft]);
 
-      // Check clipboard periodically (every 2 seconds) when screen is active
-      const clipboardInterval = setInterval(checkClipboard, 2000);
-      
-      // Also check immediately when component mounts
-      checkClipboard();
-      
-      return () => clearInterval(clipboardInterval);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.method]);
-
-  // Called for each box. Handles single-char typing AND multi-char paste / OS autofill.
-  const handleBoxChange = (text: string, index: number) => {
-    const digits = text.replace(/\D/g, '');
-
-    if (digits.length > 1) {
-      // Paste or tap-to-fill: distribute across boxes starting at current index
-      const newOtp = [...otpCode];
-      let filled = 0;
-      for (let i = index; i < 6 && filled < digits.length; i++, filled++) {
-        newOtp[i] = digits[filled];
-      }
-      setOtpCode(newOtp);
-      const lastFilled = Math.min(index + digits.length - 1, 5);
-      inputRefs.current[lastFilled]?.focus();
-      const joined = newOtp.join('');
-      if (joined.length === 6 && newOtp.every(d => d !== '')) {
-        setTimeout(() => handleVerifyOtp(joined), 300);
-      }
-      return;
-    }
-
-    const newOtp = [...otpCode];
-    newOtp[index] = digits;
-    setOtpCode(newOtp);
-    if (digits && index < 5) {
-      inputRefs.current[index + 1]?.focus();
-    }
-    if (newOtp.every(d => d !== '') && !isLoading) {
-      handleVerifyOtp(newOtp.join(''));
-    }
+  const focusInput = () => {
+    hiddenInputRef.current?.focus();
   };
 
-  const handleKeyPress = (key: string, index: number) => {
-    if (key === 'Backspace' && !otpCode[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
+  const handleOtpChange = (text: string) => {
+    if (isLoading) return;
+    const digits = text.replace(/\D/g, '').slice(0, OTP_LENGTH);
+    setOtpValue(digits);
+    setError('');
+    if (digits.length === OTP_LENGTH) {
+      handleVerifyOtp(digits);
     }
   };
 
@@ -234,9 +166,9 @@ export default function OtpVerificationScreen() {
   };
 
   const handleVerifyOtp = async (code?: string) => {
-    const finalCode = code || otpCode.join('');
-    
-    if (finalCode.length !== 6) {
+    const finalCode = code ?? otpValue;
+
+    if (finalCode.length !== OTP_LENGTH) {
       setError('Please enter the complete 6-digit code');
       return;
     }
@@ -245,46 +177,29 @@ export default function OtpVerificationScreen() {
       setError('');
       setIsLoading(true);
 
-      // Determine which identifier to use based on preferred auth method
       const preferredMethod = params.preferredAuthMethod || (params.method === 'sms' ? 'phone' : 'email');
       const email = params.userEmail || '';
       const phoneNumber = params.userPhone || '';
-      
-      // Build request body based on auth method
-      let requestBody: any;
-      if (preferredMethod === 'phone' && phoneNumber) {
-        requestBody = {
-          phoneNumber: phoneNumber,
-          otpCode: finalCode,
-        };
-      } else if (email) {
-        requestBody = {
-          email: email,
-          otpCode: finalCode,
-        };
-      } else {
-        // Fallback to username if no email/phone available (backward compatibility)
-        console.warn('⚠️ No email or phone available, falling back to username');
-        requestBody = {
-          username: params.username,
-          otpCode: finalCode,
-        };
-      }
 
-      console.log('🔐 Verifying OTP with:', { method: preferredMethod, identifier: preferredMethod === 'phone' ? phoneNumber : email });
+      let requestBody: Record<string, string>;
+      if (preferredMethod === 'phone' && phoneNumber) {
+        requestBody = { phoneNumber, otpCode: finalCode };
+      } else if (email) {
+        requestBody = { email, otpCode: finalCode };
+      } else {
+        requestBody = { username: params.username, otpCode: finalCode };
+      }
 
       const response = await fetch(`${API_BASE_URL}/api/v1/mobile/auth/verify-otp`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
 
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // Optional: if verify-otp ever returns JWT + user (not current API), persist immediately
+        // Path A: verify-otp returns JWT + user directly
         if (data.token && data.user) {
           const userData = buildUserDataFromMobileLoginUser(
             data.user as Record<string, unknown>,
@@ -297,33 +212,20 @@ export default function OtpVerificationScreen() {
             await secureStorage.setItem('user', JSON.stringify(userData));
             if (data.deviceToken) {
               await secureStorage.setItem('device_token', data.deviceToken);
-              const deviceName = data.deviceName || 'this device';
-              Alert.alert(
-                'Success',
-                `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
-                [{ text: 'Continue', onPress: () => { void continueToMainApp(data.user); } }]
-              );
-            } else {
-              Alert.alert('Success', 'Authentication successful!', [
-                { text: 'Continue', onPress: () => { void continueToMainApp(data.user); } },
-              ]);
             }
-            await refreshSession();
+            await setUserFromExternal(userData, data.token);
+            void continueToMainApp(data.user);
             return;
           }
         }
 
-        // Current API: verify-otp only returns verification flags — JWT is issued by POST /login with otpVerified: true
+        // Path B: complete login via POST /login with otpVerified: true
         const completeLoginWithOtpVerified = async (): Promise<boolean> => {
-          if (!params.username || !params.tempPassword) {
-            return false;
-          }
+          if (!params.username || !params.tempPassword) return false;
 
           const loginResponse = await fetch(`${API_BASE_URL}/api/v1/mobile/login`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
             body: JSON.stringify({
               username: params.username,
@@ -334,22 +236,10 @@ export default function OtpVerificationScreen() {
           });
 
           const loginData = await loginResponse.json();
-          console.log('📊 Login completion response:', loginData);
 
-          if (!loginResponse.ok || !loginData.success) {
-            console.error('❌ Login completion failed:', loginData);
-            return false;
-          }
-
-          if (loginData.requires2FA) {
-            console.error('❌ Login still requires 2FA after OTP verification');
-            return false;
-          }
-
-          if (!loginData.token || typeof loginData.token !== 'string') {
-            console.error('❌ Login succeeded but no JWT returned');
-            return false;
-          }
+          if (!loginResponse.ok || !loginData.success) return false;
+          if (loginData.requires2FA) return false;
+          if (!loginData.token || typeof loginData.token !== 'string') return false;
 
           let userData = buildUserDataFromMobileLoginUser(
             loginData.user as Record<string, unknown> | undefined,
@@ -379,10 +269,7 @@ export default function OtpVerificationScreen() {
             }
           }
 
-          if (!userData?.id) {
-            console.error('❌ No user profile after login');
-            return false;
-          }
+          if (!userData?.id) return false;
 
           const { secureStorage } = await import('../../utils/storage');
           await secureStorage.setItem('auth_token', loginData.token);
@@ -391,46 +278,28 @@ export default function OtpVerificationScreen() {
             await secureStorage.setItem('device_token', loginData.deviceToken);
           }
 
-          if (loginData.deviceToken) {
-            const deviceName = loginData.deviceName || 'this device';
-            Alert.alert(
-              'Success',
-              `Authentication successful! Device "${deviceName}" is now trusted for 60 days.`,
-              [{ text: 'Continue', onPress: () => { void continueToMainApp(loginData.user); } }]
-            );
-          } else {
-            Alert.alert('Success', 'Authentication successful!', [
-              { text: 'Continue', onPress: () => { void continueToMainApp(loginData.user); } },
-            ]);
-          }
-
-          await refreshSession();
+          // Update React auth state immediately without a network round-trip.
+          // refreshSession() (calls checkAuth) is skipped here: a transient network failure
+          // cannot nuke the freshly-written JWT when we use setUserFromExternal directly.
+          await setUserFromExternal(userData, loginData.token);
+          void continueToMainApp(loginData.user);
           return true;
         };
 
         try {
           const loginOk = await completeLoginWithOtpVerified();
-          if (loginOk) {
-            return;
-          }
+          if (loginOk) return;
         } catch (loginError) {
           console.error('Error completing login after OTP:', loginError);
         }
 
-        if (!params.username || !params.tempPassword) {
-          setError(
-            'Verification succeeded. Sign in again with your password to finish logging in.'
-          );
-        } else {
-          setError('Verification successful but could not complete login. Please sign in again.');
-        }
-        setTimeout(() => {
-          router.replace('/(auth)/sign-in');
-        }, 2000);
+        setError('Verification successful but could not complete login. Please sign in again.');
+        setTimeout(() => router.replace('/(auth)/sign-in'), 2000);
       } else {
-        setError(data.message || 'Verification failed');
-        setOtpCode(['', '', '', '', '', '']);
-        requestAnimationFrame(() => inputRefs.current[0]?.focus());
+        setError(data.message || 'Incorrect code. Please try again.');
+        setOtpValue('');
+        triggerShake();
+        requestAnimationFrame(() => hiddenInputRef.current?.focus());
       }
     } catch (err) {
       setError('Network error. Please try again.');
@@ -445,26 +314,22 @@ export default function OtpVerificationScreen() {
       setIsResending(true);
       setError('');
 
-      // Use email or phoneNumber for resend, same as verify
       const preferredMethod = params.preferredAuthMethod || (params.method === 'sms' ? 'phone' : 'email');
       const email = params.userEmail || '';
       const phoneNumber = params.userPhone || '';
-      
-      let requestBody: any;
+
+      let requestBody: Record<string, string>;
       if (preferredMethod === 'phone' && phoneNumber) {
-        requestBody = { phoneNumber: phoneNumber };
+        requestBody = { phoneNumber };
       } else if (email) {
-        requestBody = { email: email };
+        requestBody = { email };
       } else {
-        // Fallback to username
         requestBody = { username: params.username };
       }
 
       const response = await fetch(`${API_BASE_URL}/api/v1/mobile/auth/resend-otp`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
 
@@ -472,9 +337,8 @@ export default function OtpVerificationScreen() {
 
       if (response.ok && data.success) {
         setTimeLeft(600);
-        setOtpCode(['', '', '', '', '', '']);
-        requestAnimationFrame(() => inputRefs.current[0]?.focus());
-        Alert.alert('Code Sent', data.message);
+        setOtpValue('');
+        requestAnimationFrame(() => hiddenInputRef.current?.focus());
       } else {
         setError(data.message || 'Failed to resend code');
       }
@@ -486,16 +350,13 @@ export default function OtpVerificationScreen() {
     }
   };
 
-  const getMethodIcon = () => {
-    return params.method === 'sms' ? 'phone-portrait' : 'mail';
-  };
+  const getMethodIcon = () => (params.method === 'sms' ? 'phone-portrait' : 'mail');
+  const getMethodText = () => (params.method === 'sms' ? 'phone number' : 'email address');
 
-  const getMethodText = () => {
-    return params.method === 'sms' ? 'phone number' : 'email address';
-  };
+  const activeIndex = Math.min(otpValue.length, OTP_LENGTH - 1);
 
   return (
-    <KeyboardAvoidingView 
+    <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
@@ -519,45 +380,61 @@ export default function OtpVerificationScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        <View style={styles.otpContainer}>
-          {otpCode.map((digit, index) => (
-            <TextInput
-              key={index}
-              ref={ref => { inputRefs.current[index] = ref; }}
-              style={[
-                styles.otpInput,
-                digit ? styles.otpInputFilled : null,
-                error ? styles.otpInputError : null,
-              ]}
-              value={digit}
-              onChangeText={text => handleBoxChange(text, index)}
-              onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, index)}
-              keyboardType="number-pad"
-              maxLength={index === 0 ? 6 : 1}
-              textContentType={index === 0 && Platform.OS === 'ios' ? 'oneTimeCode' : undefined}
-              autoComplete={
-                index === 0 && Platform.OS === 'android'
-                  ? params.method === 'sms' ? 'sms-otp' : 'one-time-code'
-                  : undefined
-              }
-              importantForAutofill={index === 0 ? 'yes' : 'no'}
-              selectTextOnFocus
-              editable={!isLoading}
-            />
-          ))}
-        </View>
+        {/* Hidden real input that captures all keyboard/autofill input */}
+        <TextInput
+          ref={hiddenInputRef}
+          value={otpValue}
+          onChangeText={handleOtpChange}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          keyboardType="number-pad"
+          maxLength={OTP_LENGTH}
+          textContentType="oneTimeCode"
+          autoComplete={Platform.OS === 'android'
+            ? (params.method === 'sms' ? 'sms-otp' : 'one-time-code')
+            : undefined}
+          importantForAutofill="yes"
+          editable={!isLoading}
+          style={styles.hiddenInput}
+          caretHidden
+        />
+
+        {/* Visual digit boxes */}
+        <Pressable onPress={focusInput}>
+          <Animated.View style={[styles.otpContainer, { transform: [{ translateX: shakeAnim }] }]}>
+            {Array.from({ length: OTP_LENGTH }).map((_, i) => {
+              const digit = otpValue[i];
+              const isActive = isFocused && i === activeIndex && !isLoading;
+              const isFilled = !!digit;
+
+              return (
+                <View
+                  key={i}
+                  style={[
+                    styles.otpBox,
+                    isFilled && styles.otpBoxFilled,
+                    isActive && styles.otpBoxActive,
+                    !!error && styles.otpBoxError,
+                  ]}
+                >
+                  {digit ? (
+                    <Text style={styles.otpDigit}>{digit}</Text>
+                  ) : isActive ? (
+                    <Animated.View style={[styles.cursor, { opacity: cursorAnim }]} />
+                  ) : null}
+                </View>
+              );
+            })}
+          </Animated.View>
+        </Pressable>
 
         {timeLeft > 0 ? (
-          <Text style={styles.timerText}>
-            Code expires in {formatTime(timeLeft)}
-          </Text>
+          <Text style={styles.timerText}>Code expires in {formatTime(timeLeft)}</Text>
         ) : (
-          <Text style={styles.expiredText}>
-            Code has expired. Please request a new one.
-          </Text>
+          <Text style={styles.expiredText}>Code has expired. Please request a new one.</Text>
         )}
 
-        {/* Trust This Device Option */}
+        {/* Trust This Device */}
         <View style={styles.trustDeviceContainer}>
           <Switch
             value={trustDevice}
@@ -567,15 +444,16 @@ export default function OtpVerificationScreen() {
             ios_backgroundColor={palette.switchTrackOff}
             style={styles.trustDeviceSwitch}
           />
-          <Text style={styles.trustDeviceLabel}>
-            Trust this device for 60 days
-          </Text>
+          <Text style={styles.trustDeviceLabel}>Trust this device for 60 days</Text>
         </View>
 
         <TouchableOpacity
-          style={[styles.verifyButton, isLoading && styles.buttonDisabled]}
+          style={[
+            styles.verifyButton,
+            (isLoading || otpValue.length < OTP_LENGTH) && styles.buttonDisabled,
+          ]}
           onPress={() => handleVerifyOtp()}
-          disabled={isLoading || otpCode.some(digit => !digit)}
+          disabled={isLoading || otpValue.length < OTP_LENGTH}
         >
           {isLoading ? (
             <ActivityIndicator color="#fff" />
@@ -588,15 +466,12 @@ export default function OtpVerificationScreen() {
           <Text style={styles.resendText}>Didn&apos;t receive the code? </Text>
           <TouchableOpacity
             onPress={handleResendOtp}
-            disabled={isResending || timeLeft > 540} // Allow resend after 1 minute
+            disabled={isResending || timeLeft > 540}
           >
             {isResending ? (
               <ActivityIndicator size="small" color={Colors.primary} />
             ) : (
-              <Text style={[
-                styles.resendLink,
-                (timeLeft > 540) && styles.resendLinkDisabled
-              ]}>
+              <Text style={[styles.resendLink, timeLeft > 540 && styles.resendLinkDisabled]}>
                 Resend Code
               </Text>
             )}
@@ -667,32 +542,59 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#ef4444',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
     fontSize: 14,
+  },
+  hiddenInput: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
+    pointerEvents: 'none',
   },
   otpContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
-    paddingHorizontal: 20,
+    marginBottom: 24,
+    paddingHorizontal: 10,
   },
-  otpInput: {
-    width: 45,
-    height: 55,
+  otpBox: {
+    width: 46,
+    height: 58,
     borderWidth: 2,
     borderColor: '#e0e0e0',
-    borderRadius: 8,
-    textAlign: 'center',
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.text,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fafafa',
   },
-  otpInputFilled: {
+  otpBoxFilled: {
     borderColor: Colors.primary,
     backgroundColor: '#f0f8ff',
   },
-  otpInputError: {
+  otpBoxActive: {
+    borderColor: Colors.primary,
+    backgroundColor: '#fff',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  otpBoxError: {
     borderColor: '#ef4444',
+    backgroundColor: '#fff5f5',
+  },
+  otpDigit: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: Colors.text,
+  },
+  cursor: {
+    width: 2,
+    height: 24,
+    backgroundColor: Colors.primary,
+    borderRadius: 1,
   },
   timerText: {
     textAlign: 'center',
@@ -730,7 +632,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   buttonDisabled: {
-    opacity: 0.7,
+    opacity: 0.5,
   },
   verifyButtonText: {
     color: '#fff',
@@ -763,4 +665,4 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
   },
-}); 
+});

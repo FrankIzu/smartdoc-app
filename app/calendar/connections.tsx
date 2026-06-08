@@ -8,16 +8,29 @@ import {
   calendarConnections,
   calendarDeleteConnection,
   calendarResetConnection,
+  calendarSetDefaultConnection,
   calendarSyncGoogleWithStaleConnectionRecovery,
+  formatCalendarSyncMessage,
+  type CalendarConnection,
+  type CalendarProvider,
 } from '../../services/calendarApi';
-import { CalendarOAuthWebView } from './components/CalendarOAuthWebView';
+import {
+  calendarConnectionProvider,
+  canConnectMoreCalendarProviders,
+  connectionDisplayLabel,
+} from '../../utils/calendarConnections';
+import { CalendarOAuthWebView } from './_components/CalendarOAuthWebView';
+import { ConnectCalendarModal } from './_components/ConnectCalendarModal';
+import { ConnectionChips } from './_components/ConnectionChips';
 
 export default function CalendarConnectionsScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const [loading, setLoading] = useState(true);
-  const [list, setList] = useState<any[]>([]);
+  const [list, setList] = useState<CalendarConnection[]>([]);
+  const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [oauthOpen, setOauthOpen] = useState(false);
+  const [oauthProvider, setOauthProvider] = useState<CalendarProvider>('google');
 
   const load = useCallback(async () => {
     const c = await calendarConnections();
@@ -38,6 +51,13 @@ export default function CalendarConnectionsScreen() {
       cancelled = true;
     };
   }, [load]);
+
+  const hasGoogle = useMemo(() => list.some((c) => calendarConnectionProvider(c) === 'google'), [list]);
+  const hasMicrosoft = useMemo(
+    () => list.some((c) => calendarConnectionProvider(c) === 'microsoft'),
+    [list]
+  );
+  const canConnectMore = useMemo(() => canConnectMoreCalendarProviders(list), [list]);
 
   const styles = useMemo(
     () =>
@@ -66,19 +86,24 @@ export default function CalendarConnectionsScreen() {
         },
         btnText: { color: '#fff', fontWeight: '600' },
         secondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-        danger: { backgroundColor: '#ef4444' },
       }),
     [colors]
   );
 
   const syncAll = async () => {
     try {
-      await calendarSyncGoogleWithStaleConnectionRecovery();
-      Alert.alert('Sync', 'Calendar sync started');
+      const result = await calendarSyncGoogleWithStaleConnectionRecovery();
+      Alert.alert('Sync', formatCalendarSyncMessage(result));
       await load();
     } catch (e: any) {
       Alert.alert('Sync failed', e?.response?.data?.error || e?.message || '');
     }
+  };
+
+  const openOAuth = (provider: CalendarProvider) => {
+    setOauthProvider(provider);
+    setConnectModalOpen(false);
+    setOauthOpen(true);
   };
 
   return (
@@ -91,9 +116,11 @@ export default function CalendarConnectionsScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      <TouchableOpacity style={styles.btn} onPress={() => setOauthOpen(true)}>
-        <Text style={styles.btnText}>Connect Google</Text>
-      </TouchableOpacity>
+      {list.length === 0 || canConnectMore ? (
+        <TouchableOpacity style={styles.btn} onPress={() => setConnectModalOpen(true)}>
+          <Text style={styles.btnText}>{list.length === 0 ? 'Connect calendar' : 'Connect another'}</Text>
+        </TouchableOpacity>
+      ) : null}
       <TouchableOpacity style={[styles.btn, styles.secondary]} onPress={syncAll}>
         <Text style={[styles.btnText, { color: colors.text }]}>Sync all calendars</Text>
       </TouchableOpacity>
@@ -104,16 +131,55 @@ export default function CalendarConnectionsScreen() {
         <View style={{ paddingHorizontal: 24, paddingTop: 24 }}>
           <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>No connections yet</Text>
           <Text style={{ color: colors.textSecondary, marginTop: 8, lineHeight: 22 }}>
-            Connect Google Calendar to sync events into GrabDocs. After connecting, use Sync all calendars to pull the latest.
+            Connect Google Calendar or Microsoft 365 to sync events into GrabDocs. After connecting, use Sync all
+            calendars to pull the latest.
           </Text>
         </View>
+      ) : null}
+
+      {!loading && list.length > 0 ? (
+        <ConnectionChips
+          connections={list}
+          canConnectMore={canConnectMore}
+          onSetDefault={async (id) => {
+            try {
+              const res = await calendarSetDefaultConnection(id);
+              await load();
+              Alert.alert('Default calendar', res?.message || 'Default calendar updated');
+            } catch (e: any) {
+              Alert.alert('Error', e?.response?.data?.error || '');
+            }
+          }}
+          onDisconnect={(connection) => {
+            const label = connectionDisplayLabel(connection);
+            Alert.alert('Disconnect', `Remove ${label}?`, [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Disconnect',
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await calendarDeleteConnection(Number(connection.id));
+                    await load();
+                  } catch (e: any) {
+                    Alert.alert('Error', e?.response?.data?.error || '');
+                  }
+                },
+              },
+            ]);
+          }}
+          onAddAnother={() => setConnectModalOpen(true)}
+        />
       ) : null}
 
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         {list.map((c) => (
           <View key={String(c.id)} style={styles.card}>
-            <Text style={styles.name}>{c.provider || c.type || 'Connection'}</Text>
-            <Text style={styles.meta}>Status: {c.status || c.sync_status || '—'}</Text>
+            <Text style={styles.name}>{connectionDisplayLabel(c)}</Text>
+            <Text style={styles.meta}>
+              Status: {c.status || '—'}
+              {c.is_default ? ' · Default for new events' : ''}
+            </Text>
             <View style={{ flexDirection: 'row', marginTop: 12, gap: 12 }}>
               <TouchableOpacity
                 onPress={async () => {
@@ -153,12 +219,23 @@ export default function CalendarConnectionsScreen() {
         ))}
       </ScrollView>
 
+      <ConnectCalendarModal
+        visible={connectModalOpen}
+        hasGoogle={hasGoogle}
+        hasMicrosoft={hasMicrosoft}
+        onClose={() => setConnectModalOpen(false)}
+        onConnectGoogle={() => openOAuth('google')}
+        onConnectMicrosoft={() => openOAuth('microsoft')}
+      />
+
       <CalendarOAuthWebView
         visible={oauthOpen}
+        provider={oauthProvider}
         onClose={() => setOauthOpen(false)}
         onSuccess={async () => {
           await load();
-          await calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
+          const result = await calendarSyncGoogleWithStaleConnectionRecovery({ silent: true }).catch(() => null);
+          if (result) Alert.alert('Connected', formatCalendarSyncMessage(result));
         }}
         onError={(msg) => Alert.alert('Connection', msg)}
       />

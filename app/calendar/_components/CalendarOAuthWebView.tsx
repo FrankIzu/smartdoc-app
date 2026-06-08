@@ -1,9 +1,14 @@
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useRef } from 'react';
-import { calendarGoogleConnectUrl } from '../../../services/calendarApi';
+import {
+  calendarGoogleConnectUrl,
+  calendarMicrosoftConnectUrl,
+  type CalendarProvider,
+} from '../../../services/calendarApi';
 
 type Props = {
   visible: boolean;
+  provider: CalendarProvider;
   onClose: () => void;
   onSuccess: () => void;
   onError: (message: string) => void;
@@ -34,10 +39,10 @@ function parseCalendarOAuthReturnUrl(url: string): { result: 'success' } | { res
 }
 
 /**
- * Opens Google Calendar OAuth in the browser and completes the session when the backend
- * redirects to grabdocs:// — same pattern as main Google login (HTTPS callback → app deep link).
+ * Opens Google or Microsoft Calendar OAuth in the browser and completes when the backend
+ * redirects to grabdocs://calendar-oauth (HTTPS callback → app deep link).
  */
-export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: Props) {
+export function CalendarOAuthWebView({ visible, provider, onClose, onSuccess, onError }: Props) {
   const handlersRef = useRef({ onSuccess, onError, onClose });
   handlersRef.current = { onSuccess, onError, onClose };
 
@@ -50,7 +55,8 @@ export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: P
       try {
         WebBrowser.maybeCompleteAuthSession();
 
-        const authUrl = await calendarGoogleConnectUrl();
+        const authUrl =
+          provider === 'microsoft' ? await calendarMicrosoftConnectUrl() : await calendarGoogleConnectUrl();
         if (!active) return;
 
         const result = await WebBrowser.openAuthSessionAsync(authUrl, CALENDAR_OAUTH_RETURN);
@@ -64,7 +70,10 @@ export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: P
             return;
           }
           if (parsed?.result === 'error') {
-            err(parsed.reason.replace(/_/g, ' ') || 'Could not connect Google Calendar');
+            err(
+              parsed.reason.replace(/_/g, ' ') ||
+                `Could not connect ${provider === 'microsoft' ? 'Microsoft' : 'Google'} Calendar`
+            );
             close();
             return;
           }
@@ -78,7 +87,10 @@ export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: P
         close();
       } catch (e: unknown) {
         if (!active) return;
-        const msg = e instanceof Error ? e.message : 'Could not start Google sign-in';
+        const msg =
+          e instanceof Error
+            ? e.message
+            : `Could not start ${provider === 'microsoft' ? 'Microsoft' : 'Google'} sign-in`;
         err(msg);
         close();
       }
@@ -89,7 +101,7 @@ export function CalendarOAuthWebView({ visible, onClose, onSuccess, onError }: P
     return () => {
       active = false;
     };
-  }, [visible]);
+  }, [visible, provider]);
 
   return null;
 }

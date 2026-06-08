@@ -231,6 +231,14 @@ export default function CalendarEventDetailScreen() {
     event &&
     (event.event_type === 'company' ? isAdmin : isOrganizer);
 
+  const handleEdit = useCallback(() => {
+    if (deviceOffline) {
+      Alert.alert('Offline', 'Editing requires a connection.');
+      return;
+    }
+    router.push(`/calendar/edit/${eventId}` as any);
+  }, [deviceOffline, eventId, router]);
+
   const handleDelete = () => {
     if (deviceOffline) {
       Alert.alert('Offline', 'Delete requires a connection.');
@@ -358,17 +366,7 @@ export default function CalendarEventDetailScreen() {
           {event.title || 'Event'}
         </Text>
         {canEditDelete ? (
-          <TouchableOpacity
-            style={{ flexShrink: 0 }}
-            onPress={() => {
-              if (deviceOffline) {
-                Alert.alert('Offline', 'Editing requires a connection.');
-                return;
-              }
-              router.push(`/calendar/edit/${eventId}` as any);
-            }}
-            accessibilityLabel="Edit"
-          >
+          <TouchableOpacity style={{ flexShrink: 0 }} onPress={handleEdit} accessibilityLabel="Edit">
             <Text style={{ color: '#007AFF', fontSize: 17, fontWeight: '600' }}>Edit</Text>
           </TouchableOpacity>
         ) : (
@@ -570,9 +568,14 @@ export default function CalendarEventDetailScreen() {
         ) : null}
 
         {canEditDelete ? (
-          <TouchableOpacity style={[styles.btn, styles.btnDanger, { marginTop: 24 }]} onPress={handleDelete}>
-            <Text style={styles.btnText}>Delete event</Text>
-          </TouchableOpacity>
+          <View style={{ marginTop: 24, gap: 10 }}>
+            <TouchableOpacity style={styles.btn} onPress={handleEdit} accessibilityLabel="Edit event">
+              <Text style={styles.btnText}>Edit event</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.btn, styles.btnDanger]} onPress={handleDelete}>
+              <Text style={styles.btnText}>Delete event</Text>
+            </TouchableOpacity>
+          </View>
         ) : null}
       </ScrollView>
 
@@ -581,11 +584,6 @@ export default function CalendarEventDetailScreen() {
         onClose={() => setNotesOpen(false)}
         title="Notebook"
         heightRatio={0.92}
-        headerRight={() => (
-          <TouchableOpacity onPress={() => setNotesOpen(false)}>
-            <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>Done</Text>
-          </TouchableOpacity>
-        )}
       >
         <View style={{ paddingHorizontal: 16, flex: 1 }}>
             {notesLoading ? <ActivityIndicator style={{ marginTop: 16 }} /> : null}

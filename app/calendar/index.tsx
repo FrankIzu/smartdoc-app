@@ -15,9 +15,7 @@ import {
     FlatList,
     Keyboard,
     ListRenderItem,
-    Modal,
     Platform,
-    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -39,8 +37,17 @@ import {
     calendarGetStats,
     calendarListEvents,
     calendarSearchCompanyMembers,
+    calendarSetDefaultConnection,
     calendarSyncGoogleWithStaleConnectionRecovery,
+    formatCalendarSyncMessage,
+    type CalendarConnection,
+    type CalendarProvider,
 } from '../../services/calendarApi';
+import {
+  canConnectMoreCalendarProviders,
+  connectionDisplayLabel,
+  calendarConnectionProvider,
+} from '../../utils/calendarConnections';
 import {
     buildCalendarListStorageKey,
     getCalendarListCache,
@@ -63,15 +70,14 @@ import {
     sortCalendarEventsByStartDesc,
 } from '../../utils/calendarTime';
 import { openMapsForLocationLabel } from '../../utils/openMapsQuery';
-import {
-  dialogSurfaceBorder,
-  dialogSurfaceShadow,
-  modalScrimOverlayStyle,
-} from '../../utils/dialogSurfaceStyles';
 import { useAuth } from '../context/auth';
-import { CalendarOAuthWebView } from './components/CalendarOAuthWebView';
-import { CalendarReachPill } from './components/CalendarReachIndicator';
-import { CalendarVisualPane } from './components/CalendarVisualPane';
+import { GoogleLogo } from '../../components/GoogleLogo';
+import { MicrosoftLogo } from '../../components/MicrosoftLogo';
+import { CalendarOAuthWebView } from './_components/CalendarOAuthWebView';
+import { CalendarReachPill } from './_components/CalendarReachIndicator';
+import { CalendarVisualPane } from './_components/CalendarVisualPane';
+import { ConnectCalendarModal } from './_components/ConnectCalendarModal';
+import { ConnectionChips } from './_components/ConnectionChips';
 
 type EventRow = Record<string, any>;
 
@@ -82,11 +88,6 @@ function isCalendarFetchCancelled(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const o = err as { code?: string; name?: string };
   return o.code === 'ERR_CANCELED' || o.name === 'AbortError' || o.name === 'CanceledError';
-}
-
-function isGoogleCalendarConnection(c: Record<string, unknown>): boolean {
-  const p = String(c.provider ?? c.type ?? '').toLowerCase();
-  return p.includes('google');
 }
 
 function isPersonalEvent(ev: EventRow): boolean {
@@ -140,10 +141,10 @@ export default function CalendarHomeScreen() {
   const [memberHits, setMemberHits] = useState<any[]>([]);
   const onEndReachedCalledDuringMomentumRef = useRef(false);
 
-  const [calendarConnectionsList, setCalendarConnectionsList] = useState<any[]>([]);
-  const [linkMenuOpen, setLinkMenuOpen] = useState(false);
+  const [calendarConnectionsList, setCalendarConnectionsList] = useState<CalendarConnection[]>([]);
+  const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [oauthOpen, setOauthOpen] = useState(false);
-  const [syncMenuBusy, setSyncMenuBusy] = useState(false);
+  const [oauthProvider, setOauthProvider] = useState<CalendarProvider>('google');
 
   const networkState = useNetworkState();
   const deviceOffline = useMemo(
@@ -174,10 +175,20 @@ export default function CalendarHomeScreen() {
     }
   }, []);
 
-  const hasGoogleLinked = useMemo(
-    () => calendarConnectionsList.some((c) => isGoogleCalendarConnection(c)),
+  const hasGoogleConnection = useMemo(
+    () => calendarConnectionsList.some((c) => calendarConnectionProvider(c) === 'google'),
     [calendarConnectionsList]
   );
+  const hasMicrosoftConnection = useMemo(
+    () => calendarConnectionsList.some((c) => calendarConnectionProvider(c) === 'microsoft'),
+    [calendarConnectionsList]
+  );
+  const hasAnyConnection = calendarConnectionsList.length > 0;
+  const canConnectMore = useMemo(
+    () => canConnectMoreCalendarProviders(calendarConnectionsList),
+    [calendarConnectionsList]
+  );
+  const viewUserActive = isAdmin && viewUserId != null;
 
   const dismissCalendarOverlays = useCallback(() => {
     Keyboard.dismiss();
@@ -625,62 +636,55 @@ export default function CalendarHomeScreen() {
     [refreshing, onRefresh]
   );
 
-  const onHeaderCalendarLinkPress = useCallback(() => {
-    if (hasGoogleLinked) {
-      setLinkMenuOpen(true);
-    } else {
-      setOauthOpen(true);
-    }
-  }, [hasGoogleLinked]);
+  const openConnectFlow = useCallback((provider: CalendarProvider) => {
+    setOauthProvider(provider);
+    setConnectModalOpen(false);
+    setOauthOpen(true);
+  }, []);
 
-  const syncGoogleFromMenu = useCallback(async () => {
-    if (deviceOffline) {
-      Alert.alert('Offline', 'Connect to sync Google Calendar.');
-      return;
-    }
-    setSyncMenuBusy(true);
-    try {
-      await calendarSyncGoogleWithStaleConnectionRecovery();
-      await refreshConnections();
-      await load();
-      Alert.alert('Sync', 'Calendar sync started');
-      setLinkMenuOpen(false);
-    } catch (e: any) {
-      Alert.alert('Sync failed', e?.response?.data?.error || e?.message || '');
-    } finally {
-      setSyncMenuBusy(false);
-    }
-  }, [load, refreshConnections, deviceOffline]);
+  const handleSetDefaultCalendar = useCallback(
+    async (connectionId: number) => {
+      if (deviceOffline) {
+        Alert.alert('Offline', 'Changing default calendar requires a connection.');
+        return;
+      }
+      try {
+        const res = await calendarSetDefaultConnection(connectionId);
+        await refreshConnections();
+        Alert.alert('Default calendar', res?.message || 'Default calendar updated');
+      } catch (e: any) {
+        Alert.alert('Error', e?.response?.data?.error || e?.message || 'Failed to set default calendar');
+      }
+    },
+    [refreshConnections, deviceOffline]
+  );
 
-  const disconnectGoogleFromMenu = useCallback(() => {
-    Alert.alert('Disconnect', 'Remove Google Calendar from GrabDocs?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Disconnect',
-        style: 'destructive',
-        onPress: async () => {
-          if (deviceOffline) {
-            Alert.alert('Offline', 'Disconnecting requires a connection.');
-            return;
-          }
-          const googleIds = calendarConnectionsList
-            .filter((c) => isGoogleCalendarConnection(c))
-            .map((c) => Number(c.id))
-            .filter((id) => Number.isFinite(id));
-          try {
-            for (const id of googleIds) {
-              await calendarDeleteConnection(id);
+  const handleDisconnectCalendar = useCallback(
+    (connection: CalendarConnection) => {
+      const label = connectionDisplayLabel(connection);
+      Alert.alert('Disconnect', `Remove ${label} from GrabDocs?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: async () => {
+            if (deviceOffline) {
+              Alert.alert('Offline', 'Disconnecting requires a connection.');
+              return;
             }
-            await refreshConnections();
-            await load();
-            setLinkMenuOpen(false);
-          } catch (e: any) {
-            Alert.alert('Error', e?.response?.data?.error || e?.message || '');
-          }
+            try {
+              await calendarDeleteConnection(Number(connection.id));
+              await refreshConnections();
+              await load();
+            } catch (e: any) {
+              Alert.alert('Error', e?.response?.data?.error || e?.message || '');
+            }
+          },
         },
-      },
-    ]);
-  }, [calendarConnectionsList, load, refreshConnections, deviceOffline]);
+      ]);
+    },
+    [load, refreshConnections, deviceOffline]
+  );
 
   const goCalendarToday = useCallback(() => {
     const n = new Date();
@@ -776,20 +780,6 @@ export default function CalendarHomeScreen() {
           alignItems: 'center',
           flexShrink: 0,
           gap: 2,
-        },
-        headerLinkBtn: {
-          maxWidth: 158,
-          alignItems: 'flex-end',
-          justifyContent: 'center',
-          paddingVertical: 4,
-          paddingLeft: 4,
-        },
-        headerConnectText: {
-          color: '#007AFF',
-          fontSize: 12,
-          fontWeight: '600',
-          textAlign: 'right',
-          lineHeight: 16,
         },
         chip: {
           paddingHorizontal: 12,
@@ -1036,6 +1026,32 @@ export default function CalendarHomeScreen() {
           borderColor: colors.border,
         },
         viewingBannerText: { flex: 1, fontSize: 14, color: colors.textSecondary, marginRight: 12 },
+        connectBanner: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          marginHorizontal: 14,
+          marginBottom: 10,
+          padding: 12,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: '#007AFF44',
+          backgroundColor: '#007AFF12',
+          gap: 10,
+        },
+        connectBannerIcons: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          width: 36,
+        },
+        connectBannerTitle: { fontSize: 14, fontWeight: '600', color: colors.text },
+        connectBannerSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2, lineHeight: 17 },
+        connectBannerBtn: {
+          backgroundColor: '#007AFF',
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+        },
+        connectBannerBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
         offlineBanner: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -1066,39 +1082,6 @@ export default function CalendarHomeScreen() {
         },
         memberSuggestName: { color: colors.text, fontSize: 15 },
         memberSuggestEmail: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
-        modalWrap: { flex: 1, justifyContent: 'center', paddingHorizontal: 24 },
-        modalBackdropPressable: {
-          ...StyleSheet.absoluteFillObject,
-          ...(colors.isDark ? { backgroundColor: 'rgba(0,0,0,0.5)' } : { backgroundColor: 'rgba(0,0,0,0.45)' }),
-        },
-        modalCard: {
-          borderRadius: 14,
-          padding: 20,
-          backgroundColor: colors.surface,
-          ...dialogSurfaceBorder(colors.isDark, colors.border),
-          ...dialogSurfaceShadow(colors.isDark),
-        },
-        modalTitle: {
-          fontSize: 17,
-          fontWeight: '700',
-          color: colors.text,
-          marginBottom: 16,
-        },
-        modalBtn: {
-          backgroundColor: '#007AFF',
-          paddingVertical: 14,
-          borderRadius: 10,
-          alignItems: 'center',
-          marginBottom: 10,
-          minHeight: 48,
-          justifyContent: 'center',
-        },
-        modalBtnDanger: {
-          backgroundColor: '#ef4444',
-          marginBottom: 0,
-        },
-        modalBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-        modalBtnDisabled: { opacity: 0.65 },
       }),
     [colors]
   );
@@ -1337,17 +1320,6 @@ export default function CalendarHomeScreen() {
           >
             <Ionicons name="add" size={24} color={colors.tint ?? '#007AFF'} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.headerLinkBtn}
-            onPress={onHeaderCalendarLinkPress}
-            accessibilityLabel={hasGoogleLinked ? 'Google Calendar — sync or disconnect' : 'Connect Google Calendar'}
-          >
-            {hasGoogleLinked ? (
-              <Ionicons name="link-outline" size={24} color="#007AFF" />
-            ) : (
-              <Text style={styles.headerConnectText}>Connect Google Calendar</Text>
-            )}
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -1360,6 +1332,36 @@ export default function CalendarHomeScreen() {
               : "Can't reach the server — showing saved calendar."}
           </Text>
         </View>
+      ) : null}
+
+      {!viewUserActive && !hasAnyConnection ? (
+        <View style={styles.connectBanner}>
+          <View style={styles.connectBannerIcons}>
+            <GoogleLogo size={18} />
+            <View style={{ marginLeft: -4 }}>
+              <MicrosoftLogo size={18} />
+            </View>
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.connectBannerTitle}>Sync your external calendar</Text>
+            <Text style={styles.connectBannerSub}>
+              Connect Google or Microsoft 365 to import events automatically.
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.connectBannerBtn} onPress={() => setConnectModalOpen(true)}>
+            <Text style={styles.connectBannerBtnText}>Connect</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {!viewUserActive && hasAnyConnection ? (
+        <ConnectionChips
+          connections={calendarConnectionsList}
+          canConnectMore={canConnectMore}
+          onSetDefault={handleSetDefaultCalendar}
+          onDisconnect={handleDisconnectCalendar}
+          onAddAnother={() => setConnectModalOpen(true)}
+        />
       ) : null}
 
       {isAdmin && viewUserId != null ? (
@@ -1698,46 +1700,29 @@ export default function CalendarHomeScreen() {
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
 
-      <Modal visible={linkMenuOpen} transparent animationType="fade" onRequestClose={() => setLinkMenuOpen(false)}>
-        <View style={styles.modalWrap}>
-          <Pressable style={styles.modalBackdropPressable} onPress={() => setLinkMenuOpen(false)} />
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Google Calendar</Text>
-            <TouchableOpacity
-              style={[styles.modalBtn, syncMenuBusy && styles.modalBtnDisabled]}
-              disabled={syncMenuBusy}
-              onPress={syncGoogleFromMenu}
-              accessibilityRole="button"
-              accessibilityLabel="Sync Google Calendar"
-            >
-              {syncMenuBusy ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.modalBtnText}>Sync</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.modalBtn, styles.modalBtnDanger]}
-              onPress={disconnectGoogleFromMenu}
-              accessibilityRole="button"
-              accessibilityLabel="Disconnect Google Calendar"
-            >
-              <Text style={styles.modalBtnText}>Disconnect</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <ConnectCalendarModal
+        visible={connectModalOpen}
+        hasGoogle={hasGoogleConnection}
+        hasMicrosoft={hasMicrosoftConnection}
+        onClose={() => setConnectModalOpen(false)}
+        onConnectGoogle={() => openConnectFlow('google')}
+        onConnectMicrosoft={() => openConnectFlow('microsoft')}
+      />
 
       <CalendarOAuthWebView
         visible={oauthOpen}
+        provider={oauthProvider}
         onClose={() => setOauthOpen(false)}
         onSuccess={async () => {
           await refreshConnections();
-          await calendarSyncGoogleWithStaleConnectionRecovery().catch(() => {});
+          const result = await calendarSyncGoogleWithStaleConnectionRecovery({ silent: true }).catch(() => null);
           try {
             await load();
           } catch {
             /* surfaced via existing load error paths */
+          }
+          if (result) {
+            Alert.alert('Connected', formatCalendarSyncMessage(result));
           }
         }}
         onError={(msg) => Alert.alert('Connection', msg)}

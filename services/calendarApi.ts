@@ -36,6 +36,30 @@ export type CalendarEvent = {
 
 export type CalendarStats = Record<string, number>;
 
+export type CalendarProvider = 'google' | 'microsoft';
+
+export interface CalendarConnection {
+  id: number;
+  provider: CalendarProvider | string;
+  provider_display_name: string;
+  status: string;
+  sync_enabled: boolean;
+  is_default?: boolean;
+  last_sync_at?: string;
+}
+
+export type CalendarSyncResult = {
+  success?: boolean;
+  error?: string;
+  message?: string;
+  results?: Array<{
+    provider?: string;
+    success?: boolean;
+    error?: string;
+    pull_result?: { created?: number; updated?: number };
+  }>;
+};
+
 export interface CalendarListParams {
   start_date?: string;
   end_date?: string;
@@ -121,9 +145,19 @@ export async function calendarCategoriesWithRecords() {
   return data?.categories ?? [];
 }
 
-export async function calendarConnections() {
-  const { data } = await client().get<{ connections?: any[] }>('/api/v1/calendar/connections');
+export async function calendarConnections(): Promise<CalendarConnection[]> {
+  const { data } = await client().get<{
+    connections?: CalendarConnection[];
+    default_connection_id?: number;
+  }>('/api/v1/calendar/connections');
   return data?.connections ?? [];
+}
+
+export async function calendarSetDefaultConnection(connectionId: number) {
+  const { data } = await client().post<{ message?: string }>(
+    `/api/v1/calendar/connections/${connectionId}/default`
+  );
+  return data;
 }
 
 export async function calendarDeleteConnection(connectionId: number) {
@@ -135,49 +169,85 @@ export async function calendarResetConnection(connectionId: number) {
 }
 
 /** Runs sync for active Google + Microsoft connections (same as web). */
-export async function calendarSyncGoogle() {
-  await client().post('/api/v1/calendar/google/sync');
+export async function calendarSyncGoogle(): Promise<CalendarSyncResult> {
+  const { data } = await client().post<CalendarSyncResult>('/api/v1/calendar/google/sync');
+  return data ?? {};
+}
+
+/** Human-readable sync summary (mirrors web runExternalCalendarSync toasts). */
+export function formatCalendarSyncMessage(data: CalendarSyncResult): string {
+  if (data.success === false) {
+    return data.error || 'Sync failed';
+  }
+  const results = data.results ?? [];
+  const failed = results.filter((r) => r && r.success === false);
+  if (failed.length) {
+    return failed.map((f) => f.error || 'Unknown error').join('; ');
+  }
+  if (data.message && String(data.message).includes('No active calendar')) {
+    return 'Connect a calendar first, then sync.';
+  }
+  const parts: string[] = [];
+  for (const r of results) {
+    const pr = r.pull_result;
+    if (pr && typeof pr.created === 'number') {
+      parts.push(`${pr.created} imported, ${pr.updated ?? 0} updated (${r.provider || 'calendar'})`);
+    }
+  }
+  if (parts.length) return `Synced: ${parts.join(' · ')}`;
+  return 'Calendar synced successfully';
 }
 
 /**
- * Matches web: GET connections → POST …/reset for any row that is not active or has sync disabled → POST google/sync.
- * Does not run OAuth; clears DB flags so sync can retry token refresh. Ignores per-connection reset failures.
+ * Matches web: GET connections → POST …/reset for paused rows → POST google/sync.
+ * Does not run OAuth; clears DB flags so sync can retry token refresh.
  */
-export async function calendarSyncGoogleWithStaleConnectionRecovery(): Promise<void> {
+export async function calendarSyncGoogleWithStaleConnectionRecovery(opts?: {
+  silent?: boolean;
+}): Promise<CalendarSyncResult> {
   try {
     const conns = await calendarConnections();
     for (const c of conns) {
-      const rawId = (c as { id?: unknown }).id;
-      const id = typeof rawId === 'number' ? rawId : Number(rawId);
+      const id = Number(c.id);
       if (!Number.isFinite(id)) continue;
-      const status = String((c as { status?: unknown }).status ?? '').toLowerCase();
-      const syncEnabled = !!(c as { sync_enabled?: unknown }).sync_enabled;
-      if (status !== 'active' || !syncEnabled) {
+      const status = String(c.status ?? '').toLowerCase();
+      if (status !== 'active' || !c.sync_enabled) {
         try {
           await calendarResetConnection(id);
-        } catch {
-          /* best-effort; same as web silent sync */
+        } catch (resetErr: unknown) {
+          const msg =
+            (resetErr as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+            'Could not resume calendar connection';
+          if (!opts?.silent) throw new Error(msg);
         }
       }
     }
-  } catch {
-    /* connections fetch failed — still try sync */
+  } catch (e) {
+    if (!opts?.silent) throw e;
   }
-  await calendarSyncGoogle();
+  return calendarSyncGoogle();
 }
 
-export async function calendarGoogleConnectUrl(): Promise<string> {
-  const { data } = await client().get<{ auth_url?: string }>('/api/v1/calendar/google/connect', {
+async function calendarProviderConnectUrl(provider: CalendarProvider): Promise<string> {
+  const { data } = await client().get<{ auth_url?: string }>(`/api/v1/calendar/${provider}/connect`, {
     params: { mobile: '1' },
-    // Prevent axios from following the 302 so we always get JSON back
     maxRedirects: 0,
     validateStatus: (s) => s < 400,
   });
   const url = data?.auth_url;
   if (!url || typeof url !== 'string') {
-    throw new Error('Backend did not return a Google auth URL. Restart the backend server and try again.');
+    const label = provider === 'google' ? 'Google' : 'Microsoft';
+    throw new Error(`Backend did not return a ${label} auth URL. Restart the backend server and try again.`);
   }
   return url;
+}
+
+export async function calendarGoogleConnectUrl(): Promise<string> {
+  return calendarProviderConnectUrl('google');
+}
+
+export async function calendarMicrosoftConnectUrl(): Promise<string> {
+  return calendarProviderConnectUrl('microsoft');
 }
 
 export async function calendarGoogleCalendars() {

@@ -111,8 +111,10 @@ export default function MinimizableBottomSheet({
       sheetTranslateY.value = 0;
       return;
     }
+    // Always open fully — sync translateY first so a prior minimize cannot flash on reopen.
     setMinimized(false);
     onMinimizedChange?.(false);
+    sheetTranslateY.value = 0;
     sheetTranslateY.value = withSpring(0, SPRING);
   }, [visible, expandNonce, onMinimizedChange, sheetTranslateY]);
 

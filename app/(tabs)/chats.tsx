@@ -4365,6 +4365,17 @@ export default function ChatsScreen() {
   const smartChatOnChunk = (type: string, data: any) => {
       const assistantMessageIndex = pollingAssistantIndexRef.current;
       switch (type) {
+        case 'chat_history_id': {
+          // Early binding: backend emits this before the complete event so a fast
+          // follow-up message can include the correct chat_history_id right away.
+          const earlyId = data.chat_history_id ? Number(data.chat_history_id) : null;
+          if (earlyId && earlyId > 0 && earlyId !== currentChatIdRef.current) {
+            currentChatIdRef.current = earlyId;
+            console.log('🔗 [MOBILE] Early chat_history_id bound from stream:', earlyId);
+          }
+          break;
+        }
+
         case 'status':
         case 'started':
         case 'understanding':
@@ -5034,15 +5045,19 @@ export default function ChatsScreen() {
           streamFilters.document_ids = streamFilters.context_file_ids;
         }
         
-        // CRITICAL: Add chat_history_id only if this is an existing chat from backend
-        // Backend will create chat history automatically when chat_history_id is not provided
-        // Temporary placeholder IDs (-2) indicate new chats that haven't been saved yet
-        // Default assistant (-1) should not send chat_history_id
-        if (selectedChat && selectedChat.id && selectedChat.id > 0) {
-          // Only send chat_history_id for positive backend IDs
-          // Backend creates new chat history when chat_history_id is omitted
-          streamFilters.chat_history_id = selectedChat.id;
-          console.log('📋 [MOBILE] Adding chat_history_id to filters:', selectedChat.id);
+        // CRITICAL: Add chat_history_id if this is an existing chat from backend.
+        // Fall back to currentChatIdRef so a fast second message gets the ID that was
+        // returned by the first response's complete event, even when selectedChat still
+        // holds the temp placeholder (-2).
+        const _persistedChatId = (() => {
+          const fromState = selectedChat?.id != null ? Number(selectedChat.id) : NaN;
+          if (Number.isFinite(fromState) && fromState > 0) return fromState;
+          const fromRef = currentChatIdRef.current != null ? Number(currentChatIdRef.current) : NaN;
+          return Number.isFinite(fromRef) && fromRef > 0 ? fromRef : null;
+        })();
+        if (_persistedChatId) {
+          streamFilters.chat_history_id = _persistedChatId;
+          console.log('📋 [MOBILE] Adding chat_history_id to filters:', _persistedChatId);
         } else {
           // New chat (placeholder ID -2) or default assistant (-1) - let backend create history
           console.log('📋 [MOBILE] Not sending chat_history_id - backend will create new chat history');
@@ -5071,6 +5086,20 @@ export default function ChatsScreen() {
           documentContextId: selectedChat?.document_context?.id,
           bookmarkContextId: selectedChat?.bookmark_context?.id
         });
+
+        // Build conversation_history from on-screen turns (last ~10, skip empty/system).
+        // The backend merges this with the DB-canonical history, which fixes the save-race
+        // and makes follow-ups work even when chat_history_id is momentarily null.
+        const _convHistory = messages
+          .filter(m => m.content && m.content.trim().length > 0)
+          .slice(-10)
+          .map(m => ({
+            role: m.is_own_message ? 'user' : 'assistant',
+            content: m.content.trim(),
+          }));
+        if (_convHistory.length > 0) {
+          streamFilters.conversation_history = _convHistory;
+        }
 
         pollingAssistantIndexRef.current = assistantMessageIndex;
         lastStreamFiltersRef.current = { ...streamFilters };

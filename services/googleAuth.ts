@@ -2,12 +2,6 @@ import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 import {
-  GoogleSignin,
-  isErrorWithCode,
-  isSuccessResponse,
-  statusCodes,
-} from '@react-native-google-signin/google-signin';
-import {
   API_BASE_URL,
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_ID_IOS,
@@ -60,6 +54,29 @@ interface MobileGoogleLoginResponse {
   requires2FA?: boolean;
   deviceTrusted?: boolean;
   deviceName?: string;
+}
+
+type GoogleSignInNativeModule = typeof import('@react-native-google-signin/google-signin');
+
+/** Loaded on demand on Android only — top-level import crashes iOS/Expo Go when native module is absent. */
+let nativeGoogleSignInModule: GoogleSignInNativeModule | null | undefined;
+
+async function loadNativeGoogleSignIn(): Promise<GoogleSignInNativeModule | null> {
+  if (Platform.OS !== 'android') return null;
+  if (nativeGoogleSignInModule !== undefined) {
+    return nativeGoogleSignInModule;
+  }
+  try {
+    nativeGoogleSignInModule = await import('@react-native-google-signin/google-signin');
+    return nativeGoogleSignInModule;
+  } catch (error) {
+    console.warn(
+      'Native Google Sign-In unavailable; falling back to browser OAuth flow:',
+      error
+    );
+    nativeGoogleSignInModule = null;
+    return null;
+  }
 }
 
 class GoogleAuthService {
@@ -150,9 +167,9 @@ class GoogleAuthService {
   private googleSigninConfigured = false;
 
   /** Configure the native Google Sign-In SDK once. webClientId is required to receive an idToken. */
-  private ensureGoogleSigninConfigured(): void {
+  private ensureGoogleSigninConfigured(mod: GoogleSignInNativeModule): void {
     if (this.googleSigninConfigured) return;
-    GoogleSignin.configure({
+    mod.GoogleSignin.configure({
       webClientId: GOOGLE_CLIENT_ID_WEB,
       iosClientId: GOOGLE_CLIENT_ID_IOS || undefined,
       offlineAccess: true, // returns serverAuthCode so the backend can obtain a refresh token if needed
@@ -168,8 +185,15 @@ class GoogleAuthService {
    * (apiService.googleSignInWithIdToken) to establish the session.
    */
   private async signInWithGoogleNativeSdk(): Promise<GoogleAuthResult> {
+    const mod = await loadNativeGoogleSignIn();
+    if (!mod) {
+      return this.signInWithGoogleNativeBackendFlow();
+    }
+
+    const { GoogleSignin, isSuccessResponse, isErrorWithCode, statusCodes } = mod;
+
     try {
-      this.ensureGoogleSigninConfigured();
+      this.ensureGoogleSigninConfigured(mod);
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
 
       const response = await GoogleSignin.signIn();
@@ -573,8 +597,11 @@ class GoogleAuthService {
       // and a different account can be chosen. No-op if never signed in natively.
       if (Platform.OS === 'android') {
         try {
-          this.ensureGoogleSigninConfigured();
-          await GoogleSignin.signOut();
+          const mod = await loadNativeGoogleSignIn();
+          if (mod) {
+            this.ensureGoogleSigninConfigured(mod);
+            await mod.GoogleSignin.signOut();
+          }
         } catch (nativeErr) {
           console.warn('Native Google sign-out skipped:', nativeErr);
         }

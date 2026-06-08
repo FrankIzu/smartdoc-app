@@ -124,7 +124,32 @@ export default function CalendarEditScreen() {
 
   const [showPicker, setShowPicker] = useState<'date' | 'time' | null>(null);
   const [durationPickerOpen, setDurationPickerOpen] = useState(false);
+  const [datePickerExpandNonce, setDatePickerExpandNonce] = useState(0);
+  const [timePickerExpandNonce, setTimePickerExpandNonce] = useState(0);
+  const [durationPickerExpandNonce, setDurationPickerExpandNonce] = useState(0);
+  const [memberPickerExpandNonce, setMemberPickerExpandNonce] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+
+  const openDatePicker = useCallback(() => {
+    setDurationPickerOpen(false);
+    setMemberModal(false);
+    setShowPicker('date');
+    setDatePickerExpandNonce((n) => n + 1);
+  }, []);
+
+  const openTimePicker = useCallback(() => {
+    setDurationPickerOpen(false);
+    setMemberModal(false);
+    setShowPicker('time');
+    setTimePickerExpandNonce((n) => n + 1);
+  }, []);
+
+  const openDurationPicker = useCallback(() => {
+    setShowPicker(null);
+    setMemberModal(false);
+    setDurationPickerOpen(true);
+    setDurationPickerExpandNonce((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -476,7 +501,15 @@ export default function CalendarEditScreen() {
         {isAdmin && eventType === 'company' ? (
           <>
             <Text style={styles.label}>Assigned member</Text>
-            <TouchableOpacity style={styles.input} onPress={() => setMemberModal(true)}>
+            <TouchableOpacity
+              style={styles.input}
+              onPress={() => {
+                setShowPicker(null);
+                setDurationPickerOpen(false);
+                setMemberModal(true);
+                setMemberPickerExpandNonce((n) => n + 1);
+              }}
+            >
               <Text style={{ color: assignedMemberId ? colors.text : colors.textSecondary }}>
                 {selectedMemberLabel || 'Tap to search member'}
               </Text>
@@ -491,10 +524,10 @@ export default function CalendarEditScreen() {
 
         <Text style={styles.label}>Starts</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('date')}>
+          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={openDatePicker}>
             <Text style={{ color: colors.text }}>{eventDate}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={() => setShowPicker('time')}>
+          <TouchableOpacity style={[styles.input, { flex: 1 }]} onPress={openTimePicker}>
             <Text style={{ color: colors.text }}>{eventTime}</Text>
           </TouchableOpacity>
         </View>
@@ -502,7 +535,7 @@ export default function CalendarEditScreen() {
         <Text style={styles.label}>Duration</Text>
         <TouchableOpacity
           style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-          onPress={() => setDurationPickerOpen(true)}
+          onPress={openDurationPicker}
           accessibilityRole="button"
           accessibilityLabel={`Duration, ${durationLabel}`}
         >
@@ -632,14 +665,11 @@ export default function CalendarEditScreen() {
       {showPicker === 'date' && Platform.OS === 'ios' ? (
         <MinimizableBottomSheet
           visible
+          minimizable={false}
+          expandNonce={datePickerExpandNonce}
           onClose={() => setShowPicker(null)}
           title="Date"
           sheetHeight={300}
-          headerRight={() => (
-            <TouchableOpacity onPress={() => setShowPicker(null)}>
-              <Text style={{ color: colors.tint, fontWeight: '600' }}>Done</Text>
-            </TouchableOpacity>
-          )}
         >
           <DateTimePicker
             value={getPickerDateTime()}
@@ -656,14 +686,11 @@ export default function CalendarEditScreen() {
       {showPicker === 'time' && Platform.OS === 'ios' ? (
         <MinimizableBottomSheet
           visible
+          minimizable={false}
+          expandNonce={timePickerExpandNonce}
           onClose={() => setShowPicker(null)}
           title="Time"
           sheetHeight={300}
-          headerRight={() => (
-            <TouchableOpacity onPress={() => setShowPicker(null)}>
-              <Text style={{ color: colors.tint, fontWeight: '600' }}>Done</Text>
-            </TouchableOpacity>
-          )}
         >
           <DateTimePicker
             value={getPickerDateTime()}
@@ -679,6 +706,8 @@ export default function CalendarEditScreen() {
 
       <MinimizableBottomSheet
         visible={durationPickerOpen}
+        minimizable={false}
+        expandNonce={durationPickerExpandNonce}
         onClose={() => setDurationPickerOpen(false)}
         title="Duration"
         heightRatio={0.52}
@@ -756,6 +785,8 @@ export default function CalendarEditScreen() {
 
       <MinimizableBottomSheet
         visible={memberModal}
+        minimizable={false}
+        expandNonce={memberPickerExpandNonce}
         onClose={() => {
           Keyboard.dismiss();
           setMemberModal(false);

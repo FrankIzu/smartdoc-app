@@ -2886,6 +2886,13 @@ class ApiService {
           payload.preview_mode = true;
           payload.enable_preview_mode = true;
         }
+
+        // Send on-screen turns so the backend can merge them with DB-canonical history.
+        // This kills the save-race and makes follow-ups work even when chat_history_id
+        // is momentarily null (mirrors web buildConversationHistory).
+        if (Array.isArray(filters.conversation_history) && filters.conversation_history.length > 0) {
+          payload.conversation_history = filters.conversation_history;
+        }
       }
 
       // Use longer timeout for starting chat job (60s) to handle slow network conditions
@@ -3114,6 +3121,13 @@ class ApiService {
             main_search_pending: jobMsp,
           } = chunkResponse;
           const accumulatedSnapshotBeforeChunk = accumulatedContent;
+
+          // Early chat_history_id binding: the backend now emits the ID as soon as it
+          // is known (before the job completes), so forward it immediately so the UI
+          // can update currentChatIdRef before any fast follow-up message is sent.
+          if (onChunk && !done && chunkResponse.chat_history_id) {
+            onChunk('chat_history_id', { chat_history_id: chunkResponse.chat_history_id });
+          }
 
           const rap = jobRap === true;
           const msp = jobMsp === true;
