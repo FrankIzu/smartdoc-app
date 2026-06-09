@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 
@@ -76,6 +77,7 @@ export default function FormBuilderScreen() {
   const [formShareUrl, setFormShareUrl] = useState<string | null>(null);
   const [isPublished, setIsPublished] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [shareMenuUrl, setShareMenuUrl] = useState<string | null>(null);
 
   // Load form when formId is present (e.g. editing existing form) to get is_published
   useEffect(() => {
@@ -406,45 +408,55 @@ export default function FormBuilderScreen() {
       const { FRONTEND_URL } = await import('../../constants/Config');
       const baseUrl = FRONTEND_URL || 'http://localhost:3000';
       const fullShareUrl = `${baseUrl.replace(/\/$/, '')}/form/${shareUrl}`;
-      
-      Alert.alert(
-        'Share Form',
-        'Choose how you want to share this form:',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Copy Link', 
-            onPress: async () => {
-              try {
-                await Clipboard.setStringAsync(fullShareUrl);
-                Alert.alert('Success', 'Share link copied to clipboard!');
-              } catch (error) {
-                console.error('Failed to copy link:', error);
-                Alert.alert('Error', 'Failed to copy link');
-              }
-            }
-          },
-          { 
-            text: 'Share', 
-            onPress: async () => {
-              try {
-                await Share.share({
-                  message: `Check out this form: ${fullShareUrl}`,
-                  url: fullShareUrl,
-                  title: formData.name
-                });
-              } catch (error) {
-                console.error('Failed to share:', error);
-              }
-            }
-          }
-        ]
-      );
+      setShareMenuUrl(fullShareUrl);
     } catch (error) {
       console.error('Failed to get form share URL:', error);
       Alert.alert('Error', 'Failed to get share link. Please try again.');
     }
   };
+
+  const shareMenuItems = useMemo((): ActionMenuItem[] => {
+    if (!shareMenuUrl) return [];
+    const fullShareUrl = shareMenuUrl;
+    return [
+      {
+        id: 'copy',
+        label: 'Copy link',
+        icon: 'copy-outline',
+        iconColor: colors.primary,
+        onPress: () => {
+          void (async () => {
+            try {
+              await Clipboard.setStringAsync(fullShareUrl);
+              Alert.alert('Success', 'Share link copied to clipboard!');
+            } catch (error) {
+              console.error('Failed to copy link:', error);
+              Alert.alert('Error', 'Failed to copy link');
+            }
+          })();
+        },
+      },
+      {
+        id: 'share',
+        label: 'Share',
+        icon: 'share-outline',
+        iconColor: colors.primary,
+        onPress: () => {
+          void (async () => {
+            try {
+              await Share.share({
+                message: `Check out this form: ${fullShareUrl}`,
+                url: fullShareUrl,
+                title: formData.name,
+              });
+            } catch (error) {
+              console.error('Failed to share:', error);
+            }
+          })();
+        },
+      },
+    ];
+  }, [colors.primary, formData.name, shareMenuUrl]);
 
   const renderFieldItem = ({ item, index }: { item: FormField; index: number }) => {
     return (
@@ -1196,6 +1208,13 @@ export default function FormBuilderScreen() {
           }}
         />
       )}
+      <ActionMenuModal
+        visible={shareMenuUrl != null}
+        title="Share form"
+        message="Choose how you want to share this form:"
+        items={shareMenuItems}
+        onClose={() => setShareMenuUrl(null)}
+      />
     </SafeAreaView>
   );
 }

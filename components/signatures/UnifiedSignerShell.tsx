@@ -110,7 +110,11 @@ export default function UnifiedSignerShell({
               ui.setActivePage(0);
             }}
           >
-            <Text style={{ color: i === ui.activeDocIndex ? colors.primary : colors.textSecondary }} numberOfLines={1}>
+            <Text
+              style={{ color: i === ui.activeDocIndex ? colors.primary : colors.textSecondary }}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
               {d.title}
             </Text>
           </TouchableOpacity>

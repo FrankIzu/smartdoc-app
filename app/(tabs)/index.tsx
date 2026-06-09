@@ -8,7 +8,6 @@ import {
     Image,
     KeyboardAvoidingView,
     Modal,
-    Platform,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -20,6 +19,7 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SignatureIcon } from '../../components/SignatureIcon';
+import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { expoHrefForWebDefaultHome } from '../../utils/defaultHomePath';
@@ -102,6 +102,7 @@ function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const [showQuickActionsMenu, setShowQuickActionsMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
@@ -528,6 +529,26 @@ function DashboardScreen() {
     setShowUploadOptions(false);
     router.push('/upload-by-link-code');
   };
+
+  const quickActionItems = useMemo(
+    (): ActionMenuItem[] => [
+      {
+        id: 'upload',
+        label: 'Upload file',
+        icon: 'cloud-upload-outline',
+        iconColor: colors.primary,
+        onPress: () => setShowUploadOptions(true),
+      },
+      {
+        id: 'scan',
+        label: 'Scan document',
+        icon: 'scan-outline',
+        iconColor: colors.primary,
+        onPress: () => router.push('/scanner'),
+      },
+    ],
+    [colors.primary, router],
+  );
 
   const handleUploadFromGallery = async () => {
     if (isUploading) {
@@ -1067,34 +1088,21 @@ function DashboardScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Floating Action Button - hidden on Android */}
-      {Platform.OS !== 'android' && (
-        <TouchableOpacity
-          style={dynamicStyles.fab}
-          onPress={() => {
-            Alert.alert(
-              'Quick Actions',
-              'Choose an action:',
-              [
-                {
-                  text: 'Upload File',
-                  onPress: () => setShowUploadOptions(true),
-                },
-                {
-                  text: 'Scan Document',
-                  onPress: () => router.push('/scanner'),
-                },
-                {
-                  text: 'Cancel',
-                  style: 'cancel',
-                },
-              ]
-            );
-          }}
-        >
-          <Ionicons name="add" size={26} color="#fff" />
-        </TouchableOpacity>
-      )}
+      {/* Floating Action Button */}
+      <TouchableOpacity
+        style={dynamicStyles.fab}
+        onPress={() => setShowQuickActionsMenu(true)}
+      >
+        <Ionicons name="add" size={26} color="#fff" />
+      </TouchableOpacity>
+
+      <ActionMenuModal
+        visible={showQuickActionsMenu}
+        title="Quick actions"
+        message="Choose an action:"
+        items={quickActionItems}
+        onClose={() => setShowQuickActionsMenu(false)}
+      />
 
       <UploadOptionsModal
         visible={showUploadOptions}

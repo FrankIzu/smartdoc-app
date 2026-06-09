@@ -1,28 +1,24 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import React from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import FileNameText from '../FileNameText';
+import { SIGNATURE_LIST_TITLE_MAX } from '../../utils/displayFilename';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { WizardSourceDraft } from '../../types/signature';
 
 interface Props {
   sources: WizardSourceDraft[];
   onSourcesChange: (sources: WizardSourceDraft[]) => void;
-  onUploadPdf: () => Promise<void>;
-  onPickTemplate: () => void;
-  onPickForm: () => void;
-  onPickAttachment: () => Promise<void>;
+  onOpenUpload: () => void;
   onPrepare: (templateId: number) => void;
 }
 
 export default function DocumentSourcePicker({
   sources,
   onSourcesChange,
-  onUploadPdf,
-  onPickTemplate,
-  onPickForm,
-  onPickAttachment,
+  onOpenUpload,
   onPrepare,
 }: Props) {
   const colors = useThemeColors();
@@ -47,71 +43,104 @@ export default function DocumentSourcePicker({
   };
 
   return (
-    <View>
-      <View style={styles.actions}>
-        <ActionBtn icon="cloud-upload-outline" label="Upload" colors={colors} onPress={() => void onUploadPdf()} />
-        <ActionBtn icon="document-text-outline" label="Template" colors={colors} onPress={onPickTemplate} />
-        <ActionBtn icon="list-outline" label="Form" colors={colors} onPress={onPickForm} />
-        <ActionBtn icon="attach-outline" label="File" colors={colors} onPress={() => void onPickAttachment()} />
-      </View>
-      {sources.map((s, i) => (
-        <View key={s.localId} style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <FileNameText
-              name={s.display_name || s.source_type}
-              style={[styles.name, { color: colors.text }]}
-            />
-            <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{s.source_type}</Text>
+    <View style={styles.section}>
+      <Text style={[styles.sectionLabel, { color: colors.text }]}>Documents</Text>
+
+      {sources.length === 0 ? (
+        <TouchableOpacity
+          style={[
+            styles.emptyUpload,
+            { borderColor: colors.primary, backgroundColor: `${colors.primary}08` },
+          ]}
+          onPress={onOpenUpload}
+          accessibilityLabel="Upload document"
+          accessibilityRole="button"
+        >
+          <View style={[styles.emptyIconWrap, { backgroundColor: `${colors.primary}18` }]}>
+            <Ionicons name="cloud-upload-outline" size={24} color={colors.primary} />
           </View>
-          {s.source_type === 'fillable' && s.fillable_template_id ? (
-            <TouchableOpacity onPress={() => onPrepare(s.fillable_template_id!)} style={styles.iconBtn}>
-              <Text style={{ color: colors.primary, fontSize: 12 }}>Prepare</Text>
-            </TouchableOpacity>
-          ) : null}
-          <TouchableOpacity onPress={() => move(i, -1)} disabled={i === 0}>
-            <Ionicons name="arrow-up" size={20} color={i === 0 ? colors.border : colors.text} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>Upload document</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+            PDF, images, or Word files
+          </Text>
+        </TouchableOpacity>
+      ) : (
+        <>
+          {sources.map((s, i) => (
+            <View key={s.localId} style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <FileNameText
+                  name={s.display_name || s.source_type}
+                  style={[styles.name, { color: colors.text }]}
+                  maxLength={SIGNATURE_LIST_TITLE_MAX}
+                />
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{s.source_type}</Text>
+              </View>
+              {s.source_type === 'fillable' && s.fillable_template_id ? (
+                <TouchableOpacity onPress={() => onPrepare(s.fillable_template_id!)} style={styles.iconBtn}>
+                  <Text style={{ color: colors.primary, fontSize: 12 }}>Prepare</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity onPress={() => move(i, -1)} disabled={i === 0}>
+                <Ionicons name="arrow-up" size={20} color={i === 0 ? colors.border : colors.text} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => move(i, 1)} disabled={i === sources.length - 1}>
+                <Ionicons name="arrow-down" size={20} color={i === sources.length - 1 ? colors.border : colors.text} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => remove(i)}>
+                <Ionicons name="trash-outline" size={20} color="#dc2626" />
+              </TouchableOpacity>
+            </View>
+          ))}
+          <TouchableOpacity
+            style={[styles.addBtn, { borderColor: colors.border }]}
+            onPress={onOpenUpload}
+            accessibilityLabel="Add another document"
+            accessibilityRole="button"
+          >
+            <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+            <Text style={[styles.addBtnText, { color: colors.primary }]}>Add document</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => move(i, 1)} disabled={i === sources.length - 1}>
-            <Ionicons name="arrow-down" size={20} color={i === sources.length - 1 ? colors.border : colors.text} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => remove(i)}>
-            <Ionicons name="trash-outline" size={20} color="#dc2626" />
-          </TouchableOpacity>
-        </View>
-      ))}
+        </>
+      )}
     </View>
   );
 }
 
-function ActionBtn({
-  icon,
-  label,
-  colors,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  colors: ReturnType<typeof useThemeColors>;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity style={[styles.actionBtn, { borderColor: colors.border }]} onPress={onPress}>
-      <Ionicons name={icon} size={22} color={colors.primary} />
-      <Text style={{ color: colors.text, fontSize: 11, marginTop: 4 }}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
 const styles = StyleSheet.create({
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  actionBtn: {
-    width: '22%',
-    minWidth: 72,
+  section: { marginTop: 12 },
+  sectionLabel: { fontWeight: '600', marginBottom: 8 },
+  emptyUpload: {
     alignItems: 'center',
-    padding: 10,
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+  },
+  emptyIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  emptyTitle: { fontSize: 15, fontWeight: '700', marginBottom: 2 },
+  emptySubtitle: { fontSize: 13, textAlign: 'center' },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    marginTop: 4,
     borderWidth: 1,
     borderRadius: 8,
+    borderStyle: 'dashed',
   },
+  addBtnText: { fontSize: 15, fontWeight: '600' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -132,6 +161,59 @@ export async function pickDocumentPdf(): Promise<DocumentPicker.DocumentPickerAs
   });
   if (result.canceled || !result.assets?.[0]) return null;
   return result.assets[0];
+}
+
+const FILES_SCREEN_DOCUMENT_TYPES = [
+  'application/pdf',
+  'image/*',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+] as const;
+
+function enforceMobileUploadLimit(count: number): boolean {
+  const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+  if (isMobile && count > 3) {
+    Alert.alert('Upload Limit', 'Sorry, our maximum upload is 3', [{ text: 'OK' }]);
+    return false;
+  }
+  return true;
+}
+
+/** Same document picker as the Files screen upload dialog. */
+export async function pickDocumentsLikeFilesScreen(): Promise<DocumentPicker.DocumentPickerAsset[] | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: [...FILES_SCREEN_DOCUMENT_TYPES],
+    multiple: true,
+    copyToCacheDirectory: true,
+  });
+  if (result.canceled || !result.assets?.length) return null;
+  if (!enforceMobileUploadLimit(result.assets.length)) return null;
+  return result.assets;
+}
+
+/** Same gallery picker as the Files screen upload dialog. */
+export async function pickGalleryImagesLikeFilesScreen(): Promise<
+  Array<{ uri: string; name?: string; mimeType?: string }> | null
+> {
+  const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permissionResult.granted) {
+    Alert.alert('Permission required', 'Media library permission is required to select files.');
+    return null;
+  }
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['images'],
+    quality: 1,
+    allowsMultipleSelection: true,
+  });
+  if (result.canceled || !result.assets?.length) return null;
+  if (!enforceMobileUploadLimit(result.assets.length)) return null;
+
+  return result.assets.map((asset, i) => ({
+    uri: asset.uri,
+    name: asset.fileName || `image_${Date.now()}_${i}.jpg`,
+    mimeType: asset.mimeType || asset.type || 'image/jpeg',
+  }));
 }
 
 /** Pick a document for Fill — PDF, text, or office formats (converted server-side). */

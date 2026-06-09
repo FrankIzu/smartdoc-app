@@ -24,6 +24,12 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import type { EnvelopeTab } from '../../services/envelopeApi';
 import { deleteFillableTemplate } from '../../services/fillableApi';
 import type { Envelope } from '../../types/signature';
+import {
+  envelopeFillableTemplateId,
+  envelopeFinalFileId,
+  loadEnvelopeForActions,
+  resolveEnvelopeAuditFileId,
+} from '../../utils/envelopeActions';
 import { submissionDisplayTitle } from '../../utils/signatureActivity';
 import { envelopeDisplayId } from '../../utils/signatureRuntime';
 import { shareDocumentFile } from '../../utils/shareDocumentFile';
@@ -183,6 +189,75 @@ export default function SignaturesHubScreen() {
     [],
   );
 
+  const envelopeActionHandlers = useCallback(
+    (envelope: Envelope) => {
+      const eid = envelopeDisplayId(envelope);
+      const title = envelope.title || 'Envelope';
+      const isCompleted = envelope.status === 'completed';
+      if (!isCompleted) {
+        return {
+          onViewCompletedPdf: undefined,
+          onShare: undefined,
+          onViewSubmissions: undefined,
+          onViewAuditTrail: undefined,
+        };
+      }
+
+      const templateId = envelopeFillableTemplateId(envelope);
+
+      return {
+        onViewCompletedPdf: () => {
+          void (async () => {
+            try {
+              const full = await loadEnvelopeForActions(envelope);
+              const fileId = envelopeFinalFileId(full);
+              if (!fileId) {
+                Alert.alert('Not available', 'The signed PDF is not ready yet.');
+                return;
+              }
+              setViewerFile({ id: String(fileId), name: title });
+            } catch (e: unknown) {
+              Alert.alert('Could not open PDF', e instanceof Error ? e.message : 'Try again.');
+            }
+          })();
+        },
+        onShare: () => {
+          void (async () => {
+            try {
+              const full = await loadEnvelopeForActions(envelope);
+              const fileId = envelopeFinalFileId(full);
+              if (!fileId) {
+                Alert.alert('Cannot share', 'No signed PDF is available yet.');
+                return;
+              }
+              await handleShareFile(fileId, title);
+            } catch (e: unknown) {
+              Alert.alert('Could not share', e instanceof Error ? e.message : 'Try again.');
+            }
+          })();
+        },
+        onViewSubmissions: templateId
+          ? () => router.push(hubTemplateSubmissionsRoute(templateId))
+          : undefined,
+        onViewAuditTrail: () => {
+          void (async () => {
+            try {
+              const auditFileId = await resolveEnvelopeAuditFileId(eid, envelope.audit_file_id);
+              if (!auditFileId) {
+                Alert.alert('Not available', 'The audit trail PDF could not be generated.');
+                return;
+              }
+              setViewerFile({ id: String(auditFileId), name: `Audit trail — ${title}` });
+            } catch (e: unknown) {
+              Alert.alert('Could not open audit trail', e instanceof Error ? e.message : 'Try again.');
+            }
+          })();
+        },
+      };
+    },
+    [handleShareFile, router],
+  );
+
   const renderActivityRow = useCallback(
     (row: SignatureActivityItem) => {
       const templateId = row.template
@@ -231,10 +306,22 @@ export default function SignaturesHubScreen() {
                 }
               : undefined
           }
+          onViewCompletedPdf={
+            row.kind === 'envelope' && row.envelope
+              ? envelopeActionHandlers(row.envelope).onViewCompletedPdf
+              : undefined
+          }
+          onViewAuditTrail={
+            row.kind === 'envelope' && row.envelope
+              ? envelopeActionHandlers(row.envelope).onViewAuditTrail
+              : undefined
+          }
           onViewSubmissions={
             row.kind === 'submission' && templateId
               ? () => router.push(hubTemplateSubmissionsRoute(templateId))
-              : undefined
+              : row.kind === 'envelope' && row.envelope
+                ? envelopeActionHandlers(row.envelope).onViewSubmissions
+                : undefined
           }
           onShare={
             row.kind === 'fillable' && row.template?.file_id
@@ -248,7 +335,9 @@ export default function SignaturesHubScreen() {
                       submissionDisplayTitle(row.submission!),
                     );
                   }
-                : undefined
+                : row.kind === 'envelope' && row.envelope
+                  ? envelopeActionHandlers(row.envelope).onShare
+                  : undefined
           }
           onDeleteDocument={
             row.kind === 'fillable' && row.template
@@ -286,7 +375,7 @@ export default function SignaturesHubScreen() {
         />
       );
     },
-    [handleShareFile, refreshActivity, router],
+    [envelopeActionHandlers, handleShareFile, refreshActivity, router],
   );
 
   const listFooter = loadingMore ? (
@@ -377,18 +466,25 @@ export default function SignaturesHubScreen() {
             </View>
           }
           ListFooterComponent={listFooter}
-          renderItem={({ item }) => (
-            <EnvelopeListItem
-              envelope={item}
-              tab={tab}
-              onPress={() => router.push(hubDetailRoute(envelopeDisplayId(item)))}
-              onSign={
-                item.inbox_context?.can_sign
-                  ? () => router.push(hubSignRoute(envelopeDisplayId(item)))
-                  : undefined
-              }
-            />
-          )}
+          renderItem={({ item }) => {
+            const envelopeActions = envelopeActionHandlers(item);
+            return (
+              <EnvelopeListItem
+                envelope={item}
+                tab={tab}
+                onPress={() => router.push(hubDetailRoute(envelopeDisplayId(item)))}
+                onSign={
+                  item.inbox_context?.can_sign
+                    ? () => router.push(hubSignRoute(envelopeDisplayId(item)))
+                    : undefined
+                }
+                onViewCompletedPdf={envelopeActions.onViewCompletedPdf}
+                onShare={envelopeActions.onShare}
+                onViewSubmissions={envelopeActions.onViewSubmissions}
+                onViewAuditTrail={envelopeActions.onViewAuditTrail}
+              />
+            );
+          }}
           contentContainerStyle={
             envelopes.length === 0
               ? { flexGrow: 1, paddingBottom: 100 }

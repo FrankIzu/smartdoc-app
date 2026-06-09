@@ -1,4 +1,5 @@
 import { apiService } from './api';
+import { ensureFillableTemplateReady } from './fillableApi';
 import { sanitizeDisplayFilename } from '../utils/displayFilename';
 import { useProgressStore } from './progressService';
 
@@ -97,7 +98,6 @@ export async function uploadFormDataWithGlobalProgress(
 export async function uploadPdfForSignature(
   asset: { uri: string; name?: string | null; mimeType?: string | null },
 ): Promise<{ fileId: number; templateId: number; displayName: string }> {
-  const { ensureFillableTemplateReady } = await import('./fillableApi');
   const displayName = sanitizeDisplayFilename(asset.name || 'Document');
   const filename = displayName;
 

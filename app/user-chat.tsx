@@ -1932,7 +1932,7 @@ export default function UserChatScreen() {
               ref={inputContainerRef}
               style={[
                 dynamicStyles.inputContainer,
-                { elevation: 10, zIndex: 10 },
+                { zIndex: 10 },
                 keyboardTop != null && {
                   marginBottom: Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop),
                 },
@@ -2088,7 +2088,7 @@ export default function UserChatScreen() {
               ref={inputContainerRef}
               style={[
                 dynamicStyles.inputContainer,
-                { elevation: 10, zIndex: 10 },
+                { zIndex: 10 },
                 Platform.OS === 'android' && keyboardTop != null && {
                   marginBottom: Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop),
                 },

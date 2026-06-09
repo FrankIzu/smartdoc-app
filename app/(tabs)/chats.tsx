@@ -8119,7 +8119,6 @@ export default function ChatsScreen() {
             isEmptyChat && dynamicStyles.inputContainerEmpty,
             {
               paddingBottom: 8,
-              elevation: 10,
               zIndex: 10,
             },
           ]}
@@ -9452,7 +9451,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
     backgroundColor: '#fff',
-    elevation: 10,
     zIndex: 10,
   },
   messageInput: {

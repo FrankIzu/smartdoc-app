@@ -25,6 +25,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import TextAssetViewer from '../../components/TextAssetViewer';
+import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
@@ -2079,57 +2080,59 @@ export default function MeetingDetailsScreen() {
     );
   };
 
-  const showAssetMenu = (asset: MeetingAsset) => {
-    setMenuAsset(asset);
+  const assetMenuItems = useMemo((): ActionMenuItem[] => {
+    if (!menuAsset) return [];
+    const asset = menuAsset;
     const canCopyPlayLink =
-      (asset.type === 'recording' || asset.type === 'video') && extractCallRecordingDbId(asset) != null;
-
-    const actions: {
-      text: string;
-      style?: 'destructive' | 'cancel';
-      onPress: () => void;
-    }[] = [
+      (asset.type === 'recording' || asset.type === 'video') &&
+      extractCallRecordingDbId(asset) != null;
+    const items: ActionMenuItem[] = [
       {
-        text: 'View',
+        id: 'view',
+        label: 'View',
+        icon: 'eye-outline',
+        iconColor: '#007AFF',
         onPress: () => {
-          viewAsset(asset);
-          setMenuAsset(null);
+          void viewAsset(asset);
         },
       },
     ];
     if (canCopyPlayLink) {
-      actions.push({
-        text: 'Copy play link',
+      items.push({
+        id: 'copy-link',
+        label: 'Copy play link',
+        icon: 'link-outline',
+        iconColor: '#007AFF',
         onPress: () => {
-          copyRecordingGrabdocsPlayLink(asset);
-          setMenuAsset(null);
+          void copyRecordingGrabdocsPlayLink(asset);
         },
       });
     }
-    actions.push(
+    items.push(
       {
-        text: 'Share',
+        id: 'share',
+        label: 'Share',
+        icon: 'share-outline',
+        iconColor: '#007AFF',
         onPress: () => {
-          shareAsset(asset);
-          setMenuAsset(null);
+          void shareAsset(asset);
         },
       },
       {
-        text: 'Delete',
-        style: 'destructive',
+        id: 'delete',
+        label: 'Delete',
+        icon: 'trash-outline',
+        destructive: true,
         onPress: () => {
-          deleteAsset(asset);
-          setMenuAsset(null);
+          void deleteAsset(asset);
         },
       },
-      {
-        text: 'Cancel',
-        style: 'cancel',
-        onPress: () => setMenuAsset(null),
-      }
     );
+    return items;
+  }, [menuAsset]);
 
-    Alert.alert(asset.title, 'Choose an action', actions);
+  const showAssetMenu = (asset: MeetingAsset) => {
+    setMenuAsset(asset);
   };
 
   const getAssetIcon = (type: string) => {
@@ -3468,6 +3471,13 @@ export default function MeetingDetailsScreen() {
           setTextViewerAssetType('');
           setTextViewerLoading(false);
         }}
+      />
+      <ActionMenuModal
+        visible={menuAsset != null}
+        title={menuAsset?.title ?? 'Asset'}
+        message="Choose an action"
+        items={assetMenuItems}
+        onClose={() => setMenuAsset(null)}
       />
     </SafeAreaView>
   );

@@ -1,9 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
-  AlertButton,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,15 +11,19 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import DocumentSourcePicker from '../../../components/signatures/DocumentSourcePicker';
+import { UploadOptionsModal } from '../../components/UploadOptionsModal';
+import DocumentSourcePicker, {
+  pickDocumentsLikeFilesScreen,
+  pickGalleryImagesLikeFilesScreen,
+} from '../../../components/signatures/DocumentSourcePicker';
 import { useEnvelopeDraft } from '../../../hooks/useEnvelopeDraft';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { useAuth } from '../../context/auth';
 import { createEnvelope, getEnvelope, replaceDocuments, updateEnvelopeDraft } from '../../../services/envelopeApi';
-import { listFillableTemplates } from '../../../services/fillableApi';
-import { resolveUploadedFileId, uploadFormDataWithGlobalProgress, uploadPdfForSignature } from '../../../services/uploadWithGlobalProgress';
+import { uploadPdfForSignature } from '../../../services/uploadWithGlobalProgress';
 import type { SourceInput, WizardSourceDraft } from '../../../types/signature';
 import { saveDraftStep } from '../../../services/signatureSessionCache';
+import { useFileStore } from '../../../stores/fileStore';
 import { envelopeDocsToWizardSources, wizardSourcesToReplaceDocuments } from '../../../utils/signatureRuntime';
 
 function newLocalId() {
@@ -37,6 +40,8 @@ export default function CreateEnvelopeScreen() {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -62,105 +67,90 @@ export default function CreateEnvelopeScreen() {
     void saveWizardSources(next);
   };
 
-  const handleUploadPdf = async () => {
-    try {
-      const { pickDocumentPdf } = await import('../../../components/signatures/DocumentSourcePicker');
-      const asset = await pickDocumentPdf();
-      if (!asset?.uri) return;
+  const addSignatureUploads = useCallback(
+    async (assets: Array<{ uri: string; name?: string | null; mimeType?: string | null }>) => {
+      const added: WizardSourceDraft[] = [];
 
-      const { templateId, displayName } = await uploadPdfForSignature(asset);
-      persistSources([
-        ...sources,
-        {
+      for (const asset of assets) {
+        const { templateId, displayName } = await uploadPdfForSignature({
+          uri: asset.uri,
+          name: asset.name ?? 'Document',
+          mimeType: asset.mimeType ?? null,
+        });
+        added.push({
           localId: newLocalId(),
           source_type: 'fillable',
           fillable_template_id: templateId,
           display_name: displayName,
           needsPrepare: true,
-        },
-      ]);
-      router.push(`/signatures/create/prepare/${templateId}` as any);
+        });
+      }
+
+      if (!added.length) return;
+
+      setSources((prev) => {
+        const nextSources = [...prev, ...added];
+        void saveWizardSources(nextSources);
+        return nextSources;
+      });
+      const firstTemplateId = added[0].fillable_template_id;
+      if (firstTemplateId) {
+        router.push(`/signatures/create/prepare/${firstTemplateId}` as any);
+      }
+    },
+    [router, saveWizardSources],
+  );
+
+  const dismissUploadModal = useCallback(() => {
+    setShowUploadOptions(false);
+  }, []);
+
+  const handleUploadFromFilesViaModal = useCallback(async () => {
+    if (uploading) return;
+
+    setShowUploadOptions(false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    try {
+      setUploading(true);
+      await useFileStore.getState().forceResetDocumentPicker();
+      const assets = await pickDocumentsLikeFilesScreen();
+      if (!assets?.length) return;
+      await addSignatureUploads(assets);
     } catch (e: unknown) {
       Alert.alert('Upload failed', e instanceof Error ? e.message : 'Try again');
+    } finally {
+      setUploading(false);
     }
-  };
+  }, [addSignatureUploads, uploading]);
 
-  const handlePickTemplate = async () => {
-    const templates = await listFillableTemplates();
-    if (!templates.length) {
-      Alert.alert('No templates', 'Upload a PDF first.');
-      return;
-    }
-    const templateButtons: AlertButton[] = templates.slice(0, 5).map((t) => ({
-      text: t.name,
-      onPress: () =>
-        persistSources([
-          ...sources,
-          {
-            localId: newLocalId(),
-            source_type: 'fillable',
-            fillable_template_id: t.id,
-            display_name: t.name,
-          },
-        ]),
-    }));
-    templateButtons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert('Select template', undefined, templateButtons);
-  };
+  const handleUploadFromCameraViaModal = useCallback(() => {
+    setShowUploadOptions(false);
+    router.push('/scanner');
+  }, [router]);
 
-  const handlePickForm = async () => {
-    const res = await apiService.getForms();
-    const forms = res.forms ?? [];
-    if (!forms.length) {
-      Alert.alert('No forms', 'Create a form first.');
-      return;
-    }
-    const formButtons: AlertButton[] = forms.slice(0, 5).map((f: { id: number; name?: string; title?: string }) => ({
-      text: f.name || f.title || `Form ${f.id}`,
-      onPress: () =>
-        persistSources([
-          ...sources,
-          {
-            localId: newLocalId(),
-            source_type: 'form',
-            user_form_id: f.id,
-            display_name: f.name || f.title,
-          },
-        ]),
-    }));
-    formButtons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert('Select form', undefined, formButtons);
-  };
+  const handleUploadFromGalleryViaModal = useCallback(async () => {
+    if (uploading) return;
 
-  const handlePickAttachment = async () => {
-    const { pickDocumentPdf } = await import('../../../components/signatures/DocumentSourcePicker');
-    const asset = await pickDocumentPdf();
-    if (!asset?.uri) return;
-    const formData = new FormData();
-    formData.append('file', {
-      uri: asset.uri,
-      name: asset.name || 'attachment.pdf',
-      type: 'application/pdf',
-    } as unknown as Blob);
-    const upload = await uploadFormDataWithGlobalProgress(
-      formData as FormData,
-      asset.name || 'attachment.pdf',
-    );
-    const fileId = await resolveUploadedFileId(upload, asset.name || 'attachment.pdf');
-    if (!fileId) {
-      Alert.alert('Upload incomplete', 'The file uploaded but could not be attached. Check Files and try again.');
-      return;
+    setShowUploadOptions(false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    try {
+      setUploading(true);
+      const assets = await pickGalleryImagesLikeFilesScreen();
+      if (!assets?.length) return;
+      await addSignatureUploads(assets);
+    } catch (e: unknown) {
+      Alert.alert('Upload failed', e instanceof Error ? e.message : 'Try again');
+    } finally {
+      setUploading(false);
     }
-    persistSources([
-      ...sources,
-      {
-        localId: newLocalId(),
-        source_type: 'attachment',
-        file_id: fileId,
-        display_name: asset.name,
-      },
-    ]);
-  };
+  }, [addSignatureUploads, uploading]);
+
+  const handleUploadByLinkViaModal = useCallback(() => {
+    setShowUploadOptions(false);
+    router.push('/upload-by-link-code');
+  }, [router]);
 
   const handleNext = async () => {
     if (!sources.length) {
@@ -182,14 +172,14 @@ export default function CreateEnvelopeScreen() {
       if (!envelopeId) {
         const res = await createEnvelope({
           sources: apiSources,
-          title: title || 'Signature request',
+          ...(title.trim() ? { title: title.trim() } : {}),
           message: message || undefined,
         });
         envelopeId = res.envelope.public_id || String(res.envelope.id);
       } else {
         const existing = await getEnvelope(envelopeId);
         await updateEnvelopeDraft(envelopeId, {
-          title: title || 'Signature request',
+          ...(title.trim() ? { title: title.trim() } : {}),
           message: message || undefined,
         });
         await replaceDocuments(
@@ -235,10 +225,7 @@ export default function CreateEnvelopeScreen() {
         <DocumentSourcePicker
           sources={sources}
           onSourcesChange={persistSources}
-          onUploadPdf={handleUploadPdf}
-          onPickTemplate={handlePickTemplate}
-          onPickForm={handlePickForm}
-          onPickAttachment={handlePickAttachment}
+          onOpenUpload={() => setShowUploadOptions(true)}
           onPrepare={(templateId) => router.push(`/signatures/create/prepare/${templateId}` as any)}
         />
         <TouchableOpacity
@@ -249,6 +236,15 @@ export default function CreateEnvelopeScreen() {
           <Text style={styles.nextText}>{saving ? 'Saving…' : 'Next: Recipients'}</Text>
         </TouchableOpacity>
       </ScrollView>
+      <UploadOptionsModal
+        visible={showUploadOptions}
+        isUploading={uploading}
+        onDismiss={dismissUploadModal}
+        onFiles={handleUploadFromFilesViaModal}
+        onCamera={handleUploadFromCameraViaModal}
+        onGallery={handleUploadFromGalleryViaModal}
+        onLink={handleUploadByLinkViaModal}
+      />
     </SafeAreaView>
   );
 }

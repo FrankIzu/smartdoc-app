@@ -20,6 +20,7 @@ import Toast from 'react-native-toast-message';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import FileNameText from '../../components/FileNameText';
+import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import QuickFormViewer from '../../components/QuickFormViewer';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -143,6 +144,7 @@ export default function WorkspaceDetailsScreen() {
   const [showInvitationKebab, setShowInvitationKebab] = useState(false);
   const [selectedInvitation, setSelectedInvitation] = useState<any>(null);
   const [showMemberActionSheet, setShowMemberActionSheet] = useState(false);
+  const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [selectedMember, setSelectedMember] = useState<WorkspaceMember | null>(null);
   const [creatingMeeting, setCreatingMeeting] = useState(false);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
@@ -548,39 +550,43 @@ export default function WorkspaceDetailsScreen() {
     }
   };
 
+  const roleMenuItems = useMemo((): ActionMenuItem[] => {
+    if (!selectedMember) return [];
+    return [
+      {
+        id: 'viewer',
+        label: 'Viewer',
+        icon: 'eye-outline',
+        iconColor: colors.text,
+        onPress: () => {
+          void handleChangeMemberRole('viewer');
+        },
+      },
+      {
+        id: 'member',
+        label: 'Member',
+        icon: 'person-outline',
+        iconColor: colors.primary,
+        onPress: () => {
+          void handleChangeMemberRole('member');
+        },
+      },
+      {
+        id: 'admin',
+        label: 'Admin',
+        icon: 'shield-outline',
+        iconColor: '#5856D6',
+        onPress: () => {
+          void handleChangeMemberRole('admin');
+        },
+      },
+    ];
+  }, [colors.primary, colors.text, selectedMember]);
+
   const handleShowRoleSelector = () => {
     if (!selectedMember) return;
-    
-    const memberName = selectedMember.user?.username || selectedMember.user?.email || 'this member';
-    
-    Alert.alert(
-      'Change Role',
-      `Select new role for ${memberName}:`,
-      [
-        { text: 'Cancel', style: 'cancel', onPress: () => setShowMemberActionSheet(false) },
-        { 
-          text: 'Viewer', 
-          onPress: () => {
-            handleChangeMemberRole('viewer');
-            setShowMemberActionSheet(false);
-          }
-        },
-        { 
-          text: 'Member', 
-          onPress: () => {
-            handleChangeMemberRole('member');
-            setShowMemberActionSheet(false);
-          }
-        },
-        { 
-          text: 'Admin', 
-          onPress: () => {
-            handleChangeMemberRole('admin');
-            setShowMemberActionSheet(false);
-          }
-        },
-      ]
-    );
+    setShowMemberActionSheet(false);
+    setShowRoleMenu(true);
   };
 
   const loadWorkspaceFilesSheet = useCallback(
@@ -1452,6 +1458,21 @@ export default function WorkspaceDetailsScreen() {
           </TouchableOpacity>
         </View>
       </MinimizableBottomSheet>
+
+      <ActionMenuModal
+        visible={showRoleMenu}
+        title="Change role"
+        message={
+          selectedMember
+            ? `Select new role for ${selectedMember.user?.username || selectedMember.user?.email || 'this member'}:`
+            : undefined
+        }
+        items={roleMenuItems}
+        onClose={() => {
+          setShowRoleMenu(false);
+          setSelectedMember(null);
+        }}
+      />
 
       <MinimizableBottomSheet
         visible={workspaceFilesSheetVisible}

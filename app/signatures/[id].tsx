@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,22 +11,26 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import DocumentViewer from '../../components/DocumentViewer';
 import FileNameText from '../../components/FileNameText';
+import { SIGNATURE_HEADER_TITLE_MAX } from '../../utils/displayFilename';
 import EnvelopeDetailPanels from '../../components/signatures/EnvelopeDetailPanels';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { useAuth } from '../context/auth';
 import { invalidateEnvelopeListCache } from '../../hooks/useEnvelopeList';
 import {
-  auditPdfUrl,
-  certificatePdfUrl,
   deleteEnvelopeDraft,
   duplicateEnvelope,
-  finalPdfUrl,
   getEnvelope,
   resendRecipientInvite,
   voidEnvelope,
 } from '../../services/envelopeApi';
 import type { Envelope } from '../../types/signature';
+import {
+  envelopeFinalFileId,
+  resolveEnvelopeAuditFileId,
+  resolveEnvelopeCertificateFileId,
+} from '../../utils/envelopeActions';
 import { envelopeStatusBadge } from '../../utils/envelopeDisplay';
 import { envelopeDisplayId, resolveWizardStepFromEnvelope } from '../../utils/signatureRuntime';
 import { hubSignRoute } from '../../utils/signatureRouteResolver';
@@ -40,6 +43,8 @@ export default function EnvelopeDetailScreen() {
   const { user } = useAuth();
   const [envelope, setEnvelope] = useState<Envelope | null>(null);
   const [loading, setLoading] = useState(true);
+  const [viewerFile, setViewerFile] = useState<{ id: string; name: string } | null>(null);
+  const [openingPdfKind, setOpeningPdfKind] = useState<'audit' | 'certificate' | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -79,8 +84,63 @@ export default function EnvelopeDetailScreen() {
     }
   };
 
-  const openPdf = (url: string) => {
-    void Linking.openURL(url);
+  const openSignedPdf = async () => {
+    if (!envelope) return;
+    const fileId = envelopeFinalFileId(envelope);
+    if (!fileId) {
+      Alert.alert('Not available', 'The signed PDF is not ready yet.');
+      return;
+    }
+    setViewerFile({
+      id: String(fileId),
+      name: envelope.title || 'Signed document',
+    });
+  };
+
+  const openAuditTrailPdf = async () => {
+    if (!envelope) return;
+    setOpeningPdfKind('audit');
+    try {
+      const auditFileId = await resolveEnvelopeAuditFileId(
+        envelopeDisplayId(envelope),
+        envelope.audit_file_id,
+      );
+      if (!auditFileId) {
+        Alert.alert('Not available', 'The audit trail PDF could not be generated.');
+        return;
+      }
+      setViewerFile({
+        id: String(auditFileId),
+        name: `Audit trail — ${envelope.title || 'Envelope'}`,
+      });
+    } catch (e: unknown) {
+      Alert.alert('Could not open audit trail', e instanceof Error ? e.message : 'Try again.');
+    } finally {
+      setOpeningPdfKind(null);
+    }
+  };
+
+  const openCertificatePdf = async () => {
+    if (!envelope) return;
+    setOpeningPdfKind('certificate');
+    try {
+      const certificateFileId = await resolveEnvelopeCertificateFileId(
+        envelopeDisplayId(envelope),
+        envelope.certificate_file_id,
+      );
+      if (!certificateFileId) {
+        Alert.alert('Not available', 'The completion certificate is not ready yet.');
+        return;
+      }
+      setViewerFile({
+        id: String(certificateFileId),
+        name: `Certificate — ${envelope.title || 'Envelope'}`,
+      });
+    } catch (e: unknown) {
+      Alert.alert('Could not open certificate', e instanceof Error ? e.message : 'Try again.');
+    } finally {
+      setOpeningPdfKind(null);
+    }
   };
 
   if (loading || !envelope) {
@@ -132,6 +192,7 @@ export default function EnvelopeDetailScreen() {
             name={envelope.title || 'Untitled envelope'}
             style={[styles.title, { color: colors.text }]}
             sanitize={false}
+            maxLength={SIGNATURE_HEADER_TITLE_MAX}
           />
           <View style={[styles.statusBadge, { backgroundColor: statusBadge.backgroundColor }]}>
             <Text style={[styles.statusBadgeText, { color: statusBadge.color }]}>
@@ -170,17 +231,29 @@ export default function EnvelopeDetailScreen() {
           onDelete={handleDeleteDraft}
         />
 
-        {envelope.final_file_id || envelope.status === 'completed' ? (
-          <TouchableOpacity style={styles.linkBtn} onPress={() => openPdf(finalPdfUrl(eid))}>
+        {envelopeFinalFileId(envelope) || envelope.status === 'completed' ? (
+          <TouchableOpacity style={styles.linkBtn} onPress={() => void openSignedPdf()}>
             <Text style={{ color: colors.primary }}>Download signed PDF</Text>
           </TouchableOpacity>
         ) : null}
-        <TouchableOpacity style={styles.linkBtn} onPress={() => openPdf(auditPdfUrl(eid))}>
-          <Text style={{ color: colors.primary }}>Audit trail PDF</Text>
+        <TouchableOpacity
+          style={styles.linkBtn}
+          onPress={() => void openAuditTrailPdf()}
+          disabled={openingPdfKind != null}
+        >
+          <Text style={{ color: colors.primary }}>
+            {openingPdfKind === 'audit' ? 'Opening audit trail…' : 'Audit trail PDF'}
+          </Text>
         </TouchableOpacity>
         {envelope.status === 'completed' ? (
-          <TouchableOpacity style={styles.linkBtn} onPress={() => openPdf(certificatePdfUrl(eid))}>
-            <Text style={{ color: colors.primary }}>Certificate</Text>
+          <TouchableOpacity
+            style={styles.linkBtn}
+            onPress={() => void openCertificatePdf()}
+            disabled={openingPdfKind != null}
+          >
+            <Text style={{ color: colors.primary }}>
+              {openingPdfKind === 'certificate' ? 'Opening certificate…' : 'Certificate'}
+            </Text>
           </TouchableOpacity>
         ) : null}
 
@@ -228,6 +301,15 @@ export default function EnvelopeDetailScreen() {
           </TouchableOpacity>
         ) : null}
       </ScrollView>
+
+      {viewerFile ? (
+        <DocumentViewer
+          fileId={viewerFile.id}
+          fileName={viewerFile.name}
+          fileType="application/pdf"
+          onClose={() => setViewerFile(null)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }

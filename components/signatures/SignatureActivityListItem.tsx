@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback } from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import ActionMenuModal, { type ActionMenuItem } from '../ActionMenuModal';
 import FileNameText from '../FileNameText';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { FillSubmission } from '../../services/fillApi';
@@ -11,6 +12,7 @@ import {
   envelopeStatusBadge,
   formatEnvelopeListDate,
 } from '../../utils/envelopeDisplay';
+import { SIGNATURE_LIST_TITLE_MAX } from '../../utils/displayFilename';
 import {
   envelopeLastActivityIso,
   formatSignatureActivityLabel,
@@ -30,6 +32,8 @@ interface Props {
   onViewSubmission?: () => void;
   onViewSubmissions?: () => void;
   onShare?: () => void;
+  onViewCompletedPdf?: () => void;
+  onViewAuditTrail?: () => void;
 }
 
 function Badge({ badge }: { badge: { label: string; backgroundColor: string; color: string } }) {
@@ -56,13 +60,26 @@ function EnvelopeRow({
   envelope,
   onPress,
   onSign,
+  onViewCompletedPdf,
+  onShare,
+  onViewSubmissions,
+  onViewAuditTrail,
 }: {
   envelope: Envelope;
   onPress: () => void;
   onSign?: () => void;
+  onViewCompletedPdf?: () => void;
+  onShare?: () => void;
+  onViewSubmissions?: () => void;
+  onViewAuditTrail?: () => void;
 }) {
   const colors = useThemeColors();
+  const [menuVisible, setMenuVisible] = useState(false);
   const canSign = envelope.inbox_context?.can_sign && envelope.inbox_context?.is_my_turn;
+  const isCompleted = envelope.status === 'completed';
+  const showCompletedMenu =
+    isCompleted &&
+    (onViewCompletedPdf || onShare || onViewSubmissions || onViewAuditTrail);
   const statusBadge = envelopeStatusBadge(envelope.status);
   const sourceBadge = envelopeSourceTypeBadge(envelope);
   const signerSummary = envelopeSignerSummary(envelope, 'all');
@@ -71,42 +88,107 @@ function EnvelopeRow({
   });
   const metaParts = [activityLabel, signerSummary].filter(Boolean);
 
+  const menuItems = useMemo((): ActionMenuItem[] => {
+    const items: ActionMenuItem[] = [];
+    if (onViewCompletedPdf) {
+      items.push({
+        id: 'view-pdf',
+        label: 'View completed PDF',
+        icon: 'document-text-outline',
+        iconColor: '#007AFF',
+        onPress: onViewCompletedPdf,
+      });
+    }
+    if (onShare) {
+      items.push({
+        id: 'share',
+        label: 'Share',
+        icon: 'share-outline',
+        iconColor: '#007AFF',
+        onPress: onShare,
+      });
+    }
+    if (onViewSubmissions) {
+      items.push({
+        id: 'all-submissions',
+        label: 'All submissions',
+        icon: 'layers-outline',
+        iconColor: colors.text,
+        onPress: onViewSubmissions,
+      });
+    }
+    if (onViewAuditTrail) {
+      items.push({
+        id: 'audit-trail',
+        label: 'View audit trail',
+        icon: 'list-outline',
+        iconColor: colors.text,
+        onPress: onViewAuditTrail,
+      });
+    }
+    return items;
+  }, [colors.text, onShare, onViewAuditTrail, onViewCompletedPdf, onViewSubmissions]);
+
   return (
-    <TouchableOpacity
-      style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      <View style={styles.body}>
-        <FileNameText
-          name={envelope.title || 'Untitled envelope'}
-          style={[styles.title, { color: colors.text }]}
-          sanitize={false}
-        />
-        <View style={styles.badgeRow}>
-          <Badge badge={statusBadge} />
-          {sourceBadge ? <Badge badge={sourceBadge} /> : null}
+    <>
+      <TouchableOpacity
+        style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
+        onPress={onPress}
+        activeOpacity={0.7}
+      >
+        <View style={styles.body}>
+          <FileNameText
+            name={envelope.title || 'Untitled envelope'}
+            style={[styles.title, { color: colors.text }]}
+            sanitize={false}
+            maxLength={SIGNATURE_LIST_TITLE_MAX}
+          />
+          <View style={styles.badgeRow}>
+            <Badge badge={statusBadge} />
+            {sourceBadge ? <Badge badge={sourceBadge} /> : null}
+          </View>
+          {metaParts.length > 0 ? (
+            <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={2}>
+              {metaParts.join(' · ')}
+            </Text>
+          ) : null}
         </View>
-        {metaParts.length > 0 ? (
-          <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={2}>
-            {metaParts.join(' · ')}
-          </Text>
-        ) : null}
-      </View>
-      {canSign && onSign ? (
-        <TouchableOpacity
-          style={[styles.signBtn, { backgroundColor: colors.primary }]}
-          onPress={(e) => {
-            e.stopPropagation?.();
-            onSign();
-          }}
-        >
-          <Text style={styles.signText}>Sign</Text>
-        </TouchableOpacity>
-      ) : (
-        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-      )}
-    </TouchableOpacity>
+        {canSign && onSign ? (
+          <TouchableOpacity
+            style={[styles.signBtn, { backgroundColor: colors.primary }]}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              onSign();
+            }}
+          >
+            <Text style={styles.signText}>Sign</Text>
+          </TouchableOpacity>
+        ) : showCompletedMenu ? (
+          <TouchableOpacity
+            style={styles.kebabBtn}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              setMenuVisible(true);
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Envelope actions"
+            accessibilityRole="button"
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        ) : (
+          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+        )}
+      </TouchableOpacity>
+      {showCompletedMenu ? (
+        <ActionMenuModal
+          visible={menuVisible}
+          title={envelope.title || 'Envelope'}
+          items={menuItems}
+          onClose={() => setMenuVisible(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -126,58 +208,97 @@ function TemplateRow({
   onShare?: () => void;
 }) {
   const colors = useThemeColors();
+  const [menuVisible, setMenuVisible] = useState(false);
   const activityIso = templateLastActivityIso(template);
   const activityLabel =
     formatSignatureActivityLabel(activityIso, { uploadedAt: template.created_at }) ??
     (activityIso ? `Updated ${formatEnvelopeListDate(activityIso)}` : null);
 
-  const openMenu = useCallback(() => {
-    Alert.alert(template.name || 'Document', undefined, [
-      ...(onFillDocument ? [{ text: 'Continue filling', onPress: onFillDocument }] : []),
-      ...(onViewDocument ? [{ text: 'View original', onPress: onViewDocument }] : []),
-      ...(onShare ? [{ text: 'Share', onPress: onShare }] : []),
-      ...(onDeleteDocument
-        ? [{ text: 'Delete', style: 'destructive' as const, onPress: onDeleteDocument }]
-        : []),
-      { text: 'Cancel', style: 'cancel' as const },
-    ]);
-  }, [onDeleteDocument, onFillDocument, onShare, onViewDocument, template.name]);
+  const menuItems = useMemo((): ActionMenuItem[] => {
+    const items: ActionMenuItem[] = [];
+    if (onFillDocument) {
+      items.push({
+        id: 'continue',
+        label: 'Continue filling',
+        icon: 'create-outline',
+        iconColor: colors.primary,
+        onPress: onFillDocument,
+      });
+    }
+    if (onViewDocument) {
+      items.push({
+        id: 'view-original',
+        label: 'View original',
+        icon: 'eye-outline',
+        iconColor: '#007AFF',
+        onPress: onViewDocument,
+      });
+    }
+    if (onShare) {
+      items.push({
+        id: 'share',
+        label: 'Share',
+        icon: 'share-outline',
+        iconColor: '#007AFF',
+        onPress: onShare,
+      });
+    }
+    if (onDeleteDocument) {
+      items.push({
+        id: 'delete',
+        label: 'Delete',
+        icon: 'trash-outline',
+        destructive: true,
+        onPress: onDeleteDocument,
+      });
+    }
+    return items;
+  }, [colors.primary, onDeleteDocument, onFillDocument, onShare, onViewDocument]);
 
   return (
-    <TouchableOpacity
-      style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
-      onPress={onPress ?? onFillDocument}
-      activeOpacity={0.7}
-      disabled={!onPress && !onFillDocument}
-    >
-      <View style={styles.body}>
-        <FileNameText
-          name={template.name || 'Untitled document'}
-          style={[styles.title, { color: colors.text }]}
-          sanitize={false}
-        />
-        <View style={styles.badgeRow}>
-          <Badge badge={IN_PROGRESS_BADGE} />
-        </View>
-        {activityLabel ? (
-          <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={2}>
-            {activityLabel}
-          </Text>
-        ) : null}
-      </View>
+    <>
       <TouchableOpacity
-        style={styles.kebabBtn}
-        onPress={(e) => {
-          e.stopPropagation?.();
-          openMenu();
-        }}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        accessibilityLabel="Document actions"
-        accessibilityRole="button"
+        style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
+        onPress={onPress ?? onFillDocument}
+        activeOpacity={0.7}
+        disabled={!onPress && !onFillDocument}
       >
-        <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+        <View style={styles.body}>
+          <FileNameText
+            name={template.name || 'Untitled document'}
+            style={[styles.title, { color: colors.text }]}
+            sanitize={false}
+            maxLength={SIGNATURE_LIST_TITLE_MAX}
+          />
+          <View style={styles.badgeRow}>
+            <Badge badge={IN_PROGRESS_BADGE} />
+          </View>
+          {activityLabel ? (
+            <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={2}>
+              {activityLabel}
+            </Text>
+          ) : null}
+        </View>
+        <TouchableOpacity
+          style={styles.kebabBtn}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            setMenuVisible(true);
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Document actions"
+          accessibilityRole="button"
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
       </TouchableOpacity>
-    </TouchableOpacity>
+      <ActionMenuModal
+        visible={menuVisible}
+        title={template.name || 'Document'}
+        items={menuItems}
+        onClose={() => setMenuVisible(false)}
+      />
+    </>
   );
 }
 
@@ -195,6 +316,7 @@ function SubmissionRow({
   onShare?: () => void;
 }) {
   const colors = useThemeColors();
+  const [menuVisible, setMenuVisible] = useState(false);
   const filledIso = submissionLastActivityIso(submission);
   const filledDate = formatEnvelopeListDate(filledIso);
   const metaParts = [
@@ -202,50 +324,82 @@ function SubmissionRow({
     submission.filled_by_name?.trim() || null,
   ].filter(Boolean);
 
-  const openMenu = useCallback(() => {
-    Alert.alert(submissionDisplayTitle(submission), undefined, [
-      ...(onViewSubmission ? [{ text: 'View completed PDF', onPress: onViewSubmission }] : []),
-      ...(onShare ? [{ text: 'Share', onPress: onShare }] : []),
-      ...(onViewSubmissions ? [{ text: 'All submissions', onPress: onViewSubmissions }] : []),
-      { text: 'Cancel', style: 'cancel' as const },
-    ]);
-  }, [onShare, onViewSubmission, onViewSubmissions, submission]);
+  const menuItems = useMemo((): ActionMenuItem[] => {
+    const items: ActionMenuItem[] = [];
+    if (onViewSubmission) {
+      items.push({
+        id: 'view-pdf',
+        label: 'View completed PDF',
+        icon: 'document-text-outline',
+        iconColor: '#007AFF',
+        onPress: onViewSubmission,
+      });
+    }
+    if (onShare) {
+      items.push({
+        id: 'share',
+        label: 'Share',
+        icon: 'share-outline',
+        iconColor: '#007AFF',
+        onPress: onShare,
+      });
+    }
+    if (onViewSubmissions) {
+      items.push({
+        id: 'all-submissions',
+        label: 'All submissions',
+        icon: 'layers-outline',
+        iconColor: colors.text,
+        onPress: onViewSubmissions,
+      });
+    }
+    return items;
+  }, [colors.text, onShare, onViewSubmission, onViewSubmissions]);
 
   return (
-    <TouchableOpacity
-      style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
-      onPress={onPress ?? onViewSubmission}
-      activeOpacity={0.7}
-      disabled={!onPress && !onViewSubmission}
-    >
-      <View style={styles.body}>
-        <FileNameText
-          name={submissionDisplayTitle(submission)}
-          style={[styles.title, { color: colors.text }]}
-          sanitize={false}
-        />
-        <View style={styles.badgeRow}>
-          <Badge badge={COMPLETED_BADGE} />
-        </View>
-        {metaParts.length > 0 ? (
-          <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={2}>
-            {metaParts.join(' · ')}
-          </Text>
-        ) : null}
-      </View>
+    <>
       <TouchableOpacity
-        style={styles.kebabBtn}
-        onPress={(e) => {
-          e.stopPropagation?.();
-          openMenu();
-        }}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        accessibilityLabel="Submission actions"
-        accessibilityRole="button"
+        style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
+        onPress={onPress ?? onViewSubmission}
+        activeOpacity={0.7}
+        disabled={!onPress && !onViewSubmission}
       >
-        <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+        <View style={styles.body}>
+          <FileNameText
+            name={submissionDisplayTitle(submission)}
+            style={[styles.title, { color: colors.text }]}
+            sanitize={false}
+            maxLength={SIGNATURE_LIST_TITLE_MAX}
+          />
+          <View style={styles.badgeRow}>
+            <Badge badge={COMPLETED_BADGE} />
+          </View>
+          {metaParts.length > 0 ? (
+            <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={2}>
+              {metaParts.join(' · ')}
+            </Text>
+          ) : null}
+        </View>
+        <TouchableOpacity
+          style={styles.kebabBtn}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            setMenuVisible(true);
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Submission actions"
+          accessibilityRole="button"
+        >
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
       </TouchableOpacity>
-    </TouchableOpacity>
+      <ActionMenuModal
+        visible={menuVisible}
+        title={submissionDisplayTitle(submission)}
+        items={menuItems}
+        onClose={() => setMenuVisible(false)}
+      />
+    </>
   );
 }
 
@@ -259,9 +413,21 @@ export default function SignatureActivityListItem({
   onViewSubmission,
   onViewSubmissions,
   onShare,
+  onViewCompletedPdf,
+  onViewAuditTrail,
 }: Props) {
   if (item.kind === 'envelope' && item.envelope) {
-    return <EnvelopeRow envelope={item.envelope} onPress={onPress} onSign={onSign} />;
+    return (
+      <EnvelopeRow
+        envelope={item.envelope}
+        onPress={onPress}
+        onSign={onSign}
+        onViewCompletedPdf={onViewCompletedPdf}
+        onShare={onShare}
+        onViewSubmissions={onViewSubmissions}
+        onViewAuditTrail={onViewAuditTrail}
+      />
+    );
   }
   if (item.kind === 'fillable' && item.template) {
     return (

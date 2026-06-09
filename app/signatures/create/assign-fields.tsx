@@ -1,9 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
-  AlertButton,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import ActionMenuModal, { type ActionMenuItem } from '../../../components/ActionMenuModal';
 import FileNameText from '../../../components/FileNameText';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { useAuth } from '../../context/auth';
@@ -29,6 +29,7 @@ export default function AssignFieldsScreen() {
   const [envelope, setEnvelope] = useState<Envelope | null>(null);
   const [assignments, setAssignments] = useState<FieldAssignmentInput[]>([]);
   const [saving, setSaving] = useState(false);
+  const [assignMenuIndex, setAssignMenuIndex] = useState<number | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -58,17 +59,23 @@ export default function AssignFieldsScreen() {
 
   const pickRecipient = (index: number) => {
     if (!signers.length) return;
-    const buttons: AlertButton[] = signers.map((s) => ({
-      text: s.name || s.email,
+    setAssignMenuIndex(index);
+  };
+
+  const assignMenuItems = useMemo((): ActionMenuItem[] => {
+    if (assignMenuIndex == null) return [];
+    return signers.map((s) => ({
+      id: String(s.id),
+      label: s.name || s.email,
+      icon: 'person-outline' as const,
+      iconColor: colors.primary,
       onPress: () => {
         setAssignments((prev) =>
-          prev.map((a, i) => (i === index ? { ...a, recipient_id: s.id } : a)),
+          prev.map((a, i) => (i === assignMenuIndex ? { ...a, recipient_id: s.id } : a)),
         );
       },
     }));
-    buttons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert('Assign to', undefined, buttons);
-  };
+  }, [assignMenuIndex, colors.primary, signers]);
 
   const handleNext = async () => {
     if (!envelopeId) return;
@@ -145,6 +152,12 @@ export default function AssignFieldsScreen() {
           <Text style={styles.nextText}>{saving ? 'Saving…' : 'Next: Review'}</Text>
         </TouchableOpacity>
       </ScrollView>
+      <ActionMenuModal
+        visible={assignMenuIndex != null}
+        title="Assign to"
+        items={assignMenuItems}
+        onClose={() => setAssignMenuIndex(null)}
+      />
     </SafeAreaView>
   );
 }

@@ -1,8 +1,8 @@
 // Import polyfills for mobile compatibility
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Alert, AppState, findNodeHandle, Linking, LogBox, Pressable, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, AppState, findNodeHandle, Linking, LogBox, Pressable, StyleSheet } from 'react-native';
 import 'react-native-url-polyfill/auto';
 import { errorLogger } from '../services/errorLogger';
 
@@ -31,6 +31,7 @@ import { AppLockProvider, useAppLock } from '../contexts/AppLockContext';
 import { DisplayScaleProvider } from '../contexts/DisplayScaleContext';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
 import ChatGDBottomSheetHost from '../components/chatgd/ChatGDBottomSheet';
+import ActionMenuModal, { type ActionMenuItem } from '../components/ActionMenuModal';
 import { ChatGDSheetProvider } from '../contexts/ChatGDSheetContext';
 import { HeaderVisibilityProvider } from '../contexts/HeaderVisibilityContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
@@ -68,6 +69,7 @@ function RootLayoutNav() {
   // User id present when auth bootstrap finished — only auto-open notification targets on cold
   // start with an existing session, never right after sign-in/sign-up in the same app session.
   const coldStartAuthenticatedUserIdRef = useRef<string | null | undefined>(undefined);
+  const [appLockReminderVisible, setAppLockReminderVisible] = useState(false);
 
   // Hide top bar (NetworkIndicator) on meeting screen to avoid black banner and full-screen meeting UX
   const isMeetingScreen = segments.some((s) => String(s).includes('hms-meeting-interface'));
@@ -122,24 +124,7 @@ function RootLayoutNav() {
         const lastShown = lastStr ? parseInt(lastStr, 10) : 0;
         if (lastShown && Date.now() - lastShown < REMINDER_INTERVAL_MS) return;
 
-        Alert.alert(
-          'Set up app lock',
-          'For better security, lock the app 10 minutes after you leave it. You can unlock with Face ID, Touch ID, or your device passcode.\n\nGo to Settings → Security & 2FA to turn it on.',
-          [
-            { text: 'Later' },
-            {
-              text: "Don't remind me again",
-              style: 'destructive',
-              onPress: async () => {
-                await AsyncStorage.setItem(APP_LOCK_REMINDER_OPTOUT_KEY, 'true');
-              },
-            },
-            {
-              text: 'Open Settings',
-              onPress: () => router.push('/(tabs)/settings'),
-            },
-          ]
-        );
+        setAppLockReminderVisible(true);
         await AsyncStorage.setItem(APP_LOCK_REMINDER_KEY, String(Date.now()));
       } catch {
         // ignore storage/alert errors
@@ -274,6 +259,31 @@ function RootLayoutNav() {
     }
   };
 
+  const appLockReminderItems = useMemo((): ActionMenuItem[] => [
+    {
+      id: 'settings',
+      label: 'Open Settings',
+      icon: 'settings-outline',
+      iconColor: '#007AFF',
+      onPress: () => router.push('/(tabs)/settings'),
+    },
+    {
+      id: 'later',
+      label: 'Later',
+      icon: 'time-outline',
+      onPress: () => {},
+    },
+    {
+      id: 'opt-out',
+      label: "Don't remind me again",
+      icon: 'notifications-off-outline',
+      destructive: true,
+      onPress: () => {
+        void AsyncStorage.setItem(APP_LOCK_REMINDER_OPTOUT_KEY, 'true');
+      },
+    },
+  ], [router]);
+
   return (
     <>
       {showLock && <AppLockScreen />}
@@ -324,6 +334,15 @@ function RootLayoutNav() {
       </View>
       <ChatGDBottomSheetHost />
       </ChatGDSheetProvider>
+      <ActionMenuModal
+        visible={appLockReminderVisible}
+        title="Set up app lock"
+        message="For better security, lock the app 10 minutes after you leave it. You can unlock with Face ID, Touch ID, or your device passcode.
+
+Go to Settings → Security & 2FA to turn it on."
+        items={appLockReminderItems}
+        onClose={() => setAppLockReminderVisible(false)}
+      />
       <Toast />
       <GlobalProgressBar
         visible={visible}

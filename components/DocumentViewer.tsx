@@ -1716,12 +1716,13 @@ export default function DocumentViewer({
         // Skip dimensions for SVG files (vector graphics, no fixed dimensions)
         const detectedFileKind = fileInfo.file.file_kind || fileCategory;
         const detectedFileType = fileInfo.file.file_type || fileType;
+        const viewerFileType = detectedFileType || fileType;
         const previewIsSigned =
           typeof previewUrl === 'string' &&
           previewUrl.includes('sig=') &&
           previewUrl.includes('exp=');
-        if (isImageFile(fileType, detectedFileKind, fileCategory) && !isSvgFile(fileName, detectedFileType)) {
-          console.log('🖼️ [IMAGE-DETECT] Image file detected:', { fileType, file_kind: detectedFileKind, fileCategory });
+        if (isImageFile(viewerFileType, detectedFileKind, fileCategory) && !isSvgFile(fileName, detectedFileType)) {
+          console.log('🖼️ [IMAGE-DETECT] Image file detected:', { fileType: viewerFileType, file_kind: detectedFileKind, fileCategory });
           // Do not prefetch dimensions for signed URLs — it duplicates full GET /view traffic and races TTL;
           // AuthenticatedImage downloads once; layout uses full screen until optional onLoad sizing.
           if (!previewIsSigned) {
@@ -1735,10 +1736,10 @@ export default function DocumentViewer({
         
         // For text files and images, loading is complete (no secondary download)
         // For PDF/Office, loading continues until native viewer or WebView data is ready
-        if (isTextDocument(fileType) || isImageFile(fileType, detectedFileKind, fileCategory)) {
+        if (isTextDocument(viewerFileType) || isImageFile(viewerFileType, detectedFileKind, fileCategory)) {
           console.log('Text/image file loaded, clearing loading state');
           setLoading(false);
-        } else if (isPdfFile(fileType)) {
+        } else if (isPdfFile(viewerFileType)) {
           // For PDFs, loading will be cleared by the PDF download effect
           // But if native PDF viewer is not available, clear loading here
           if (isExpoGo || !Pdf) {
@@ -2045,54 +2046,70 @@ export default function DocumentViewer({
     }
   };
 
+  const isPdfFile = (type: string) => {
+    const t = (type || '').toLowerCase();
+    return (
+      t === 'pdf' ||
+      t.includes('pdf') ||
+      fileName.toLowerCase().endsWith('.pdf')
+    );
+  };
+
   const isImageFile = (type: string, kind?: string | null, category?: string | null) => {
+    // PDFs must never use the image viewer — filename may end in .png/.jpg from template names.
+    if (isPdfFile(type)) {
+      return false;
+    }
+
     const kindLower = kind?.toLowerCase();
     const categoryLower = category?.toLowerCase();
     const fileNameLower = fileName.toLowerCase();
     const typeLower = type?.toLowerCase() || '';
-    const isSvg = fileNameLower.endsWith('.svg') || typeLower === 'image/svg+xml' || typeLower.includes('svg');
-    
-    const isImage = type === 'image' || 
-           type.includes('image/') || 
-           fileNameLower.match(/\.(jpg|jpeg|png|gif|bmp|webp|heic|heif|svg)$/) ||
-           kindLower === 'picture' ||
-           kindLower === 'image' ||
-           categoryLower === 'picture' ||
-           categoryLower === 'image';
-    
-    if (isImage && (kindLower === 'picture' || categoryLower === 'picture')) {
-      console.log('🖼️ [IMAGE-DETECT] Detected picture file_kind:', { type, kind, category, fileName, isSvg });
-    }
-    
-    return isImage;
-  };
-  
-  const isSvgFile = (fileName: string, fileType?: string) => {
-    const fileNameLower = fileName.toLowerCase();
-    const fileTypeLower = fileType?.toLowerCase() || '';
-    return fileNameLower.endsWith('.svg') || 
-           fileTypeLower === 'image/svg+xml' || 
-           fileTypeLower.includes('svg');
+
+    return (
+      typeLower === 'image' ||
+      typeLower.startsWith('image/') ||
+      !!fileNameLower.match(/\.(jpg|jpeg|png|gif|bmp|webp|heic|heif|svg)$/) ||
+      kindLower === 'picture' ||
+      kindLower === 'image' ||
+      categoryLower === 'picture' ||
+      categoryLower === 'image'
+    );
   };
 
-  const isPdfFile = (type: string) => {
-    return type === 'pdf' || 
-           type.includes('pdf') || 
-           fileName.toLowerCase().endsWith('.pdf');
+  const isSvgFile = (svgFileName: string, svgFileType?: string) => {
+    const fileNameLower = svgFileName.toLowerCase();
+    const fileTypeLower = svgFileType?.toLowerCase() || '';
+    return (
+      fileNameLower.endsWith('.svg') ||
+      fileTypeLower === 'image/svg+xml' ||
+      fileTypeLower.includes('svg')
+    );
   };
+
+  const resolveViewerFileType = () => (actualFileType || fileType || '').trim();
 
   const isOfficeDocument = (type: string) => {
+    const t = (type || '').toLowerCase();
+    if (isPdfFile(type)) return false;
     const officeExtensions = /\.(doc|docx|xls|xlsx|ppt|pptx)$/;
-    return type === 'doc' || 
-           type === 'docx' || 
-           type === 'xls' || 
-           type === 'xlsx' || 
-           type === 'ppt' || 
-           type === 'pptx' ||
-           type.includes('document') ||
-           type.includes('spreadsheet') ||
-           type.includes('presentation') ||
-           fileName.toLowerCase().match(officeExtensions);
+    return (
+      t === 'doc' ||
+      t === 'docx' ||
+      t === 'xls' ||
+      t === 'xlsx' ||
+      t === 'ppt' ||
+      t === 'pptx' ||
+      t.includes('wordprocessingml') ||
+      t.includes('spreadsheetml') ||
+      t.includes('presentationml') ||
+      t.includes('msword') ||
+      t.includes('ms-excel') ||
+      t.includes('ms-powerpoint') ||
+      t.includes('officedocument') ||
+      t.includes('openxmlformats') ||
+      !!fileName.toLowerCase().match(officeExtensions)
+    );
   };
 
   const isTextDocument = (type: string) => {
@@ -2121,7 +2138,7 @@ export default function DocumentViewer({
       return 'Document Preview';
     }
     
-    if (isPdfFile(fileType)) {
+    if (isPdfFile(resolveViewerFileType())) {
       return 'PDF Document';
     } else if (isOfficeDocument(fileType)) {
       if (fileType.includes('doc') || fileName.toLowerCase().match(/\.(doc|docx)$/)) {
@@ -2425,7 +2442,7 @@ export default function DocumentViewer({
 
     // For PDFs, use native PDF viewer if available (development builds only)
     // In Expo Go, fall back to WebView or external opening
-    if (isPdfFile(fileType)) {
+    if (isPdfFile(resolveViewerFileType())) {
       // Check if native PDF viewer is available
       if (Pdf && pdfLocalUri) {
         // Native PDF viewer available - use it
@@ -2875,24 +2892,22 @@ export default function DocumentViewer({
       );
     }
 
-    const isImage = isImageFile(fileType, fileKind, fileCategory);
-    const isPdf = isPdfFile(fileType);
-    const isOffice = isOfficeDocument(fileType);
-    const isText = isTextDocument(fileType);
+    const viewerFileType = resolveViewerFileType();
+    const isPdf = isPdfFile(viewerFileType);
+    const isOffice = isOfficeDocument(viewerFileType);
+    const isText = isTextDocument(viewerFileType);
+    const isImage = isImageFile(viewerFileType, fileKind, fileCategory);
 
-    // For images, show the image directly
-    if (isImage) {
-      return renderImage();
+    if (isPdf || isOffice) {
+      return renderDocumentPreview();
     }
-    
-    // For text documents, use TextDocumentViewer
+
     if (isText) {
       return renderTextDocument();
     }
-    
-    // For PDFs and Office documents, show WebView preview
-    if (isPdf || isOffice) {
-      return renderDocumentPreview();
+
+    if (isImage) {
+      return renderImage();
     }
     
     // For other document types, try to show in WebView as fallback
@@ -2921,7 +2936,7 @@ export default function DocumentViewer({
           </Text>
           <View style={styles.placeholder} />
         </View>
-        <View style={[styles.content, isImageFile(fileType, fileKind, fileCategory) && styles.imageViewerContent]}>
+        <View style={[styles.content, isImageFile(resolveViewerFileType(), fileKind, fileCategory) && styles.imageViewerContent]}>
           {renderContent()}
         </View>
       </SafeAreaView>

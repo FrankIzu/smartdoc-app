@@ -15,3 +15,17 @@ export function sanitizeDisplayFilename(name: string | null | undefined): string
   const base = n.split(/[/\\]/).pop();
   return base?.trim() || n;
 }
+
+/** Truncate long labels for list rows; keeps room for the trailing ellipsis. */
+export function truncateDisplayText(text: string, maxLength: number): string {
+  if (maxLength < 4) return text;
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+/** Default max length for signature envelope titles in list rows. */
+export const SIGNATURE_LIST_TITLE_MAX = 48;
+
+/** Default max length for signature titles in screen headers. */
+export const SIGNATURE_HEADER_TITLE_MAX = 56;

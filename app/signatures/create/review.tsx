@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import FileNameText from '../../../components/FileNameText';
+import { SIGNATURE_LIST_TITLE_MAX } from '../../../utils/displayFilename';
 import { useEnvelopeDraft } from '../../../hooks/useEnvelopeDraft';
 import { invalidateEnvelopeListCache } from '../../../hooks/useEnvelopeList';
 import { useThemeColors } from '../../../hooks/useThemeColors';
@@ -69,6 +70,7 @@ export default function ReviewSendScreen() {
           name={envelope?.title}
           style={[styles.envTitle, { color: colors.text }]}
           sanitize={false}
+          maxLength={SIGNATURE_LIST_TITLE_MAX}
         />
         {envelope?.message ? (
           <Text style={{ color: colors.textSecondary, marginBottom: 16 }}>{envelope.message}</Text>

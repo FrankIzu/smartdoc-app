@@ -18,6 +18,7 @@ import {
     type ViewStyle
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import AiFileManagerBottomSheet from '../../components/ai-file-manager/AiFileManagerBottomSheet';
 import DeletedFolderGroups from '../../components/documents/DeletedFolderGroups';
 import DocumentsFolderBar from '../../components/documents/DocumentsFolderBar';
@@ -209,14 +210,18 @@ export default function QuickFilesScreen() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('date');
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  const sortMenuItems = useMemo(
+    (): ActionMenuItem[] => [
+      { id: 'name', label: 'Name', icon: 'text-outline', onPress: () => setSortBy('name') },
+      { id: 'date', label: 'Date', icon: 'calendar-outline', onPress: () => setSortBy('date') },
+      { id: 'size', label: 'Size', icon: 'resize-outline', onPress: () => setSortBy('size') },
+      { id: 'type', label: 'Type', icon: 'folder-outline', onPress: () => setSortBy('type') },
+    ],
+    [],
+  );
   const showSortOptions = useCallback(() => {
-    Alert.alert('Sort Options', 'Choose sorting option:', [
-      { text: 'Name', onPress: () => setSortBy('name') },
-      { text: 'Date', onPress: () => setSortBy('date') },
-      { text: 'Size', onPress: () => setSortBy('size') },
-      { text: 'Type', onPress: () => setSortBy('type') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    setShowSortMenu(true);
   }, []);
   const [filterBy, setFilterBy] = useState<FilterOption>('all');
 
@@ -3973,6 +3978,12 @@ export default function QuickFilesScreen() {
         onCamera={handleUploadFromCameraViaModal}
         onGallery={handleUploadFromGalleryViaModal}
         onLink={handleUploadByLinkViaModal}
+      />
+      <ActionMenuModal
+        visible={showSortMenu}
+        title="Sort options"
+        items={sortMenuItems}
+        onClose={() => setShowSortMenu(false)}
       />
       </TapToToggleHeaderView>
     </SafeAreaView>
