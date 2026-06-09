@@ -237,8 +237,11 @@ const config = {
   expo: {
     ...baseExpo,
     plugins,
-    // Explicit fallback so EAS never resolves runtimeVersion as undefined
-    runtimeVersion: baseExpo.version || versions.version || "1.0.14",
+    // Fingerprint policy: runtimeVersion is derived from the native layer, so OTA (eas update)
+    // reaches every build with the same native fingerprint regardless of app version. It only
+    // changes automatically when native deps/config change (then a new build is required),
+    // preventing JS updates from landing on an incompatible binary.
+    runtimeVersion: { policy: "fingerprint" },
     updates: {
       url: "https://u.expo.dev/341d1cdf-5759-41ef-8ae3-36e4cf7fab00",
     },
