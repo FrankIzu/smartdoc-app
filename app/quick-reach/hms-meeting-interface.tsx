@@ -113,7 +113,7 @@ function applyGrabdocsHmsRoomKitJoinDefaults() {
   (global as any).joinConfig = {
     mutedAudio: true,
     mutedVideo: true,
-    skipPreview: false,
+    skipPreview: true,
     audioMixer: false,
     musicMode: false,
     softwareDecoder: true,
@@ -728,7 +728,6 @@ export default function HMSMeetingInterfaceScreen() {
           enable_audio: false,
           enable_video: false,
           viewer_type: user ? 'host' : 'guest',
-          join_intent: 'prepare',
           ...(forceJoin ? { force_join: true } : {}),
           ...passcodePayload,
         });
@@ -796,6 +795,9 @@ export default function HMSMeetingInterfaceScreen() {
           timestamp: new Date().toISOString(),
         };
         setJoinConfig(joinConfigData);
+        // Legacy join (no join_intent=prepare): backend finalize ran with the token response.
+        presenceConfirmSentRef.current = true;
+        setPresenceConfirmed(true);
       } catch (joinError: any) {
         const status = joinError?.response?.status;
         const errData = joinError?.response?.data || {};
@@ -1098,19 +1100,17 @@ export default function HMSMeetingInterfaceScreen() {
     if (Platform.OS !== 'web') applyGrabdocsHmsRoomKitJoinDefaults();
 
     try {
-      // React Native HMSPrebuilt props format:
-      // - token - required for token-based join (mutually exclusive with roomCode)
-      // - roomCode - only used for room-link-based join (not used here; backend issues a token)
-      // - options: { userName, userId, ios?: { appGroup, preferredExtension } } - optional
-      // - onLeave - callback when leaving
-      // iOS screenshare: pass appGroup + preferredExtension so prebuilt can start screen share (see docs/MOBILE_SCREENSHARE_WHITEBOARD.md)
+      let finalRoomCode = roomCode.trim();
+      if (finalRoomCode.includes('/meeting/')) {
+        const urlParts = finalRoomCode.split('/meeting/');
+        if (urlParts.length > 1) {
+          finalRoomCode = urlParts[1].split('?')[0];
+        }
+      }
+
       const hmsProps = {
         token: token.trim(),
-        // roomCode is intentionally omitted: token and roomCode are mutually exclusive join
-        // methods. Passing both causes HMS to attempt a room-code lookup with the GrabDocs
-        // numeric meeting ID (not a valid 100ms room code), which silently fails and leaves
-        // the "Join" button spinning. The backend already supplies an auth token via
-        // /api/v1/video/room/join-by-id, so token-only join is the correct path.
+        roomCode: finalRoomCode,
         options: {
           ...(validUserName && { userName: displayUserName.trim() }),
           ...(user?.id && { userId: user.id.toString() }),
@@ -1307,6 +1307,7 @@ export default function HMSMeetingInterfaceScreen() {
                     {/* PiP: Square, smaller window on both platforms. Video preview enabled by 100ms (useActiveSpeaker: true). iOS: UIBackgroundModes ["voip"] + plugins/ios-pip. Android: plugins/android-pip + GrabDocsPipModule (1:1). See docs/PIP_MOBILE_SETUP.md if PiP shows black. */}
                     <HMSPrebuilt 
                       token={hmsProps.token}
+                      roomCode={hmsProps.roomCode}
                       options={hmsProps.options}
                       autoEnterPipMode={Platform.OS !== 'web'}
                       pipConfig={Platform.OS !== 'web' ? { aspectRatio: [1, 1] } : undefined}
