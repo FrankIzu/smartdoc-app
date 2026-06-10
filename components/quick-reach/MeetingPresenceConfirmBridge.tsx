@@ -27,12 +27,24 @@ function getHmsPkg(): Record<string, unknown> | null {
 type Props = {
   enabled: boolean;
   onEnteredRoom: () => void;
+  /**
+   * Called when a join/connection attempt is detected (the SDK starts (re)connecting) but never
+   * completes within {@link STUCK_CONNECT_TIMEOUT_MS}. Lets the caller surface a "couldn't connect"
+   * error instead of leaving the HMS prebuilt "Join" spinner hanging forever.
+   */
+  onConnectionStuck?: () => void;
 };
 
+/** How long after the SDK starts struggling to (re)connect before we treat the join as failed. */
+const STUCK_CONNECT_TIMEOUT_MS = 30000;
+
 /** Uses HMS native join events to detect room entry (no-op stubs if package missing). */
-function InnerPresenceBridge({ enabled, onEnteredRoom }: Props) {
+function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Props) {
   const doneRef = useRef(false);
   const firedRef = useRef(false);
+  const stuckFiredRef = useRef(false);
+  const onConnectionStuckRef = useRef<(() => void) | undefined>(undefined);
+  onConnectionStuckRef.current = onConnectionStuck;
   const hmsPkg = useMemo(() => getHmsPkg(), []);
 
   const fireOnce = useCallback(() => {
@@ -50,11 +62,17 @@ function InnerPresenceBridge({ enabled, onEnteredRoom }: Props) {
     if (!enabled) return;
     doneRef.current = false;
     firedRef.current = false;
+    stuckFiredRef.current = false;
   }, [enabled]);
 
   // Primary signal: native ON_JOIN / RECONNECTED events (RN equivalent of selectIsConnectedToRoom).
   // We attach a passive NativeEventEmitter listener so we don't toggle the SDK's event enablement;
   // Room Kit already enables these events, and all JS listeners receive them.
+  //
+  // We also watch RECONNECTING as a "join is struggling" signal: it only fires after an actual
+  // connection attempt (never while the user simply sits on the prejoin screen). If we never reach
+  // the room within STUCK_CONNECT_TIMEOUT_MS of the SDK starting to (re)connect, we report the join
+  // as stuck so the caller can show an error instead of an endless spinner.
   useEffect(() => {
     if (!enabled || Platform.OS === 'web') return;
     const nativeModule = hmsPkg?.HMSManagerModule as object | undefined;
@@ -67,18 +85,45 @@ function InnerPresenceBridge({ enabled, onEnteredRoom }: Props) {
       return;
     }
 
-    const subs = ['ON_JOIN', 'RECONNECTED'].map((evt) => {
+    let stuckTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearStuckTimer = () => {
+      if (stuckTimer) {
+        clearTimeout(stuckTimer);
+        stuckTimer = null;
+      }
+    };
+
+    const enteredHandler = () => {
+      clearStuckTimer();
+      if (!enabled || doneRef.current) return;
+      fireOnce();
+    };
+
+    const reconnectingHandler = () => {
+      // Already in the room (mid-call blip) or we already reported stuck — ignore.
+      if (doneRef.current || stuckFiredRef.current || stuckTimer) return;
+      stuckTimer = setTimeout(() => {
+        stuckTimer = null;
+        if (doneRef.current || stuckFiredRef.current) return;
+        stuckFiredRef.current = true;
+        onConnectionStuckRef.current?.();
+      }, STUCK_CONNECT_TIMEOUT_MS);
+    };
+
+    const subs = [
+      ['ON_JOIN', enteredHandler],
+      ['RECONNECTED', enteredHandler],
+      ['RECONNECTING', reconnectingHandler],
+    ].map(([evt, handler]) => {
       try {
-        return emitter.addListener(evt, () => {
-          if (!enabled || doneRef.current) return;
-          fireOnce();
-        });
+        return emitter.addListener(evt as string, handler as () => void);
       } catch {
         return null;
       }
     });
 
     return () => {
+      clearStuckTimer();
       subs.forEach((s) => {
         try {
           s?.remove();
@@ -109,17 +154,21 @@ function InnerPresenceBridge({ enabled, onEnteredRoom }: Props) {
     [enabled, fireOnce],
   );
 
-  // Final safety net if no recognizable native event arrives on some builds.
-  useEffect(() => {
-    if (!enabled) return;
-    const fallback = setTimeout(() => fireOnce(), 25000);
-    return () => clearTimeout(fallback);
-  }, [enabled, fireOnce]);
+  // NOTE: We intentionally do NOT confirm presence on a blind timer. Doing so created a phantom
+  // ActiveParticipant ("1 person in the meeting") even when the HMS join never actually completed.
+  // Presence is now confirmed only on a genuine room-connection signal (ON_JOIN / RECONNECTED /
+  // peer update); a stuck attempt is reported via onConnectionStuck instead.
 
   return null;
 }
 
 export function MeetingPresenceConfirmBridge(props: Props) {
   if (Platform.OS === 'web' || !props.enabled) return null;
-  return <InnerPresenceBridge enabled={props.enabled} onEnteredRoom={props.onEnteredRoom} />;
+  return (
+    <InnerPresenceBridge
+      enabled={props.enabled}
+      onEnteredRoom={props.onEnteredRoom}
+      onConnectionStuck={props.onConnectionStuck}
+    />
+  );
 }

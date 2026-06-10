@@ -1,21 +1,21 @@
 // 100ms Prebuilt Interface Implementation
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
-import * as ImagePicker from 'expo-image-picker';
 import * as Device from 'expo-device';
+import * as ImagePicker from 'expo-image-picker';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import React, {
-  Component,
-  ErrorInfo,
-  ReactNode,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
+    Component,
+    ErrorInfo,
+    ReactNode,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState,
 } from 'react';
 import {
     Alert,
@@ -32,14 +32,14 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MeetingPresenceConfirmBridge } from '../../components/quick-reach/MeetingPresenceConfirmBridge';
 import { API_BASE_URL, HMS_IOS_SCREENSHARE } from '../../constants/Config';
 import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../constants/reachMeeting';
 import { apiClient } from '../../services/api';
-import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { errorLogger } from '../../services/errorLogger';
+import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
-import { MeetingPresenceConfirmBridge } from '../../components/quick-reach/MeetingPresenceConfirmBridge';
 
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
 
@@ -884,6 +884,22 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, []);
 
+  // Called by the presence bridge when a join attempt is detected but never connects (stuck).
+  // Surfaces a friendly error and stops the endless HMS "Join" spinner. Ignored once we are
+  // actually in the meeting (presence confirmed) so mid-call reconnects don't bounce the user.
+  const handleConnectionStuck = useCallback(() => {
+    if (presenceConfirmed) return;
+    setIsLoading(false);
+    setError('Couldn’t connect to the meeting. It may have ended or not started yet. Please try again.');
+    errorLogger.logError(new Error('HMS join stuck: connecting but never entered room'), {
+      severity: 'warning',
+      screenName: 'HMSMeetingInterface',
+      userAction: 'Join stuck',
+      errorType: 'HMSJoinStuck',
+      userId: user?.id,
+    });
+  }, [presenceConfirmed, user?.id]);
+
   const handleLeaveMeeting = async () => {
     Alert.alert(
       'Leave Meeting',
@@ -1082,35 +1098,19 @@ export default function HMSMeetingInterfaceScreen() {
     if (Platform.OS !== 'web') applyGrabdocsHmsRoomKitJoinDefaults();
 
     try {
-      // Final validation before rendering
-      // Prepare props object with only valid values
-      // According to React Native docs: HMSPrebuilt uses:
-      // - roomCode OR token (not authToken!)
-      // - options: { userName, userId }
-      // - onLeave callback
-      // - NO onJoin callback (use HMSSDK event listeners instead)
-      // roomCode should be the meeting room code (e.g., "abc-defg-hij" from URL)
-      // If meetingId is a full URL, extract the code; otherwise use it directly
-      let finalRoomCode = roomCode.trim();
-      
-      // Extract room code from URL if needed (format: https://subdomain.app.100ms.live/meeting/abc-defg-hij)
-      // Or if meetingId is already just the code, use it as-is
-      if (finalRoomCode.includes('/meeting/')) {
-        const urlParts = finalRoomCode.split('/meeting/');
-        if (urlParts.length > 1) {
-          finalRoomCode = urlParts[1].split('?')[0]; // Remove query params if any
-        }
-      }
-      
       // React Native HMSPrebuilt props format:
-      // - token (not authToken) - required if using token-based join
-      // - roomCode - required if using roomCode-based join
+      // - token - required for token-based join (mutually exclusive with roomCode)
+      // - roomCode - only used for room-link-based join (not used here; backend issues a token)
       // - options: { userName, userId, ios?: { appGroup, preferredExtension } } - optional
       // - onLeave - callback when leaving
       // iOS screenshare: pass appGroup + preferredExtension so prebuilt can start screen share (see docs/MOBILE_SCREENSHARE_WHITEBOARD.md)
       const hmsProps = {
-        token: token.trim(), // React Native uses 'token', not 'authToken'
-        roomCode: finalRoomCode, // Can use either token OR roomCode
+        token: token.trim(),
+        // roomCode is intentionally omitted: token and roomCode are mutually exclusive join
+        // methods. Passing both causes HMS to attempt a room-code lookup with the GrabDocs
+        // numeric meeting ID (not a valid 100ms room code), which silently fails and leaves
+        // the "Join" button spinning. The backend already supplies an auth token via
+        // /api/v1/video/room/join-by-id, so token-only join is the correct path.
         options: {
           ...(validUserName && { userName: displayUserName.trim() }),
           ...(user?.id && { userId: user.id.toString() }),
@@ -1130,6 +1130,7 @@ export default function HMSMeetingInterfaceScreen() {
           <MeetingPresenceConfirmBridge
             enabled={!!joinConfig && !!authToken && !hmsError}
             onEnteredRoom={handleHmsEnteredForPresenceConfirm}
+            onConnectionStuck={handleConnectionStuck}
           />
           {/* Join sound after GrabDocs presence + short delay (useHMSPeerUpdates needs room context) */}
           {HMSPrebuilt && joinSoundReady && (
@@ -1306,7 +1307,6 @@ export default function HMSMeetingInterfaceScreen() {
                     {/* PiP: Square, smaller window on both platforms. Video preview enabled by 100ms (useActiveSpeaker: true). iOS: UIBackgroundModes ["voip"] + plugins/ios-pip. Android: plugins/android-pip + GrabDocsPipModule (1:1). See docs/PIP_MOBILE_SETUP.md if PiP shows black. */}
                     <HMSPrebuilt 
                       token={hmsProps.token}
-                      roomCode={hmsProps.roomCode}
                       options={hmsProps.options}
                       autoEnterPipMode={Platform.OS !== 'web'}
                       pipConfig={Platform.OS !== 'web' ? { aspectRatio: [1, 1] } : undefined}
