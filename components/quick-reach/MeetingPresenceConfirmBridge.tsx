@@ -1,9 +1,14 @@
 /**
- * Runs after HMS Room Kit completes prejoin Join: notifies parent once the local user is in the room,
- * then the app POSTs `/api/v1/video/room/join-by-id/confirm` for GrabDocs presence.
+ * Runs after HMS Room Kit completes prejoin Join: notifies parent once the local user is actually
+ * in the room, then the app POSTs `/api/v1/video/room/join-by-id/confirm` for GrabDocs presence.
+ *
+ * Web detects "connected" via `useHMSStore(selectIsConnectedToRoom)`. The native package
+ * (`@100mslive/react-native-hms`) does NOT export `useHMSSelectors`, so the RN equivalent is the
+ * native `ON_JOIN` / `RECONNECTED` event. We listen for those directly (the SDK emits them globally
+ * via its NativeEventEmitter), with peer updates and a short timeout as fallbacks.
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Platform } from 'react-native';
+import { NativeEventEmitter, Platform } from 'react-native';
 
 let hmsPkgCache: Record<string, unknown> | null | undefined;
 
@@ -19,32 +24,25 @@ function getHmsPkg(): Record<string, unknown> | null {
   return hmsPkgCache;
 }
 
-/** Safe no-op hook when HMS SDK is unavailable (Expo Go, etc.). */
-function useSelectorsNull<S>(_selector: (s: S) => unknown): unknown {
-  return null;
-}
-
 type Props = {
   enabled: boolean;
   onEnteredRoom: () => void;
+  /**
+   * Called when a join/connection attempt is detected (the SDK starts (re)connecting) but never
+   * completes within {@link STUCK_CONNECT_TIMEOUT_MS}. Lets the caller surface a "couldn't connect"
+   * error instead of leaving the HMS prebuilt "Join" spinner hanging forever.
+   */
   onConnectionStuck?: () => void;
 };
 
-function pickLocalPeerId(state: Record<string, unknown>): string | null {
-  try {
-    const lp =
-      (state?.localPeer as { peerID?: string } | undefined)?.peerID ??
-      (((state?.peerState as Record<string, unknown>)?.localPeer as { peerID?: string })?.peerID ?? null);
-    return lp ?? null;
-  } catch {
-    return null;
-  }
-}
+/** How long after the SDK starts struggling to (re)connect before we treat the join as failed. */
+const STUCK_CONNECT_TIMEOUT_MS = 30000;
 
-/** Uses HMS hooks unconditionally (no-op stubs if package missing). */
+/** Uses HMS native join events to detect room entry (no-op stubs if package missing). */
 function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Props) {
   const doneRef = useRef(false);
   const firedRef = useRef(false);
+  const stuckFiredRef = useRef(false);
   const onConnectionStuckRef = useRef<(() => void) | undefined>(undefined);
   onConnectionStuckRef.current = onConnectionStuck;
   const hmsPkg = useMemo(() => getHmsPkg(), []);
@@ -59,80 +57,107 @@ function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Prop
     });
   }, [onEnteredRoom]);
 
-  const useHMSSelectors = (
-    typeof hmsPkg?.useHMSSelectors === 'function'
-      ? (hmsPkg.useHMSSelectors as typeof useSelectorsNull)
-      : useSelectorsNull
-  ) as <S>(selector: (s: S) => unknown) => unknown;
+  // Reset guards whenever the bridge is (re)enabled for a fresh join attempt.
+  useEffect(() => {
+    if (!enabled) return;
+    doneRef.current = false;
+    firedRef.current = false;
+    stuckFiredRef.current = false;
+  }, [enabled]);
 
+  // Primary signal: native ON_JOIN / RECONNECTED events (RN equivalent of selectIsConnectedToRoom).
+  // We attach a passive NativeEventEmitter listener so we don't toggle the SDK's event enablement;
+  // Room Kit already enables these events, and all JS listeners receive them.
+  //
+  // We also watch RECONNECTING as a "join is struggling" signal: it only fires after an actual
+  // connection attempt (never while the user simply sits on the prejoin screen). If we never reach
+  // the room within STUCK_CONNECT_TIMEOUT_MS of the SDK starting to (re)connect, we report the join
+  // as stuck so the caller can show an error instead of an endless spinner.
+  useEffect(() => {
+    if (!enabled || Platform.OS === 'web') return;
+    const nativeModule = hmsPkg?.HMSManagerModule as object | undefined;
+    if (!nativeModule) return;
+
+    let emitter: NativeEventEmitter;
+    try {
+      emitter = new NativeEventEmitter(nativeModule as never);
+    } catch {
+      return;
+    }
+
+    let stuckTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearStuckTimer = () => {
+      if (stuckTimer) {
+        clearTimeout(stuckTimer);
+        stuckTimer = null;
+      }
+    };
+
+    const enteredHandler = () => {
+      clearStuckTimer();
+      if (!enabled || doneRef.current) return;
+      fireOnce();
+    };
+
+    const reconnectingHandler = () => {
+      // Already in the room (mid-call blip) or we already reported stuck — ignore.
+      if (doneRef.current || stuckFiredRef.current || stuckTimer) return;
+      stuckTimer = setTimeout(() => {
+        stuckTimer = null;
+        if (doneRef.current || stuckFiredRef.current) return;
+        stuckFiredRef.current = true;
+        onConnectionStuckRef.current?.();
+      }, STUCK_CONNECT_TIMEOUT_MS);
+    };
+
+    const subs = [
+      ['ON_JOIN', enteredHandler],
+      ['RECONNECTED', enteredHandler],
+      ['RECONNECTING', reconnectingHandler],
+    ].map(([evt, handler]) => {
+      try {
+        return emitter.addListener(evt as string, handler as () => void);
+      } catch {
+        return null;
+      }
+    });
+
+    return () => {
+      clearStuckTimer();
+      subs.forEach((s) => {
+        try {
+          s?.remove();
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+  }, [enabled, hmsPkg, fireOnce]);
+
+  // Secondary signal: any peer update is only delivered once we are connected to the room.
+  // Covers builds/cases where ON_JOIN is missed but other peers are present.
   const useHMSPeerUpdates = (
     typeof hmsPkg?.useHMSPeerUpdates === 'function'
       ? (hmsPkg.useHMSPeerUpdates as (handler: (...args: unknown[]) => void, deps: unknown[]) => void)
       : (_h: (...args: unknown[]) => void, _d: unknown[]) => {}
   );
 
-  const localPeerId =
-    useHMSSelectors((s: Record<string, unknown>) => pickLocalPeerId(s ?? {})) ??
-    null;
-
-  const roomStateSelector = useMemo(
-    () =>
-      (typeof hmsPkg?.selectHMSRoomState === 'function'
-        ? (hmsPkg.selectHMSRoomState as (s: unknown) => unknown)
-        : typeof hmsPkg?.selectRoomState === 'function'
-          ? (hmsPkg.selectRoomState as (s: unknown) => unknown)
-          : (s: unknown) => {
-              const st = (s ?? {}) as Record<string, unknown>;
-              const r =
-                (((st?.hmsSdk as Record<string, unknown>)?.room ?? st?.room) as Record<string, unknown>) ??
-                {};
-              return r?.rtcState ?? r?.roomState ?? r?.sessionState ?? st?.roomState ?? null;
-            }) as (s: unknown) => unknown,
-    [hmsPkg],
-  );
-
-  const roomStateStr = useHMSSelectors(roomStateSelector);
-
-  useEffect(() => {
-    if (!enabled) return;
-    doneRef.current = false;
-    firedRef.current = false;
-  }, [enabled]);
-
-  useEffect(() => {
-    if (!enabled || doneRef.current || !roomStateStr) return;
-    const rstr = String(roomStateStr).toLowerCase();
-    if (rstr.includes('connected') || rstr.includes('joined') || rstr.includes('meeting')) {
-      fireOnce();
-    }
-  }, [enabled, roomStateStr, fireOnce]);
-
   useHMSPeerUpdates(
     (data: { type?: string; peer?: { peerID?: string; isLocal?: boolean } }) => {
       if (!enabled || doneRef.current) return;
-      const t = String(data?.type ?? '');
-      const pid = String(data?.peer?.peerID ?? '');
-      const isJoined =
-        t === 'PEER_JOINED' || t === 'HMSPeerJoined' || (t.includes('JOINED') && t.includes('PEER'));
-      if (!isJoined) return;
-      const lpId = typeof localPeerId === 'string' ? localPeerId : null;
-      if (data?.peer?.isLocal || (lpId && pid && lpId === pid)) {
+      // Any peer update (local or remote) is only delivered once connected to the room.
+      const hasUpdate = !!data?.peer || !!data?.type;
+      if (hasUpdate) {
         fireOnce();
       }
     },
-    [enabled, localPeerId, fireOnce],
+    [enabled, fireOnce],
   );
 
-  // Surface stuck joins without attaching NativeEventEmitter listeners (v1.0.53 regression).
-  useEffect(() => {
-    if (!enabled || !onConnectionStuckRef.current) return;
-    const stuckTimer = setTimeout(() => {
-      if (!doneRef.current) {
-        onConnectionStuckRef.current?.();
-      }
-    }, 45000);
-    return () => clearTimeout(stuckTimer);
-  }, [enabled]);
+  // NOTE: We intentionally do NOT confirm presence on a blind timer. Doing so created a phantom
+  // ActiveParticipant ("1 person in the meeting") even when the HMS join never actually completed.
+  // Presence is now confirmed only on a genuine room-connection signal (ON_JOIN / RECONNECTED /
+  // peer update); a stuck attempt is reported via onConnectionStuck instead.
 
   return null;
 }
