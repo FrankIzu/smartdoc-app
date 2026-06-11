@@ -32,11 +32,16 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MeetingJoinDiagnostics } from '../../components/quick-reach/MeetingJoinDiagnostics';
 import { MeetingPresenceConfirmBridge } from '../../components/quick-reach/MeetingPresenceConfirmBridge';
 import { API_BASE_URL, HMS_IOS_SCREENSHARE } from '../../constants/Config';
 import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../constants/reachMeeting';
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
+import {
+  logHmsPackageVersions,
+  logJoinMilestone,
+} from '../../utils/meetingJoinDiagnostics';
 import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
@@ -186,6 +191,7 @@ export default function HMSMeetingInterfaceScreen() {
     startedWithForceJoin: false,
   });
   const presenceConfirmSentRef = useRef(false);
+  const prebuiltMountCountRef = useRef(0);
 
   // Network connectivity monitoring — shown as a friendly overlay instead of the raw HMS error
   const [isNetworkDown, setIsNetworkDown] = useState(false);
@@ -306,6 +312,60 @@ export default function HMSMeetingInterfaceScreen() {
       ScreenOrientation.unlockAsync().catch(() => {});
     };
   }, [meetingId]);
+
+  useEffect(() => {
+    logJoinMilestone('screen_mount', {
+      meetingId: meetingIdForDisplay,
+      userId: user?.id,
+    });
+    logHmsPackageVersions();
+    return () => {
+      logJoinMilestone('screen_unmount', { meetingId: meetingIdForDisplay });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount/unmount markers
+  }, []);
+
+  useEffect(() => {
+    logJoinMilestone('grabdocs_loading_state', { isLoading, hasError: !!error, hasHmsError: !!hmsError });
+  }, [isLoading, error, hmsError]);
+
+  useEffect(() => {
+    if (authToken) {
+      logJoinMilestone('auth_token_set', {
+        meetingId: meetingIdForDisplay,
+        tokenLength: authToken.length,
+      });
+    }
+  }, [authToken, meetingIdForDisplay]);
+
+  useEffect(() => {
+    if (joinConfig) {
+      logJoinMilestone('join_config_set', {
+        meetingId: joinConfig.roomId,
+        userName: joinConfig.userName,
+        permissionsGranted: joinConfig.permissionsGranted,
+      });
+    }
+  }, [joinConfig]);
+
+  useEffect(() => {
+    logJoinMilestone('orientation_ready', { orientationReadyForHms, meetingId: meetingIdForDisplay });
+  }, [orientationReadyForHms, meetingIdForDisplay]);
+
+  useEffect(() => {
+    logJoinMilestone('presence_confirmed', { presenceConfirmed, meetingId: meetingIdForDisplay });
+  }, [presenceConfirmed, meetingIdForDisplay]);
+
+  useEffect(() => {
+    if (HMSPrebuilt && authToken && meetingId && orientationReadyForHms) {
+      prebuiltMountCountRef.current += 1;
+      logJoinMilestone('hms_prebuilt_mount', {
+        meetingId: meetingIdForDisplay,
+        mountCount: prebuiltMountCountRef.current,
+        skipPreview: (global as { joinConfig?: { skipPreview?: boolean } })?.joinConfig?.skipPreview,
+      });
+    }
+  }, [authToken, meetingId, orientationReadyForHms, meetingIdForDisplay]);
 
   useEffect(() => {
     // Check permissions first, then initialize
@@ -733,6 +793,10 @@ export default function HMSMeetingInterfaceScreen() {
       try {
         presenceConfirmSentRef.current = false;
         setPresenceConfirmed(false);
+        logJoinMilestone('join_by_id_start', {
+          meetingId: (meetingId as string).trim(),
+          viewerType: user ? 'host' : 'guest',
+        });
         let joinRes;
         try {
           joinRes = await joinById(forceJoinFromRoute);
@@ -792,6 +856,11 @@ export default function HMSMeetingInterfaceScreen() {
           timestamp: new Date().toISOString(),
         };
         setJoinConfig(joinConfigData);
+        logJoinMilestone('join_by_id_token_received', {
+          meetingId: (meetingId as string).trim(),
+          tokenLength: token.length,
+          tokenParts: tokenParts.length,
+        });
       } catch (joinError: any) {
         const status = joinError?.response?.status;
         const errData = joinError?.response?.data || {};
@@ -824,6 +893,10 @@ export default function HMSMeetingInterfaceScreen() {
       }
 
       setIsLoading(false);
+      logJoinMilestone('grabdocs_loading_cleared', {
+        meetingId: meetingIdForDisplay,
+        hmsPrebuiltAvailable: !!HMSPrebuilt,
+      });
     } catch (error: any) {
       setError('Failed to initialize meeting interface. Please try again.');
       setIsLoading(false);
@@ -839,6 +912,9 @@ export default function HMSMeetingInterfaceScreen() {
 
   const handleHmsEnteredForPresenceConfirm = useCallback(async () => {
     if (presenceConfirmSentRef.current) return;
+    logJoinMilestone('presence_confirm_start', {
+      meetingId: joinConfirmContextRef.current.meetingIdStr,
+    });
     presenceConfirmSentRef.current = true;
     const ctx = joinConfirmContextRef.current;
     if (!ctx.token || !ctx.meetingIdStr) {
@@ -874,8 +950,15 @@ export default function HMSMeetingInterfaceScreen() {
         }
       }
       setPresenceConfirmed(true);
+      logJoinMilestone('presence_confirm_success', {
+        meetingId: ctx.meetingIdStr,
+      });
     } catch (e) {
       console.error('[HMS] POST /join-by-id/confirm failed', e);
+      logJoinMilestone('presence_confirm_failed', {
+        meetingId: ctx.meetingIdStr,
+        error: String(e),
+      });
       presenceConfirmSentRef.current = false;
     }
   }, []);
@@ -885,6 +968,7 @@ export default function HMSMeetingInterfaceScreen() {
   // actually in the meeting (presence confirmed) so mid-call reconnects don't bounce the user.
   const handleConnectionStuck = useCallback(() => {
     if (presenceConfirmed) return;
+    logJoinMilestone('connection_stuck_timeout', { meetingId: meetingIdForDisplay });
     setIsLoading(false);
     setError('Couldn’t connect to the meeting. It may have ended or not started yet. Please try again.');
     errorLogger.logError(new Error('HMS join stuck: connecting but never entered room'), {
@@ -1123,6 +1207,10 @@ export default function HMSMeetingInterfaceScreen() {
 
       return (
         <>
+          <MeetingJoinDiagnostics
+            enabled={!!joinConfig && !!authToken && !hmsError}
+            meetingId={meetingIdForDisplay}
+          />
           <MeetingPresenceConfirmBridge
             enabled={!!joinConfig && !!authToken && !hmsError}
             onEnteredRoom={handleHmsEnteredForPresenceConfirm}

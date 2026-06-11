@@ -191,8 +191,9 @@ function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Prop
   );
 
   useHMSPeerUpdates(
-    (data: { type?: string; peer?: { peerID?: string; isLocal?: boolean } }) => {
+    (...args: unknown[]) => {
       if (!enabled || doneRef.current) return;
+      const data = args[0] as { type?: string; peer?: { peerID?: string; isLocal?: boolean } } | undefined;
       // Any peer update (local or remote) is only delivered once connected to the room.
       const hasUpdate = !!data?.peer || !!data?.type;
       if (hasUpdate) {
