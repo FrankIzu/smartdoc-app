@@ -1,15 +1,10 @@
 /**
- * HMS join-flow instrumentation. Logs a timestamped timeline to console and the backend
- * error logger so we can compare against server webhooks (peer.join.success, etc.).
- *
- * Toggle off after the stuck-prejoin root cause is identified.
+ * HMS join-flow instrumentation. Console-only timeline when enabled.
  */
 import { Platform } from 'react-native';
-import { APP_VERSION } from '../constants/Config';
-import { errorLogger } from '../services/errorLogger';
 
-/** Set false to silence join diagnostics in production builds. */
-export const MEETING_JOIN_DIAGNOSTICS_ENABLED = true;
+/** Set true for verbose console join timeline (never posts to backend — avoids HMSJoinDiag flood). */
+export const MEETING_JOIN_DIAGNOSTICS_ENABLED = false;
 
 const LOG_PREFIX = '[HMS-DIAG]';
 const sessionStartedAt = Date.now();
@@ -52,7 +47,6 @@ function emit(
   if (!MEETING_JOIN_DIAGNOSTICS_ENABLED) return;
 
   sequence += 1;
-  const ts = new Date().toISOString();
   const elapsed = elapsedMs();
   const line = `${LOG_PREFIX} +${elapsed}ms #${sequence} ${kind.toUpperCase()} ${name}`;
 
@@ -60,24 +54,6 @@ function emit(
   if (detail && Object.keys(detail).length > 0) {
     console.log(`${LOG_PREFIX} detail:`, safeSerialize(detail));
   }
-
-  // Backend timeline — grep api logs for errorType HMSJoinDiag
-  void errorLogger.logError(new Error(`${kind}:${name}`), {
-    severity: 'warning',
-    screenName: 'HMSMeetingInterface',
-    userAction: 'HMS join diagnostics',
-    errorType: 'HMSJoinDiag',
-    metadata: {
-      kind,
-      name,
-      ts,
-      elapsedMs: elapsed,
-      seq: sequence,
-      platform: Platform.OS,
-      appVersion: APP_VERSION,
-      ...detail,
-    },
-  });
 }
 
 /** App-level join milestones (token fetch, prebuilt mount, presence confirm, etc.). */

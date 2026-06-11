@@ -39,8 +39,8 @@ import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../con
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import {
-  logHmsPackageVersions,
-  logJoinMilestone,
+    logHmsPackageVersions,
+    logJoinMilestone,
 } from '../../utils/meetingJoinDiagnostics';
 import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
