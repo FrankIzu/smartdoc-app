@@ -78,6 +78,7 @@ const baseExpo = {
     package: "com.grabdocs.mobile",
     versionCode: versions.android?.versionCode ?? 55,
     softwareKeyboardLayoutMode: "resize",
+    edgeToEdgeEnabled: true,
     adaptiveIcon: {
       foregroundImage:
         "./assets/images/grabdocs-brand-app-images/png/icon-1024-light-android.png",
@@ -140,7 +141,6 @@ const baseExpo = {
   plugins: [
     "./plugins/android-pip",
     "./plugins/android-large-screen",
-    "./plugins/android-edge-to-edge-opt-out",
     "./plugins/android-disable-release-lint",
     "./plugins/ios-pip",
     "expo-dev-client",

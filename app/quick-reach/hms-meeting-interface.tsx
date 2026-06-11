@@ -104,10 +104,6 @@ class HMSErrorBoundary extends Component<
   }
 }
 
-// Minimal bottom inset for Android so prebuilt toolbar clears system nav (kept small to avoid moving UI up too much)
-const ANDROID_NAV_INSET = 24;
-
-/** Must match `@100mslive/react-native-room-kit` defaults so stale/partial `global.joinConfig` never leaves AV unmuted. */
 function applyGrabdocsHmsRoomKitJoinDefaults() {
   if (typeof global === 'undefined') return;
   (global as any).joinConfig = {
@@ -135,7 +131,7 @@ export default function HMSMeetingInterfaceScreen() {
     meetingId == null ? undefined : Array.isArray(meetingId) ? meetingId[0] : meetingId;
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
-  const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
+  const bottomInset = insets.bottom;
 
   const goToAppHome = useCallback(async () => {
     try {

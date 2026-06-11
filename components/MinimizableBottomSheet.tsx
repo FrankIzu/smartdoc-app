@@ -85,8 +85,10 @@ export default function MinimizableBottomSheet({
 
   // Match pre-Modal layout: sheet anchored to physical screen bottom (over tab bar).
   const sheetHeight = sheetHeightProp ?? Math.round(windowHeight * heightRatio);
-  const minimizedOffset = Math.max(0, sheetHeight - minimizedPeek);
   const paddingBottom = paddingBottomProp ?? insets.bottom;
+  // Subtract paddingBottom so the minimized peek (header strip) sits above the system nav bar,
+  // not partially hidden beneath it on edge-to-edge Android.
+  const minimizedOffset = Math.max(0, sheetHeight - minimizedPeek - paddingBottom);
 
   const sheetTranslateY = useSharedValue(0);
   const dragStartY = useSharedValue(0);

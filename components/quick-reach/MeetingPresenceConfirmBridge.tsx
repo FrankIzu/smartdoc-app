@@ -3,12 +3,23 @@
  * in the room, then the app POSTs `/api/v1/video/room/join-by-id/confirm` for GrabDocs presence.
  *
  * Web detects "connected" via `useHMSStore(selectIsConnectedToRoom)`. The native package
- * (`@100mslive/react-native-hms`) does NOT export `useHMSSelectors`, so the RN equivalent is the
- * native `ON_JOIN` / `RECONNECTED` event. We listen for those directly (the SDK emits them globally
- * via its NativeEventEmitter), with peer updates and a short timeout as fallbacks.
+ * (`@100mslive/react-native-hms`) does NOT export that selector, so the RN equivalent is the native
+ * `ON_JOIN` / `RECONNECTED` event.
+ *
+ * CRITICAL: We must NOT attach our own `new NativeEventEmitter(HMSManagerModule)`. Doing so creates a
+ * second emitter over the shared native module; its add/remove churn drives the module's listener
+ * ref-count to zero and silently stops the SDK from forwarding events to JS — including the `ON_JOIN`
+ * that Room Kit's prebuilt relies on to leave the "Join" spinner. (This was the v1.0.53 regression:
+ * the native peer joined the 100ms room — `peer.join.success` server-side — but the RN prebuilt hung
+ * on prejoin and `/join-by-id/confirm` was never sent.)
+ *
+ * Instead we reuse the SDK's own managed event channel: the singleton `HMSNativeEventListener` (the
+ * exact instance `useHMSPeerUpdates` and Room Kit use) keyed by `DEFAULT_SDK_ID`. Room Kit registers
+ * its own `ON_JOIN` listener on that same singleton, so its listener count never reaches zero on our
+ * account and our subscribe/unsubscribe can never disable its event delivery.
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { NativeEventEmitter, Platform } from 'react-native';
+import { Platform } from 'react-native';
 
 let hmsPkgCache: Record<string, unknown> | null | undefined;
 
@@ -24,6 +35,46 @@ function getHmsPkg(): Record<string, unknown> | null {
   return hmsPkgCache;
 }
 
+/** Minimal shape of the SDK's managed native-event singleton (HMSNativeEventEmitter). */
+type ManagedNativeListener = {
+  addListener: (
+    id: string,
+    eventType: string,
+    listener: (...args: unknown[]) => void
+  ) => { remove: () => void };
+};
+
+let nativeListenerCache: ManagedNativeListener | null | undefined;
+
+/**
+ * Returns the SDK's shared `HMSNativeEventListener` singleton. We deep-import the `src/` entry on
+ * purpose: Metro resolves `@100mslive/react-native-hms` via its `react-native` field (`src/index`)
+ * with package exports disabled, so this is the SAME module instance Room Kit loads — guaranteeing we
+ * share its listener bookkeeping rather than spawning a competing emitter. Native-only; never touched
+ * on web (the require is runtime-guarded so Metro never evaluates the native module in the web bundle).
+ */
+function getNativeEventListener(): ManagedNativeListener | null {
+  if (nativeListenerCache !== undefined) return nativeListenerCache;
+  if (Platform.OS === 'web') {
+    nativeListenerCache = null;
+    return null;
+  }
+  try {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const mod = require('@100mslive/react-native-hms/src/classes/HMSNativeEventListener');
+    /* eslint-enable @typescript-eslint/no-require-imports */
+    const singleton = (mod && (mod.default ?? mod)) as ManagedNativeListener | null;
+    nativeListenerCache =
+      singleton && typeof singleton.addListener === 'function' ? singleton : null;
+  } catch {
+    nativeListenerCache = null;
+  }
+  return nativeListenerCache;
+}
+
+/** HMSConstants.DEFAULT_SDK_ID — the single shared native SDK instance id Room Kit uses. */
+const DEFAULT_SDK_ID = '12345';
+
 type Props = {
   enabled: boolean;
   onEnteredRoom: () => void;
@@ -38,7 +89,7 @@ type Props = {
 /** How long after the SDK starts struggling to (re)connect before we treat the join as failed. */
 const STUCK_CONNECT_TIMEOUT_MS = 30000;
 
-/** Uses HMS native join events to detect room entry (no-op stubs if package missing). */
+/** Uses the SDK's managed HMS event channel to detect room entry (no-op if package missing). */
 function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Props) {
   const doneRef = useRef(false);
   const firedRef = useRef(false);
@@ -65,9 +116,8 @@ function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Prop
     stuckFiredRef.current = false;
   }, [enabled]);
 
-  // Primary signal: native ON_JOIN / RECONNECTED events (RN equivalent of selectIsConnectedToRoom).
-  // We attach a passive NativeEventEmitter listener so we don't toggle the SDK's event enablement;
-  // Room Kit already enables these events, and all JS listeners receive them.
+  // Primary signal: native ON_JOIN / RECONNECTED events (RN equivalent of selectIsConnectedToRoom),
+  // received through the SDK's managed listener singleton (NOT a raw NativeEventEmitter — see header).
   //
   // We also watch RECONNECTING as a "join is struggling" signal: it only fires after an actual
   // connection attempt (never while the user simply sits on the prejoin screen). If we never reach
@@ -75,15 +125,13 @@ function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Prop
   // as stuck so the caller can show an error instead of an endless spinner.
   useEffect(() => {
     if (!enabled || Platform.OS === 'web') return;
-    const nativeModule = hmsPkg?.HMSManagerModule as object | undefined;
-    if (!nativeModule) return;
+    const listener = getNativeEventListener();
+    if (!listener) return;
 
-    let emitter: NativeEventEmitter;
-    try {
-      emitter = new NativeEventEmitter(nativeModule as never);
-    } catch {
-      return;
-    }
+    const actions = hmsPkg?.HMSUpdateListenerActions as Record<string, string> | undefined;
+    const ON_JOIN = actions?.ON_JOIN ?? 'ON_JOIN';
+    const RECONNECTED = actions?.RECONNECTED ?? 'RECONNECTED';
+    const RECONNECTING = actions?.RECONNECTING ?? 'RECONNECTING';
 
     let stuckTimer: ReturnType<typeof setTimeout> | null = null;
     const clearStuckTimer = () => {
@@ -111,12 +159,12 @@ function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Prop
     };
 
     const subs = [
-      ['ON_JOIN', enteredHandler],
-      ['RECONNECTED', enteredHandler],
-      ['RECONNECTING', reconnectingHandler],
+      [ON_JOIN, enteredHandler],
+      [RECONNECTED, enteredHandler],
+      [RECONNECTING, reconnectingHandler],
     ].map(([evt, handler]) => {
       try {
-        return emitter.addListener(evt as string, handler as () => void);
+        return listener.addListener(DEFAULT_SDK_ID, evt as string, handler as () => void);
       } catch {
         return null;
       }
