@@ -170,7 +170,9 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
         return;
       }
       let next = selection;
-      if (selection !== MOBILE_MAIN_HOME_WEB_ALIAS) {
+      if (selection === MOBILE_MAIN_HOME_WEB_ALIAS) {
+        await api.updateWebDefaultHomePath(null);
+      } else {
         const res = await api.updateWebDefaultHomePath(selection);
         const returned =
           (res as { defaultHomePath?: string | null }).defaultHomePath ??

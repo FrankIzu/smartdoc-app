@@ -104,6 +104,7 @@ const MOBILE_ENDPOINTS = {
   
   // User
   USER: '/api/v1/mobile/user',
+  USER_DEFAULT_HOME_PATH: '/api/v1/mobile/user/default-home-path',
   
   // Files (all operations go through backend encryption)
   FILES: '/api/v1/mobile/files',
@@ -565,8 +566,9 @@ class ApiService {
 
   async updateWebDefaultHomePath(path: string | null): Promise<ApiResponse & { defaultHomePath?: string | null }> {
     try {
-      const response = await this.client.put('/api/v1/web/user/default-home-path', {
+      const response = await this.client.put(MOBILE_ENDPOINTS.USER_DEFAULT_HOME_PATH, {
         defaultHomePath: path,
+        default_home_path: path,
       });
       return response.data;
     } catch (error: any) {

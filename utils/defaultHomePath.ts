@@ -38,7 +38,7 @@ export type WebDefaultHomePath = (typeof ALLOWED_WEB_PATHS)[number];
 export type PersistedDefaultHomePreference = WebDefaultHomePath | typeof MOBILE_NO_DEFAULT_SCREEN_STORAGE;
 
 /** Mobile settings + API: explicit database null — open main dashboard only after sign-in (same navigation as Home). */
-export const NO_DEFAULT_SCREEN_LABEL = 'No default screen';
+export const NO_DEFAULT_SCREEN_LABEL = 'None';
 
 export type ParsedDefaultHomeFromApi =
   | { kind: 'absent' }
