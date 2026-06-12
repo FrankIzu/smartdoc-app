@@ -676,6 +676,16 @@ export default function MeetingCallScreen() {
         const currentRaw = await AsyncStorage.getItem(REACH_CURRENT_MEETING_KEY);
         const currentCanon = currentRaw ? canonicalizeReachMeetingId(currentRaw.trim()) : '';
         const meetingCanon = canonicalizeReachMeetingId(meeting.meetingId);
+        if (currentCanon && meetingCanon && currentCanon === meetingCanon) {
+          navigateToMeetingScreen({
+            meetingId: meeting.meetingId,
+            title: meeting.title,
+            passcode:
+              (meeting.passcode && String(meeting.passcode).trim()) || undefined,
+            forceJoin: true,
+          });
+          return;
+        }
         if (currentCanon && meetingCanon && currentCanon !== meetingCanon) {
           Alert.alert(
             'Already in a meeting',

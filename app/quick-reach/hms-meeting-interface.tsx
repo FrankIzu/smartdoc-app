@@ -210,6 +210,8 @@ export default function HMSMeetingInterfaceScreen() {
   });
   const presenceConfirmSentRef = useRef(false);
   const isNavigatingAwayRef = useRef(false);
+  /** True when user backs/swipes to the list while still in a live call (not an explicit leave). */
+  const isMinimizingAwayRef = useRef(false);
 
   // Network connectivity monitoring — shown as a friendly overlay instead of the raw HMS error
   const [isNetworkDown, setIsNetworkDown] = useState(false);
@@ -591,31 +593,34 @@ export default function HMSMeetingInterfaceScreen() {
   // Back / swipe: go to meeting list (Reach). Using replace avoids popping to (tabs)/Home first and keeps path correct (avoids grabdocs:/// unmatched route when tapping active meeting later).
   const goBackToApp = useCallback(() => {
     isNavigatingAwayRef.current = true;
+    if (presenceConfirmed) {
+      isMinimizingAwayRef.current = true;
+    }
     router.replace('/quick-reach/meeting-call' as any);
-  }, [router]);
+  }, [router, presenceConfirmed]);
 
   const showPrejoinBack = !presenceConfirmed && !!meetingId;
 
   useEffect(() => {
-    if (Platform.OS !== 'android' || !showPrejoinBack) return;
+    if (Platform.OS !== 'android' || !meetingId) return;
     const handler = () => {
       goBackToApp();
       return true;
     };
     const subscription = BackHandler.addEventListener('hardwareBackPress', handler);
     return () => subscription.remove();
-  }, [showPrejoinBack, goBackToApp]);
+  }, [meetingId, goBackToApp]);
 
-  // During prejoin (before presence confirm), route iOS swipe-back to the meeting list instead of an arbitrary prior screen.
+  // Route swipe-back to the meeting list (prejoin cancel or in-call minimize).
   useEffect(() => {
-    if (!showPrejoinBack) return;
+    if (!meetingId) return;
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (isNavigatingAwayRef.current) return;
       e.preventDefault();
       goBackToApp();
     });
     return unsubscribe;
-  }, [navigation, showPrejoinBack, goBackToApp]);
+  }, [navigation, meetingId, goBackToApp]);
 
   // PiP strategy (both platforms):
   //
@@ -1343,27 +1348,37 @@ export default function HMSMeetingInterfaceScreen() {
                       options={hmsProps.options}
                       autoEnterPipMode={Platform.OS !== 'web'}
                       pipConfig={Platform.OS !== 'web' ? { aspectRatio: [1, 1] } : undefined}
-                      onLeave={async (data?: any) => {
+                      onLeave={async () => {
                         setIsLoading(false);
-                        
-                        // Clear "current meeting" so user can join another
+
+                        // Swipe/back to list while in-call — keep REACH_CURRENT_MEETING_KEY so user can return.
+                        if (isMinimizingAwayRef.current) {
+                          return;
+                        }
+
+                        // Prejoin cancel (HMS back) — never joined; no leave API.
+                        if (!presenceConfirmed) {
+                          if (!isNavigatingAwayRef.current) {
+                            isNavigatingAwayRef.current = true;
+                            router.replace('/quick-reach/meeting-call' as any);
+                          }
+                          return;
+                        }
+
                         try {
                           await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
                         } catch {
                           /* ignore */
                         }
-                        // Call backend to leave meeting (clears ActiveParticipant table)
                         try {
                           if (meetingId) {
                             await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
                           }
                         } catch (error: any) {
-                          // Log error but don't block navigation - user is leaving anyway
                           console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
-                          console.error('⚠️ [LEAVE] Continuing with navigation despite error');
                         }
-                        
-                        // Navigate to meeting list (same as swipe-back) so stack/path stay correct
+
+                        isNavigatingAwayRef.current = true;
                         router.replace('/quick-reach/meeting-call' as any);
                       }}
                       style={hmsProps.style}
