@@ -84,7 +84,10 @@ export function useFolderSystem(options: UseFolderSystemOptions = {}) {
   }, []);
 
   const loadFolderView = useCallback(
-    async (folderId: number | null, opts?: { appendFiles?: boolean; search?: string; scope?: FileListScope }) => {
+    async (
+      folderId: number | null,
+      opts?: { appendFiles?: boolean; search?: string; scope?: FileListScope; silent?: boolean }
+    ) => {
       if (!enabled) return;
 
       const key = folderCacheKey(folderId, workspaceId);
@@ -108,8 +111,8 @@ export function useFolderSystem(options: UseFolderSystemOptions = {}) {
       const signal = controller.signal;
 
       const run = async () => {
-        if (!opts?.appendFiles) setLoading(true);
-        else setFilesLoading(true);
+        if (opts?.appendFiles) setFilesLoading(true);
+        else if (!opts?.silent) setLoading(true);
         setError(null);
 
         try {
@@ -253,10 +256,14 @@ export function useFolderSystem(options: UseFolderSystemOptions = {}) {
     [breadcrumb, goToRoot, loadFolderView]
   );
 
-  const syncFromServer = useCallback(() => {
+  const syncFromServer = useCallback((opts?: { silent?: boolean }) => {
     const key = folderCacheKey(currentFolderId, workspaceId);
     cacheRef.current.delete(key);
-    return loadFolderView(currentFolderId, { search: searchQueryRef.current, scope: searchScopeRef.current });
+    return loadFolderView(currentFolderId, {
+      search: searchQueryRef.current,
+      scope: searchScopeRef.current,
+      silent: opts?.silent,
+    });
   }, [currentFolderId, workspaceId, loadFolderView]);
 
   const loadMoreFiles = useCallback(() => {

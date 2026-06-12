@@ -1,10 +1,12 @@
 // 100ms Prebuilt Interface Implementation
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import * as Device from 'expo-device';
 import * as ImagePicker from 'expo-image-picker';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
+import { useNavigation } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import React, {
@@ -117,8 +119,28 @@ function applyGrabdocsHmsRoomKitJoinDefaults() {
   };
 }
 
+/** Minimum bottom clearance on Android — edge-to-edge often reports 0 for the 3-button nav bar. */
+const ANDROID_NAV_INSET = 48;
+
+function PrejoinBackButton({ onPress, topInset }: { onPress: () => void; topInset: number }) {
+  return (
+    <View style={[styles.prejoinBackContainer, { top: topInset + 8 }]} pointerEvents="box-none">
+      <TouchableOpacity
+        style={styles.prejoinBackButton}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel="Back to meetings"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Ionicons name="arrow-back" size={24} color="#fff" />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const params = useLocalSearchParams();
   const { meetingId, title, userName, passcode, passcode_token: passcodeToken, force_join: forceJoinParam } = params;
   const forceJoinFromRoute =
@@ -131,7 +153,8 @@ export default function HMSMeetingInterfaceScreen() {
     meetingId == null ? undefined : Array.isArray(meetingId) ? meetingId[0] : meetingId;
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
-  const bottomInset = insets.bottom;
+  const bottomInset =
+    Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
 
   const goToAppHome = useCallback(async () => {
     try {
@@ -186,6 +209,7 @@ export default function HMSMeetingInterfaceScreen() {
     startedWithForceJoin: false,
   });
   const presenceConfirmSentRef = useRef(false);
+  const isNavigatingAwayRef = useRef(false);
 
   // Network connectivity monitoring — shown as a friendly overlay instead of the raw HMS error
   const [isNetworkDown, setIsNetworkDown] = useState(false);
@@ -566,21 +590,32 @@ export default function HMSMeetingInterfaceScreen() {
 
   // Back / swipe: go to meeting list (Reach). Using replace avoids popping to (tabs)/Home first and keeps path correct (avoids grabdocs:/// unmatched route when tapping active meeting later).
   const goBackToApp = useCallback(() => {
+    isNavigatingAwayRef.current = true;
     router.replace('/quick-reach/meeting-call' as any);
   }, [router]);
 
+  const showPrejoinBack = !presenceConfirmed && !!meetingId;
+
   useEffect(() => {
-    if (Platform.OS !== 'android' || !authToken || !meetingId) return;
+    if (Platform.OS !== 'android' || !showPrejoinBack) return;
     const handler = () => {
       goBackToApp();
       return true;
     };
     const subscription = BackHandler.addEventListener('hardwareBackPress', handler);
     return () => subscription.remove();
-  }, [authToken, meetingId, goBackToApp]);
+  }, [showPrejoinBack, goBackToApp]);
 
-  // Let swipe-back and header back arrow do default pop (no intercept) so user goes to previous screen without an extra stack entry.
-  // (Removed beforeRemove listener that was preventing default and pushing returnPath, which caused "taken back to meeting" on next back.)
+  // During prejoin (before presence confirm), route iOS swipe-back to the meeting list instead of an arbitrary prior screen.
+  useEffect(() => {
+    if (!showPrejoinBack) return;
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (isNavigatingAwayRef.current) return;
+      e.preventDefault();
+      goBackToApp();
+    });
+    return unsubscribe;
+  }, [navigation, showPrejoinBack, goBackToApp]);
 
   // PiP strategy (both platforms):
   //
@@ -956,6 +991,7 @@ export default function HMSMeetingInterfaceScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
+        <PrejoinBackButton onPress={goBackToApp} topInset={insets.top} />
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Initializing GrabDocs Meeting...</Text>
         </View>
@@ -1202,7 +1238,7 @@ export default function HMSMeetingInterfaceScreen() {
             </View>
           </Modal>
 
-          <SafeAreaView style={styles.container}>
+          <SafeAreaView style={styles.container} edges={['top']}>
             <View style={styles.meetingContentWrapper}>
           {hmsError ? (
             <View style={styles.errorContainer}>
@@ -1296,6 +1332,7 @@ export default function HMSMeetingInterfaceScreen() {
                   </View>
                 ) : permissionsGranted === null ? (
                   <View style={styles.loadingContainer}>
+                    <PrejoinBackButton onPress={goBackToApp} topInset={insets.top} />
                     <Text style={styles.loadingText}>Checking permissions...</Text>
                   </View>
                 ) : (
@@ -1370,6 +1407,7 @@ export default function HMSMeetingInterfaceScreen() {
   if (HMSPrebuilt && authToken && meetingId && !orientationReadyForHms && Platform.OS !== 'web') {
     return (
       <SafeAreaView style={styles.container}>
+        <PrejoinBackButton onPress={goBackToApp} topInset={insets.top} />
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Initializing GrabDocs Meeting...</Text>
         </View>
@@ -1498,6 +1536,21 @@ const styles = StyleSheet.create({
   },
   prebuiltWrapper: {
     flex: 1,
+    position: 'relative',
+  },
+  prejoinBackContainer: {
+    position: 'absolute',
+    left: 12,
+    zIndex: 2000,
+    elevation: 2000,
+  },
+  prejoinBackButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   prebuiltContainer: {
     flex: 1,

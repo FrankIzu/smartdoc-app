@@ -395,6 +395,21 @@ export default function QuickFilesScreen() {
   const filterByRef = React.useRef(filterBy);
   filterByRef.current = filterBy;
 
+  const useFolderModeRef = React.useRef(useFolderMode);
+  useFolderModeRef.current = useFolderMode;
+
+  /** True when a file still needs classification polling (pending status, or legacy list missing json_data). */
+  const docNeedsClassificationPoll = useCallback((doc: Document) => {
+    if (doc.status === 'pending' || doc.status === 'processing') return true;
+    // Folder-mode file rows omit json_data even when fully processed — never poll for it there.
+    if (useFolderModeRef.current) return false;
+    const kind = doc.file_kind?.toLowerCase();
+    if (kind === 'receipt' || kind === 'invoice') {
+      return !doc.json_data;
+    }
+    return false;
+  }, []);
+
   // Polling for pending files (classification polling)
   const classificationPollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   // Safety counter: stop classification polling after 60 polls (3 minutes) to prevent infinite loops
@@ -769,25 +784,27 @@ export default function QuickFilesScreen() {
     setUploadFolderContext,
   ]);
 
-  useEffect(() => {
-    if (useFolderMode && user) {
-      void folderSystem.loadFolderView(folderSystem.currentFolderId);
-    }
-  }, [useFolderMode, user, workspaceId]);
-
-  const handleSearchQueryChange = useCallback((text: string) => {
-    setSearchQuery(text);
-  }, []);
+  const prevSearchQueryRef = useRef<string | null>(null);
 
   // Debounced server search — global across all files when query is non-empty
   useEffect(() => {
     if (!useFolderMode) return;
     const q = searchQuery.trim();
+    if (prevSearchQueryRef.current === null) {
+      prevSearchQueryRef.current = q;
+      return;
+    }
+    if (prevSearchQueryRef.current === q) return;
+    prevSearchQueryRef.current = q;
     const timer = setTimeout(() => {
       void folderSystemRef.current.runSearch(q, q ? 'global' : 'current_folder');
     }, 400);
     return () => clearTimeout(timer);
   }, [searchQuery, useFolderMode]);
+
+  const handleSearchQueryChange = useCallback((text: string) => {
+    setSearchQuery(text);
+  }, []);
 
   const visibleFolders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1030,7 +1047,12 @@ export default function QuickFilesScreen() {
   }, [user, useFolderMode, workspaceId, fetchLockedBookmarkFileIds]);
 
   // Optimized loadDocuments function with caching
-  const loadDocuments = useCallback(async (forceRefresh = false, pageToLoad = 1, append = false) => {
+  const loadDocuments = useCallback(async (
+    forceRefresh = false,
+    pageToLoad = 1,
+    append = false,
+    silent = false
+  ) => {
     if (append && (!hasMoreRef.current || loadingMoreRef.current)) return;
     if (isLoadingDocumentsRef.current) return;
 
@@ -1048,14 +1070,15 @@ export default function QuickFilesScreen() {
           await folderSystemRef.current.loadMoreFiles();
         } else if (forceRefresh) {
           // Explicit force — bypass folder TTL cache.
-          setLoading(true);
-          await folderSystemRef.current.syncFromServer();
+          if (!silent) setLoading(true);
+          await folderSystemRef.current.syncFromServer({ silent });
         } else {
           // Tab-switch / debounced reload — respect the 60-second folder cache so we
           // don't fire a network request if the data is still fresh.
-          setLoading(true);
+          if (!silent) setLoading(true);
           await folderSystemRef.current.loadFolderView(
-            folderSystemRef.current.currentFolderId
+            folderSystemRef.current.currentFolderId,
+            { silent }
           );
         }
       } catch (err) {
@@ -1063,7 +1086,7 @@ export default function QuickFilesScreen() {
       } finally {
         loadingMoreRef.current = false;
         setLoadingMore(false);
-        setLoading(false);
+        if (!silent) setLoading(false);
         isLoadingDocumentsRef.current = false;
       }
       return;
@@ -1097,7 +1120,7 @@ export default function QuickFilesScreen() {
     if (append) {
       loadingMoreRef.current = true;
       setLoadingMore(true);
-    } else {
+    } else if (!silent) {
       setLoading(true);
     }
 
@@ -1380,7 +1403,7 @@ export default function QuickFilesScreen() {
       isLoadingDocumentsRef.current = false;
       loadingMoreRef.current = false;
       setLoadingMore(false);
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [workspaceId, fetchLockedBookmarkFileIds, filterPendingTrash]);
 
@@ -1573,7 +1596,7 @@ export default function QuickFilesScreen() {
       if (classificationPollingIntervalRef.current) return;
       console.log('🔄 Auto-refreshing documents...');
       setIsAutoRefreshing(true);
-      await loadDocuments(true); // Force refresh to bypass cache
+      await loadDocuments(true, 1, false, true); // Force refresh without loading UI
       setTimeout(() => setIsAutoRefreshing(false), 1000); // Show indicator for 1 second
     }, AUTO_REFRESH_INTERVAL);
 
@@ -1582,14 +1605,8 @@ export default function QuickFilesScreen() {
 
   // Polling for pending files (classification polling)
   const hasPendingFiles = useMemo(() => {
-    return documents.some((doc) => {
-      const isPending = doc.status === 'pending';
-      const isReceiptOrInvoice =
-        doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
-      const needsJsonData = isReceiptOrInvoice && !doc.json_data;
-      return isPending || needsJsonData;
-    });
-  }, [documents]);
+    return documents.some(docNeedsClassificationPoll);
+  }, [documents, docNeedsClassificationPoll]);
 
   useEffect(() => {
     if (!hasPendingFiles) {
@@ -1614,15 +1631,9 @@ export default function QuickFilesScreen() {
         return;
       }
       try {
-        await loadDocuments(true);
+        await loadDocuments(true, 1, false, true);
         setDocuments((currentDocs) => {
-          const stillPending = currentDocs.some((doc) => {
-            const isPending = doc.status === 'pending';
-            const isReceiptOrInvoice =
-              doc.file_kind?.toLowerCase() === 'receipt' || doc.file_kind?.toLowerCase() === 'invoice';
-            const needsJsonData = isReceiptOrInvoice && !doc.json_data;
-            return isPending || needsJsonData;
-          });
+          const stillPending = currentDocs.some(docNeedsClassificationPoll);
           if (!stillPending && classificationPollingIntervalRef.current) {
             console.log('✅ All files processed and json_data populated, stopping classification polling');
             clearInterval(classificationPollingIntervalRef.current);
@@ -1641,7 +1652,7 @@ export default function QuickFilesScreen() {
         classificationPollingIntervalRef.current = null;
       }
     };
-  }, [hasPendingFiles, loadDocuments]);
+  }, [hasPendingFiles, loadDocuments, docNeedsClassificationPoll]);
 
   const handleDocumentPress = async (document: Document) => {
     if (document.listKind === 'bookmark' && document.bookmarkId != null) {

@@ -12,8 +12,10 @@
 #   With update reason: .\scripts\deploy.ps1 -Platform android -Environment prod -Version 1.0.4 -UpdateReason security
 #   Local build (no EAS cloud): .\scripts\deploy.ps1 -Platform android -Environment prod -Local
 #   Local build (iOS, requires macOS): .\scripts\deploy.ps1 -Platform ios -Environment prod -Local
+#   OTA update: .\scripts\deploy.ps1 -Environment prod -DeployType ota -UpdateMessage "Added back button to prejoin screen"
 #
 #   In production, UpdateReason is prompted (1=security, 2=breaking, 3=feature) or use -UpdateReason param.
+#   Interactive mode prompts: environment → deploy type (build/OTA) → platform (build only) → OTA message (OTA only).
 #
 #   Interactive builds default to GitHub Actions (commit/push already done by the script). Use -Local for EAS on this machine.
 #   For EAS cloud builds, run eas directly (e.g. eas build --profile production --platform android).
@@ -26,6 +28,8 @@ param(
     [string]$BuildNumber,
     [string]$Version,
     [string]$UpdateReason,
+    [string]$DeployType,
+    [string]$UpdateMessage,
     [switch]$Local
 )
 
@@ -290,22 +294,36 @@ function Run-EasBuild {
     }
 }
 
-# Main script logic
-try {
-    # Prompt for platform if not provided
-    if (-not $Platform) {
-        $Platform = Prompt-WithValidation "Select platform (ios/android)" @("ios", "android")
+# Function to run EAS OTA update
+function Run-EasUpdate {
+    param(
+        [string]$Channel,
+        [string]$Message
+    )
+
+    Write-Host "📡 Running EAS OTA update on channel '$Channel'..." -ForegroundColor Yellow
+    Write-Host "   Message: $Message" -ForegroundColor Gray
+
+    try {
+        Set-Location "$PSScriptRoot\.."
+        & npx eas update --channel $Channel --message $Message --non-interactive
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ OTA update published successfully!" -ForegroundColor Green
+        } else {
+            Write-Host "❌ OTA update failed with exit code $LASTEXITCODE" -ForegroundColor Red
+            exit 1
+        }
     }
-
-    # Normalize platform to lowercase to avoid case-sensitivity issues
-    $Platform = $Platform.ToLower()
-
-    # Validate platform
-    if ($Platform -notin @("ios", "android")) {
-        Write-Host "❌ Invalid platform. Must be 'ios' or 'android'." -ForegroundColor Red
+    catch {
+        Write-Host "❌ Error running OTA update: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "💡 Tip: Make sure you have Node.js installed and run 'npm install' in the project directory." -ForegroundColor Yellow
         exit 1
     }
+}
 
+# Main script logic
+try {
     # Prompt for environment if not provided
     if (-not $Environment) {
         $Environment = Prompt-WithValidation "Select environment (development/dev/production/prod)" @("development", "dev", "production", "prod")
@@ -331,8 +349,58 @@ try {
         "production" { "production" }
     }
 
-    # Handle version name and build number for production builds
-    if ($normalizedEnv -eq "production") {
+    # Map environment to EAS update channel
+    $updateChannel = switch ($normalizedEnv) {
+        "development" { "development" }
+        "production" { "production" }
+    }
+
+    # Prompt for deploy type (fresh build vs OTA update)
+    if (-not $DeployType) {
+        Write-Host "`n📋 Deploy type:" -ForegroundColor Cyan
+        Write-Host "   1 = fresh build   (native binary via GitHub Actions / EAS)" -ForegroundColor Gray
+        Write-Host "   2 = OTA update    (JavaScript bundle via eas update)" -ForegroundColor Gray
+        $deployChoice = Prompt-WithValidation "Select deploy type (1/2) [1]" @("1", "2") -DefaultValue "1"
+        $DeployType = if ($deployChoice -eq "2") { "ota" } else { "build" }
+    } else {
+        $DeployType = $DeployType.ToLower()
+    }
+
+    if ($DeployType -notin @("build", "ota")) {
+        Write-Host "❌ Invalid deploy type. Must be 'build' or 'ota'." -ForegroundColor Red
+        exit 1
+    }
+
+    # Platform is only required for fresh builds (OTA updates both iOS and Android)
+    if ($DeployType -eq "build") {
+        if (-not $Platform) {
+            $Platform = Prompt-WithValidation "Select platform (ios/android)" @("ios", "android")
+        }
+
+        $Platform = $Platform.ToLower()
+
+        if ($Platform -notin @("ios", "android")) {
+            Write-Host "❌ Invalid platform. Must be 'ios' or 'android'." -ForegroundColor Red
+            exit 1
+        }
+    } elseif ($Platform) {
+        Write-Host "ℹ️  Platform ignored for OTA updates (applies to iOS and Android)." -ForegroundColor Gray
+        $Platform = $null
+    }
+
+    if ($DeployType -eq "ota") {
+        if (-not $UpdateMessage) {
+            $UpdateMessage = Read-Host "Enter OTA update message (e.g., Added back button to prejoin screen)"
+        }
+        if ([string]::IsNullOrWhiteSpace($UpdateMessage)) {
+            Write-Host "❌ OTA update message cannot be empty." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "ℹ️  OTA update will publish to channel: $updateChannel" -ForegroundColor Cyan
+    }
+
+    # Handle version name and build number for production fresh builds
+    if ($DeployType -eq "build" -and $normalizedEnv -eq "production") {
         $currentVersion = Get-CurrentVersion
         $currentBuildNumber = Get-CurrentBuildNumber -Platform $Platform
 
@@ -521,7 +589,9 @@ try {
                 }
                 
                 # Create commit message
-                $commitMessage = if ($normalizedEnv -eq "production") {
+                $commitMessage = if ($DeployType -eq "ota") {
+                    "OTA update ($updateChannel): $UpdateMessage"
+                } elseif ($normalizedEnv -eq "production") {
                     if ($Platform -eq "android") {
                         "Deploy Android v$Version (versionCode $BuildNumber) to production"
                     } else {
@@ -616,57 +686,59 @@ try {
             }
             Write-Host "✅ Pushed main branch" -ForegroundColor Green
             
-            # Verify workflow file was included in the push (check on main branch before switching)
-            $workflowFileCheck = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
-            $workflowPathCheck = ".github/workflows/$workflowFileCheck"
-            Write-Host "   Verifying workflow file exists in pushed commit..." -ForegroundColor Gray
-            
-            # Get the current commit hash on main
-            $currentCommit = git rev-parse HEAD 2>&1
-            if ($LASTEXITCODE -eq 0 -and $currentCommit) {
-                $currentCommit = $currentCommit.Trim()
-                Write-Host "   Checking commit: $($currentCommit.Substring(0, 7))..." -ForegroundColor Gray
+            # Verify workflow file was included in the push (builds only; OTA does not trigger CI)
+            if ($DeployType -eq "build") {
+                $workflowFileCheck = if ($Platform -eq "android") { "build-android.yml" } else { "build-ios.yml" }
+                $workflowPathCheck = ".github/workflows/$workflowFileCheck"
+                Write-Host "   Verifying workflow file exists in pushed commit..." -ForegroundColor Gray
                 
-                # Check if workflow file exists in this commit (use full path pattern)
-                $workflowInCommit = git ls-tree HEAD --name-only | Select-String -Pattern "workflows.*$workflowFileCheck"
-                if ($workflowInCommit) {
-                    Write-Host "   ✅ Workflow file confirmed in commit" -ForegroundColor Green
-                } else {
-                    # Also check if file exists at all in the commit tree
-                    $fileExists = git cat-file -e "HEAD:$workflowPathCheck" 2>&1
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Host "   ✅ Workflow file confirmed in commit (via cat-file)" -ForegroundColor Green
+                # Get the current commit hash on main
+                $currentCommit = git rev-parse HEAD 2>&1
+                if ($LASTEXITCODE -eq 0 -and $currentCommit) {
+                    $currentCommit = $currentCommit.Trim()
+                    Write-Host "   Checking commit: $($currentCommit.Substring(0, 7))..." -ForegroundColor Gray
+                    
+                    # Check if workflow file exists in this commit (use full path pattern)
+                    $workflowInCommit = git ls-tree HEAD --name-only | Select-String -Pattern "workflows.*$workflowFileCheck"
+                    if ($workflowInCommit) {
+                        Write-Host "   ✅ Workflow file confirmed in commit" -ForegroundColor Green
                     } else {
-                        Write-Host "   ⚠️  Warning: Workflow file not found in commit" -ForegroundColor Yellow
-                        Write-Host "   Ensuring workflow file is committed and pushed..." -ForegroundColor Yellow
-                        # The file exists locally, so add and commit it
-                        if (Test-Path $workflowPathCheck) {
-                            git add $workflowPathCheck 2>&1 | Out-Null
-                            if ($LASTEXITCODE -eq 0) {
-                                # Check if there are actually changes to commit
-                                git diff --cached --quiet $workflowPathCheck 2>&1 | Out-Null
-                                if ($LASTEXITCODE -ne 0) {
-                                    git commit -m "Ensure workflow file is included for workflow_dispatch" 2>&1 | Out-Null
-                                    if ($LASTEXITCODE -eq 0) {
-                                        Write-Host "   ✅ Committed workflow file" -ForegroundColor Green
-                                        Write-Host "   Pushing updated commit to main..." -ForegroundColor Yellow
-                                        git push origin main --force-with-lease 2>&1 | Out-Null
-                                        if ($LASTEXITCODE -ne 0) {
-                                            git push origin main --force 2>&1 | Out-Null
-                                        }
+                        # Also check if file exists at all in the commit tree
+                        $fileExists = git cat-file -e "HEAD:$workflowPathCheck" 2>&1
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "   ✅ Workflow file confirmed in commit (via cat-file)" -ForegroundColor Green
+                        } else {
+                            Write-Host "   ⚠️  Warning: Workflow file not found in commit" -ForegroundColor Yellow
+                            Write-Host "   Ensuring workflow file is committed and pushed..." -ForegroundColor Yellow
+                            # The file exists locally, so add and commit it
+                            if (Test-Path $workflowPathCheck) {
+                                git add $workflowPathCheck 2>&1 | Out-Null
+                                if ($LASTEXITCODE -eq 0) {
+                                    # Check if there are actually changes to commit
+                                    git diff --cached --quiet $workflowPathCheck 2>&1 | Out-Null
+                                    if ($LASTEXITCODE -ne 0) {
+                                        git commit -m "Ensure workflow file is included for workflow_dispatch" 2>&1 | Out-Null
                                         if ($LASTEXITCODE -eq 0) {
-                                            Write-Host "   ✅ Pushed workflow file to main" -ForegroundColor Green
+                                            Write-Host "   ✅ Committed workflow file" -ForegroundColor Green
+                                            Write-Host "   Pushing updated commit to main..." -ForegroundColor Yellow
+                                            git push origin main --force-with-lease 2>&1 | Out-Null
+                                            if ($LASTEXITCODE -ne 0) {
+                                                git push origin main --force 2>&1 | Out-Null
+                                            }
+                                            if ($LASTEXITCODE -eq 0) {
+                                                Write-Host "   ✅ Pushed workflow file to main" -ForegroundColor Green
+                                            }
                                         }
+                                    } else {
+                                        Write-Host "   ℹ️  Workflow file already matches commit (no changes)" -ForegroundColor Gray
                                     }
-                                } else {
-                                    Write-Host "   ℹ️  Workflow file already matches commit (no changes)" -ForegroundColor Gray
                                 }
                             }
                         }
                     }
+                } else {
+                    Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
                 }
-            } else {
-                Write-Host "   ⚠️  Could not verify commit hash" -ForegroundColor Yellow
             }
             
             # Switch back to francis branch for continued work
@@ -682,17 +754,28 @@ try {
 
     # Confirm before proceeding
     Write-Host "`n📋 Deployment Summary:" -ForegroundColor Cyan
-    Write-Host "   Platform: $Platform" -ForegroundColor White
-    Write-Host "   Environment: $normalizedEnv" -ForegroundColor White
-    Write-Host "   Profile: $profile" -ForegroundColor White
-    if ($Local) {
-        Write-Host "   Build: Local (--local)" -ForegroundColor White
-    } elseif (-not $PSBoundParameters.ContainsKey('Local')) {
-        Write-Host "   Build: GitHub Actions (default)" -ForegroundColor White
+    if ($DeployType -eq "ota") {
+        Write-Host "   Platform: iOS + Android (OTA)" -ForegroundColor White
     } else {
-        Write-Host "   Build: EAS cloud" -ForegroundColor White
+        Write-Host "   Platform: $Platform" -ForegroundColor White
     }
-    if ($normalizedEnv -eq "production") {
+    Write-Host "   Environment: $normalizedEnv" -ForegroundColor White
+    if ($DeployType -eq "ota") {
+        Write-Host "   Deploy type: OTA update" -ForegroundColor White
+        Write-Host "   Channel: $updateChannel" -ForegroundColor White
+        Write-Host "   Message: $UpdateMessage" -ForegroundColor White
+    } else {
+        Write-Host "   Deploy type: Fresh build" -ForegroundColor White
+        Write-Host "   Profile: $profile" -ForegroundColor White
+        if ($Local) {
+            Write-Host "   Build: Local (--local)" -ForegroundColor White
+        } elseif (-not $PSBoundParameters.ContainsKey('Local')) {
+            Write-Host "   Build: GitHub Actions (default)" -ForegroundColor White
+        } else {
+            Write-Host "   Build: EAS cloud" -ForegroundColor White
+        }
+    }
+    if ($DeployType -eq "build" -and $normalizedEnv -eq "production") {
         Write-Host "   Version name: $Version" -ForegroundColor White
         $buildLabel = if ($Platform -eq "ios") { "Build number" } else { "Version code" }
         Write-Host "   ${buildLabel}: $BuildNumber" -ForegroundColor White
@@ -714,6 +797,18 @@ try {
                 Write-Host "   ⚠️  WARNING: Mismatch! Expected $BuildNumber but found $actualBuildNumber" -ForegroundColor Red
             }
         }
+    }
+
+    # OTA update: publish JS bundle to EAS channel (no native build)
+    if ($DeployType -eq "ota") {
+        $confirm = Prompt-WithValidation "`nProceed with OTA update? (y/n)" @("y", "n")
+        if ($confirm -ne "y") {
+            Write-Host "OTA update cancelled." -ForegroundColor Yellow
+            exit 0
+        }
+
+        Run-EasUpdate -Channel $updateChannel -Message $UpdateMessage
+        exit 0
     }
 
     # Default to GitHub Actions unless -Local (EAS on this machine). EAS cloud: use eas CLI directly.
