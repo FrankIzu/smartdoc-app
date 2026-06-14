@@ -5202,7 +5202,11 @@ class ApiService {
     } catch (error: any) {
       const status = error.response?.status;
       const responseData = error.response?.data;
-      if (status === 409 && responseData?.error_code === 'ALREADY_IN_MEETING') {
+      if (
+        status === 409 &&
+        (responseData?.error_code === 'ALREADY_IN_MEETING' ||
+          responseData?.error_code === 'ACTIVE_MEETING_EXISTS')
+      ) {
         return {
           success: false,
           type: 'already_in_meeting',
@@ -5349,15 +5353,49 @@ class ApiService {
     }
   }
 
-  async sendMeetingHeartbeat(roomId: number): Promise<ApiResponse> {
+  /**
+   * POST /api/v1/video/room/join-by-id (prepare). Bearer attached by interceptor.
+   * All mobile join-by-id prepare calls must use this — do not post to join-by-id directly.
+   */
+  async prepareVideoJoinById(payload: Record<string, unknown>) {
+    return this.client.post('/api/v1/video/room/join-by-id', payload);
+  }
+
+  /** POST /api/v1/video/room/join-by-id/confirm (after HMS connected). Bearer attached by interceptor. */
+  async confirmVideoJoinById(payload: Record<string, unknown>) {
+    return this.client.post('/api/v1/video/room/join-by-id/confirm', payload);
+  }
+
+  async sendMeetingHeartbeat(
+    roomId: number,
+    options?: { guestId?: string },
+  ): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(`/api/v1/video/room/${roomId}/heartbeat`, {});
+      const body = options?.guestId ? { guest_id: options.guestId } : {};
+      const response = await this.client.post(`/api/v1/video/room/${roomId}/heartbeat`, body);
       return response.data;
     } catch (error: any) {
       console.error('Send meeting heartbeat failed:', error);
       // Don't throw - heartbeat failures shouldn't break the app
       return { success: false, message: error.response?.data?.message || 'Failed to send heartbeat' };
     }
+  }
+
+  /**
+   * Leave a Reach meeting. Logged-in users use the mobile leave route; guests use web leave + guest_id.
+   */
+  async leaveReachMeeting(
+    meetingId: string,
+    options?: { roomId?: number; guestId?: string },
+  ): Promise<void> {
+    const trimmedId = meetingId.trim();
+    if (options?.guestId && options.roomId) {
+      await this.client.post(`/api/v1/video/room/${options.roomId}/leave`, {
+        guest_id: options.guestId,
+      });
+      return;
+    }
+    await this.client.post(`/api/v1/mobile/meetings/${trimmedId}/leave`);
   }
 
   // ==================== MEETING ASSETS & WEBHOOKS ====================

@@ -40,6 +40,11 @@ import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../con
 import { apiClient } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
 import { getHmsDisplayUserName } from '../../utils/reachDisplayName';
+import {
+  isActiveMeetingConflict,
+  needsJoinConfirm,
+  parseJoinByIdResponse,
+} from '../../utils/meetingJoinPresence';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
 
@@ -156,21 +161,35 @@ export default function HMSMeetingInterfaceScreen() {
   const bottomInset =
     Platform.OS === 'android' ? Math.max(insets.bottom, ANDROID_NAV_INSET) : insets.bottom;
 
+  const roomIdRef = useRef<number | null>(null);
+  const guestIdRef = useRef<string | null>(null);
+  const joinPhaseRef = useRef<string | undefined>(undefined);
+  const presenceConfirmedRef = useRef(false);
+  const hmsJoinRetryRef = useRef(0);
+  const hmsRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Leave API only after confirm — no ActiveParticipant row exists before that. */
+  const leaveConfirmedReachSession = useCallback(async () => {
+    if (!presenceConfirmedRef.current || !meetingId) return;
+    try {
+      await apiClient.leaveReachMeeting(String(meetingId).trim(), {
+        roomId: roomIdRef.current ?? undefined,
+        guestId: guestIdRef.current ?? undefined,
+      });
+    } catch {
+      /* ignore */
+    }
+  }, [meetingId]);
+
   const goToAppHome = useCallback(async () => {
     try {
       await AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY);
     } catch {
       /* ignore */
     }
-    try {
-      if (meetingId) {
-        await apiClient.client.post(`/api/v1/mobile/meetings/${String(meetingId).trim()}/leave`);
-      }
-    } catch {
-      /* ignore */
-    }
+    await leaveConfirmedReachSession();
     router.replace('/(tabs)' as any);
-  }, [router, meetingId]);
+  }, [router, leaveConfirmedReachSession]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -179,6 +198,8 @@ export default function HMSMeetingInterfaceScreen() {
   const [permissionsGranted, setPermissionsGranted] = useState<boolean | null>(null);
   const [joinConfig, setJoinConfig] = useState<any>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
+  const [hmsMountKey, setHmsMountKey] = useState(0);
+  const [joinStuckExhausted, setJoinStuckExhausted] = useState(false);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingNotificationShownRef = useRef(false);
@@ -191,6 +212,14 @@ export default function HMSMeetingInterfaceScreen() {
   const [resolvedStorageMeetingId, setResolvedStorageMeetingId] = useState<string | null>(null);
   /** True only after HMS room join + `/join-by-id/confirm` — gates presence side effects (storage, heartbeat, etc.). */
   const [presenceConfirmed, setPresenceConfirmed] = useState(false);
+
+  useEffect(() => {
+    presenceConfirmedRef.current = presenceConfirmed;
+  }, [presenceConfirmed]);
+
+  useEffect(() => {
+    roomIdRef.current = roomId;
+  }, [roomId]);
 
   type JoinConfirmContext = {
     meetingIdStr: string;
@@ -278,6 +307,14 @@ export default function HMSMeetingInterfaceScreen() {
             setShowReconnected(true);
             if (reconnectedTimerRef.current) clearTimeout(reconnectedTimerRef.current);
             reconnectedTimerRef.current = setTimeout(() => setShowReconnected(false), 3000);
+            // Re-ping heartbeat after reconnect (confirm not needed for same token/session)
+            if (roomIdRef.current && presenceConfirmedRef.current) {
+              apiClient
+                .sendMeetingHeartbeat(roomIdRef.current, {
+                  guestId: guestIdRef.current ?? undefined,
+                })
+                .catch(() => {});
+            }
           }
           return false;
         });
@@ -441,27 +478,7 @@ export default function HMSMeetingInterfaceScreen() {
     }
   };
 
-  // Get room_id from meeting info and set up heartbeat. Defer by 3s so we don't parse a large response on the same frame as mounting HMSPrebuilt (can cause crash).
-  useEffect(() => {
-    let mounted = true;
-    const timeoutId = setTimeout(async () => {
-      if (!meetingId || !user) return;
-      try {
-        const meetingInfo = await apiClient.getMeetingInfo(meetingId as string);
-        if (mounted && meetingInfo.success && meetingInfo.data?.id) {
-          setRoomId(meetingInfo.data.id);
-        }
-      } catch {
-        // Non-fatal: heartbeat won't run
-      }
-    }, 3000);
-    return () => {
-      mounted = false;
-      clearTimeout(timeoutId);
-    };
-  }, [meetingId, user]);
-
-  // Set up heartbeat interval when room_id is available
+  // Heartbeat uses room_id from prepare response — MOBILE-INFO is lobby-only, not a join gate.
   useEffect(() => {
     if (!roomId || !presenceConfirmed) return;
 
@@ -473,7 +490,9 @@ export default function HMSMeetingInterfaceScreen() {
     // Send initial heartbeat immediately
     const sendHeartbeat = async () => {
       try {
-        await apiClient.sendMeetingHeartbeat(roomId);
+        await apiClient.sendMeetingHeartbeat(roomId, {
+          guestId: guestIdRef.current ?? undefined,
+        });
       } catch {
         // Silently fail - heartbeat errors shouldn't break the app
       }
@@ -557,6 +576,11 @@ export default function HMSMeetingInterfaceScreen() {
 
       // Deactivate keep-awake
       deactivateKeepAwake();
+
+      if (hmsRetryTimerRef.current) {
+        clearTimeout(hmsRetryTimerRef.current);
+        hmsRetryTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -758,7 +782,7 @@ export default function HMSMeetingInterfaceScreen() {
           : {};
 
       const joinById = async (forceJoin: boolean) => {
-        return apiClient.client.post('/api/v1/video/room/join-by-id', {
+        return apiClient.prepareVideoJoinById({
           meeting_id: (meetingId as string).trim(),
           participant_name: displayUserName,
           enable_audio: false,
@@ -773,49 +797,53 @@ export default function HMSMeetingInterfaceScreen() {
       try {
         presenceConfirmSentRef.current = false;
         setPresenceConfirmed(false);
+        setJoinStuckExhausted(false);
+        hmsJoinRetryRef.current = 0;
+        guestIdRef.current = null;
+        joinPhaseRef.current = undefined;
         let joinRes;
         try {
           joinRes = await joinById(forceJoinFromRoute);
-        } catch (firstErr: any) {
+        } catch (firstErr: unknown) {
           if (forceJoinFromRoute) {
             throw firstErr;
           }
-          const st = firstErr?.response?.status;
-          const code = firstErr?.response?.data?.error_code;
-          if (st === 409 && code === 'ALREADY_IN_MEETING') {
+          if (isActiveMeetingConflict(firstErr)) {
             joinRes = await joinById(true);
           } else {
             throw firstErr;
           }
         }
 
-        const raw = joinRes?.data || {};
-        const data =
-          raw && typeof (raw as any).data === 'object' && (raw as any).data != null ? (raw as any).data : raw;
-        const token = (data as any).token;
-        if (!token || typeof token !== 'string' || token.trim().length === 0) {
+        const parsed = parseJoinByIdResponse(joinRes?.data);
+        const token = parsed.token;
+        if (!token) {
           throw new Error('Join did not return a token');
         }
-        const apiMeetingId =
-          (data as any).meeting_id ??
-          (data as any).meetingId ??
-          (data as any).scheduled_meeting_id;
+        if (parsed.roomId != null) {
+          setRoomId(parsed.roomId);
+          roomIdRef.current = parsed.roomId;
+        }
+        if (parsed.guestId) {
+          guestIdRef.current = parsed.guestId;
+        }
+        joinPhaseRef.current = parsed.joinPhase;
         const forStorage = canonicalizeReachMeetingId(
-          apiMeetingId != null && String(apiMeetingId).trim() !== ''
-            ? String(apiMeetingId)
+          parsed.meetingId != null && parsed.meetingId.trim() !== ''
+            ? parsed.meetingId
             : String(meetingId)
         );
         joinConfirmContextRef.current = {
           meetingIdStr: (meetingId as string).trim(),
-          token: token.trim(),
+          token,
           displayName: displayUserName,
           viewerType: user ? 'host' : 'guest',
           passcodePayload: passcodePayload as Record<string, string>,
           startedWithForceJoin: forceJoinFromRoute,
         };
         setResolvedStorageMeetingId(forStorage);
-        const tokenParts = token.split('.');
         setAuthToken(token);
+        const tokenParts = token.split('.');
         const joinConfigData = {
           token,
           tokenLength: token.length,
@@ -826,17 +854,20 @@ export default function HMSMeetingInterfaceScreen() {
           userName: displayUserName,
           userNameLength: displayUserName.length,
           userId: user?.id?.toString(),
-          role: 'auto-determined-by-backend',
+          guestId: parsed.guestId,
+          joinPhase: parsed.joinPhase,
+          role: parsed.userRole ?? 'auto-determined-by-backend',
           platform: Platform.OS,
           permissionsGranted: permissionsGranted,
           timestamp: new Date().toISOString(),
         };
         setJoinConfig(joinConfigData);
+        setHmsMountKey((k) => k + 1);
       } catch (joinError: any) {
         const status = joinError?.response?.status;
         const errData = joinError?.response?.data || {};
         const errMsg = errData.message || errData.error || joinError?.message || 'Unknown error';
-        if (status === 409 || errData.error_code === 'ALREADY_IN_MEETING') {
+        if (status === 409 || isActiveMeetingConflict(joinError)) {
           setError('You are already in this meeting. Leave the other session and try again.');
         } else if (status === 403) {
           setError(errMsg || 'This meeting requires host approval to join.');
@@ -886,8 +917,14 @@ export default function HMSMeetingInterfaceScreen() {
       return;
     }
 
+    // Web Prebuilt parity: skip confirm when backend already marked join_phase=joined.
+    if (!needsJoinConfirm(joinPhaseRef.current)) {
+      setPresenceConfirmed(true);
+      return;
+    }
+
     const doConfirm = (forceJoin: boolean) =>
-      apiClient.client.post('/api/v1/video/room/join-by-id/confirm', {
+      apiClient.confirmVideoJoinById({
         meeting_id: ctx.meetingIdStr.trim(),
         participant_name: ctx.displayName,
         token: ctx.token,
@@ -900,14 +937,7 @@ export default function HMSMeetingInterfaceScreen() {
       try {
         await doConfirm(ctx.startedWithForceJoin);
       } catch (firstErr: unknown) {
-        const fe = firstErr as {
-          response?: { status?: number; data?: { error_code?: string } };
-        };
-        if (
-          !ctx.startedWithForceJoin &&
-          fe?.response?.status === 409 &&
-          fe?.response?.data?.error_code === 'ALREADY_IN_MEETING'
-        ) {
+        if (!ctx.startedWithForceJoin && isActiveMeetingConflict(firstErr)) {
           await doConfirm(true);
         } else {
           throw firstErr;
@@ -920,21 +950,58 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, []);
 
+  const retryHmsConnect = useCallback(() => {
+    if (hmsRetryTimerRef.current) {
+      clearTimeout(hmsRetryTimerRef.current);
+      hmsRetryTimerRef.current = null;
+    }
+    presenceConfirmSentRef.current = false;
+    setJoinStuckExhausted(false);
+    setError(null);
+    setHmsError(null);
+    setHmsMountKey((k) => k + 1);
+  }, []);
+
   // Called by the presence bridge when a join attempt is detected but never connects (stuck).
-  // Surfaces a friendly error and stops the endless HMS "Join" spinner. Ignored once we are
-  // actually in the meeting (presence confirmed) so mid-call reconnects don't bounce the user.
+  // Retry HMS with the same token (24h TTL) — do not call leave (no ActiveParticipant yet).
   const handleConnectionStuck = useCallback(() => {
-    if (presenceConfirmed) return;
+    if (presenceConfirmedRef.current) return;
+
+    const attempt = hmsJoinRetryRef.current;
+    const meetingIdStr = String(meetingId ?? '').trim();
+
+    if (attempt < 3 && authToken) {
+      hmsJoinRetryRef.current = attempt + 1;
+      const delayMs = Math.pow(2, attempt + 1) * 1000;
+      errorLogger.logError(new Error('HMS join stuck: retrying with same token'), {
+        severity: 'warning',
+        screenName: 'HMSMeetingInterface',
+        userAction: 'Join stuck retry',
+        errorType: 'HMSJoinStuck',
+        userId: user?.id,
+        metadata: { attempt: attempt + 1, meetingId: meetingIdStr, roomId: roomIdRef.current },
+      });
+      if (hmsRetryTimerRef.current) clearTimeout(hmsRetryTimerRef.current);
+      hmsRetryTimerRef.current = setTimeout(() => {
+        hmsRetryTimerRef.current = null;
+        presenceConfirmSentRef.current = false;
+        setHmsMountKey((k) => k + 1);
+      }, delayMs);
+      return;
+    }
+
+    setJoinStuckExhausted(true);
     setIsLoading(false);
-    setError('Couldn’t connect to the meeting. It may have ended or not started yet. Please try again.');
-    errorLogger.logError(new Error('HMS join stuck: connecting but never entered room'), {
+    setError('Couldn’t connect to the meeting. Please try again.');
+    errorLogger.logError(new Error('HMS join stuck: retries exhausted'), {
       severity: 'warning',
       screenName: 'HMSMeetingInterface',
       userAction: 'Join stuck',
       errorType: 'HMSJoinStuck',
       userId: user?.id,
+      metadata: { meetingId: meetingIdStr, roomId: roomIdRef.current },
     });
-  }, [presenceConfirmed, user?.id]);
+  }, [authToken, meetingId, user?.id]);
 
   const handleLeaveMeeting = async () => {
     Alert.alert(
@@ -959,9 +1026,7 @@ export default function HMSMeetingInterfaceScreen() {
                 /* ignore */
               }
               // Call backend to leave meeting (clears ActiveParticipant table)
-              if (meetingId) {
-                await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
-              }
+              await leaveConfirmedReachSession();
             } catch (error: any) {
               // Log error but don't block navigation - user is leaving anyway
               console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
@@ -1010,6 +1075,23 @@ export default function HMSMeetingInterfaceScreen() {
         <View style={styles.errorContainer}>
           <Text style={styles.errorTitle}>GrabDocs Meeting</Text>
           <Text style={styles.errorMessage}>{error}</Text>
+          {(joinStuckExhausted || !!authToken) && (
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => {
+                if (authToken && joinConfig) {
+                  hmsJoinRetryRef.current = 0;
+                  setJoinStuckExhausted(false);
+                  setError(null);
+                  retryHmsConnect();
+                } else {
+                  initializePrebuiltInterface();
+                }
+              }}
+            >
+              <Text style={styles.retryButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
@@ -1150,6 +1232,7 @@ export default function HMSMeetingInterfaceScreen() {
         // /api/v1/video/room/join-by-id, so token-only join is the correct path.
         options: {
           ...(validUserName && { userName: displayUserName.trim() }),
+          // Authenticated users only — guest identity is embedded in the HMS token; do not override.
           ...(user?.id && { userId: user.id.toString() }),
           ...(Platform.OS === 'ios' && HMS_IOS_SCREENSHARE && {
             ios: {
@@ -1223,7 +1306,7 @@ export default function HMSMeetingInterfaceScreen() {
                           /* ignore */
                         }
                         try {
-                          if (meetingId) await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
+                          await leaveConfirmedReachSession();
                         } catch {
                           /* ignore */
                         }
@@ -1344,6 +1427,7 @@ export default function HMSMeetingInterfaceScreen() {
                   <View style={[styles.prebuiltWrapper, { paddingBottom: bottomInset }]}>
                     {/* PiP: Square, smaller window on both platforms. Video preview enabled by 100ms (useActiveSpeaker: true). iOS: UIBackgroundModes ["voip"] + plugins/ios-pip. Android: plugins/android-pip + GrabDocsPipModule (1:1). See docs/PIP_MOBILE_SETUP.md if PiP shows black. */}
                     <HMSPrebuilt 
+                      key={`hms-${hmsMountKey}`}
                       token={hmsProps.token}
                       options={hmsProps.options}
                       autoEnterPipMode={Platform.OS !== 'web'}
@@ -1371,9 +1455,7 @@ export default function HMSMeetingInterfaceScreen() {
                           /* ignore */
                         }
                         try {
-                          if (meetingId) {
-                            await apiClient.client.post(`/api/v1/mobile/meetings/${meetingId}/leave`);
-                          }
+                          await leaveConfirmedReachSession();
                         } catch (error: any) {
                           console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
                         }

@@ -249,31 +249,26 @@ export default function JoinMeetingScreen() {
     setErrorMessage('');
 
     try {
-      const res = await apiClient.client.post('/api/v1/video/room/join-by-id', {
+      await apiClient.prepareVideoJoinById({
         meeting_id: meetingId.trim(),
         participant_name: name,
         enable_audio: false,
         enable_video: false,
-        viewer_type: 'near-realtime',
+        // host/guest — backend downgrades non-creators; streaming maps both to near-realtime.
+        // For explicit streaming latency, pass viewer_type: 'near-realtime' | 'realtime'.
+        viewer_type: user ? 'host' : 'guest',
         join_intent: 'prepare',
         ...(params.passcode_token ? { passcode_token: params.passcode_token } : (pc ? { passcode: pc } : {})),
       });
 
-      const raw = res?.data || {};
-      const data = (raw && typeof (raw as any).data === 'object' && (raw as any).data != null) ? (raw as any).data : raw;
-      if (res.status >= 200 && res.status < 300 && ((data as any).token || (data as any).success)) {
-        clearPersistedWaiting();
-        hasNavigatedRef.current = true;
-        const q = new URLSearchParams({ meetingId: meetingId.trim() });
-        if (params.passcode_token) q.set('passcode_token', params.passcode_token);
-        else if (pc) q.set('passcode', pc);
-        appendSanitizedUserName(q, name);
-        router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
-        return;
-      }
-      setErrorMessage('Could not complete join. Please try again.');
-      setCheckState('form');
-      setJoinRequestSubmitting(false);
+      // Unexpected 2xx (approval waived) — HMS screen runs prepare again as the canonical join path.
+      clearPersistedWaiting();
+      hasNavigatedRef.current = true;
+      const q = new URLSearchParams({ meetingId: meetingId.trim() });
+      if (params.passcode_token) q.set('passcode_token', params.passcode_token);
+      else if (pc) q.set('passcode', pc);
+      appendSanitizedUserName(q, name);
+      router.replace(`/quick-reach/hms-meeting-interface?${q.toString()}` as any);
     } catch (err: any) {
       setJoinRequestSubmitting(false);
       const status = err?.response?.status;
@@ -293,7 +288,7 @@ export default function JoinMeetingScreen() {
       setErrorMessage(errData?.error || errData?.message || err?.message || 'Failed to request join.');
       setCheckState('form');
     }
-  }, [meetingId, participantName, passcode, requirements, params.passcode_token, router, clearPersistedWaiting, persistWaitingState]);
+  }, [meetingId, participantName, passcode, requirements, params.passcode_token, router, clearPersistedWaiting, persistWaitingState, user]);
 
   // Poll for approval status when in waiting state
   useEffect(() => {

@@ -21,6 +21,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Toast from 'react-native-toast-message';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import { parseMobileMeetingInfoResponse } from '../../utils/meetingJoinPresence';
 import { getReachParticipantDisplayName, sanitizeReachDisplayName } from '../../utils/reachDisplayName';
 import { formatMeetingTimeToLocal } from '../../utils/timeFormatting';
 import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../constants/reachMeeting';
@@ -1074,8 +1075,10 @@ export default function MeetingCallScreen() {
     try {
       const response = await apiClient.getMeetingInfo(meeting.meetingId);
       if (response.success) {
-        const roomData = response.data?.data || response.data || response;
-        setMeetingInfoData(roomData);
+        const { room } = parseMobileMeetingInfoResponse(response as Record<string, unknown>);
+        if (room) {
+          setMeetingInfoData(room);
+        }
       }
     } catch {
       // Non-fatal: info modal will show loading/empty state

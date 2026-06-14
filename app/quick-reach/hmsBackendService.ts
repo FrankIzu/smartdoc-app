@@ -109,7 +109,8 @@ class HMSBackendService {
   }
 
   /**
-   * Join HMS room using existing meeting ID
+   * Join HMS room using existing meeting ID.
+   * @deprecated Legacy single-shot path — active Prebuilt flow uses prepareVideoJoinById in hms-meeting-interface.
    */
   async createOrJoinRoom(request: HMSRoomRequest): Promise<any> {
     try {
