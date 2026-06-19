@@ -35,6 +35,8 @@ function getHmsPkg(): Record<string, unknown> | null {
 
 type Props = {
   enabled: boolean;
+  /** When true, join confirm succeeded — disable stuck timer entirely. */
+  joinCompleted?: boolean;
   onEnteredRoom: () => void;
   /**
    * Called when join never completes within {@link STUCK_JOIN_TIMEOUT_MS}. Surfaces an error
@@ -46,43 +48,79 @@ type Props = {
 /** Max time from bridge enable until we treat the join as failed (no room-entry signal). */
 const STUCK_JOIN_TIMEOUT_MS = 90000;
 
-function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Props) {
+/** Room-entry signals from useHMSPeerUpdates (local join may not emit PEER_JOINED). */
+function isRoomEntryPeerUpdate(data: {
+  type?: string;
+  peer?: { peerID?: string; isLocal?: boolean };
+} | undefined): boolean {
+  if (!data) return false;
+  if (data.peer?.isLocal === true) return true;
+  const t = (data.type ?? '').toUpperCase();
+  if (
+    t === 'ROOM_JOINED' ||
+    t === 'PEER_LIST_UPDATED' ||
+    t === 'ROLE_CHANGED' ||
+    t === 'LOCAL_PEER_UPDATE'
+  ) {
+    return true;
+  }
+  // Remote peer joined — we are also in the room.
+  if (t === 'PEER_JOINED' && data.peer) return true;
+  return false;
+}
+
+function InnerPresenceBridge({ enabled, joinCompleted, onEnteredRoom, onConnectionStuck }: Props) {
   const doneRef = useRef(false);
   const firedRef = useRef(false);
   const stuckFiredRef = useRef(false);
+  const stuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onConnectionStuckRef = useRef<(() => void) | undefined>(undefined);
   onConnectionStuckRef.current = onConnectionStuck;
   const hmsPkg = useMemo(() => getHmsPkg(), []);
 
+  const clearStuckTimer = useCallback(() => {
+    if (stuckTimerRef.current) {
+      clearTimeout(stuckTimerRef.current);
+      stuckTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleStuckTimer = useCallback(() => {
+    if (Platform.OS === 'web' || !enabled || joinCompleted || doneRef.current) return;
+    clearStuckTimer();
+    stuckTimerRef.current = setTimeout(() => {
+      if (doneRef.current || stuckFiredRef.current || joinCompleted) return;
+      stuckFiredRef.current = true;
+      onConnectionStuckRef.current?.();
+    }, STUCK_JOIN_TIMEOUT_MS);
+  }, [enabled, joinCompleted, clearStuckTimer]);
+
   const fireOnce = useCallback(() => {
     if (doneRef.current || firedRef.current) return;
     firedRef.current = true;
+    clearStuckTimer();
     queueMicrotask(() => {
       if (doneRef.current) return;
       doneRef.current = true;
       onEnteredRoom();
     });
-  }, [onEnteredRoom]);
+  }, [onEnteredRoom, clearStuckTimer]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      clearStuckTimer();
+      return;
+    }
     doneRef.current = false;
     firedRef.current = false;
     stuckFiredRef.current = false;
-  }, [enabled]);
+    scheduleStuckTimer();
+    return clearStuckTimer;
+  }, [enabled, joinCompleted, scheduleStuckTimer, clearStuckTimer]);
 
-  // Absolute join timeout — no native RECONNECTING subscription (would race Room Kit event enable).
   useEffect(() => {
-    if (!enabled || Platform.OS === 'web') return;
-
-    const stuckTimer = setTimeout(() => {
-      if (doneRef.current || stuckFiredRef.current) return;
-      stuckFiredRef.current = true;
-      onConnectionStuckRef.current?.();
-    }, STUCK_JOIN_TIMEOUT_MS);
-
-    return () => clearTimeout(stuckTimer);
-  }, [enabled]);
+    if (joinCompleted) clearStuckTimer();
+  }, [joinCompleted, clearStuckTimer]);
 
   const useHMSPeerUpdates = (
     typeof hmsPkg?.useHMSPeerUpdates === 'function'
@@ -92,25 +130,16 @@ function InnerPresenceBridge({ enabled, onEnteredRoom, onConnectionStuck }: Prop
 
   useHMSPeerUpdates(
     (...args: unknown[]) => {
-      if (!enabled || doneRef.current) return;
+      if (!enabled || doneRef.current || joinCompleted) return;
       const data = args[0] as {
         type?: string;
         peer?: { peerID?: string; isLocal?: boolean };
       } | undefined;
-      // Any peer update (local or remote) is only delivered once we are connected to the room —
-      // never during the prejoin/preview phase. So the first one we see means the local user has
-      // fully joined, which is what triggers POST /join-by-id/confirm. That confirm links the
-      // meeting to the user (invited_participants) so it appears in their Reach list afterward.
-      //
-      // Do NOT narrow this to PEER_JOINED: that event is emitted for REMOTE peers, not the local
-      // user's own join. A user who joins a meeting alone would never get PEER_JOINED, so confirm
-      // would never fire and the meeting would be missing from their list (regression fix).
-      const hasUpdate = !!data?.peer || !!data?.type;
-      if (hasUpdate) {
+      if (isRoomEntryPeerUpdate(data)) {
         fireOnce();
       }
     },
-    [enabled, fireOnce],
+    [enabled, joinCompleted, fireOnce],
   );
 
   return null;
@@ -121,6 +150,7 @@ export function MeetingPresenceConfirmBridge(props: Props) {
   return (
     <InnerPresenceBridge
       enabled={props.enabled}
+      joinCompleted={props.joinCompleted}
       onEnteredRoom={props.onEnteredRoom}
       onConnectionStuck={props.onConnectionStuck}
     />

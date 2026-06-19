@@ -140,6 +140,7 @@ class PushNotificationService {
       { id: 'file_received', name: 'File received', description: 'Someone shared a file with you', importance: Notifications.AndroidImportance.HIGH },
       { id: 'draft_edited', name: 'Note edited', description: 'Collaborator started editing a note', importance: Notifications.AndroidImportance.HIGH },
       { id: 'calendar_invite', name: 'Calendar invite', description: 'Calendar event invitations', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'calendar_reminder', name: 'Calendar reminder', description: 'Upcoming calendar event reminders', importance: Notifications.AndroidImportance.HIGH },
       { id: 'file_share_viewed', name: 'File share viewed', description: 'Someone viewed your shared file', importance: Notifications.AndroidImportance.DEFAULT },
       { id: 'join_request', name: 'Join request', description: 'Meeting join requests', importance: Notifications.AndroidImportance.HIGH },
       { id: 'transcript_ready', name: 'Transcript ready', description: 'Meeting transcript is ready', importance: Notifications.AndroidImportance.DEFAULT },
@@ -396,6 +397,7 @@ export const NOTIFICATION_TYPES = [
   'file_received',
   'draft_edited',
   'calendar_invite',
+  'calendar_reminder',
   'file_share_viewed',
   'join_request',
   'transcript_ready',
@@ -420,7 +422,8 @@ export function getNotificationScreen(data: Record<string, any>): string {
       return '/(tabs)/documents';
     case 'draft_edited':
       return data?.file_id != null ? `/drafts/edit/${data.file_id}` : '/(tabs)/documents';
-    case 'calendar_invite': {
+    case 'calendar_invite':
+    case 'calendar_reminder': {
       const eid = data?.event_id ?? data?.calendar_event_id ?? data?.eventId;
       return eid != null ? `/calendar/${eid}` : '/calendar';
     }

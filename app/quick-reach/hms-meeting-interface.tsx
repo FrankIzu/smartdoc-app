@@ -950,6 +950,27 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, []);
 
+  // Fallback confirm when useHMSPeerUpdates never fires (common for solo joiners on Room Kit).
+  useEffect(() => {
+    if (!joinConfig || !authToken || presenceConfirmed || Platform.OS === 'web') return;
+
+    const attemptFallbackConfirm = () => {
+      if (presenceConfirmedRef.current) return;
+      presenceConfirmSentRef.current = false;
+      void handleHmsEnteredForPresenceConfirm();
+    };
+
+    const t1 = setTimeout(attemptFallbackConfirm, 20000);
+    const t2 = setTimeout(attemptFallbackConfirm, 40000);
+    const t3 = setTimeout(attemptFallbackConfirm, 65000);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [joinConfig, authToken, presenceConfirmed, handleHmsEnteredForPresenceConfirm]);
+
   const retryHmsConnect = useCallback(() => {
     if (hmsRetryTimerRef.current) {
       clearTimeout(hmsRetryTimerRef.current);
@@ -962,38 +983,21 @@ export default function HMSMeetingInterfaceScreen() {
     setHmsMountKey((k) => k + 1);
   }, []);
 
-  // Called by the presence bridge when a join attempt is detected but never connects (stuck).
-  // Retry HMS with the same token (24h TTL) — do not call leave (no ActiveParticipant yet).
-  const handleConnectionStuck = useCallback(() => {
+  // Called when the bridge stuck timer fires. Never remount HMS — that disconnects active calls.
+  const handleConnectionStuck = useCallback(async () => {
     if (presenceConfirmedRef.current) return;
 
-    const attempt = hmsJoinRetryRef.current;
     const meetingIdStr = String(meetingId ?? '').trim();
 
-    if (attempt < 3 && authToken) {
-      hmsJoinRetryRef.current = attempt + 1;
-      const delayMs = Math.pow(2, attempt + 1) * 1000;
-      errorLogger.logError(new Error('HMS join stuck: retrying with same token'), {
-        severity: 'warning',
-        screenName: 'HMSMeetingInterface',
-        userAction: 'Join stuck retry',
-        errorType: 'HMSJoinStuck',
-        userId: user?.id,
-        metadata: { attempt: attempt + 1, meetingId: meetingIdStr, roomId: roomIdRef.current },
-      });
-      if (hmsRetryTimerRef.current) clearTimeout(hmsRetryTimerRef.current);
-      hmsRetryTimerRef.current = setTimeout(() => {
-        hmsRetryTimerRef.current = null;
-        presenceConfirmSentRef.current = false;
-        setHmsMountKey((k) => k + 1);
-      }, delayMs);
-      return;
+    // Solo joiners often never emit peer updates; try confirm before any destructive action.
+    if (!presenceConfirmedRef.current) {
+      presenceConfirmSentRef.current = false;
+      await handleHmsEnteredForPresenceConfirm();
+      if (presenceConfirmedRef.current) return;
     }
 
     setJoinStuckExhausted(true);
-    setIsLoading(false);
-    setError('Couldn’t connect to the meeting. Please try again.');
-    errorLogger.logError(new Error('HMS join stuck: retries exhausted'), {
+    errorLogger.logError(new Error('HMS join stuck: confirm fallback failed'), {
       severity: 'warning',
       screenName: 'HMSMeetingInterface',
       userAction: 'Join stuck',
@@ -1001,7 +1005,7 @@ export default function HMSMeetingInterfaceScreen() {
       userId: user?.id,
       metadata: { meetingId: meetingIdStr, roomId: roomIdRef.current },
     });
-  }, [authToken, meetingId, user?.id]);
+  }, [meetingId, user?.id, handleHmsEnteredForPresenceConfirm]);
 
   const handleLeaveMeeting = async () => {
     Alert.alert(
@@ -1069,29 +1073,12 @@ export default function HMSMeetingInterfaceScreen() {
     );
   }
 
-  if (error) {
+  if (error && !authToken) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorTitle}>GrabDocs Meeting</Text>
           <Text style={styles.errorMessage}>{error}</Text>
-          {(joinStuckExhausted || !!authToken) && (
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={() => {
-                if (authToken && joinConfig) {
-                  hmsJoinRetryRef.current = 0;
-                  setJoinStuckExhausted(false);
-                  setError(null);
-                  retryHmsConnect();
-                } else {
-                  initializePrebuiltInterface();
-                }
-              }}
-            >
-              <Text style={styles.retryButtonText}>Try Again</Text>
-            </TouchableOpacity>
-          )}
           <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
@@ -1249,6 +1236,7 @@ export default function HMSMeetingInterfaceScreen() {
         <>
           <MeetingPresenceConfirmBridge
             enabled={!!joinConfig && !!authToken && !hmsError}
+            joinCompleted={presenceConfirmed}
             onEnteredRoom={handleHmsEnteredForPresenceConfirm}
             onConnectionStuck={handleConnectionStuck}
           />
@@ -1256,6 +1244,45 @@ export default function HMSMeetingInterfaceScreen() {
           {HMSPrebuilt && joinSoundReady && (
             <MeetingJoinSound enabled={!!authToken && !!meetingId && presenceConfirmed} onPeerJoined={handlePeerJoined} />
           )}
+
+          {/* Join stuck overlay — Modal keeps HMS mounted (unmounting causes peer.leave client request). */}
+          <Modal
+            visible={joinStuckExhausted && !!joinConfig && !hmsError && !presenceConfirmed}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => setJoinStuckExhausted(false)}
+          >
+            <View style={styles.networkOverlay} pointerEvents="box-none">
+              <View style={styles.networkBanner}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.networkBannerTitle}>Having trouble connecting</Text>
+                  <Text style={styles.networkBannerSubtitle}>
+                    You may still be in the call. Try confirming attendance or rejoin.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.networkLeaveButton}
+                  onPress={async () => {
+                    setJoinStuckExhausted(false);
+                    presenceConfirmSentRef.current = false;
+                    await handleHmsEnteredForPresenceConfirm();
+                  }}
+                >
+                  <Text style={styles.networkLeaveButtonText}>Retry</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.networkLeaveButton, { backgroundColor: '#666' }]}
+                  onPress={() => {
+                    setJoinStuckExhausted(false);
+                    retryHmsConnect();
+                  }}
+                >
+                  <Text style={styles.networkLeaveButtonText}>Rejoin</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
 
           {/* In-meeting event banners (recording started, peer joined) — must be dismissed by tapping OK */}
           <Modal

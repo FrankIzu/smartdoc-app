@@ -99,6 +99,45 @@ function extractReachHostUserIds(raw: unknown): string[] {
   return out;
 }
 
+/** Resolve display host/owner label across mobile + invited-meetings API shapes. */
+function extractReachHostDisplayName(m: Record<string, unknown>): string {
+  const direct =
+    m.host ?? m.host_name ?? m.hostName ?? m.creator_name ?? m.creatorName ?? m.owner_name;
+  if (typeof direct === 'string') {
+    const trimmed = direct.trim();
+    if (trimmed && trimmed.toLowerCase() !== 'unknown') return trimmed;
+  }
+
+  const creator = m.creator ?? m.owner;
+  if (creator && typeof creator === 'object') {
+    const c = creator as Record<string, unknown>;
+    const first = String(c.first_name ?? c.firstName ?? '').trim();
+    const last = String(c.last_name ?? c.lastName ?? '').trim();
+    const full = [first, last].filter(Boolean).join(' ').trim();
+    if (full) return full;
+    const username = String(c.username ?? '').trim();
+    if (username) return username;
+    const email = String(c.email ?? '').trim();
+    if (email) return email;
+  }
+
+  const hosts = m.meeting_hosts ?? m.meetingHosts;
+  if (Array.isArray(hosts)) {
+    for (const entry of hosts) {
+      if (!entry || typeof entry !== 'object') continue;
+      const h = entry as Record<string, unknown>;
+      const role = String(h.role ?? '').toLowerCase();
+      if (role && role !== 'owner' && role !== 'host') continue;
+      const name =
+        String(h.username ?? h.name ?? h.email ?? '').trim() ||
+        [String(h.first_name ?? ''), String(h.last_name ?? '')].filter(Boolean).join(' ').trim();
+      if (name) return name;
+    }
+  }
+
+  return 'Unknown';
+}
+
 function isReachMeetingOwner(meeting: Meeting, userId: string | undefined): boolean {
   if (!userId) return false;
   if (meeting.creatorId != null && String(meeting.creatorId) === String(userId)) return true;
@@ -210,28 +249,30 @@ type MeetingListRow = Meeting & {
 };
 
 function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow | null {
+  const raw = (m && typeof m === 'object' ? m : {}) as Record<string, unknown>;
   const meetingId = canonicalizeReachMeetingId(
-    String(m.meetingId || m.meeting_id || m.id || '').trim()
+    String(raw.meetingId || raw.meeting_id || raw.id || '').trim()
   );
   if (!meetingId) return null;
 
-  const titleRaw = m.title || m.name || m.roomName || m.room_name;
+  const titleRaw =
+    raw.title || raw.name || raw.roomName || raw.room_name || raw.meeting_subject;
   const title =
     typeof titleRaw === 'string' && titleRaw.trim()
       ? titleRaw.trim()
       : 'Untitled Meeting';
 
   const startTime =
-    m.startTime ||
-    m.start_time ||
-    m.start_at ||
-    m.started_at ||
-    m.scheduled_start_time ||
-    m.scheduled_time ||
-    m.scheduled_at ||
+    raw.startTime ||
+    raw.start_time ||
+    raw.start_at ||
+    raw.started_at ||
+    raw.scheduled_start_time ||
+    raw.scheduled_time ||
+    raw.scheduled_at ||
     '';
-  const scheduledStart = m.scheduled_start_time || m.scheduled_at;
-  const createdRaw = m.createdAt || m.created_at || m.created;
+  const scheduledStart = raw.scheduled_start_time || raw.scheduled_at;
+  const createdRaw = raw.createdAt || raw.created_at || raw.created;
   const createdAt =
     typeof createdRaw === 'string'
       ? createdRaw
@@ -239,44 +280,44 @@ function mapRawToMeetingListRow(m: any, source: MeetingSource): MeetingListRow |
         ? String(createdRaw)
         : '';
 
-  const statusRaw = m.status || m.meeting_status || 'created';
+  const statusRaw = raw.status || raw.meeting_status || 'created';
 
   const sortTime =
     toMillis(startTime) ||
     toMillis(scheduledStart) ||
     toMillis(createdAt) ||
-    toMillis(m.endTime || m.end_time || m.end_at) ||
-    toMillis(m.started_at) ||
+    toMillis(raw.endTime || raw.end_time || raw.end_at) ||
+    toMillis(raw.started_at) ||
     0;
   const createdFallbackMs =
     toMillis(createdAt) ||
-    toMillis(m.started_at) ||
+    toMillis(raw.started_at) ||
     toMillis(startTime) ||
     0;
 
   return {
-    id: String(m.id || m.meeting_id || m.meetingId || meetingId),
+    id: String(raw.id || raw.meeting_id || raw.meetingId || meetingId),
     title,
     meetingId,
-    host: m.host || m.host_name || m.hostName || 'Unknown',
-    participants: m.participants || m.participant_count || 0,
+    host: extractReachHostDisplayName(raw),
+    participants: raw.participants || raw.participant_count || 0,
     startTime: typeof startTime === 'string' ? startTime : String(startTime || ''),
-    endTime: m.endTime || m.end_time || m.end_at || '',
+    endTime: raw.endTime || raw.end_time || raw.end_at || '',
     status: statusRaw as Meeting['status'],
-    passcode: m.passcode || m.password || undefined,
+    passcode: raw.passcode || raw.password || undefined,
     passcode_required:
-      m.passcode_required === true || m.passcodeRequired === true ? true : undefined,
-    roomUrl: m.roomUrl || m.room_url || m.url || undefined,
-    description: m.description || undefined,
+      raw.passcode_required === true || raw.passcodeRequired === true ? true : undefined,
+    roomUrl: raw.roomUrl || raw.room_url || raw.url || undefined,
+    description: raw.description || raw.meeting_description || undefined,
     duration:
-      m.duration ??
-      m.meeting_duration_minutes ??
-      m.duration_minutes ??
+      raw.duration ??
+      raw.meeting_duration_minutes ??
+      raw.duration_minutes ??
       undefined,
     createdAt: createdAt || undefined,
-    creatorId: m.creator_id ?? m.creatorId ?? undefined,
-    currentHostId: m.current_host_id ?? m.currentHostId ?? undefined,
-    hostUserIds: extractReachHostUserIds(m.meeting_hosts ?? m.meetingHosts),
+    creatorId: raw.creator_id ?? raw.creatorId ?? undefined,
+    currentHostId: raw.current_host_id ?? raw.currentHostId ?? undefined,
+    hostUserIds: extractReachHostUserIds(raw.meeting_hosts ?? raw.meetingHosts),
     source,
     sortTime,
     createdFallbackMs,

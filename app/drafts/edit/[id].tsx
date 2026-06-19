@@ -1102,6 +1102,23 @@ export default function DraftEditScreen() {
     }
   }, [persistFilenameIfChanged]);
 
+  const handleAskChatGD = useCallback(() => {
+    setEditorMenuVisible(false);
+    if (!draftId || isNaN(draftId)) return;
+    if (draftsCache.isLocalDraftId(draftId)) {
+      Alert.alert(
+        'Note not synced yet',
+        'Save this note while online before asking ChatGD about it.',
+      );
+      return;
+    }
+    openChatGD({
+      fileId: String(draftId),
+      fileName: (filename || 'Untitled Note').trim(),
+      chatPlaceholder: 'Ask about this note',
+    });
+  }, [draftId, filename, openChatGD]);
+
   const handleBack = useCallback(async () => {
     if (!userId) { router.back(); return; }
 
@@ -2126,10 +2143,7 @@ export default function DraftEditScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[dynamicStyles.popoverItem, dynamicStyles.popoverItemBorder]}
-                onPress={() => {
-                  setEditorMenuVisible(false);
-                  openChatGD({ chatPlaceholder: 'Ask about this note' });
-                }}
+                onPress={handleAskChatGD}
               >
                 <Ionicons name="chatbubbles-outline" size={20} color={colors.text} style={dynamicStyles.popoverItemIcon} />
                 <Text style={dynamicStyles.popoverItemText}>Ask ChatGD</Text>

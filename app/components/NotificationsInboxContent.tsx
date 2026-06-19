@@ -150,12 +150,15 @@ export function NotificationsInboxContent({
     (n: AppNotification) => {
       if (n.metadata?.has_actions) return;
       if (!n.read) markAsRead(n.id);
-      const path =
+      let path =
         n.metadata?.navigation_path
           ? (n.metadata.navigation_path as string).startsWith('/')
             ? (n.metadata.navigation_path as string)
             : `/${n.metadata.navigation_path}`
           : getNotificationScreen({ type: n.type, ...(n.metadata || {}) });
+      if (path.startsWith('/calendar/event/')) {
+        path = path.replace('/calendar/event/', '/calendar/');
+      }
       if (path !== '/notifications') {
         if (variant === 'modal') onDismiss?.();
         try {
