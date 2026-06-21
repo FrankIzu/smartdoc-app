@@ -31,7 +31,6 @@ import {
     useHeaderVisibility,
 } from '../../../contexts/HeaderVisibilityContext';
 import { useTheme } from '../../../contexts/ThemeContext';
-import { useDelayedOfflineBanner } from '../../../hooks/useDelayedOfflineBanner';
 import { useOpenChatGD } from '../../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiClient } from '../../../services/api';
@@ -52,6 +51,7 @@ function stripHtmlToText(html: string): string {
   if (!html) return '';
   return html
     .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/h[1-6]>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
@@ -63,15 +63,21 @@ function stripHtmlToText(html: string): string {
 }
 
 function textToSimpleHtml(text: string): string {
-  if (!text) return '<p></p>';
+  if (!text) return EMPTY_DRAFT_HTML;
   const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-  const paras = escaped.split(/\n/).filter(Boolean);
-  if (paras.length === 0) return '<p></p>';
-  return paras.map(p => `<p>${p}</p>`).join('');
+  const lines = escaped.split(/\n/);
+  if (lines.length === 0) return EMPTY_DRAFT_HTML;
+  const [first, ...rest] = lines;
+  const titleHtml = first ? `<h1>${first}</h1>` : '<h1></h1>';
+  const bodyParas = rest.filter(Boolean);
+  const bodyHtml = bodyParas.length > 0
+    ? bodyParas.map(p => `<p>${p}</p>`).join('')
+    : '<p><br></p>';
+  return titleHtml + bodyHtml;
 }
 
 function stripExtension(name?: string): string {
@@ -79,8 +85,438 @@ function stripExtension(name?: string): string {
   return name.replace(/\.[^./\\]+$/, '');
 }
 
+function isDefaultUntitledName(name?: string): boolean {
+  const base = stripExtension(name || '').trim();
+  return !base || base === 'Untitled Note';
+}
+
+const EMPTY_DRAFT_HTML = '<h1></h1><p><br></p>';
+
+function isDraftHtmlEmpty(html: string): boolean {
+  if (!html) return true;
+  const compact = html.replace(/\s/g, '').toLowerCase();
+  if (compact === '<h1></h1><p><br></p>' || compact === '<h1><br></h1><p><br></p>' || compact === '<p><br></p>' || compact === '<p></p>') {
+    return true;
+  }
+  return !stripHtmlToText(html).trim();
+}
+
+function extractTitleFromDraftHtml(html: string): string {
+  const match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  if (!match) return '';
+  return stripHtmlToText(match[1]).trim();
+}
+
+function isDraftBodyEmpty(html: string): boolean {
+  const bodyHtml = html.replace(/<h1[^>]*>[\s\S]*?<\/h1>/i, '');
+  return !stripHtmlToText(bodyHtml).trim();
+}
+
+/** Ensure notes use an H1 title block plus body; migrate legacy single-paragraph drafts. */
+function ensureDraftHtmlStructure(html: string): string {
+  const trimmed = (html || '').trim();
+  if (!trimmed || isDraftHtmlEmpty(trimmed)) return EMPTY_DRAFT_HTML;
+  if (/<h1[\s>]/i.test(trimmed)) return trimmed;
+
+  const firstBlock = trimmed.match(/^<(p|div)[^>]*>([\s\S]*?)<\/\1>([\s\S]*)$/i);
+  if (firstBlock) {
+    const rest = (firstBlock[3] || '').trim();
+    return `<h1 data-placeholder="Title">${firstBlock[2]}</h1>${rest || '<p><br></p>'}`;
+  }
+  return `<h1 data-placeholder="Title"></h1>${trimmed}`;
+}
+
 /** Allowed font sizes (px) for the rich-text toolbar — applied as inline `font-size` on a wrapping span. */
 const DRAFT_FONT_SIZES_PX = [12, 14, 16, 18, 20, 24, 28, 32] as const;
+
+const LOCAL_SAVE_TOAST_MS = 1000;
+const LOCAL_SAVE_TOAST_COOLDOWN_MS = 60000;
+
+const DRAFT_EDITOR_SCRIPT = `
+    (function(){
+      var el=document.getElementById('content');
+      var BLOCK_TAGS=['P','DIV','H1','H2','H3','H4','LI'];
+
+      function send(){
+        if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(el.innerHTML);
+      }
+      function sendTitle(){
+        var h1=el.querySelector('h1');
+        var t=h1?(h1.textContent||'').replace(/\\u00a0/g,' ').trim():'';
+        if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('__TITLE__:'+t);
+      }
+      function sendUndoState(){
+        if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('__UNDO_STATE__:'+JSON.stringify({canUndo:document.queryCommandEnabled('undo'),canRedo:document.queryCommandEnabled('redo')}));
+      }
+      function sync(){
+        send();
+        sendTitle();
+        sendUndoState();
+      }
+
+      function getBlock(range){
+        var node=range.startContainer;
+        var block=node.nodeType===3?node.parentNode:node;
+        while(block&&block!==el&&!BLOCK_TAGS.includes(block.nodeName)){
+          block=block.parentNode;
+        }
+        return block&&block!==el?block:null;
+      }
+
+      function lastDescendant(node){
+        while(node&&node.lastChild) node=node.lastChild;
+        return node;
+      }
+
+      function isBlockEmpty(block){
+        return !(block.textContent||'').replace(/\\u00a0/g,' ').trim();
+      }
+
+      function isAtBlockStart(range, block){
+        var r=range.cloneRange();
+        r.collapse(true);
+        var test=r.cloneRange();
+        test.selectNodeContents(block);
+        test.setEnd(r.startContainer, r.startOffset);
+        return !(test.toString()||'').length;
+      }
+
+      function placeCursorAtEnd(block){
+        block=block||el;
+        var range=document.createRange();
+        var target=lastDescendant(block)||block;
+        if(target.nodeType===3){
+          range.setStart(target, target.textContent.length);
+        }else{
+          range.selectNodeContents(block);
+          range.collapse(false);
+        }
+        var sel=window.getSelection();
+        if(!sel) return;
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      function placeCursorAtStart(block){
+        block=block||el;
+        var range=document.createRange();
+        var first=block.firstChild;
+        if(first&&first.nodeType===3){
+          range.setStart(first,0);
+        }else if(first&&first.nodeName==='BR'){
+          range.setStartBefore(first);
+        }else{
+          range.selectNodeContents(block);
+          range.collapse(true);
+        }
+        var sel=window.getSelection();
+        if(!sel) return;
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      function getBodyBlock(){
+        var h1=el.querySelector('h1');
+        var node=h1?h1.nextSibling:null;
+        while(node){
+          if(node.nodeType===1&&(node.nodeName==='P'||node.nodeName==='DIV')) return node;
+          node=node.nextSibling;
+        }
+        var p=document.createElement('p');
+        p.innerHTML='<br>';
+        if(h1&&h1.nextSibling) el.insertBefore(p,h1.nextSibling);
+        else el.appendChild(p);
+        return p;
+      }
+
+      function isInTitle(range){
+        var node=range.startContainer;
+        if(node.nodeType===3) node=node.parentNode;
+        while(node&&node!==el){
+          if(node.nodeName==='H1') return true;
+          node=node.parentNode;
+        }
+        return false;
+      }
+
+      var titleEnterLock=false;
+
+      function focusBodyBlock(body){
+        body=body||getBodyBlock();
+        if(isBlockEmpty(body)) body.innerHTML='<br>';
+        el.focus();
+        var range=document.createRange();
+        var sel=window.getSelection();
+        if(body.firstChild&&body.firstChild.nodeType===3){
+          range.setStart(body.firstChild,0);
+          range.collapse(true);
+        }else if(body.firstChild&&body.firstChild.nodeName==='BR'){
+          range.setStart(body,0);
+          range.collapse(true);
+        }else{
+          range.selectNodeContents(body);
+          range.collapse(true);
+        }
+        if(sel){
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+
+      function moveToBodyFromTitle(){
+        if(titleEnterLock) return;
+        titleEnterLock=true;
+        var h1=el.querySelector('h1');
+        if(h1){
+          var junk=h1.querySelectorAll('br,div,p,ul,ol');
+          for(var j=0;j<junk.length;j++) junk[j].remove();
+        }
+        var body=getBodyBlock();
+        focusBodyBlock(body);
+        sync();
+        setTimeout(function(){ titleEnterLock=false; }, 80);
+      }
+
+      function repairTitleAfterEnter(){
+        var h1=el.querySelector('h1');
+        if(!h1) return false;
+        var br=h1.querySelector('br');
+        var nested=h1.querySelectorAll('div,p,ul,ol');
+        if(!br&&(!nested||!nested.length)) return false;
+        if(br) br.remove();
+        for(var k=0;k<nested.length;k++) nested[k].remove();
+        moveToBodyFromTitle();
+        return true;
+      }
+
+      function handleTitleEnter(e){
+        var sel=window.getSelection();
+        if(!sel||sel.rangeCount===0) return false;
+        if(!isInTitle(sel.getRangeAt(0))) return false;
+        if(e&&e.preventDefault) e.preventDefault();
+        if(e&&e.stopImmediatePropagation) e.stopImmediatePropagation();
+        moveToBodyFromTitle();
+        return true;
+      }
+
+      function onEnterKey(e){
+        if(e.key!=='Enter'&&e.keyCode!==13&&e.which!==13) return;
+        var sel=window.getSelection();
+        if(!sel||sel.rangeCount===0) return;
+        var range=sel.getRangeAt(0);
+        if(!range.collapsed) return;
+        if(isInTitle(range)){
+          handleTitleEnter(e);
+          return;
+        }
+      }
+
+      function getPreviousBodyBlock(block){
+        var node=block.previousSibling;
+        while(node){
+          if(node.nodeType===1){
+            if(node.nodeName==='H1') return null;
+            if(node.nodeName==='P'||node.nodeName==='DIV') return node;
+          }
+          node=node.previousSibling;
+        }
+        return null;
+      }
+
+      function isFirstBodyBlock(block){
+        var h1=el.querySelector('h1');
+        if(!h1||!block||block===h1) return false;
+        var node=h1.nextSibling;
+        while(node){
+          if(node.nodeType===1&&(node.nodeName==='P'||node.nodeName==='DIV')) return node===block;
+          node=node.nextSibling;
+        }
+        return false;
+      }
+
+      function getLinePrefixAtCursor(range){
+        var r=range.cloneRange();
+        r.collapse(true);
+        var prefix='';
+        var node=r.startContainer;
+        var offset=r.startOffset;
+        while(node&&el.contains(node)){
+          if(node.nodeType===3){
+            var chunk=node.textContent.substring(0,offset);
+            prefix=chunk+prefix;
+            offset=0;
+            var prev=node.previousSibling;
+            if(prev){
+              if(prev.nodeName==='BR') break;
+              node=lastDescendant(prev)||prev;
+              continue;
+            }
+          }else if(node.nodeType===1){
+            if(offset>0){
+              var child=node.childNodes[offset-1];
+              if(child&&child.nodeName==='BR') break;
+              node=lastDescendant(child)||child;
+              continue;
+            }
+            var prevEl=node.previousSibling;
+            if(prevEl){
+              if(prevEl.nodeName==='BR') break;
+              node=lastDescendant(prevEl)||prevEl;
+              continue;
+            }
+          }
+          if(node.parentNode&&node.parentNode!==el){
+            var parent=node.parentNode;
+            offset=Array.prototype.indexOf.call(parent.childNodes, node);
+            node=parent;
+            continue;
+          }
+          break;
+        }
+        return prefix.replace(/\\u00a0/g,' ').trimEnd();
+      }
+
+      function deleteCharsBeforeCursor(range, count){
+        for(var i=0;i<count;i++){
+          if(!range.collapsed) break;
+          var node=range.startContainer;
+          var offset=range.startOffset;
+          if(node.nodeType===3&&offset>0){
+            range.setStart(node, offset-1);
+            range.deleteContents();
+            continue;
+          }
+          var prev=node.nodeType===3?node.previousSibling:(offset>0?node.childNodes[offset-1]:node.previousSibling);
+          if(prev&&prev.nodeName==='BR'){
+            prev.parentNode.removeChild(prev);
+            continue;
+          }
+          if(prev){
+            var tail=lastDescendant(prev);
+            if(tail&&tail.nodeType===3&&tail.textContent.length){
+              tail.textContent=tail.textContent.slice(0,-1);
+              range.setStart(tail, tail.textContent.length);
+              range.collapse(true);
+              continue;
+            }
+          }
+          break;
+        }
+      }
+
+      el.innerHTML='<h1><\\/h1><p><br><\\/p>';
+
+      setTimeout(function(){
+        el.addEventListener('input',function(){
+          if(repairTitleAfterEnter()) return;
+          sync();
+        });
+        el.addEventListener('blur',sync);
+        el.addEventListener('paste',function(){ setTimeout(function(){
+          if(repairTitleAfterEnter()) return;
+          sync();
+        },0); });
+      },0);
+
+      el.addEventListener('beforeinput',function(e){
+        if(e.inputType!=='insertParagraph'&&e.inputType!=='insertLineBreak') return;
+        handleTitleEnter(e);
+      },true);
+
+      el.addEventListener('keydown',onEnterKey,true);
+      el.addEventListener('keyup',onEnterKey,true);
+
+      el.addEventListener('keydown',function(e){
+        var sel=window.getSelection();
+        if(!sel||sel.rangeCount===0) return;
+        var range=sel.getRangeAt(0);
+        if(!range.collapsed && e.key!=='Backspace') return;
+        if(e.key==='Enter'||e.keyCode===13||e.which===13){
+          if(isInTitle(range)) return;
+        }
+        var block=getBlock(range);
+        if(!block) return;
+
+        if(e.key==='Enter'||e.keyCode===13||e.which===13){
+          if(block.nodeName==='LI') return;
+          if(block.nodeName==='P'||block.nodeName==='DIV'){
+            e.preventDefault();
+            document.execCommand('insertParagraph',false,null);
+            sync();
+            return;
+          }
+        }
+
+        if(e.key==='Backspace'){
+          if(block.nodeName==='LI'&&isAtBlockStart(range, block)){
+            e.preventDefault();
+            if(isBlockEmpty(block)){
+              document.execCommand('outdent',false,null);
+            }else{
+              document.execCommand('insertParagraph',false,null);
+            }
+            sync();
+            return;
+          }
+          if((block.nodeName==='P'||block.nodeName==='DIV')&&isAtBlockStart(range, block)){
+            var h1=el.querySelector('h1');
+            if(h1&&block!==h1){
+              if(isFirstBodyBlock(block)){
+                if(isBlockEmpty(block)){
+                  e.preventDefault();
+                  block.innerHTML='<br>';
+                  placeCursorAtEnd(h1);
+                  sync();
+                  return;
+                }
+                e.preventDefault();
+                placeCursorAtEnd(h1);
+                return;
+              }
+              if(isBlockEmpty(block)){
+                e.preventDefault();
+                var prevBody=getPreviousBodyBlock(block);
+                block.remove();
+                if(prevBody) placeCursorAtEnd(prevBody);
+                sync();
+                return;
+              }
+              return;
+            }
+          }
+          if(block.nodeName==='H1'&&isAtBlockStart(range, block)&&isBlockEmpty(block)){
+            e.preventDefault();
+            return;
+          }
+        }
+
+        if(e.key!=='Enter'&&!(e.key===' '||e.keyCode===32)) return;
+        var linePrefix=getLinePrefixAtCursor(range);
+        var isBulletTrigger=(e.key==='Enter'&&(linePrefix==='-'||linePrefix==='*'))||(e.key===' '&&(linePrefix==='-'||linePrefix==='*'));
+        var isOrderedTrigger=(e.key===' ')&&/^[1][\\.)]$/.test(linePrefix);
+        if(isBulletTrigger||isOrderedTrigger){
+          e.preventDefault();
+          deleteCharsBeforeCursor(range, linePrefix.length);
+          if(isBulletTrigger){
+            document.execCommand('insertUnorderedList',false,null);
+          }else{
+            document.execCommand('insertOrderedList',false,null);
+          }
+          sync();
+        }
+      });
+
+      var lastTap=0;
+      el.addEventListener('touchend',function(e){
+        var now=Date.now();
+        if(now-lastTap<300){
+          if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('__DOUBLE_TAP__');
+          e.preventDefault();
+        }
+        lastTap=now;
+      });
+    })();
+  `;
 
 /** Base editor HTML with empty content; real content is injected in onLoadEnd to avoid escaping/timing issues. */
 function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: boolean): string {
@@ -103,10 +539,12 @@ function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: b
     : '';
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/><style>
     *{box-sizing:border-box}
-    body{margin:0;padding:0 20px 20px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:1.6;background:${safeBg};color:${safeText};min-height:100vh;-webkit-user-select:auto;user-select:auto}
-    #content{outline:0;min-height:200px;padding-top:12px}
-    #content:empty:before{content:attr(data-placeholder);color:gray}
-    #content p{margin:0 0 4px 0}
+    body{margin:0;padding:0 16px 16px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:1.5;background:${safeBg};color:${safeText};min-height:100vh;-webkit-user-select:auto;user-select:auto}
+    #content{outline:0;min-height:200px;padding-top:0}
+    #content h1{font-size:26px;font-weight:700;margin:0 0 6px 0;padding:0;line-height:1.25}
+    #content h1:empty:before{content:attr(data-placeholder);color:gray;font-weight:700}
+    #content p{margin:0 0 4px 0;font-size:16px;font-weight:400;line-height:1.5}
+    #content>div{margin:0 0 4px 0;font-size:16px;font-weight:400;line-height:1.5}
     #content ul,#content ol{margin:4px 0;padding-left:20px}
     #content ul ul,#content ol ol,#content ul ol,#content ol ul{margin:2px 0;padding-left:16px}
     #content li{margin:2px 0;padding-left:0}
@@ -115,70 +553,15 @@ function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: b
     table{border-collapse:collapse;width:100%;margin:8px 0}
     td,th{border:1px solid ${safeText}40;padding:8px}
     ${darkModeBlackTextFix}
-  </style></head><body><div id="content" contenteditable="true" data-placeholder="Start typing..."></div>
-  <script>
-    (function(){
-      var el=document.getElementById('content');
-      el.innerHTML='<p><br><\\/p>';
-      function send(){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(el.innerHTML); }
-      function sendUndoState(){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('__UNDO_STATE__:'+JSON.stringify({canUndo:document.queryCommandEnabled('undo'),canRedo:document.queryCommandEnabled('redo')})); }
-      setTimeout(function(){
-        el.addEventListener('input',function(){ send(); sendUndoState(); });
-        el.addEventListener('blur',function(){ send(); sendUndoState(); });
-        el.addEventListener('paste',function(){ setTimeout(function(){ send(); sendUndoState(); },0); });
-      },0);
-
-      // Auto-list shortcuts: "- " or "-[Enter]" → bullet list, "1. "[Enter] → numbered list
-      el.addEventListener('keydown',function(e){
-        if(e.key!=='Enter'&&!(e.key===' '||e.keyCode===32)) return;
-        var sel=window.getSelection();
-        if(!sel||sel.rangeCount===0) return;
-        var range=sel.getRangeAt(0);
-        if(!range.collapsed) return;
-        // Walk up from cursor to find the current block element
-        var node=range.startContainer;
-        var block=node.nodeType===3?node.parentNode:node;
-        while(block&&block!==el&&!['P','DIV','H1','H2','H3','H4'].includes(block.nodeName)){
-          block=block.parentNode;
-        }
-        if(!block||block===el) return;
-        var text=(block.textContent||'').trimEnd();
-        var isBulletTrigger=(e.key==='Enter'&&(text==='-'||text==='*'))||(e.key===' '&&(text==='-'||text==='*'));
-        var isOrderedTrigger=(e.key===' ')&&/^[1][\\.)]$/.test(text);
-        if(isBulletTrigger){
-          e.preventDefault();
-          block.textContent='';
-          document.execCommand('insertUnorderedList',false,null);
-          send(); sendUndoState();
-          return;
-        }
-        if(isOrderedTrigger){
-          e.preventDefault();
-          block.textContent='';
-          document.execCommand('insertOrderedList',false,null);
-          send(); sendUndoState();
-          return;
-        }
-      });
-
-      var lastTap=0;
-      el.addEventListener('touchend',function(e){
-        var now=Date.now();
-        if(now-lastTap<300){
-          if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('__DOUBLE_TAP__');
-          e.preventDefault();
-        }
-        lastTap=now;
-      });
-    })();
-  </script></body></html>`;
+  </style></head><body><div id="content" contenteditable="true"><h1 data-placeholder="Title"></h1><p><br></p></div>
+  <script>${DRAFT_EDITOR_SCRIPT}</script></body></html>`;
 }
 
 /** Blur editor + clear selection so the system keyboard hides; blur listener may postMessage, else we post here. */
 const DRAFT_WEBVIEW_BLUR_FOR_SAVE_JS = `(function(){
   var el=document.getElementById('content');
   if(!el){
-    if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('<p><br></p>');
+    if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage('${EMPTY_DRAFT_HTML}');
     return;
   }
   var html=el.innerHTML;
@@ -240,10 +623,14 @@ export default function DraftEditScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [showColorPicker, setShowColorPicker] = useState<'fore' | 'back' | null>(null);
   const [showFontSizePicker, setShowFontSizePicker] = useState(false);
-  const [isOffline, setIsOffline] = useState(false);
-  const { offlineBannerVisible, showOfflineBannerAfterDelay, showOfflineBannerNow } = useDelayedOfflineBanner(isOffline);
+  const [localSaveToastVisible, setLocalSaveToastVisible] = useState(false);
+  const localSaveToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLocalSaveToastAtRef = useRef(0);
+  const localSaveToastDismissedRef = useRef(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'local' | 'error' | null>(null);
   const initialFilenameRef = useRef<string | null>(null);
+  const filenameManuallyEditedRef = useRef(false);
+  const skipFilenameManualMarkRef = useRef(false);
   const currentFilenameRef = useRef<string>('Untitled Note');
   const renameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftLoadedRef = useRef(false);
@@ -254,6 +641,39 @@ export default function DraftEditScreen() {
   useEffect(() => {
     if (share === '1') setShowShareModal(true);
   }, [share]);
+
+  const dismissLocalSaveToast = useCallback(() => {
+    localSaveToastDismissedRef.current = true;
+    setLocalSaveToastVisible(false);
+    if (localSaveToastTimerRef.current) {
+      clearTimeout(localSaveToastTimerRef.current);
+      localSaveToastTimerRef.current = null;
+    }
+  }, []);
+
+  const showLocalSaveToastIfDue = useCallback(() => {
+    if (localSaveToastDismissedRef.current) return;
+    const now = Date.now();
+    if (now - lastLocalSaveToastAtRef.current < LOCAL_SAVE_TOAST_COOLDOWN_MS) return;
+    lastLocalSaveToastAtRef.current = now;
+    setLocalSaveToastVisible(true);
+    if (localSaveToastTimerRef.current) clearTimeout(localSaveToastTimerRef.current);
+    localSaveToastTimerRef.current = setTimeout(() => {
+      localSaveToastTimerRef.current = null;
+      setLocalSaveToastVisible(false);
+    }, LOCAL_SAVE_TOAST_MS);
+  }, []);
+
+  useEffect(() => {
+    if (saveStatus !== 'local') return;
+    showLocalSaveToastIfDue();
+  }, [saveStatus, showLocalSaveToastIfDue]);
+
+  useEffect(() => {
+    return () => {
+      if (localSaveToastTimerRef.current) clearTimeout(localSaveToastTimerRef.current);
+    };
+  }, []);
 
   // Load external shares when modals open
   useEffect(() => {
@@ -408,28 +828,34 @@ export default function DraftEditScreen() {
         // 1. Load from local cache immediately (no network needed)
         const cached = await draftsCache.getDraftContent(userId, draftId);
         if (cached && !cancelled) {
-          const cachedHtml = cached.content_html || '<p><br></p>';
-          setFilename(cached.filename || 'Untitled Note');
-          initialFilenameRef.current = cached.filename || 'Untitled Note';
+          const cachedHtml = ensureDraftHtmlStructure(cached.content_html || EMPTY_DRAFT_HTML);
+          const cachedName = cached.filename || 'Untitled Note';
+          setFilename(stripExtension(cachedName));
+          initialFilenameRef.current = stripExtension(cachedName);
+          filenameManuallyEditedRef.current = !isDefaultUntitledName(cachedName);
+          const titleInContent = extractTitleFromDraftHtml(cachedHtml);
+          if (titleInContent && isDefaultUntitledName(cachedName)) {
+            setFilename(titleInContent);
+            currentFilenameRef.current = titleInContent;
+          }
           setContentText(stripHtmlToText(cachedHtml));
           setContentHtml(cachedHtml);
           setInitialEditorHtml(cachedHtml);
           contentToInjectRef.current = cachedHtml;
           if (cached.version != null) lastKnownVersionRef.current = Number(cached.version);
           if (cached.updated_at != null) lastKnownUpdatedAtRef.current = String(cached.updated_at);
-          ignoreFirstEmptyMessageRef.current = !!(cachedHtml && stripHtmlToText(cachedHtml).trim());
+          ignoreFirstEmptyMessageRef.current = !isDraftHtmlEmpty(cachedHtml);
           draftLoadedRef.current = true;
           setLoading(false);
         }
 
         // Local-only drafts (negative IDs) never fetch from API.
         if (draftsCache.isLocalDraftId(draftId)) {
-          setIsOffline(true);
-          showOfflineBannerNow();
           if (!cached) {
-            const emptyHtml = '<p><br></p>';
+            const emptyHtml = EMPTY_DRAFT_HTML;
             setFilename('Untitled Note');
             initialFilenameRef.current = 'Untitled Note';
+            filenameManuallyEditedRef.current = false;
             setContentText('');
             setContentHtml(emptyHtml);
             setInitialEditorHtml(emptyHtml);
@@ -437,9 +863,9 @@ export default function DraftEditScreen() {
             draftLoadedRef.current = true;
             wasCreatedEmptyRef.current = true;
           } else {
-            const cachedText = stripHtmlToText(cached.content_html || '').trim();
             const cachedTitle = (cached.filename || 'Untitled Note').trim();
-            wasCreatedEmptyRef.current = !cachedText && cachedTitle === 'Untitled Note';
+            const localCachedHtml = ensureDraftHtmlStructure(cached.content_html || EMPTY_DRAFT_HTML);
+            wasCreatedEmptyRef.current = isDraftHtmlEmpty(localCachedHtml) && cachedTitle === 'Untitled Note';
           }
           return;
         }
@@ -453,6 +879,7 @@ export default function DraftEditScreen() {
           const name = (res as any).filename ?? data?.filename ?? 'Untitled Note';
           const ver = (res as any).version ?? data?.version;
           const updatedAt = (res as any).updated_at ?? data?.updated_at;
+          const safeHtml = ensureDraftHtmlStructure(html || EMPTY_DRAFT_HTML);
 
           // Only update UI if server has newer content than cache
           const serverVersion = ver != null ? Number(ver) : null;
@@ -460,26 +887,31 @@ export default function DraftEditScreen() {
           const serverIsNewer = serverVersion == null || cacheVersion == null || serverVersion > cacheVersion;
 
           if (serverIsNewer || !cached) {
-            setFilename(name);
-            initialFilenameRef.current = name;
+            const displayName = stripExtension(name);
+            setFilename(displayName);
+            initialFilenameRef.current = displayName;
+            filenameManuallyEditedRef.current = !isDefaultUntitledName(name);
+            const titleInContent = extractTitleFromDraftHtml(safeHtml);
+            if (titleInContent && isDefaultUntitledName(name)) {
+              setFilename(titleInContent);
+              currentFilenameRef.current = titleInContent;
+            }
             draftLoadedRef.current = true;
-            setContentText(stripHtmlToText(html));
-            setContentHtml(html);
-            const safeHtml = html || '<p><br></p>';
+            setContentText(stripHtmlToText(safeHtml));
+            setContentHtml(safeHtml);
             setInitialEditorHtml(safeHtml);
             contentToInjectRef.current = safeHtml;
             if (ver != null) lastKnownVersionRef.current = Number(ver);
             if (updatedAt != null) lastKnownUpdatedAtRef.current = String(updatedAt);
-            ignoreFirstEmptyMessageRef.current = !!(html && stripHtmlToText(html).trim());
-            wasCreatedEmptyRef.current = !stripHtmlToText(html).trim() && (name === 'Untitled Note' || !name);
+            ignoreFirstEmptyMessageRef.current = !isDraftHtmlEmpty(safeHtml);
+            wasCreatedEmptyRef.current = isDraftHtmlEmpty(safeHtml) && (name === 'Untitled Note' || !name);
             // Inject updated content into WebView if already rendered
             if (cached) {
-              const script = `(function(){ var el=document.getElementById('content'); if(el) el.innerHTML=${JSON.stringify(safeHtml)}; })(); true;`;
+              const script = `(function(){ var el=document.getElementById('content'); if(el){ el.innerHTML=${JSON.stringify(safeHtml)}; var h1=el.querySelector('h1'); if(h1&&window.ReactNativeWebView){ var t=(h1.textContent||'').replace(/\\u00a0/g,' ').trim(); if(t) window.ReactNativeWebView.postMessage('__TITLE__:'+t); } } })(); true;`;
               webViewRef.current?.injectJavaScript(script);
             }
           }
 
-          setIsOffline(false);
           // Persist to cache
           await draftsCache.saveDraftContent(userId, draftId, {
             filename: name,
@@ -495,8 +927,6 @@ export default function DraftEditScreen() {
       } catch (e: any) {
         if (cancelled) return;
         if (isNetworkError(e)) {
-          setIsOffline(true);
-          showOfflineBannerAfterDelay();
           if (!draftLoadedRef.current) {
             // No cache and no network — go back
             Alert.alert('Offline', 'This note is not available offline yet. Open it while online first to cache it locally.', [
@@ -516,7 +946,7 @@ export default function DraftEditScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [draftId, userId, router, showOfflineBannerAfterDelay, showOfflineBannerNow]);
+  }, [draftId, userId, router]);
 
   // Socket.IO: connect, join document room, presence
   useEffect(() => {
@@ -623,7 +1053,7 @@ export default function DraftEditScreen() {
   }, [draftId, user?.id, user?.name, user?.email]);
 
   const normalizeHtml = useCallback((html: string): string => {
-    if (!html) return '<p></p>';
+    if (!html) return EMPTY_DRAFT_HTML;
     // Preserve all formatting tags exactly as generated by document.execCommand
     // Only do minimal normalization for consistency
     let normalized = html;
@@ -669,8 +1099,6 @@ export default function DraftEditScreen() {
           plainText,
           filename: currentFilenameRef.current || 'Untitled Note',
         });
-        setIsOffline(true);
-        showOfflineBannerNow();
         setSaveStatus('local');
         setHasUnsavedChanges(false);
         return;
@@ -685,7 +1113,6 @@ export default function DraftEditScreen() {
       }
       const res = await apiClient.saveDraft(draftId, html, plainText);
       setHasUnsavedChanges(false);
-      setIsOffline(false);
       setSaveStatus('saved');
       // Remove from pending queue on successful save
       await draftsCache.removePendingSave(userId, draftId);
@@ -705,8 +1132,6 @@ export default function DraftEditScreen() {
         Alert.alert('Someone else is editing', 'Your changes were not saved. Someone else is editing this note.');
       } else if (isNetworkError(e)) {
         // Queue for later sync — content already saved locally above
-        setIsOffline(true);
-        showOfflineBannerAfterDelay();
         setSaveStatus('local');
         await draftsCache.addPendingSave(userId, {
           id: draftId,
@@ -722,7 +1147,7 @@ export default function DraftEditScreen() {
     } finally {
       setSaving(false);
     }
-  }, [draftId, userId, normalizeHtml, showOfflineBannerAfterDelay, showOfflineBannerNow]);
+  }, [draftId, userId, normalizeHtml]);
 
   const refetchDraftContent = useCallback(async (version: number, updatedAt: string) => {
     if (!draftId || isNaN(draftId)) return;
@@ -732,7 +1157,7 @@ export default function DraftEditScreen() {
       if (!(res as any)?.success) return;
       const data = (res as any).data ?? res;
       const html = (res as any).content_html ?? data?.content_html ?? '';
-      const safeHtml = html || '<p><br></p>';
+      const safeHtml = ensureDraftHtmlStructure(html || EMPTY_DRAFT_HTML);
       setContentHtml(safeHtml);
       setContentText(stripHtmlToText(safeHtml));
       contentHtmlRef.current = safeHtml;
@@ -764,7 +1189,6 @@ export default function DraftEditScreen() {
       try {
         await apiClient.saveDraft(draftId, item.html, item.plainText);
         await draftsCache.removePendingSave(userId, draftId);
-        setIsOffline(false);
         setSaveStatus('saved');
         setHasUnsavedChanges(false);
         if (item.filename) {
@@ -784,7 +1208,6 @@ export default function DraftEditScreen() {
     try {
       await apiClient.renameFile(draftId, rename.filename);
       await draftsCache.removePendingRename(userId, draftId);
-      setIsOffline(false);
       setSaveStatus('saved');
     } catch {
       // Still offline — leave in queue
@@ -818,6 +1241,24 @@ export default function DraftEditScreen() {
     }, 2000);
   }, [handleSave]);
 
+  const syncFilenameFromTitle = useCallback((title: string) => {
+    if (filenameManuallyEditedRef.current) return;
+    const name = title.trim() || 'Untitled Note';
+    const current = stripExtension(currentFilenameRef.current || '').trim();
+    if (name === current) return;
+    if (name === 'Untitled Note' && isDefaultUntitledName(currentFilenameRef.current)) return;
+
+    skipFilenameManualMarkRef.current = true;
+    setFilename(name);
+    currentFilenameRef.current = name;
+    if (userId && draftId && !isNaN(draftId)) {
+      void draftsCache.updateCachedFilename(userId, draftId, name);
+    }
+    setTimeout(() => {
+      skipFilenameManualMarkRef.current = false;
+    }, 0);
+  }, [draftId, userId]);
+
   const handleWebViewMessage = useCallback((event: { nativeEvent: { data: string } }) => {
     const rawHtml = event.nativeEvent.data || '';
     
@@ -838,8 +1279,13 @@ export default function DraftEditScreen() {
       } catch {}
       return;
     }
+
+    if (rawHtml.startsWith('__TITLE__:')) {
+      syncFilenameFromTitle(rawHtml.slice('__TITLE__:'.length));
+      return;
+    }
     
-    const isEmpty = !rawHtml || rawHtml === '<p><br></p>' || !stripHtmlToText(rawHtml).trim();
+    const isEmpty = isDraftHtmlEmpty(rawHtml);
     if (isEmpty && ignoreFirstEmptyMessageRef.current) {
       ignoreFirstEmptyMessageRef.current = false;
       return;
@@ -849,6 +1295,7 @@ export default function DraftEditScreen() {
     contentHtmlRef.current = html;
     setContentText(stripHtmlToText(html));
     contentTextRef.current = stripHtmlToText(html);
+    syncFilenameFromTitle(extractTitleFromDraftHtml(html));
     if (saveRequestedRef.current) {
       saveRequestedRef.current = false;
       handleSave(html, true);
@@ -860,11 +1307,33 @@ export default function DraftEditScreen() {
       saveTimeoutRef.current = null;
       handleSave(html, true);
     }, 2000);
-  }, [handleSave, normalizeHtml, toggleHeader, toggleEnabled]);
+  }, [handleSave, normalizeHtml, syncFilenameFromTitle, toggleHeader, toggleEnabled]);
 
   const handleWebViewLoadEnd = useCallback(() => {
-    const html = contentToInjectRef.current || '<p><br></p>';
-    const script = `(function(){ var el=document.getElementById('content'); if(el) el.innerHTML=${JSON.stringify(html)}; })(); true;`;
+    const html = contentToInjectRef.current || EMPTY_DRAFT_HTML;
+    const script = `(function(){
+      var el=document.getElementById('content');
+      if(!el) return;
+      el.innerHTML=${JSON.stringify(html)};
+      var h1=el.querySelector('h1');
+      if(h1&&!h1.getAttribute('data-placeholder')) h1.setAttribute('data-placeholder','Title');
+      var hasBody=false;
+      var n=h1?h1.nextSibling:null;
+      while(n){
+        if(n.nodeType===1&&(n.nodeName==='P'||n.nodeName==='DIV')){ hasBody=true; break; }
+        n=n.nextSibling;
+      }
+      if(h1&&!hasBody){
+        var p=document.createElement('p');
+        p.innerHTML='<br>';
+        if(h1.nextSibling) el.insertBefore(p,h1.nextSibling);
+        else el.appendChild(p);
+      }
+      if(h1&&window.ReactNativeWebView){
+        var t=(h1.textContent||'').replace(/\\u00a0/g,' ').trim();
+        if(t) window.ReactNativeWebView.postMessage('__TITLE__:'+t);
+      }
+    })(); true;`;
     webViewRef.current?.injectJavaScript(script);
   }, []);
 
@@ -1074,7 +1543,8 @@ export default function DraftEditScreen() {
   /** Persist current filename to server if it changed. Call on blur, Back, and Save. */
   const persistFilenameIfChanged = useCallback(async (): Promise<void> => {
     const name = (currentFilenameRef.current || '').trim() || 'Untitled Note';
-    if (name === (initialFilenameRef.current ?? '')) return;
+    const initial = stripExtension(initialFilenameRef.current ?? '').trim() || 'Untitled Note';
+    if (stripExtension(name).trim() === initial) return;
     if (!draftId || isNaN(draftId) || !userId) return;
     // Always update local cache immediately
     await draftsCache.updateCachedFilename(userId, draftId, name);
@@ -1088,19 +1558,22 @@ export default function DraftEditScreen() {
     } catch (e: any) {
       if (!isNetworkError(e)) throw e;
       await draftsCache.addPendingRename(userId, { id: draftId, filename: name });
-      setIsOffline(true);
-      showOfflineBannerAfterDelay();
       setSaveStatus('local');
     }
-  }, [draftId, userId, showOfflineBannerAfterDelay]);
+  }, [draftId, userId]);
+
+  const reportRenamePersistError = useCallback((e: any) => {
+    if (isNetworkError(e)) return;
+    Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename note'));
+  }, []);
 
   const handleRenameBlur = useCallback(async () => {
     try {
       await persistFilenameIfChanged();
     } catch (e: any) {
-      Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename note'));
+      reportRenamePersistError(e);
     }
-  }, [persistFilenameIfChanged]);
+  }, [persistFilenameIfChanged, reportRenamePersistError]);
 
   const handleAskChatGD = useCallback(() => {
     setEditorMenuVisible(false);
@@ -1125,9 +1598,9 @@ export default function DraftEditScreen() {
     // If the note was opened empty and the user never added content or changed
     // the title, discard it entirely rather than leaving an empty shell.
     if (wasCreatedEmptyRef.current) {
-      const currentText = stripHtmlToText(contentHtmlRef.current).trim();
+      const titleFromEditor = extractTitleFromDraftHtml(contentHtmlRef.current);
       const currentTitle = (currentFilenameRef.current || '').trim();
-      const stillEmpty = !currentText;
+      const stillEmpty = isDraftBodyEmpty(contentHtmlRef.current) && !titleFromEditor;
       const stillUntitled = !currentTitle || currentTitle === 'Untitled Note';
 
       if (stillEmpty && stillUntitled) {
@@ -1173,19 +1646,18 @@ export default function DraftEditScreen() {
     if (!draftId || isNaN(draftId) || !draftLoadedRef.current) return;
     if (renameTimeoutRef.current) clearTimeout(renameTimeoutRef.current);
     const name = (filename || '').trim() || 'Untitled Note';
-    if (name === (initialFilenameRef.current ?? '')) return;
+    const initial = stripExtension(initialFilenameRef.current ?? '').trim() || 'Untitled Note';
+    if (stripExtension(name).trim() === initial) return;
     const timeoutId = setTimeout(() => {
       renameTimeoutRef.current = null;
-      persistFilenameIfChanged().catch((e: any) => {
-        Alert.alert('Rename failed', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not rename note'));
-      });
+      persistFilenameIfChanged().catch(reportRenamePersistError);
     }, 600);
     renameTimeoutRef.current = timeoutId;
     return () => {
       clearTimeout(timeoutId);
       if (renameTimeoutRef.current === timeoutId) renameTimeoutRef.current = null;
     };
-  }, [draftId, filename, persistFilenameIfChanged]);
+  }, [draftId, filename, persistFilenameIfChanged, reportRenamePersistError]);
 
   const others = Array.from(presenceEditors.entries()).map(([uid, name]) => ({ id: uid, name }));
   const othersLabel = others.length === 0
@@ -1319,13 +1791,19 @@ export default function DraftEditScreen() {
       alignItems: 'center',
       backgroundColor: '#FF9500',
       paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingVertical: 8,
+      borderRadius: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 4,
+      elevation: 4,
     },
     offlineBannerText: {
-      fontSize: 12,
+      fontSize: 13,
       color: '#fff',
       fontWeight: '600',
-      marginLeft: 6,
+      marginLeft: 8,
       flex: 1,
     },
     presenceBar: {
@@ -1347,8 +1825,8 @@ export default function DraftEditScreen() {
       position: 'absolute',
       left: 6,
       right: 6,
-      paddingVertical: 8,
-      paddingHorizontal: 8,
+      paddingVertical: 4,
+      paddingHorizontal: 6,
       backgroundColor: colors.card,
       borderRadius: 14,
       borderWidth: StyleSheet.hairlineWidth,
@@ -1363,20 +1841,43 @@ export default function DraftEditScreen() {
     toolBtn: {
       alignItems: 'center',
       justifyContent: 'center',
-      minWidth: 44,
-      height: 38,
+      minWidth: 48,
+      height: 44,
       borderRadius: 9,
-      marginRight: 3,
+      marginRight: 2,
       backgroundColor: colors.background,
-      paddingHorizontal: 8,
+      paddingHorizontal: 6,
     },
     toolBtnDivider: {
       width: StyleSheet.hairlineWidth,
-      height: 26,
+      height: 28,
       backgroundColor: colors.border,
-      marginHorizontal: 6,
+      marginHorizontal: 4,
     },
     editorWrap: { flex: 1, paddingTop: 0, paddingBottom: 0, paddingHorizontal: 0 },
+    localSaveToast: {
+      position: 'absolute',
+      top: 8,
+      left: 12,
+      right: 12,
+      zIndex: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#FF9500',
+      paddingLeft: 12,
+      paddingRight: 4,
+      paddingVertical: 8,
+      borderRadius: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 4,
+      elevation: 4,
+    },
+    localSaveToastCloseBtn: {
+      padding: 8,
+      marginLeft: 4,
+    },
     editor: {
       flex: 1,
       fontSize: 16,
@@ -1549,7 +2050,7 @@ export default function DraftEditScreen() {
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       <TapToToggleHeaderView style={{ flex: 1 }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        <AnimatedHeaderContainer height={100}>
+        <AnimatedHeaderContainer height={64}>
           <View style={dynamicStyles.header}>
             <TouchableOpacity style={dynamicStyles.backBtn} onPress={handleBack}>
               <Ionicons name="chevron-back" size={30} color={colors.primary || '#007AFF'} />
@@ -1559,7 +2060,12 @@ export default function DraftEditScreen() {
                 ref={filenameInputRef}
                 style={dynamicStyles.titleInput}
                 value={filename}
-                onChangeText={setFilename}
+                onChangeText={(text) => {
+                  if (!skipFilenameManualMarkRef.current) {
+                    filenameManuallyEditedRef.current = true;
+                  }
+                  setFilename(text);
+                }}
                 onBlur={handleRenameBlur}
                 placeholder="Untitled Note"
                 placeholderTextColor={colors.textSecondary}
@@ -1586,20 +2092,6 @@ export default function DraftEditScreen() {
               </TouchableOpacity>
             </View>
           </View>
-          {offlineBannerVisible && (
-            <View style={dynamicStyles.offlineBanner}>
-              <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
-              <Text style={dynamicStyles.offlineBannerText}>
-                {saveStatus === 'local' ? 'Offline — saved locally, will sync when online' : 'Offline — changes saved locally'}
-              </Text>
-            </View>
-          )}
-          {!isOffline && saveStatus === 'local' && (
-            <View style={[dynamicStyles.offlineBanner, { backgroundColor: '#34C759' }]}>
-              <Ionicons name="checkmark-circle-outline" size={14} color="#fff" />
-              <Text style={dynamicStyles.offlineBannerText}>Back online — syncing local changes...</Text>
-            </View>
-          )}
           {othersLabel ? (
             <TouchableOpacity
               style={dynamicStyles.presenceBar}
@@ -1614,6 +2106,20 @@ export default function DraftEditScreen() {
         </AnimatedHeaderContainer>
 
         <View style={dynamicStyles.editorWrap}>
+          {localSaveToastVisible ? (
+            <View style={dynamicStyles.localSaveToast}>
+              <Ionicons name="cloud-offline-outline" size={16} color="#fff" />
+              <Text style={dynamicStyles.offlineBannerText}>Saved locally — will sync when online</Text>
+              <TouchableOpacity
+                style={dynamicStyles.localSaveToastCloseBtn}
+                onPress={dismissLocalSaveToast}
+                accessibilityLabel="Dismiss saved locally notice"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
           {initialEditorHtml !== null ? (
             <WebView
               key={`draft-${draftId}`}
@@ -1649,12 +2155,12 @@ export default function DraftEditScreen() {
             {/* Undo / Redo */}
             {canUndo && (
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('undo')} accessibilityLabel="Undo">
-              <Ionicons name="arrow-undo-outline" size={22} color={colors.text} />
+              <Ionicons name="arrow-undo-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             )}
             {canRedo && (
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('redo')} accessibilityLabel="Redo">
-              <Ionicons name="arrow-redo-outline" size={22} color={colors.text} />
+              <Ionicons name="arrow-redo-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             )}
 
@@ -1662,20 +2168,20 @@ export default function DraftEditScreen() {
 
             {/* Bold / Italic / Underline */}
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('bold')} accessibilityLabel="Bold">
-              <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.5 }}>B</Text>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, letterSpacing: -0.5 }}>B</Text>
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('italic')} accessibilityLabel="Italic">
-              <Text style={{ fontSize: 18, fontStyle: 'italic', fontWeight: '700', color: colors.text }}>I</Text>
+              <Text style={{ fontSize: 20, fontStyle: 'italic', fontWeight: '700', color: colors.text }}>I</Text>
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('underline')} accessibilityLabel="Underline">
-              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, textDecorationLine: 'underline' }}>U</Text>
+              <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, textDecorationLine: 'underline' }}>U</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={dynamicStyles.toolBtn}
               onPress={() => { setShowColorPicker(null); setShowFontSizePicker(true); }}
               accessibilityLabel="Font size"
             >
-              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Aa</Text>
+              <Text style={{ fontSize: 19, fontWeight: '700', color: colors.text }}>Aa</Text>
             </TouchableOpacity>
 
             <View style={dynamicStyles.toolBtnDivider} />
@@ -1688,26 +2194,26 @@ export default function DraftEditScreen() {
               <Ionicons name="reorder-four-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('indent')} accessibilityLabel="Indent">
-              <Ionicons name="chevron-forward-outline" size={22} color={colors.text} />
+              <Ionicons name="chevron-forward-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => execCommandAndSync('outdent')} accessibilityLabel="Outdent">
-              <Ionicons name="chevron-back-outline" size={22} color={colors.text} />
+              <Ionicons name="chevron-back-outline" size={24} color={colors.text} />
             </TouchableOpacity>
 
             <View style={dynamicStyles.toolBtnDivider} />
 
             {/* Link / Color / Table */}
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={toggleLink} accessibilityLabel="Link">
-              <Ionicons name="link-outline" size={22} color={colors.text} />
+              <Ionicons name="link-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => setShowColorPicker('fore')} accessibilityLabel="Text color">
-              <Ionicons name="color-palette-outline" size={22} color={colors.text} />
+              <Ionicons name="color-palette-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={() => setShowColorPicker('back')} accessibilityLabel="Highlight">
-              <Ionicons name="color-fill-outline" size={22} color={colors.text} />
+              <Ionicons name="color-fill-outline" size={24} color={colors.text} />
             </TouchableOpacity>
             <TouchableOpacity style={dynamicStyles.toolBtn} onPress={insertTable} accessibilityLabel="Insert table">
-              <Ionicons name="grid-outline" size={22} color={colors.text} />
+              <Ionicons name="grid-outline" size={24} color={colors.text} />
             </TouchableOpacity>
           </ScrollView>
         </View>

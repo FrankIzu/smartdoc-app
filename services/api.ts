@@ -1326,12 +1326,8 @@ class ApiService {
    * PUT /api/v1/web/files/:id/rename with body { filename }.
    */
   async renameFile(fileId: number, filename: string): Promise<ApiResponse> {
-    try {
-      const response = await this.client.put(`/api/v1/web/files/${fileId}/rename`, { filename });
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.message || 'Rename failed');
-    }
+    const response = await this.client.put(`/api/v1/web/files/${fileId}/rename`, { filename });
+    return response.data;
   }
 
   // ==================== DRAFT API (web endpoints, Bearer auth) ====================
