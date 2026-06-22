@@ -2770,6 +2770,7 @@ class ApiService {
         onChunk('error', {
           type: 'error',
           message: userFriendlyMessage,
+          content: userFriendlyMessage,
           error: error.message
         });
       }

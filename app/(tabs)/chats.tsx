@@ -4409,14 +4409,19 @@ export default function ChatsScreen() {
           }, (data.content?.length || 0) * 50 + 1000);
           break;
 
-        case 'error':
-          console.error('❌ Streaming error:', data.error);
+        case 'error': {
+          const errorText =
+            data.message ||
+            data.content ||
+            data.error ||
+            'Sorry, there was an error processing your request. Please try again.';
+          console.error('❌ Streaming error:', errorText);
           setMessages(prev => {
             const newMessages = [...prev];
             if (newMessages[assistantMessageIndex]) {
               newMessages[assistantMessageIndex] = {
                 ...newMessages[assistantMessageIndex],
-                content: data.content || 'Sorry, there was an error processing your request. Please try again.',
+                content: errorText,
                 is_own_message: false,
                 sender: { id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' },
                 refining_answer_pending: false,
@@ -4428,6 +4433,7 @@ export default function ChatsScreen() {
           setSendingMessage(false);
           stopBounceAnimation();
           break;
+        }
 
         case 'chunk':
         case 'preview_chunk': {
