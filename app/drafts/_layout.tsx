@@ -1,11 +1,11 @@
-import { Stack } from 'expo-router';
+import React from 'react';
+import { DraftsSplitProvider } from '../../contexts/DraftsSplitContext';
+import DraftsSplitLayout from '../../components/drafts/DraftsSplitLayout';
 
 export default function DraftsLayout() {
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" options={{ title: 'Notes', headerShown: false }} />
-      <Stack.Screen name="recent" options={{ title: 'Deleted & shared', headerShown: false }} />
-      <Stack.Screen name="edit/[id]" options={{ presentation: 'card', headerShown: false }} />
-    </Stack>
+    <DraftsSplitProvider>
+      <DraftsSplitLayout />
+    </DraftsSplitProvider>
   );
 }

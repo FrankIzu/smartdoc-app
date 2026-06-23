@@ -9,6 +9,7 @@ import {
     Dimensions,
     Keyboard,
     KeyboardAvoidingView,
+    LayoutChangeEvent,
     Modal,
     NativeScrollEvent,
     NativeSyntheticEvent,
@@ -32,6 +33,7 @@ import {
 } from '../../../contexts/HeaderVisibilityContext';
 import { useTheme } from '../../../contexts/ThemeContext';
 import { useOpenChatGD } from '../../../contexts/ChatGDSheetContext';
+import { useDraftsSplitOptional } from '../../../contexts/DraftsSplitContext';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiClient } from '../../../services/api';
 import { toAlertMessage } from '../../../utils/alertUtils';
@@ -42,6 +44,8 @@ import {
   modalScrimOverlayStyle,
 } from '../../../utils/dialogSurfaceStyles';
 import { draftsCache, isNetworkError } from '../../../utils/draftsCache';
+import { syncSingleLocalDraft } from '../../../utils/draftsOfflineSync';
+import { saveLastOpenedDraft } from '../../../utils/lastOpenedDraft';
 import { secureStorage } from '../../../utils/storage';
 import { AnimatedHeaderContainer } from '../../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../../components/TapToToggleHeaderView';
@@ -515,6 +519,16 @@ const DRAFT_EDITOR_SCRIPT = `
         }
         lastTap=now;
       });
+
+      function resetTopScroll(){
+        try{
+          window.scrollTo(0,0);
+          document.documentElement.scrollTop=0;
+          document.body.scrollTop=0;
+        }catch(e0){}
+      }
+      resetTopScroll();
+      setTimeout(resetTopScroll,50);
     })();
   `;
 
@@ -539,7 +553,8 @@ function getRichEditorBaseHtml(bgColor: string, textColor: string, isDarkMode: b
     : '';
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/><style>
     *{box-sizing:border-box}
-    body{margin:0;padding:0 16px 16px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:1.5;background:${safeBg};color:${safeText};min-height:100vh;-webkit-user-select:auto;user-select:auto}
+    html{margin:0;padding:0}
+    body{margin:0;padding:0 16px 16px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:1.5;background:${safeBg};color:${safeText};min-height:100vh;-webkit-user-select:auto;user-select:auto;-webkit-overflow-scrolling:touch}
     #content{outline:0;min-height:200px;padding-top:0}
     #content h1{font-size:26px;font-weight:700;margin:0 0 6px 0;padding:0;line-height:1.25}
     #content h1:empty:before{content:attr(data-placeholder);color:gray;font-weight:700}
@@ -581,6 +596,8 @@ export default function DraftEditScreen() {
   const openChatGD = useOpenChatGD();
   const { user } = useAuth();
   const userId = user?.id;
+  const split = useDraftsSplitOptional();
+  const isSplitMode = split?.isSplit ?? false;
   const colors = useThemeColors();
   const isDarkMode = colors.isDark;
   const { isDark, setTheme } = useTheme();
@@ -589,6 +606,7 @@ export default function DraftEditScreen() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [creatingNote, setCreatingNote] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -821,6 +839,13 @@ export default function DraftEditScreen() {
     if (!draftId || isNaN(draftId) || !userId) return;
     draftLoadedRef.current = false;
     let cancelled = false;
+    const markDraftOpened = (openedId: number) => {
+      if (split) {
+        split.notifyDraftOpened(openedId);
+      } else {
+        void saveLastOpenedDraft(userId, openedId);
+      }
+    };
     (async () => {
       try {
         setLoading(true);
@@ -846,6 +871,7 @@ export default function DraftEditScreen() {
           if (cached.updated_at != null) lastKnownUpdatedAtRef.current = String(cached.updated_at);
           ignoreFirstEmptyMessageRef.current = !isDraftHtmlEmpty(cachedHtml);
           draftLoadedRef.current = true;
+          markDraftOpened(draftId);
           setLoading(false);
         }
 
@@ -861,12 +887,16 @@ export default function DraftEditScreen() {
             setInitialEditorHtml(emptyHtml);
             contentToInjectRef.current = emptyHtml;
             draftLoadedRef.current = true;
+            markDraftOpened(draftId);
             wasCreatedEmptyRef.current = true;
           } else {
             const cachedTitle = (cached.filename || 'Untitled Note').trim();
             const localCachedHtml = ensureDraftHtmlStructure(cached.content_html || EMPTY_DRAFT_HTML);
             wasCreatedEmptyRef.current = isDraftHtmlEmpty(localCachedHtml) && cachedTitle === 'Untitled Note';
           }
+          void syncSingleLocalDraft(userId, draftId).then((serverId) => {
+            if (serverId && !cancelled) router.replace(`/drafts/edit/${serverId}`);
+          });
           return;
         }
 
@@ -897,6 +927,7 @@ export default function DraftEditScreen() {
               currentFilenameRef.current = titleInContent;
             }
             draftLoadedRef.current = true;
+            markDraftOpened(draftId);
             setContentText(stripHtmlToText(safeHtml));
             setContentHtml(safeHtml);
             setInitialEditorHtml(safeHtml);
@@ -946,7 +977,7 @@ export default function DraftEditScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [draftId, userId, router]);
+  }, [draftId, userId, router, split]);
 
   // Socket.IO: connect, join document room, presence
   useEffect(() => {
@@ -1099,6 +1130,13 @@ export default function DraftEditScreen() {
           plainText,
           filename: currentFilenameRef.current || 'Untitled Note',
         });
+        const serverId = await syncSingleLocalDraft(userId, draftId);
+        if (serverId) {
+          router.replace(`/drafts/edit/${serverId}`);
+          setSaveStatus('saved');
+          setHasUnsavedChanges(false);
+          return;
+        }
         setSaveStatus('local');
         setHasUnsavedChanges(false);
         return;
@@ -1147,7 +1185,23 @@ export default function DraftEditScreen() {
     } finally {
       setSaving(false);
     }
-  }, [draftId, userId, normalizeHtml]);
+  }, [draftId, userId, normalizeHtml, router]);
+
+  /** Upload a local-only draft when back online; returns new server id or null. */
+  const trySyncLocalDraft = useCallback(async (): Promise<number | null> => {
+    if (!draftId || isNaN(draftId) || !userId || !draftsCache.isLocalDraftId(draftId)) return null;
+    const html = normalizeHtml(contentHtmlRef.current || contentHtml);
+    const plainText = stripHtmlToText(html);
+    const filename = currentFilenameRef.current || 'Untitled Note';
+    await draftsCache.saveDraftContent(userId, draftId, {
+      filename,
+      content_html: html,
+      version: lastKnownVersionRef.current ?? undefined,
+      updated_at: lastKnownUpdatedAtRef.current ?? undefined,
+    });
+    await draftsCache.updatePendingCreate(userId, draftId, { html, plainText, filename });
+    return syncSingleLocalDraft(userId, draftId);
+  }, [draftId, userId, contentHtml, normalizeHtml]);
 
   const refetchDraftContent = useCallback(async (version: number, updatedAt: string) => {
     if (!draftId || isNaN(draftId)) return;
@@ -1217,19 +1271,24 @@ export default function DraftEditScreen() {
   // Sync pending operations when app comes to foreground; also pull latest content from server
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        flushPendingOpsForDraft();
-        // Pull latest content from server if there are no local unsaved changes
-        if (!hasUnsavedRef.current) {
-          refetchDraftContentRef.current?.(
-            lastKnownVersionRef.current ?? 0,
-            lastKnownUpdatedAtRef.current ?? ''
-          );
-        }
+      if (nextState !== 'active') return;
+      if (draftsCache.isLocalDraftId(draftId)) {
+        void trySyncLocalDraft().then((serverId) => {
+          if (serverId) router.replace(`/drafts/edit/${serverId}`);
+        });
+        return;
+      }
+      flushPendingOpsForDraft();
+      // Pull latest content from server if there are no local unsaved changes
+      if (!hasUnsavedRef.current) {
+        refetchDraftContentRef.current?.(
+          lastKnownVersionRef.current ?? 0,
+          lastKnownUpdatedAtRef.current ?? ''
+        );
       }
     });
     return () => sub.remove();
-  }, [flushPendingOpsForDraft]);
+  }, [draftId, flushPendingOpsForDraft, router, trySyncLocalDraft]);
 
   const handleContentChange = useCallback((text: string) => {
     setContentText(text);
@@ -1333,6 +1392,11 @@ export default function DraftEditScreen() {
         var t=(h1.textContent||'').replace(/\\u00a0/g,' ').trim();
         if(t) window.ReactNativeWebView.postMessage('__TITLE__:'+t);
       }
+      try{
+        window.scrollTo(0,0);
+        document.documentElement.scrollTop=0;
+        document.body.scrollTop=0;
+      }catch(e1){}
     })(); true;`;
     webViewRef.current?.injectJavaScript(script);
   }, []);
@@ -1592,6 +1656,17 @@ export default function DraftEditScreen() {
     });
   }, [draftId, filename, openChatGD]);
 
+  const handleNewNote = useCallback(async () => {
+    if (creatingNote || !userId || !split) return;
+    setCreatingNote(true);
+    try {
+      const list = (await draftsCache.getDraftsList(userId)) || [];
+      await split.createAndOpenNewDraft(list);
+    } finally {
+      setCreatingNote(false);
+    }
+  }, [creatingNote, userId, split]);
+
   const handleBack = useCallback(async () => {
     if (!userId) { router.back(); return; }
 
@@ -1757,6 +1832,12 @@ export default function DraftEditScreen() {
     { value: 'member', label: 'Member' },
     { value: 'admin', label: 'Admin' },
   ];
+
+  const [headerBlockHeight, setHeaderBlockHeight] = useState(56);
+  const onHeaderBlockLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = Math.ceil(e.nativeEvent.layout.height);
+    if (h > 0) setHeaderBlockHeight(h);
+  }, []);
 
   const webViewSource = useMemo(
     () => ({ html: getRichEditorBaseHtml(colors.background || '#fff', colors.text || '#000', isDarkMode) }),
@@ -2040,22 +2121,28 @@ export default function DraftEditScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[dynamicStyles.container, { justifyContent: 'center', alignItems: 'center' }]} edges={['top']}>
+      <SafeAreaView
+        style={[dynamicStyles.container, { justifyContent: 'center', alignItems: 'center' }]}
+        edges={isSplitMode ? [] : ['top']}
+      >
         <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={dynamicStyles.container} edges={['top']}>
+    <SafeAreaView style={dynamicStyles.container} edges={isSplitMode ? [] : ['top']}>
       <TapToToggleHeaderView style={{ flex: 1 }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        <AnimatedHeaderContainer height={64}>
+        <AnimatedHeaderContainer height={headerBlockHeight}>
+          <View onLayout={onHeaderBlockLayout}>
           <View style={dynamicStyles.header}>
-            <TouchableOpacity style={dynamicStyles.backBtn} onPress={handleBack}>
-              <Ionicons name="chevron-back" size={30} color={colors.primary || '#007AFF'} />
-            </TouchableOpacity>
-            <View style={dynamicStyles.titleWrap}>
+            {!isSplitMode && (
+              <TouchableOpacity style={dynamicStyles.backBtn} onPress={handleBack}>
+                <Ionicons name="chevron-back" size={30} color={colors.primary || '#007AFF'} />
+              </TouchableOpacity>
+            )}
+            <View style={[dynamicStyles.titleWrap, isSplitMode && { paddingLeft: 12 }]}>
               <TextInput
                 ref={filenameInputRef}
                 style={dynamicStyles.titleInput}
@@ -2081,6 +2168,21 @@ export default function DraftEditScreen() {
               ) : saveStatus === 'saved' ? (
                 <Ionicons name="checkmark-circle" size={30} color="#34C759" style={{ marginRight: 2, padding: 8 }} />
               ) : null}
+              {isSplitMode && (
+                <TouchableOpacity
+                  style={dynamicStyles.headerBtn}
+                  onPress={handleNewNote}
+                  disabled={creatingNote}
+                  accessibilityLabel="New note"
+                  accessibilityRole="button"
+                >
+                  {creatingNote ? (
+                    <ActivityIndicator size="small" color={colors.primary || '#007AFF'} />
+                  ) : (
+                    <Ionicons name="create-outline" size={30} color={colors.primary || '#007AFF'} />
+                  )}
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={dynamicStyles.headerBtn}
                 onPress={() => { if (shareLink) setShowSendLinkModal(true); else setShowShareModal(true); }}
@@ -2103,6 +2205,7 @@ export default function DraftEditScreen() {
               <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} style={{ marginLeft: 4 }} />
             </TouchableOpacity>
           ) : null}
+          </View>
         </AnimatedHeaderContainer>
 
         <View style={dynamicStyles.editorWrap}>
@@ -2135,6 +2238,12 @@ export default function DraftEditScreen() {
               keyboardDisplayRequiresUserAction={false}
               nestedScrollEnabled
               hideKeyboardAccessoryView={true}
+              {...(Platform.OS === 'ios'
+                ? {
+                    automaticallyAdjustContentInsets: false,
+                    contentInsetAdjustmentBehavior: 'never' as const,
+                  }
+                : {})}
             />
           ) : (
             <View style={[dynamicStyles.editor, { backgroundColor: colors.background, minHeight: 200, justifyContent: 'center', alignItems: 'center' }]}>
@@ -2668,6 +2777,7 @@ export default function DraftEditScreen() {
                         style: 'destructive',
                         onPress: async () => {
                           if (!userId) return;
+                          const snapshot = split?.getListSnapshot() ?? [];
                           try {
                             if (draftsCache.isLocalDraftId(draftId)) {
                               await draftsCache.removePendingCreate(userId, draftId);
@@ -2682,7 +2792,12 @@ export default function DraftEditScreen() {
                               await draftsCache.removeFromDraftsList(userId, draftId);
                               await draftsCache.deleteDraftContent(userId, draftId);
                             }
-                            router.back();
+                            split?.refreshList();
+                            if (isSplitMode) {
+                              split?.handleDeleteNavigation(draftId, { snapshot });
+                            } else {
+                              router.back();
+                            }
                           } catch (e: any) {
                             Alert.alert('Error', toAlertMessage(e?.message ?? e?.response?.data?.message, 'Could not delete note'));
                           }

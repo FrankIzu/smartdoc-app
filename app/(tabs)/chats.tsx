@@ -38,6 +38,7 @@ import AssistantMessageBody from '../../components/AssistantMessageBody';
 import ChartImageModal from '../../components/ChartImageModal';
 import InAppWebViewModal, { shouldUseExternalLinking } from '../../components/InAppWebViewModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
+import GeneralFileViewerModal from '../../components/GeneralFileViewerModal';
 import SermonViewerModal from '../../components/SermonViewerModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
@@ -48,6 +49,7 @@ import { errorLogger } from '../../services/errorLogger';
 import { useChatStore } from '../../stores/chatStore';
 import type { ChatHistory } from '../../types';
 import { parseGrabDocsFileViewUrl } from '../../utils/chatFileLinks';
+import { isSermonFile } from '../../utils/isSermonFile';
 import { localizeUtcDatesInAssistantText } from '../../utils/chatUtcDisplay';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
@@ -469,6 +471,44 @@ export default function ChatsScreen() {
     pdfUri?: string | null;
     defaultTab?: 'text' | 'pdf';
   }>({ visible: false, fileId: 0, paragraph: 1, defaultTab: 'text' });
+  const [generalFileModal, setGeneralFileModal] = useState<{
+    visible: boolean;
+    fileId: number;
+    title?: string;
+    pdfUri?: string | null;
+  }>({ visible: false, fileId: 0 });
+
+  const openDocumentViewer = useCallback(
+    async (
+      fileId: number,
+      paragraph: number = 0,
+      title?: string,
+      paragraphEnd?: number,
+      pdfUri?: string | null,
+      defaultTab: 'text' | 'pdf' = 'text',
+    ) => {
+      const sermon = await isSermonFile(fileId);
+      if (sermon) {
+        setSermonModal({
+          visible: true,
+          fileId,
+          paragraph,
+          paragraphEnd,
+          title,
+          pdfUri: pdfUri ?? undefined,
+          defaultTab,
+        });
+      } else {
+        setGeneralFileModal({
+          visible: true,
+          fileId,
+          title,
+          pdfUri: pdfUri ?? null,
+        });
+      }
+    },
+    [],
+  );
   const [chartModal, setChartModal] = useState<{
     visible: boolean;
     chartFileId: number;
@@ -7365,27 +7405,19 @@ export default function ChatsScreen() {
                         textColor={colors.text}
                         previewColor="#9ca3af"
                         onOpenSermon={(fileId, paragraph, title, paragraphEnd) =>
-                          setSermonModal({
-                            visible: true,
-                            fileId,
-                            paragraph,
-                            paragraphEnd,
-                            title,
-                            pdfUri: undefined,
-                            defaultTab: 'text',
-                          })
+                          void openDocumentViewer(fileId, paragraph, title, paragraphEnd, undefined, 'text')
                         }
                         onOpenLink={(url) => {
                           const fileLink = parseGrabDocsFileViewUrl(url);
                           if (fileLink) {
-                            setSermonModal({
-                              visible: true,
-                              fileId: fileLink.fileId,
-                              paragraph: 0,
-                              title: 'Document',
-                              pdfUri: fileLink.pdfUri ?? null,
-                              defaultTab: 'pdf',
-                            });
+                            void openDocumentViewer(
+                              fileLink.fileId,
+                              0,
+                              'Document',
+                              undefined,
+                              fileLink.pdfUri ?? null,
+                              'pdf',
+                            );
                             return;
                           }
                           if (url.startsWith('/')) {
@@ -9160,6 +9192,13 @@ export default function ChatsScreen() {
         pdfUri={sermonModal.pdfUri}
         defaultTab={sermonModal.defaultTab}
         onClose={() => setSermonModal((s) => ({ ...s, visible: false }))}
+      />
+      <GeneralFileViewerModal
+        visible={generalFileModal.visible}
+        fileId={generalFileModal.fileId}
+        title={generalFileModal.title}
+        pdfUri={generalFileModal.pdfUri}
+        onClose={() => setGeneralFileModal((s) => ({ ...s, visible: false }))}
       />
       <ChartImageModal
         visible={chartModal.visible}
