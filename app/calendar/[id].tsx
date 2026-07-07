@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import LinkifiedText from '../../components/LinkifiedText';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -408,11 +409,15 @@ export default function CalendarEventDetailScreen() {
             Organized by {event.organizer.name || event.organizer.email || '—'}
           </Text>
         ) : null}
-        {event.description ? <Text style={[styles.meta, { color: colors.text }]}>{event.description}</Text> : null}
+        {event.description ? (
+          <LinkifiedText style={[styles.meta, { color: colors.text }]} linkColor={colors.primary || '#007AFF'}>
+            {event.description}
+          </LinkifiedText>
+        ) : null}
         {event.notes ? (
-          <Text style={[styles.meta, { color: colors.text }]}>
-            Event notes: {event.notes}
-          </Text>
+          <LinkifiedText style={[styles.meta, { color: colors.text }]} linkColor={colors.primary || '#007AFF'}>
+            {`Event notes: ${event.notes}`}
+          </LinkifiedText>
         ) : null}
 
         {(() => {
@@ -594,7 +599,12 @@ export default function CalendarEventDetailScreen() {
               {notes.map((n) => (
                 <View key={String(n.id)} style={{ marginBottom: 12, padding: 10, backgroundColor: colors.surface, borderRadius: 8 }}>
                   <Text style={{ fontWeight: '600', color: colors.text }}>{n.title}</Text>
-                  <Text style={{ color: colors.textSecondary, marginTop: 4 }}>{n.content}</Text>
+                  <LinkifiedText
+                    style={{ color: colors.textSecondary, marginTop: 4 }}
+                    linkColor={colors.primary || '#007AFF'}
+                  >
+                    {n.content || ''}
+                  </LinkifiedText>
                   {userNumericId != null && n.user_id === userNumericId ? (
                     <View style={{ flexDirection: 'row', marginTop: 8, gap: 12 }}>
                       <TouchableOpacity

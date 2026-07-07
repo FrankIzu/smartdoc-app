@@ -47,7 +47,7 @@ export const AI_FM_HELP_ACTIONS: { title: string; description: string }[] = [
 ];
 
 export const AI_FM_COMMAND_HINT =
-  'Describe a change to your files and folders.';
+  'Ask AI to organize your files and folders — move, rename, and more.';
 
 export const AI_FM_DISCLAIMER =
   'AI File Manager will NOT: permanently delete · modify contents · share externally · cross companies · override permissions · auto-execute';

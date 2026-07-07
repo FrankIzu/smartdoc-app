@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import LinkifiedText from '../../../components/LinkifiedText';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import {
   flushPendingCalendarCreates,
@@ -227,7 +228,20 @@ export default function CalendarPendingEventScreen() {
         <Text style={styles.meta}>{formatEventWhen(evLike as any)}</Text>
         {locationLabel ? <Text style={styles.meta}>📍 {locationLabel}</Text> : null}
         {payload.description ? (
-          <Text style={{ color: colors.text, marginTop: 12 }}>{String(payload.description)}</Text>
+          <LinkifiedText
+            style={{ color: colors.text, marginTop: 12, fontSize: 14 }}
+            linkColor={colors.primary || '#007AFF'}
+          >
+            {String(payload.description)}
+          </LinkifiedText>
+        ) : null}
+        {payload.notes ? (
+          <LinkifiedText
+            style={{ color: colors.text, marginTop: 12, fontSize: 14 }}
+            linkColor={colors.primary || '#007AFF'}
+          >
+            {`Event notes: ${String(payload.notes)}`}
+          </LinkifiedText>
         ) : null}
 
         {needsAttention ? (
