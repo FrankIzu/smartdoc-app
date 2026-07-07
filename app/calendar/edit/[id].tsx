@@ -42,6 +42,7 @@ import {
   parseUTC,
   toLocalDateString,
 } from '../../../utils/calendarTime';
+import { htmlToPlainText } from '../../../utils/linkifyPlainText';
 
 type Participant = { email: string; name: string; type: string };
 
@@ -179,8 +180,12 @@ export default function CalendarEditScreen() {
     if (!Number.isFinite(eventId)) return;
     const event = await calendarGetEvent(eventId);
     setTitle(event.title || '');
-    setDescription(event.description || '');
-    setNotesField(typeof event.notes === 'string' ? event.notes : event.notes != null ? String(event.notes) : '');
+    setDescription(htmlToPlainText(event.description || ''));
+    setNotesField(
+      htmlToPlainText(
+        typeof event.notes === 'string' ? event.notes : event.notes != null ? String(event.notes) : '',
+      ),
+    );
     setLocation(event.location || '');
     setMeetingUrl(event.meeting_url || '');
     const rawVid = event.video_call_id;
@@ -486,7 +491,7 @@ export default function CalendarEditScreen() {
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={styles.body}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >

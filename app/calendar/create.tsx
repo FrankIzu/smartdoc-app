@@ -510,7 +510,7 @@ export default function CalendarCreateScreen() {
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={styles.body}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           keyboardDismissMode="on-drag"
           onScrollBeginDrag={dismissFormOverlays}
           showsVerticalScrollIndicator={false}
