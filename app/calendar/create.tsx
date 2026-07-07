@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
+import LinkifiedMultilineInput from '../../components/LinkifiedMultilineInput';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
@@ -624,23 +625,25 @@ export default function CalendarCreateScreen() {
           {additionalExpanded ? (
             <View style={styles.additionalBody}>
               <Text style={[styles.label, { marginTop: 0 }]}>Description</Text>
-              <TextInput
+              <LinkifiedMultilineInput
                 style={[styles.input, { minHeight: 72 }]}
                 multiline
                 value={description}
                 onChangeText={setDescription}
                 placeholder="Add details about the event…"
                 placeholderTextColor={colors.textSecondary}
+                linkColor={colors.primary || '#007AFF'}
               />
 
               <Text style={styles.label}>Notes (on invite)</Text>
-              <TextInput
+              <LinkifiedMultilineInput
                 style={styles.input}
                 value={notesField}
                 onChangeText={setNotesField}
                 placeholder="Optional note shown on the invite…"
                 placeholderTextColor={colors.textSecondary}
                 multiline
+                linkColor={colors.primary || '#007AFF'}
               />
 
               <Text style={styles.label}>Reminders</Text>
