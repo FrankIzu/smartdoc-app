@@ -81,6 +81,38 @@ export function workspaceFilesSheetScreenKey(
   return scopedScreenKey(userId, `workspace_files_sheet_${workspaceId}`);
 }
 
+export function intakesListScreenKey(
+  userId: string | number | null | undefined,
+  archived: boolean,
+) {
+  return scopedScreenKey(userId, archived ? 'intakes_list_archived' : 'intakes_list_active');
+}
+
+export function intakeDetailScreenKey(
+  userId: string | number | null | undefined,
+  intakeId: number,
+) {
+  return scopedScreenKey(userId, `intake_detail_${intakeId}`);
+}
+
+export function uploadLinksListScreenKey(userId: string | number | null | undefined) {
+  return scopedScreenKey(userId, 'upload_links_list');
+}
+
+export function uploadLinkDetailScreenKey(
+  userId: string | number | null | undefined,
+  linkId: number,
+) {
+  return scopedScreenKey(userId, `upload_link_detail_${linkId}`);
+}
+
+export function signaturesHubScreenKey(
+  userId: string | number | null | undefined,
+  tab: string,
+) {
+  return scopedScreenKey(userId, `signatures_hub_${tab}`);
+}
+
 // ---- AsyncStorage key builders ----
 
 export function chatContextsStorageKey(userId: string | number | null | undefined) {
@@ -159,6 +191,11 @@ const LEGACY_SCREEN_PREFIXES = [
   'workspace_members_',
   'workspace_activities_',
   'workspace_files_sheet_',
+  'intakes_list_',
+  'intake_detail_',
+  'upload_links_list_',
+  'upload_link_detail_',
+  'signatures_hub_',
   'dashboard_data_',
   'chat_list_data_',
   'workspaces_list_',

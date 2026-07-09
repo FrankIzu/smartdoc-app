@@ -20,12 +20,21 @@ import { useThemeColors } from '../hooks/useThemeColors';
 import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
 import DocumentViewer from '../components/DocumentViewer';
 
+interface IntakeChecklistItem {
+  label: string;
+  description: string | null;
+  required: boolean;
+  status: 'pending' | 'matched' | 'confirmed' | 'not_applicable';
+}
+
 interface UploadLinkInfo {
   name: string;
   description: string;
   current_uploads: number;
   max_uploads: number | null;
   expires_at: string | null;
+  /** Present only when this File Request link belongs to an Intake (client document checklist). */
+  intake: { id: number; title: string; checklist: IntakeChecklistItem[] } | null;
 }
 
 interface UploadLinkResponse {
@@ -94,6 +103,7 @@ export default function UploadByLinkScreen() {
           current_uploads: raw.upload_count ?? raw.current_uploads ?? 0,
           max_uploads: raw.max_uploads ?? null,
           expires_at: raw.expires_at ?? null,
+          intake: raw.intake ?? null,
         });
       } else {
         Alert.alert('Error', 'Invalid or expired upload link');
@@ -277,9 +287,9 @@ export default function UploadByLinkScreen() {
             setSenderEmail('');
             setMessage('');
             setActionCode('');
-            loadUploadInfo(); // Refresh upload info
-            loadUploadedFiles(); // Refresh uploaded files
-            setActiveTab('files'); // Switch to files tab
+            // Re-fetch so the client immediately sees updated checklist status (e.g. pending -> matched)
+            // without needing to reopen the page.
+            loadUploadInfo();
           },
         },
       ]);
@@ -586,6 +596,38 @@ export default function UploadByLinkScreen() {
       fontSize: 16,
       fontWeight: '600',
     },
+    checklistItem: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    checklistIcon: {
+      marginRight: 10,
+      marginTop: 1,
+    },
+    checklistTextCol: {
+      flex: 1,
+    },
+    checklistLabel: {
+      fontSize: 13,
+      fontWeight: '500',
+      color: colors.text,
+    },
+    checklistLabelDone: {
+      textDecorationLine: 'line-through',
+      color: colors.textSecondary,
+    },
+    checklistOptional: {
+      fontSize: 11,
+      color: colors.textLight,
+    },
+    checklistDescription: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
   });
 
   if (loading) {
@@ -655,6 +697,44 @@ export default function UploadByLinkScreen() {
               )}
             </View>
           </View>
+
+          {/* Intake checklist — only present when this link belongs to an Intake */}
+          {uploadInfo.intake && uploadInfo.intake.checklist.length > 0 && (
+            <View style={dynamicStyles.section}>
+              <Text style={dynamicStyles.sectionTitle}>Documents needed for &quot;{uploadInfo.intake.title}&quot;</Text>
+              {uploadInfo.intake.checklist.map((item, idx) => {
+                const done = item.status === 'confirmed' || item.status === 'matched' || item.status === 'not_applicable';
+                const icon =
+                  item.status === 'confirmed'
+                    ? 'checkmark-circle'
+                    : item.status === 'matched'
+                    ? 'checkmark-circle-outline'
+                    : item.status === 'not_applicable'
+                    ? 'remove-circle-outline'
+                    : 'ellipse-outline';
+                const iconColor =
+                  item.status === 'confirmed'
+                    ? '#34C759'
+                    : item.status === 'matched'
+                    ? '#007AFF'
+                    : item.status === 'not_applicable'
+                    ? colors.textLight
+                    : colors.textLight;
+                return (
+                  <View key={`${item.label}-${idx}`} style={dynamicStyles.checklistItem}>
+                    <Ionicons name={icon as any} size={18} color={iconColor} style={dynamicStyles.checklistIcon} />
+                    <View style={dynamicStyles.checklistTextCol}>
+                      <Text style={[dynamicStyles.checklistLabel, done && dynamicStyles.checklistLabelDone]}>
+                        {item.label}
+                        {!item.required && <Text style={dynamicStyles.checklistOptional}> (optional)</Text>}
+                      </Text>
+                      {item.description && <Text style={dynamicStyles.checklistDescription}>{item.description}</Text>}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
 
           {/* Sender Information */}
           <View style={dynamicStyles.section}>

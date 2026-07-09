@@ -401,6 +401,7 @@ export const NOTIFICATION_TYPES = [
   'file_share_viewed',
   'join_request',
   'transcript_ready',
+  'intake_file_received',
 ] as const;
 
 /**
@@ -451,6 +452,9 @@ export function getNotificationScreen(data: Record<string, any>): string {
       return '/notifications';
     case 'upload_link_expiring':
       return '/upload-links';
+    case 'intake_file_received':
+      // Backend already sends extra_data.screen = `/intake/{id}` (handled above); this is a defensive fallback.
+      return data?.intake_id != null ? `/intake/${data.intake_id}` : '/intake';
     case 'signature_request':
     case 'signature_invite':
     case 'signature_reminder':

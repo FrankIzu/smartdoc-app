@@ -1,0 +1,311 @@
+C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend\scripts\test_branham_daughter_query_live.py:10: SyntaxWarning: invalid escape sequence '\.'
+  ..\.venv\Scripts\python.exe scripts\test_branham_daughter_query_live.py
+Γ£à ssl.create_default_context() patched - using safe verify_mode setter
+ΓÜá∩╕Å Skipping aggressive SSL patch for Python 3.12+ (not needed)
+Γ£à httpx SSL patch applied - using patched ssl.create_default_context
+Γ£à Botocore SSL patch applied - bypassing broken options setter
+Γ£à SSL patch module loaded successfully
+   ssl.create_default_context: True, httpx: True, botocore: True, aggressive: False, standard: True
+Γ£à SSL patch imported in global_singletons.py
+Γ£à httpx SSL patch applied - using patched ssl.create_default_context
+Γ£à httpx SSL patch applied in global_singletons.py
+2026-07-08 16:27:08,131 - utils.doc_llm_parser - INFO - Logger configured for utils.doc_llm_parser (PID: 46132)
+2026-07-08 16:27:08,131 - utils.doc_llm_parser - INFO - Module file: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend\utils\doc_llm_parser.py
+2026-07-08 16:27:08,131 - utils.doc_llm_parser - INFO - Backend dir: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend
+2026-07-08 16:27:08,132 - utils.doc_llm_parser - INFO - Loading prompt template from: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend\prompts\generic_data_extraction_prompt.txt (PID: 46132)
+2026-07-08 16:27:08,132 - utils.doc_llm_parser - INFO - Path exists: True
+2026-07-08 16:27:08,132 - utils.doc_llm_parser - INFO - Prompt template loaded successfully (length: 2205 chars, PID: 46132)
+INFO:utils.rate_limiter:Rate limiter cleanup task started
+2026-07-08 16:27:08,134 - app - INFO - Rate limiting middleware loaded successfully
+2026-07-08 16:27:08,135 - app - INFO - Loading .env from: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\.env
+2026-07-08 16:27:09,984 - app - INFO - Query Router will be initialized at startup for optimal performance
+INFO:utils.performance_monitor:System monitoring started
+INFO:utils.performance_monitor:Γ£à Performance monitor initialized
+INFO:utils.job_storage:ΓÜá∩╕Å [JOB-STORAGE] Redis not available, using in-memory storage for chat_job:
+INFO:utils.job_storage:ΓÜá∩╕Å [JOB-STORAGE] Redis not available, using in-memory storage for upload_job:
+2026-07-08 16:27:10,041 - app - INFO - Mobile routes blueprint imported successfully
+2026-07-08 16:27:10,041 - app - INFO - Phone authentication routes available via web blueprint
+INFO:utils.chat_cache:ΓÜá∩╕Å Redis not available - using in-memory cache only
+INFO:utils.request_deduplicator:≡ƒº╣ Request deduplicator cleanup thread started
+INFO:utils.async_chat_processor:Γ£à ThreadPoolExecutor created with 4 workers
+INFO:utils.async_chat_processor:Background chat processor started
+INFO:utils.async_chat_processor:Γ£à Async chat processor initialized with 4 workers
+2026-07-08 16:27:10,599 - app - INFO - Γ£à AI File Manager blueprint registered at /api/v1/web/ai-file-manager
+2026-07-08 16:27:10,599 - app - INFO - Γ£à Injected _RealOsThread (pre-patch threading.Thread) into web_routes
+2026-07-08 16:27:10,601 - app - INFO - Γ£à celery_fallback thread class configured (Celery ΓåÆ thread when broker unavailable)
+2026-07-08 16:27:10,601 - app - INFO - Γ£à Chat search thread pool ready (gevent.threadpool, 8 workers)
+2026-07-08 16:27:10,601 - app - INFO - Γ£à Web blueprint registered successfully with /api/v1/web prefix
+INFO:celery_app:Γä╣∩╕Å Celery result backend DISABLED to save Redis connections
+INFO:celery_app:Γ£à main_tasks module imported - all tasks should be registered
+INFO:main_tasks:Γ£à [TASK-REGISTRATION] extract_data_task registered with name: main_tasks.extract_data_task
+2026-07-08 16:27:10,944 - app - INFO - Γ£à Upload retry routes registered
+2026-07-08 16:27:10,948 - app - INFO - Γ£à Webhook monitor routes registered
+2026-07-08 16:27:10,982 - app - INFO - Γ£à Subscription admin routes registered
+2026-07-08 16:27:10,987 - app - INFO - Γ£à Analytics API routes registered (/api/analytics)
+2026-07-08 16:27:10,995 - company_api - INFO - Company API blueprint initialized
+2026-07-08 16:27:11,026 - app - INFO - Γ£à Company management API registered
+2026-07-08 16:27:11,033 - internal_file_sharing_api - INFO - Internal file sharing routes registered
+2026-07-08 16:27:11,039 - app - INFO - System Alerts API routes registered
+INFO:hms_api:Γ£à 100ms configuration complete
+INFO:hms_api:Γ£à SIP Interconnect configuration complete
+INFO:video_api:Local file manager imported successfully
+INFO:video_api:=== VIDEO API BLUEPRINT INITIALIZATION ===
+INFO:video_api:Initializing Local Asset Manager...
+INFO:video_api:≡ƒÄÑ VIDEO API INITIALIZATION
+INFO:video_api:≡ƒÄÑ VIDEO_PROVIDER: 100ms
+INFO:video_api:≡ƒÄÑ FLASK_ENV: development
+INFO:video_provider:≡ƒÄÑ Using 100ms video provider
+INFO:video_api:≡ƒÄÑ Video provider initialized: HMSProvider
+INFO:video_api:Γ£à Video provider is properly configured
+INFO:utils.twilio_sms:Γ£à Twilio SMS service initialized successfully
+INFO:utils.twilio_sms:Γ£à Twilio SIP Interconnect configured
+INFO:video_api:≡ƒô₧ Twilio service initialized: SMS=True, SIP=True
+INFO:video_api:≡ƒÄÑ Environment: FLASK_ENV=development - using 100ms API with real credentials
+INFO:video_api:≡ƒÄÑ Video provider configured: True
+2026-07-08 16:27:11,250 - app - INFO - Γ£à Calendar API blueprint registered successfully
+INFO:notes_api:Notes API blueprint initialized
+2026-07-08 16:27:11,260 - app - INFO - Γ£à Notes API blueprint registered successfully
+2026-07-08 16:27:11,277 - app - INFO - Γ£à Email inbound blueprint registered successfully
+2026-07-08 16:27:11,293 - app - INFO - Compatibility routes for Render deployment registered successfully
+2026-07-08 16:27:11,353 - app - INFO - Mobile routes registered successfully
+C:\llm\projects\grabdocs-app\grabdocs\manager-francis\.venv\Lib\site-packages\transformers\utils\hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO:utils.global_singletons:≡ƒöä Loading SentenceTransformer model: all-MiniLM-L6-v2 (ONE-TIME ONLY)...
+INFO:sentence_transformers.SentenceTransformer:Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+INFO:utils.global_singletons:Γ£à SentenceTransformer model loaded successfully on CPU
+INFO:root:sentence-transformers available and working via singleton
+INFO:root:Smart Chat System available
+INFO:root:LlamaIndex imports successful
+INFO:utils.usage_tracker:Usage tracker initialized
+INFO:utils.conversation_context_manager:OpenAI client initialized for context management
+INFO:utils.conversation_intent_classifier:OpenAI client initialized for conversation intent classification
+INFO:utils.global_singletons:≡ƒöä Loading spaCy model (ONE-TIME ONLY)...
+INFO:utils.global_singletons:Γ£à spaCy model loaded with FULL pipeline
+INFO:utils.conversation_intent_classifier:Γ£à spaCy model retrieved from global singleton for conversation intent
+INFO:utils.conversation_context_detector:OpenAI client initialized for context detection
+INFO:utils.conversation_context_detector:Γ£à spaCy model retrieved from global singleton for context detection
+INFO:utils.conversation_context_manager:Context classifiers initialized
+INFO:utils.conversation_session_manager:Context manager initialized for session management
+INFO:utils.conversation_context_manager:OpenAI client initialized for context management
+INFO:utils.conversation_intent_classifier:OpenAI client initialized for conversation intent classification
+INFO:utils.conversation_intent_classifier:Γ£à spaCy model retrieved from global singleton for conversation intent
+INFO:utils.conversation_context_detector:OpenAI client initialized for context detection
+INFO:utils.conversation_context_detector:Γ£à spaCy model retrieved from global singleton for context detection
+INFO:utils.conversation_context_manager:Context classifiers initialized
+INFO:routes.enhanced_chat_routes:Enhanced conversation management initialized
+2026-07-08 16:27:30,277 - app - INFO - Enhanced chat routes registered successfully
+2026-07-08 16:27:30,295 - app - INFO - Extraction API routes registered successfully
+2026-07-08 16:27:30,324 - app - INFO - Signature envelopes API routes registered successfully
+2026-07-08 16:27:30,325 - app - INFO - Γ£à Async chat processor loaded successfully
+INFO:utils.global_singletons:≡ƒöä Creating Database Engine singleton (ONE-TIME ONLY)...
+INFO:utils.global_singletons:Γ£à Database Engine created and tested (pool: 10+8, timeout: 30s)
+INFO:utils.db_optimizer:Γ£à Database optimizer initialized
+INFO:routes.performance_routes:Γ£à Performance routes initialized
+INFO:utils.memory_optimizer:MemoryOptimizer: Using system RAM 32205 MB
+INFO:utils.memory_optimizer:MemoryOptimizer: 1 worker(s), total=32205 MB, os_reserve=5797 MB, per_worker_usable=26408 MB ΓåÆ cleanup=21126 MB (65.6%), critical=23767 MB (73.8%), max=25351 MB (78.7%), monitor_interval=298s
+INFO:utils.memory_optimizer:MemoryOptimizer initialized with dynamic thresholds:
+INFO:utils.memory_optimizer:  - Cleanup threshold: 21126MB (65.6% of system)
+INFO:utils.memory_optimizer:  - Critical threshold: 23767MB (73.8% of system)
+INFO:utils.memory_optimizer:  - Max limit: 25351MB (78.7% of system)
+INFO:utils.memory_optimizer:Memory monitoring started
+WARNING:utils.search_cache:ΓÜá∩╕Å No Redis URL available for search cache
+INFO:utils.conversation_performance_optimizer:ConversationPerformanceOptimizer initialized
+INFO:utils.conversation_performance_optimizer:Background optimization loop started
+INFO:utils.conversation_performance_optimizer:Background optimization started
+2026-07-08 16:27:30,771 - app - INFO - ΓÅ¡∩╕Å  Skipping component pre-warm (Celery worker / DISABLE_WORKER_PREWARMING) ΓÇö models will lazy-load on first use
+INFO:utils.global_singletons:≡ƒöä Creating Query Router (ONE-TIME ONLY)...
+INFO:query_router:Creating QueryRouter with PostgreSQL backend
+INFO:query_router:LlamaIndex document processor initialized
+INFO:query_router:DocumentSearchHandler: Using PostgreSQL backend for ChromaDB
+INFO:query_router:≡ƒöì Attempting to initialize fused search system...
+INFO:query_router:Γ£à Successfully imported fused search modules (relative)
+INFO:query_router:≡ƒöì Initializing fused search from global singleton...
+INFO:utils.global_singletons:≡ƒöä Creating Fused Intent Search (ONE-TIME ONLY)...
+INFO:faiss.loader:Loading faiss with AVX2 support.
+INFO:faiss.loader:Successfully loaded faiss with AVX2 support.
+INFO:utils.pgvector_client:Γ£à PostgreSQL connection pool established (2-20 connections)
+INFO:utils.pgvector_client:Γä╣∩╕Å Skipping pgvector index creation (3072 dimensions > 2000 limit; FAISS handles searches)
+INFO:utils.pgvector_client:Γ£à Database tables and indexes created/verified
+INFO:utils.pgvector_client:Γ£à Raw PgVectorClient singleton created
+INFO:utils.global_singletons:≡ƒöä Creating PartitionedFaissClient (ONE-TIME ONLY)...
+INFO:utils.faiss_client:[PartitionedFAISS] Loaded stats for 56 workspaces from disk
+INFO:utils.faiss_client:[PartitionedFAISS] Per-workspace indexes found on disk (Redis unavailable or no migration marker) ΓÇö ready for lazy-load
+INFO:utils.global_singletons:Γ£à PartitionedFaissClient created successfully
+INFO:utils.hybrid_vector_client:Γ£à Hybrid vector client initialized
+INFO:utils.pgvector_client:Γ£à Hybrid client initialized with PostgreSQL + FAISS backend
+WARNING:utils.search_result_cache:ΓÜá∩╕Å No Redis configured. Result caching disabled.
+INFO:utils.search_result_cache:Γ£à SearchResultCache initialized with TTL=1800s (Redis: unavailable, using memory)
+INFO:utils.search_result_cache:Γ£à Search result cache initialized
+INFO:utils.hybrid_vector_client:Γ£à Search result cache enabled for hybrid collection
+INFO:utils.pgvector_client:Γ£à Connected to existing safe hybrid collection: user_documents
+INFO:utils.global_singletons:[ADS] ADS_ENABLED=false (default) ΓÇö AdvancedDocumentSearch is DISABLED. UnifiedIndexing is the sole write path. Set ADS_ENABLED=true in .env to re-enable (dev only).
+INFO:utils.global_singletons:≡ƒöä Creating EmbeddingCache singleton (ONE-TIME ONLY)...
+INFO:utils.embedding_cache:ΓÜá∩╕Å No Redis URL provided - using local cache only
+INFO:utils.embedding_cache:Γ£à Database cache available (query_embeddings table)
+INFO:utils.embedding_cache:Embedding cache initialized (Redis: unavailable, DB: available, max_size: 50, ttl: 1h/90d)
+INFO:utils.global_singletons:Γ£à EmbeddingCache singleton created successfully
+INFO:utils.global_singletons:Γ£à Fused Intent Search created successfully
+INFO:query_router:Γ£à Fused intent search retrieved from global singleton
+INFO:query_router:≡ƒöì Attempting to initialize advanced search system with pgvector...
+WARNING:query_router:ΓÜá∩╕Å AdvancedDocumentSearch singleton returned None
+INFO:query_router:Using pgvector backend for document search (ChromaDB removed)
+INFO:query_router:SMART_CHAT_AVAILABLE: True
+INFO:query_router:Attempting to initialize Smart Chat System from global singleton...
+INFO:query_router:OpenAI API key available: True
+INFO:query_router:Calling get_smart_chat_system with database_url=True, openai_api_key=True
+INFO:utils.global_singletons:≡ƒöä Creating Smart Chat System...
+INFO:utils.global_singletons:   OpenAI API key provided: True
+INFO:utils.global_singletons:   OpenAI API key length: 164
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Starting MergedSmartChatSystem initialization...
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 1: Getting OpenAI client (singleton)...
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 1: OpenAI client initialized
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 2: Initializing ChatGPT Enhancement Orchestrator...
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 3: Initializing ConditionalAPIBatcher...
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 3: ConditionalAPIBatcher initialized
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 4: Initializing ChatGPTEnhancementOrchestrator...
+INFO:utils.enhanced_coreference_resolver:Γ£à spaCy model retrieved from global singleton for coreference
+INFO:utils.dynamic_worker_pool:≡ƒöº Dynamic Worker Pool initialized - 22 CPUs detected
+INFO:utils.multi_turn_task_orchestrator:Multi-Turn Task Orchestrator initialized with 10 workers
+INFO:utils.tool_invocation_layer:Tool Invocation Layer initialized
+INFO:utils.hallucination_mitigation:Hallucination Mitigation System initialized
+INFO:utils.enhanced_fallback_handler:Enhanced Fallback Handler initialized
+INFO:utils.chatgpt_enhancement_orchestrator:ChatGPT Enhancement Orchestrator initialized
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 4: ChatGPT Enhancement Orchestrator initialized
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 5: Setting up pgvector (vector search)...
+INFO:utils.smart_chat_system_merged:Using PostgreSQL backend for pgvector - no local directory needed
+INFO:utils.smart_chat_system_merged:Using existing shared pgvector client
+INFO:utils.smart_chat_system_merged:Connected to pgvector user_documents collection
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 5: pgvector setup complete
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 6: Initializing AdvancedDocumentSearch...
+WARNING:utils.smart_chat_system_merged:ΓÜá∩╕Å [INIT] Step 6: AdvancedDocumentSearch singleton returned None
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 6.5: Initializing ExpansionDetector...
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 6.5: ExpansionDetector initialized
+INFO:utils.llm_query_rephraser:Γ£à LLM Query Rephraser initialized
+INFO:utils.llm_reranker:Γ£à LLM Reranker initialized
+INFO:utils.smart_chat_system_merged:Γ£à LLM query rephraser and reranker initialized
+INFO:utils.smart_chat_system_merged:Γ£à Multi-strategy search and multi-tiered deduplicator initialized
+INFO:utils.smart_chat_system_merged:≡ƒôè Dedup thresholds: exactΓëÑ98%, semanticΓëÑ95%, versionΓëÑ85%
+INFO:utils.smart_chat_system_merged:Creating spaCy NLP processor (uses global singleton internally)...
+INFO:utils.smart_chat_system_merged:Γ£à spaCy model retrieved from global singleton
+INFO:utils.faiss_client:[PartitionedFAISS] Reverse map rebuilt: 90148 doc_id entries
+INFO:utils.smart_chat_system_merged:ΓÜá∩╕Å No Redis URL provided, using local cache
+INFO:utils.smart_chat_system_merged:Γ£à Fused search retrieved from global singleton with collection: user_documents
+INFO:utils.smart_chat_system_merged:Merged Smart Chat System initialized with ALL features including fused intent search
+INFO:utils.global_singletons:Γ£à Smart Chat System created successfully
+INFO:query_router:get_smart_chat_system returned: True
+INFO:query_router:Γ£à Smart Chat System retrieved from global singleton
+INFO:query_router:QueryRouter initialized - Smart Chat: True, Enabled: True, Fallback: True
+INFO:utils.global_singletons:Γ£à Query Router created successfully | [QUERY_ROUTER_INIT] duration_ms=3307 trigger=unknown
+INFO:utils.super_merged_analytics:Γ£à Super-merged analytics: using shared OpenAI client
+INFO:utils.super_merged_analytics:ΓÅ▒∩╕Å [SUPER-MERGED-ANALYTICS] Starting LLM call for: 'Where did bro Branham call his daughter fat and ug...'
+INFO:utils.encryption_manager:Γ£à Encryption manager initialized successfully (AES-256-GCM)
+INFO:utils.super_merged_analytics:ΓÅ▒∩╕Å [SUPER-MERGED-ANALYTICS] LLM call completed in 12.08s
+INFO:utils.super_merged_analytics:≡ƒôä query_semantics='document_retrieval' ΓÇö clearing SQL analytics path flags
+INFO:utils.fused_intent_search:≡ƒöè [SINGLE-SPEAKER] User 2 is member of single-speaker workspace(s) [2392] ΓåÆ always active
+INFO:utils.fused_intent_search:≡ƒöè [SINGLE-SPEAKER] Global strip enabled; single_speaker workspace_ids=[2392] (scope=[2]; includes user membership when applicable)
+INFO:utils.stop_words_manager:Γ£à Loaded 326 stop words from spaCy
+INFO:utils.single_speaker_retrieval:≡ƒÄñ Single-speaker [neutral] retrieval: 'Where did bro Branham call his daughter fat and ugly' ΓåÆ 'daughter fat ugly'
+INFO:utils.global_singletons:≡ƒöä Creating UnifiedIndexingSystem singleton (ONE-TIME ONLY per worker)...
+INFO:utils.global_singletons:   ΓÜí Using lazy-loading for heavy components to avoid full app initialization
+INFO:utils.indexing_validator:Γ£à IndexingValidator initialized with comprehensive validation
+INFO:utils.unified_indexing:Γ£à UnifiedIndexingSystem: IndexingValidator initialized
+INFO:utils.unified_indexing:≡ƒöì [PGVECTOR INIT] Starting pgvector collection initialization
+INFO:utils.unified_indexing:≡ƒöì [PGVECTOR INIT] DATABASE_URL is available: postgresql://grabdocs_user.uptcttbrdasxttwomquu:gr...
+INFO:utils.unified_indexing:Γ£à UnifiedIndexingSystem: pgvector collection initialized successfully
+INFO:utils.global_singletons:Γ£à UnifiedIndexingSystem singleton created successfully (heavy components will load on-demand)
+INFO:utils.global_singletons:≡ƒöä Creating AdvancedIntentClassifier singleton (ONE-TIME ONLY)...
+INFO:utils.local_intent_classifier:Model loaded from advanced_intent_classifier.pkl
+INFO:utils.db_cache:Where clause cache initialized (max_size=1000, ttl=0s)
+INFO:utils.local_intent_classifier:Advanced intent classifier model initialized
+INFO:utils.db_cache:Where clause cache DISABLED via DISABLE_SEARCH_CACHE=true
+INFO:utils.local_intent_classifier:Advanced intent classifier initialized with MiniLM embeddings
+INFO:utils.db_cache:≡ƒöì Building where clause for user 2 (cache miss - ALL workspaces + shared content)
+INFO:utils.global_singletons:Γ£à AdvancedIntentClassifier singleton created successfully
+INFO:utils.db_cache:[CHAT-DEBUG] get_accessible_content_for_user_batched(user_id=2) starting
+≡ƒö┤ Celery Redis URL: redis://localhost:6379/0
+Info: spaCy imports successful
+Info: LangChain imports successful
+Info: LlamaIndex imports successful
+Info: ChatGPT Enhancement imports successful
+Info: LLM query rephraser and reranker imports successful
+Info: Multi-strategy search and content deduplicator imports successful
+[sim] requires_narrative_search=True  hyde_passage='Bro Branham called his daughter fat and ugly in a specific context or story.'
+
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]
+Batches: 100%|ΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûê| 1/1 [00:00<00:00,  6.14it/s]
+Batches: 100%|ΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûê| 1/1 [00:00<00:00,  6.13it/s]
+WARNING:utils.fused_intent_search:≡ƒºá Local classifier confidence too low (0.29 < 0.7), using LLM super-merged call for 'Where did bro Branham call his daughter fat and ugly'
+INFO:utils.db_cache:[CHAT-DEBUG] get_accessible_content_for_user_batched OK for user_id=2 workspaces=7 cross_files=0 meetings=5
+INFO:utils.db_cache:≡ƒôé User 2 has access to:
+INFO:utils.db_cache:   - 7 workspaces: [2, 40, 553, 2095, 2392, 2421, 2467]
+INFO:utils.db_cache:   - 0 cross-workspace shared files (excluding workspace-local)
+INFO:utils.db_cache:   - 5 accessible meetings
+INFO:utils.db_cache:   - 0 shared meeting asset files
+INFO:utils.db_cache:Γ£à Built where clause in 0.338s with 2 OR conditions
+WARNING:utils.fused_intent_search:ΓÜá∩╕Å [SUPER-MERGED] Slow API call: 10224.0ms (consider optimizing prompt or using faster model)
+INFO:utils.fused_intent_search:≡ƒöì [QUERY-HIERARCHY] source=reformulated: retrieval query = 'Where did Branham call his daughter fat and ugly'
+INFO:utils.single_speaker_retrieval:≡ƒÄñ Single-speaker [neutral] retrieval: 'where did branham call his daughter fat and ugly' ΓåÆ 'branham daughter fat ugly'
+INFO:utils.db_cache:Permission cache initialized (max_size=10000, ttl=0s)
+INFO:utils.db_cache:Permission cache DISABLED via DISABLE_SEARCH_CACHE=true
+INFO:utils.db_cache:≡ƒöì Cache miss - fetching workspace IDs for user 2 from DB
+INFO:utils.db_cache:Γ£à Fetched 7 workspaces for user 2 in 0.114s (raw SQL)
+INFO:utils.keyword_tsvector_queries:KEYWORD-RESOLVE raw='branham daughter fat ugly' resolved=['daughter fat ugly', 'branham daughter fat ugly', 'Where did Branham call his daughter fat and ugly'] sources=['single_speaker', 'raw', 'reformulated'] [extracted=yes topic_kw=no kw_subq=yes candidates_tried=4]
+WARNING:utils.faiss_baked:[faiss_baked] FAISS version drift: runtime=1.12.0 expected=1.14.2 (pin faiss-cpu==1.14.2 and rebuild indexes after upgrade)
+INFO:utils.faiss_client:[PartitionedFAISS] no baked workspaces present at /opt/faiss_baked
+INFO:utils.hybrid_vector_client:≡ƒöæ [KEYWORD] Batched OR tsquery: 4 sub-queries, n=150
+WARNING:utils.faiss_client:[FAISS-DOC-INDEX-SANITY] ws=2 doc_ntotal=87315 chunk_ntotal=87318 ratio=1.00 ΓÇö doc index suspiciously close to chunk count (possible mis-keyed/duplicated doc index)
+INFO:utils.faiss_client:[PartitionedFAISS] ws 2 loaded: ntotal=87318 faiss_load_source=disk faiss_load_reason=cold_start faiss_ws_state=READY
+INFO:utils.faiss_client:[PartitionedFAISS] ws 40 loaded: ntotal=2 faiss_load_source=disk faiss_load_reason=cold_start faiss_ws_state=READY
+INFO:utils.hybrid_vector_client:≡ƒöó [RRF DEBUG] _fetch_content_batched: requested=35 ids, found=35 rows in DB
+INFO:utils.fused_intent_search:[EVIDENCE-SPAN] Extracted snippets for 8 results (window=3)
+INFO:utils.fused_intent_search:[CROSS-ENCODER] Skipped ΓÇö reason=not_narrative
+
+Search took 15650ms
+Result type: FusedSearchResult
+comprehensive_intent.requires_narrative_search = False
+comprehensive_intent.hyde_passage = None
+
+Returned 8 search result(s)
+------------------------------------------------------------------------------------------
+
+[1] file_id=2655 score=1.0 fts_rescue=0
+    file: 56-0726 - Love - Shreveport LA.pdf
+    >>> [22] The conductor said, "I've seen the day when she was twice as pretty as her daughter will ever be. But," said, "I happened to live in the neighborhood, and this girl was a baby upstairs, her mother was in the backyard washing. And all of a sudden...
+
+[2] file_id=2724 score=1.0 fts_rescue=0
+    file: 57-0421S - The Great And Mighty Conqueror - Jeffersonville IN.pdf
+    >>> [72] Then this girl, when the train stopped out front, she brought a little girl with her, one of those little snickel-fritz kind, you know, like the Elvis Presley type. And when she was standing there, you know, at the train, her mother was on the o...
+
+[3] file_id=2379 score=1.0 fts_rescue=0
+    file: 53-0611 - Show Us The Father And It'll Satisfy Us - Connersville IN.pdf
+    >>> [242] So when she comeback,she brought a little girl home with her.And her mother was standing out on the ramp of the...to meet her. And when the cars stopped, and this young little smart-aleck was with her, looked over there and she said, "Oh, look ...
+
+[4] file_id=2378 score=1.0 fts_rescue=0
+    file: 53-0610 - Jesus Christ The Same Yesterday, Today, And Forever - Connersville IN.pdf
+    >>> [97] And so when she got off the train, her mother looked and she recognized her daughter. And she run, threw her arms around her, said, "Darling." Her face was all drawed, and her hands all drawed down. And she... all like that. And she said, "Darli...
+
+[5] file_id=2541 score=1.0 fts_rescue=0
+    file: 55-0311 - The Seal Of The Antichrist - Los Angeles CA.pdf
+    >>> [74] "When her mother come back with the two buckets of water..." Said, "She was a beautiful woman, pretty as she could be." And said, "She looked in there, and the house was on fire. The neighbors was running. And it done broke through." And said, "...
+
+[6] file_id=2724 score=1.0 fts_rescue=0
+    file: 57-0421S - The Great And Mighty Conqueror - Jeffersonville IN.pdf
+    >>> [73] Well, you know, it embarrassed the girl so much, she said, "I don't know," 'cause she was just so prissy, and had so many worldly ideas in her head. And it was her own mother.  [74] When she got off the train, the little old mother run over, to ...
+
+[7] file_id=2378 score=0.9944071146245058 fts_rescue=0
+    file: 53-0610 - Jesus Christ The Same Yesterday, Today, And Forever - Connersville IN.pdf
+    >>> [96] A little lady went away to college here not long ago. And when she come home... She'd learned so much. She used to go to church, but when she come back, she just knowed so much she didn't want... Oh, she was just a smart-aleck. That's about what...
+
+[8] file_id=2287 score=0.8967803030303029 fts_rescue=0
+    file: 50-0827A - Prodigal - Cleveland OH.pdf
+    >>> [113] I can see her put her arms around him and hug him. She just loved him and turned her head... He don't want a kiss in public... No affections... Next... The Bible said they would be this way. Paul speaks it: without natural affections. That's th...
+
+==========================================================================================
+Target file_id 3486 present in top-10: False
+All returned file_ids (top-10): ['2655', '2724', '2379', '2378', '2541', '2724', '2378', '2287']
+==========================================================================================
+==========================================================================================
+LIVE PIPELINE TEST
+Query: Where did bro Branham call his daughter fat and ugly
+Workspace: 2
+==========================================================================================

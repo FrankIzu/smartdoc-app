@@ -1,13 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     FlatList,
     Modal,
     RefreshControl,
-    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -34,6 +33,13 @@ interface Bookmark {
   is_locked?: boolean;
 }
 
+type PaginatedBookmarksCache = {
+  items: Bookmark[];
+  hasMore: boolean;
+};
+
+const BOOKMARKS_PAGE_SIZE = 20;
+
 export default function ManageBookmarksScreen() {
   const router = useRouter();
   const openChatGD = useOpenChatGD();
@@ -42,6 +48,12 @@ export default function ManageBookmarksScreen() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const hasMoreRef = useRef(true);
+  const loadingMoreRef = useRef(false);
+  const offsetRef = useRef(0);
+  const onEndReachedCalledDuringMomentumRef = useRef(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [bookmarkToRename, setBookmarkToRename] = useState<Bookmark | null>(null);
@@ -59,38 +71,70 @@ export default function ManageBookmarksScreen() {
   const BOOKMARKS_LIST_CACHE_MS = 30_000;
   const bookmarksCacheKey = bookmarksListScreenKey(user?.id);
 
-  const loadBookmarks = async (forceRefresh = false) => {
+  const loadBookmarks = async (forceRefresh = false, append = false) => {
     if (!user?.id) return;
 
-    if (!forceRefresh && bookmarksCacheKey) {
-      const cached = screenCache.get<Bookmark[]>(bookmarksCacheKey, BOOKMARKS_LIST_CACHE_MS);
+    if (append && (!hasMoreRef.current || loadingMoreRef.current)) return;
+
+    if (!forceRefresh && !append && bookmarksCacheKey) {
+      const cached = screenCache.get<PaginatedBookmarksCache>(bookmarksCacheKey, BOOKMARKS_LIST_CACHE_MS);
       if (cached) {
-        setBookmarks(cached);
+        setBookmarks(cached.items);
+        setHasMore(cached.hasMore);
+        hasMoreRef.current = cached.hasMore;
+        offsetRef.current = cached.items.length;
         setLoading(false);
         setRefreshing(false);
         return;
       }
     }
-    try {
+
+    const fetchOffset = append ? offsetRef.current : 0;
+    if (append) {
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else if (!forceRefresh) {
       setLoading(true);
-      const response = await apiClient.getBookmarks();
+    }
+
+    try {
+      const response = await apiClient.getBookmarks(BOOKMARKS_PAGE_SIZE, fetchOffset);
       
       if (response.success && response.data) {
         const bookmarksData = Array.isArray(response.data) 
           ? response.data 
           : (response.data.bookmarks || []);
-        
-        setBookmarks(bookmarksData);
-        if (bookmarksCacheKey) screenCache.set(bookmarksCacheKey, bookmarksData);
-      } else {
+        const pagination = response.pagination ?? response.data?.pagination;
+        const hasMorePage =
+          pagination?.has_more === true ||
+          (pagination?.has_more !== false && bookmarksData.length >= BOOKMARKS_PAGE_SIZE);
+
+        setBookmarks((prev) => {
+          const merged = append ? [...prev, ...bookmarksData] : bookmarksData;
+          offsetRef.current = merged.length;
+          if (!append && bookmarksCacheKey) {
+            screenCache.set(bookmarksCacheKey, { items: merged, hasMore: hasMorePage });
+          }
+          return merged;
+        });
+        setHasMore(hasMorePage);
+        hasMoreRef.current = hasMorePage;
+      } else if (!append) {
         setBookmarks([]);
       }
     } catch {
-      setBookmarks([]);
+      if (!append) setBookmarks([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
     }
+  };
+
+  const loadMoreBookmarks = () => {
+    if (loading || refreshing || loadingMoreRef.current || !hasMoreRef.current) return;
+    void loadBookmarks(false, true);
   };
 
   // Reload on focus so the list reflects changes made inside a bookmark detail,
@@ -103,6 +147,8 @@ export default function ManageBookmarksScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
+    offsetRef.current = 0;
+    hasMoreRef.current = true;
     if (bookmarksCacheKey) screenCache.invalidate(bookmarksCacheKey);
     loadBookmarks(true);
   };
@@ -281,6 +327,14 @@ export default function ManageBookmarksScreen() {
     },
     content: {
       flex: 1,
+      padding: 10,
+    },
+    listContent: {
+      padding: 10,
+      paddingBottom: 24,
+    },
+    emptyListContent: {
+      flexGrow: 1,
       padding: 10,
     },
     emptyState: {
@@ -586,34 +640,43 @@ export default function ManageBookmarksScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView 
-        style={dynamicStyles.content}
+      <FlatList
+        data={bookmarks}
+        renderItem={renderBookmarkItem}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={bookmarks.length === 0 ? dynamicStyles.emptyListContent : dynamicStyles.listContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {bookmarks.length === 0 ? (
-          <View style={dynamicStyles.emptyState}>
-            <Ionicons name="bookmark-outline" size={64} color={colors.textLight} />
-            <Text style={dynamicStyles.emptyStateTitle}>No bookmarks yet</Text>
-            <Text style={dynamicStyles.emptyStateDescription}>
-              Create your first bookmark to organize your documents
-            </Text>
-            <TouchableOpacity
-              style={dynamicStyles.createFirstButton}
-              onPress={() => setShowCreateModal(true)}
-            >
-              <Text style={dynamicStyles.createFirstButtonText}>Create Bookmark</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <FlatList
-            data={bookmarks}
-            renderItem={renderBookmarkItem}
-            keyExtractor={(item) => item.id.toString()}
-            scrollEnabled={false}
-            showsVerticalScrollIndicator={false}
-          />
-        )}
-      </ScrollView>
+        onEndReached={loadMoreBookmarks}
+        onEndReachedThreshold={0.4}
+        onMomentumScrollBegin={() => {
+          onEndReachedCalledDuringMomentumRef.current = false;
+        }}
+        ListEmptyComponent={
+          !loading ? (
+            <View style={dynamicStyles.emptyState}>
+              <Ionicons name="bookmark-outline" size={64} color={colors.textLight} />
+              <Text style={dynamicStyles.emptyStateTitle}>No bookmarks yet</Text>
+              <Text style={dynamicStyles.emptyStateDescription}>
+                Create your first bookmark to organize your documents
+              </Text>
+              <TouchableOpacity
+                style={dynamicStyles.createFirstButton}
+                onPress={() => setShowCreateModal(true)}
+              >
+                <Text style={dynamicStyles.createFirstButtonText}>Create Bookmark</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="#007AFF" />
+            </View>
+          ) : null
+        }
+        showsVerticalScrollIndicator={false}
+      />
 
       {/* Create Bookmark Modal */}
       {showCreateModal && (

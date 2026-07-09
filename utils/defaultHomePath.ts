@@ -31,6 +31,7 @@ const ALLOWED_WEB_PATHS = [
   '/workspaces',
   '/analysis',
   '/signatures',
+  '/intake',
 ] as const;
 
 export type WebDefaultHomePath = (typeof ALLOWED_WEB_PATHS)[number];
@@ -72,6 +73,7 @@ export const DEFAULT_HOME_SCREEN_OPTIONS: ReadonlyArray<{ webPath: WebDefaultHom
   { webPath: '/workspaces', label: 'Workspace' },
   { webPath: '/analysis', label: 'Financials' },
   { webPath: '/signatures', label: 'Signatures' },
+  { webPath: '/intake', label: 'Intake' },
 ];
 
 /** Web slug → Expo route (there is no `app/upload` stack screen; `/upload` = ChatGD → chats tab + composer). */
@@ -88,6 +90,7 @@ const WEB_TO_EXPO_HREF: Record<WebDefaultHomePath, Href> = {
   '/workspaces': '/workspaces',
   '/analysis': '/analytics/dashboard',
   '/signatures': '/signatures' as Href,
+  '/intake': '/intake' as Href,
 };
 
 /** Map web-only default-home segments to routes the mobile app supports. */

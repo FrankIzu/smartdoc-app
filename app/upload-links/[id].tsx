@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Clipboard,
   FlatList,
@@ -21,6 +22,8 @@ import FileNameText from '../../components/FileNameText';
 import { FRONTEND_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { uploadLinkDetailScreenKey, uploadLinksListScreenKey } from '../../services/userScopedCache';
+import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 interface UploadLink {
@@ -51,6 +54,8 @@ interface UploadedFile {
   sender_info?: any;
 }
 
+const UPLOAD_LINK_DETAIL_CACHE_MS = 30_000;
+
 export default function UploadLinkDetailsScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -69,16 +74,38 @@ export default function UploadLinkDetailsScreen() {
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameValue, setRenameValue] = useState('');
 
-  const loadUploadLink = async () => {
+  const linkId = Number(id);
+  const detailCacheKey = uploadLinkDetailScreenKey(user?.id, linkId);
+
+  const invalidateUploadLinkCaches = useCallback(() => {
+    if (!user?.id) return;
+    if (detailCacheKey) screenCache.invalidate(detailCacheKey);
+    const listKey = uploadLinksListScreenKey(user.id);
+    if (listKey) screenCache.invalidate(listKey);
+  }, [user?.id, detailCacheKey]);
+
+  const loadUploadLink = useCallback(async (forceRefresh = false) => {
     if (!user) {
       setLoading(false);
       return;
     }
+
+    if (!forceRefresh && detailCacheKey) {
+      const cached = screenCache.get<UploadLink>(detailCacheKey, UPLOAD_LINK_DETAIL_CACHE_MS);
+      if (cached) {
+        setUploadLink(cached);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
     
     try {
-      const response = await apiService.getUploadLink(Number(id));
+      if (!forceRefresh && !uploadLink) setLoading(true);
+      const response = await apiService.getUploadLink(linkId);
       if (response.success) {
         setUploadLink(response.upload_link);
+        if (detailCacheKey) screenCache.set(detailCacheKey, response.upload_link);
       } else {
         Alert.alert('Error', response.message || 'Failed to load upload link');
         router.back();
@@ -91,7 +118,7 @@ export default function UploadLinkDetailsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [user, linkId, router, detailCacheKey, uploadLink]);
 
   // Add debounce to prevent excessive reloads
   const lastLoadTimeRef = useRef<number>(0);
@@ -112,7 +139,8 @@ export default function UploadLinkDetailsScreen() {
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
-    loadUploadLink();
+    if (detailCacheKey) screenCache.invalidate(detailCacheKey);
+    loadUploadLink(true);
   };
 
   const getFullUrl = (url: string): string => {
@@ -200,7 +228,14 @@ export default function UploadLinkDetailsScreen() {
       });
       
       if (response.success) {
-        setUploadLink(prev => prev ? { ...prev, is_active: !prev.is_active } : null);
+        setUploadLink((prev) => {
+          if (!prev) return null;
+          const next = { ...prev, is_active: !prev.is_active };
+          if (detailCacheKey) screenCache.set(detailCacheKey, next);
+          return next;
+        });
+        const listKey = uploadLinksListScreenKey(user?.id);
+        if (listKey) screenCache.invalidate(listKey);
       } else {
         Alert.alert('Error', response.message || 'Failed to update link');
       }
@@ -226,7 +261,14 @@ export default function UploadLinkDetailsScreen() {
     try {
       const response = await apiService.updateUploadLink(uploadLink.id, { link_name: trimmed });
       if (response.success) {
-        setUploadLink(prev => prev ? { ...prev, name: trimmed } : null);
+        setUploadLink((prev) => {
+          if (!prev) return null;
+          const next = { ...prev, name: trimmed };
+          if (detailCacheKey) screenCache.set(detailCacheKey, next);
+          return next;
+        });
+        const listKey = uploadLinksListScreenKey(user?.id);
+        if (listKey) screenCache.invalidate(listKey);
         setRenameModalVisible(false);
       } else {
         Alert.alert('Error', response.message || 'Failed to rename');
@@ -251,6 +293,7 @@ export default function UploadLinkDetailsScreen() {
             try {
               const response = await apiService.deleteUploadLink(uploadLink.id);
               if (response.success) {
+                invalidateUploadLinkCaches();
                 router.back();
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete link');
@@ -693,6 +736,7 @@ export default function UploadLinkDetailsScreen() {
           <View style={dynamicStyles.placeholder} />
         </View>
         <View style={dynamicStyles.centerContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
           <Text style={dynamicStyles.loadingText}>Loading upload link...</Text>
         </View>
       </SafeAreaView>

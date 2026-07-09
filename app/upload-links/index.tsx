@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Platform,
@@ -17,6 +18,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FRONTEND_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { uploadLinksListScreenKey } from '../../services/userScopedCache';
+import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 interface UploadLink {
@@ -32,6 +35,15 @@ interface UploadLink {
   url: string;
 }
 
+const UPLOAD_LINKS_LIST_CACHE_MS = 30_000;
+const UPLOAD_LINKS_PAGE_SIZE = 20;
+
+type PaginatedUploadLinksCache = {
+  items: UploadLink[];
+  hasMore: boolean;
+  page: number;
+};
+
 export default function UploadLinksScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -39,31 +51,85 @@ export default function UploadLinksScreen() {
   const [uploadLinks, setUploadLinks] = useState<UploadLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [menuVisible, setMenuVisible] = useState(false);
   const [selectedLink, setSelectedLink] = useState<UploadLink | null>(null);
 
-  const loadUploadLinks = async () => {
+  const hasMoreRef = useRef(true);
+  const loadingMoreRef = useRef(false);
+  const pageRef = useRef(1);
+  const onEndReachedCalledDuringMomentumRef = useRef(false);
+
+  const listCacheKey = uploadLinksListScreenKey(user?.id);
+
+  const loadUploadLinks = useCallback(async (forceRefresh = false, append = false) => {
     if (!user) {
       setLoading(false);
       return;
     }
-    
+
+    if (append && (!hasMoreRef.current || loadingMoreRef.current)) return;
+
+    if (!forceRefresh && !append && listCacheKey) {
+      const cached = screenCache.get<PaginatedUploadLinksCache>(listCacheKey, UPLOAD_LINKS_LIST_CACHE_MS);
+      if (cached) {
+        setUploadLinks(cached.items);
+        setHasMore(cached.hasMore);
+        hasMoreRef.current = cached.hasMore;
+        pageRef.current = cached.page;
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
+
+    const fetchPage = append ? pageRef.current + 1 : 1;
+    if (append) {
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else if (!forceRefresh) {
+      setLoading(true);
+    }
+
     try {
-      const response = await apiService.getUploadLinks();
+      const response = await apiService.getUploadLinks(fetchPage, UPLOAD_LINKS_PAGE_SIZE);
       if (response.success) {
-        setUploadLinks(response.upload_links || []);
-      } else {
+        const rows = response.upload_links || [];
+        const pagination = response.pagination;
+        const hasMorePage =
+          pagination?.has_more === true ||
+          (pagination?.has_more !== false && rows.length >= UPLOAD_LINKS_PAGE_SIZE);
+
+        setUploadLinks((prev) => {
+          const merged = append ? [...prev, ...rows] : rows;
+          pageRef.current = fetchPage;
+          if (!append && listCacheKey) {
+            screenCache.set(listCacheKey, { items: merged, hasMore: hasMorePage, page: fetchPage });
+          }
+          return merged;
+        });
+        setHasMore(hasMorePage);
+        hasMoreRef.current = hasMorePage;
+      } else if (!append) {
         console.error('Get upload links error:', response.message || 'Failed to load upload links');
         Alert.alert('Error', response.message || 'Failed to load upload links');
       }
     } catch (error: any) {
       console.error('Load upload links error:', error);
-      Alert.alert('Error', error.message || 'Failed to load upload links');
+      if (!append) Alert.alert('Error', error.message || 'Failed to load upload links');
     } finally {
       setLoading(false);
       setRefreshing(false);
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
     }
-  };
+  }, [user, listCacheKey]);
+
+  const loadMoreUploadLinks = useCallback(() => {
+    if (loading || refreshing || loadingMoreRef.current || !hasMoreRef.current) return;
+    void loadUploadLinks(false, true);
+  }, [loading, refreshing, loadUploadLinks]);
 
   // Add debounce to prevent excessive reloads
   const lastLoadTimeRef = useRef<number>(0);
@@ -78,13 +144,16 @@ export default function UploadLinksScreen() {
           loadUploadLinks();
         }
       }
-    }, [user])
+    }, [user, loadUploadLinks])
   );
 
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
-    loadUploadLinks();
+    pageRef.current = 1;
+    hasMoreRef.current = true;
+    if (listCacheKey) screenCache.invalidate(listCacheKey);
+    loadUploadLinks(true);
   };
 
   const handleCreateLink = () => {
@@ -475,6 +544,7 @@ export default function UploadLinksScreen() {
           <View style={dynamicStyles.placeholder} />
         </View>
         <View style={dynamicStyles.centerContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
           <Text style={dynamicStyles.loadingText}>Loading file requests...</Text>
         </View>
       </SafeAreaView>
@@ -516,6 +586,18 @@ export default function UploadLinksScreen() {
               onRefresh={handleRefresh}
               tintColor="#007AFF"
             />
+          }
+          onEndReached={loadMoreUploadLinks}
+          onEndReachedThreshold={0.4}
+          onMomentumScrollBegin={() => {
+            onEndReachedCalledDuringMomentumRef.current = false;
+          }}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={{ paddingVertical: 16 }}>
+                <ActivityIndicator size="small" color="#007AFF" />
+              </View>
+            ) : null
           }
           showsVerticalScrollIndicator={false}
         />

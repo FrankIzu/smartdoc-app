@@ -1,0 +1,145 @@
+/**
+ * Intake feature types — mirrors backend `Intake`/`IntakeItem`/`IntakeFile`/`IntakeTemplate`
+ * to_dict() shapes (manager-francis/backend/model.py) via the same `/api/v1/web/intakes*`
+ * endpoints the web app uses (manager-francis/frontend/src/pages/intake/*.tsx).
+ */
+
+export type IntakeStatus = 'draft' | 'waiting_for_client' | 'in_review' | 'completed' | 'archived';
+export type IntakeItemStatus = 'pending' | 'matched' | 'confirmed' | 'not_applicable';
+export type IntakeDueBadge = 'on_track' | 'due_tomorrow' | 'overdue';
+export type IntakeMatchSource = 'ai' | 'filename' | 'manual';
+export type IntakeFileMatchStatus = 'auto_matched' | 'needs_review' | 'unmatched' | 'manually_matched';
+export type IntakeFileSource = 'file_request_link' | 'email_alias' | 'gmail_sync' | 'outlook_sync';
+export type ReminderPreset = 'gentle' | 'standard' | 'urgent' | 'custom';
+
+export interface IntakeAuthorizedSender {
+  name: string;
+  email: string;
+}
+
+export interface IntakeProgress {
+  received: number;
+  total: number;
+  percent: number;
+}
+
+export interface IntakeItem {
+  id: number;
+  intake_id: number;
+  label: string;
+  description: string | null;
+  required: boolean;
+  status: IntakeItemStatus;
+  matched_file_id: number | null;
+  matched_file_name: string | null;
+  match_confidence: number | null;
+  match_source: IntakeMatchSource | null;
+  auto_verified: boolean;
+  confirmed_by_user_id: number | null;
+  sort_order: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface IntakeFileRow {
+  id: number;
+  intake_id: number;
+  file_id: number;
+  filename: string | null;
+  source: IntakeFileSource;
+  sender_email: string | null;
+  matched_item_id: number | null;
+  matched_item_label: string | null;
+  match_confidence: number | null;
+  match_status: IntakeFileMatchStatus;
+  created_at: string | null;
+}
+
+export interface IntakeUploadLink {
+  link_token: string;
+  upload_code: string | null;
+  public_url: string;
+}
+
+export interface Intake {
+  id: number;
+  user_id: number;
+  company_id: number;
+  workspace_id: number;
+  title: string;
+  client_name: string | null;
+  client_primary_email: string | null;
+  authorized_senders: IntakeAuthorizedSender[];
+  status: IntakeStatus;
+  due_at: string | null;
+  due_badge?: IntakeDueBadge | null;
+  upload_link_id: number | null;
+  destination_folder_id: number | null;
+  template_id: number | null;
+  auto_verify_high_confidence: boolean;
+  reminder_enabled: boolean;
+  reminder_preset: ReminderPreset | null;
+  reminder_first_after_hours: number;
+  reminder_repeat_every_hours: number;
+  reminder_max_count: number;
+  last_reminder_sent_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+  progress: IntakeProgress;
+  upload_link?: IntakeUploadLink;
+  items?: IntakeItem[];
+  needs_attention?: IntakeFileRow[];
+  unmatched?: IntakeFileRow[];
+  arrival_history?: IntakeFileRow[];
+  last_file_received_at?: string | null;
+}
+
+export interface IntakeTemplateItem {
+  label: string;
+  description: string | null;
+  required: boolean;
+}
+
+export interface IntakeTemplate {
+  id: number;
+  user_id: number;
+  name: string;
+  industry_tag: string | null;
+  created_at: string | null;
+  items: IntakeTemplateItem[];
+}
+
+export const INTAKE_STATUS_LABELS: Record<IntakeStatus, string> = {
+  draft: 'Draft',
+  waiting_for_client: 'Waiting for Client',
+  in_review: 'In Review',
+  completed: 'Completed',
+  archived: 'Archived',
+};
+
+export const INTAKE_ITEM_STATUS_LABELS: Record<IntakeItemStatus, string> = {
+  pending: 'Missing',
+  matched: 'Received',
+  confirmed: 'Verified',
+  not_applicable: 'N/A',
+};
+
+export const INTAKE_DUE_BADGE_LABELS: Record<IntakeDueBadge, string> = {
+  on_track: 'On Track',
+  due_tomorrow: 'Due Tomorrow',
+  overdue: 'Overdue',
+};
+
+export const INTAKE_SOURCE_LABELS: Record<string, string> = {
+  file_request_link: 'Upload Link',
+  email_alias: 'Email Forward',
+  gmail_sync: 'Gmail Sync',
+  outlook_sync: 'Outlook Sync',
+};
+
+export const INTAKE_REMINDER_PRESETS: Record<'gentle' | 'standard' | 'urgent', { first: number; repeat: number; max: number }> = {
+  gentle: { first: 72, repeat: 120, max: 3 },
+  standard: { first: 48, repeat: 72, max: 4 },
+  urgent: { first: 24, repeat: 24, max: 6 },
+};

@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     FlatList,
     RefreshControl,
@@ -34,6 +35,14 @@ interface Workspace {
   can_edit: boolean;
 }
 
+type PaginatedWorkspacesCache = {
+  items: Workspace[];
+  hasMore: boolean;
+};
+
+const WORKSPACES_PAGE_SIZE = 20;
+const WORKSPACES_CACHE_MS = 30_000;
+
 export default function WorkspacesScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -41,45 +50,80 @@ export default function WorkspacesScreen() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
-  const WORKSPACES_CACHE_MS = 30_000;
+  const hasMoreRef = useRef(true);
+  const loadingMoreRef = useRef(false);
+  const offsetRef = useRef(0);
+  const onEndReachedCalledDuringMomentumRef = useRef(false);
+
   const workspacesCacheKey = workspacesListScreenKey(user?.id);
 
-  const loadWorkspaces = async (forceRefresh = false) => {
+  const loadWorkspaces = async (forceRefresh = false, append = false) => {
     if (!user) return;
 
-    if (!forceRefresh && workspacesCacheKey) {
-      const cached = screenCache.get<Workspace[]>(workspacesCacheKey, WORKSPACES_CACHE_MS);
+    if (append && (!hasMoreRef.current || loadingMoreRef.current)) return;
+
+    if (!forceRefresh && !append && workspacesCacheKey) {
+      const cached = screenCache.get<PaginatedWorkspacesCache>(workspacesCacheKey, WORKSPACES_CACHE_MS);
       if (cached) {
-        setWorkspaces(cached);
+        setWorkspaces(cached.items);
+        setHasMore(cached.hasMore);
+        hasMoreRef.current = cached.hasMore;
+        offsetRef.current = cached.items.length;
         setLoading(false);
         setRefreshing(false);
         return;
       }
     }
+
+    const fetchOffset = append ? offsetRef.current : 0;
+    if (append) {
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else if (!forceRefresh) {
+      setLoading(true);
+    }
     
     try {
-      const response = await apiService.getMobileWorkspaces();
+      const response = await apiService.getMobileWorkspaces(WORKSPACES_PAGE_SIZE, fetchOffset);
       if (response.success && response.data) {
-        // Handle both response structures: data as array or data.workspaces
         const workspacesData = Array.isArray(response.data) 
           ? response.data 
           : (response.data.workspaces || []);
-        
-        console.log('✅ Loaded workspaces:', workspacesData.length);
-        setWorkspaces(workspacesData);
-        if (workspacesCacheKey) screenCache.set(workspacesCacheKey, workspacesData);
+        const pagination = response.pagination ?? response.data?.pagination;
+        const hasMorePage =
+          pagination?.has_more === true ||
+          (pagination?.has_more !== false && workspacesData.length >= WORKSPACES_PAGE_SIZE);
+
+        setWorkspaces((prev) => {
+          const merged = append ? [...prev, ...workspacesData] : workspacesData;
+          offsetRef.current = merged.length;
+          if (!append && workspacesCacheKey) {
+            screenCache.set(workspacesCacheKey, { items: merged, hasMore: hasMorePage });
+          }
+          return merged;
+        });
+        setHasMore(hasMorePage);
+        hasMoreRef.current = hasMorePage;
       } else {
-        console.log('❌ No workspaces found:', response);
-        setWorkspaces([]);
+        if (!append) setWorkspaces([]);
       }
     } catch (error: any) {
       console.error('❌ Failed to load workspaces:', error);
-      setWorkspaces([]);
+      if (!append) setWorkspaces([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
     }
+  };
+
+  const loadMoreWorkspaces = () => {
+    if (loading || refreshing || loadingMoreRef.current || !hasMoreRef.current) return;
+    void loadWorkspaces(false, true);
   };
 
   useFocusEffect(
@@ -91,6 +135,8 @@ export default function WorkspacesScreen() {
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
+    offsetRef.current = 0;
+    hasMoreRef.current = true;
     if (workspacesCacheKey) screenCache.invalidate(workspacesCacheKey);
     loadWorkspaces(true);
   };
@@ -400,7 +446,8 @@ export default function WorkspacesScreen() {
           <View style={{ width: 24 }} />
         </View>
         <View style={dynamicStyles.loadingContainer}>
-          <Text style={{ color: colors.textSecondary }}>Loading workspaces...</Text>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Loading workspaces...</Text>
         </View>
       </SafeAreaView>
     );
@@ -425,6 +472,18 @@ export default function WorkspacesScreen() {
         contentContainerStyle={workspaces.length === 0 ? dynamicStyles.emptyContainer : dynamicStyles.listContainer}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
+        onEndReached={loadMoreWorkspaces}
+        onEndReachedThreshold={0.4}
+        onMomentumScrollBegin={() => {
+          onEndReachedCalledDuringMomentumRef.current = false;
+        }}
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={{ paddingVertical: 16 }}>
+              <ActivityIndicator size="small" color="#007AFF" />
+            </View>
+          ) : null
         }
         ListEmptyComponent={renderEmptyState}
         showsVerticalScrollIndicator={false}

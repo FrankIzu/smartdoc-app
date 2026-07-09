@@ -184,15 +184,31 @@ const MOBILE_ENDPOINTS = {
   WORKSPACE_INVITATION_BY_ID: (workspaceId: number, invitationId: number) => `/api/v1/mobile/workspaces/${workspaceId}/invitations/${invitationId}`,
   WORKSPACE_USERS: '/api/v1/mobile/workspace-users',
   
-  // Upload Links (mobile - kept for getUploadLinkFiles if needed)
+  // Upload Links (mobile list/detail; mutations may use web routes)
+  UPLOAD_LINKS: '/api/v1/mobile/upload-links',
+  UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/mobile/upload-links/${id}`,
   UPLOAD_LINK_FILES: (id: number) => `/api/v1/mobile/upload-links/${id}/files`,
-  // Web Upload Links (same as web app - links reachable at grabdocs.com/upload-to/{link_token})
+  // Web Upload Links (create/update/delete, public upload-to, email share)
   WEB_UPLOAD_LINKS: '/api/v1/web/upload-links',
   WEB_UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/web/upload-links/${id}`,
   WEB_UPLOAD_LINK_SEND_EMAIL: (id: number) => `/api/v1/web/upload-links/${id}/send-email`,
   WEB_FILES_UPLOADED_VIA_LINKS: '/api/v1/web/files/uploaded-via-links',
   WEB_UPLOAD_TO: (token: string) => `/api/v1/web/upload-to/${token}`,
   WEB_UPLOAD_TO_BY_CODE: (code: string) => `/api/v1/web/upload-to/by-code/${code}`,
+
+  // Intake (mobile for list/detail reads; web for mutations/templates)
+  INTAKES: '/api/v1/mobile/intakes',
+  INTAKE_BY_ID: (id: number) => `/api/v1/mobile/intakes/${id}`,
+  WEB_INTAKES: '/api/v1/web/intakes',
+  WEB_INTAKE_BY_ID: (id: number) => `/api/v1/web/intakes/${id}`,
+  WEB_INTAKE_SEND: (id: number) => `/api/v1/web/intakes/${id}/send`,
+  WEB_INTAKE_REMIND: (id: number) => `/api/v1/web/intakes/${id}/remind`,
+  WEB_INTAKE_ITEM_CONFIRM: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/confirm`,
+  WEB_INTAKE_ITEM_REJECT: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/reject`,
+  WEB_INTAKE_ITEM_NOT_APPLICABLE: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/not-applicable`,
+  WEB_INTAKE_ITEM_ASSIGN: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/assign`,
+  WEB_INTAKE_TEMPLATES: '/api/v1/web/intake-templates',
+  WEB_INTAKE_TEMPLATE_BY_ID: (id: number) => `/api/v1/web/intake-templates/${id}`,
   
   // Meeting Assets & Webhooks (same endpoints as web)
   VIDEO_ASSET_CONTENT: '/api/v1/video/asset-content',
@@ -4950,12 +4966,14 @@ class ApiService {
     };
   }
 
-  async getUploadLinks(): Promise<ApiResponse> {
+  async getUploadLinks(page = 1, perPage = 20): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_LINKS);
+      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINKS, {
+        params: { page, perPage },
+      });
       const data = response.data;
       const links = (data.upload_links || []).map((l: any) => this.normalizeWebUploadLink(l));
-      return { ...data, success: true, upload_links: links };
+      return { ...data, success: data.success !== false, upload_links: links };
     } catch (error: any) {
       console.error('Get upload links error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload links');
@@ -4995,10 +5013,10 @@ class ApiService {
 
   async getUploadLink(id: number): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_BY_ID(id));
+      const response = await this.client.get(MOBILE_ENDPOINTS.UPLOAD_LINK_BY_ID(id));
       const data = response.data;
       const upload_link = this.normalizeWebUploadLink(data.upload_link ?? data.link);
-      return { ...data, success: true, upload_link };
+      return { ...data, success: data.success !== false, upload_link };
     } catch (error: any) {
       console.error('Get upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch upload link');
@@ -5062,6 +5080,169 @@ class ApiService {
     } catch (error: any) {
       console.error('Get upload link by code error:', error);
       throw new Error(error.response?.data?.message || 'Invalid upload code');
+    }
+  }
+
+  // ==================== INTAKE ====================
+  // List/detail: mobile routes (paginated). Create/update/send/item actions: web routes.
+
+  async getIntakes(status?: 'archived', page = 1, perPage = 20): Promise<ApiResponse> {
+    try {
+      const params: Record<string, string | number> = { page, perPage };
+      if (status) params.status = status;
+      const response = await this.client.get(MOBILE_ENDPOINTS.INTAKES, { params });
+      return response.data;
+    } catch (error: any) {
+      console.error('Get intakes error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to load Intakes');
+    }
+  }
+
+  async getIntake(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.INTAKE_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get intake error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to load Intake');
+    }
+  }
+
+  async createIntake(data: {
+    title: string;
+    client_name?: string | null;
+    client_primary_email?: string | null;
+    authorized_senders?: { name: string; email: string }[];
+    items: { label: string; description?: string | null; required?: boolean }[];
+    due_at?: string | null;
+    destination_folder_id?: number | null;
+    template_id?: number | null;
+    auto_verify_high_confidence?: boolean;
+    reminder_preset?: 'gentle' | 'standard' | 'urgent' | 'custom';
+    reminder_first_after_hours?: number;
+    reminder_repeat_every_hours?: number;
+    reminder_max_count?: number;
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKES, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Create intake error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to create Intake');
+    }
+  }
+
+  async updateIntake(id: number, data: Record<string, unknown>): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.WEB_INTAKE_BY_ID(id), data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Update intake error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update Intake');
+    }
+  }
+
+  /** Archive (soft-delete) — reachable from any state, same as web. */
+  async archiveIntake(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(MOBILE_ENDPOINTS.WEB_INTAKE_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Archive intake error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to archive Intake');
+    }
+  }
+
+  /** draft -> waiting_for_client; emails the client and schedules the first reminder. */
+  async sendIntake(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_SEND(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Send intake error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to send Intake');
+    }
+  }
+
+  /** Manual "send reminder now" — only valid while waiting_for_client. */
+  async remindIntake(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_REMIND(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Remind intake error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to send reminder');
+    }
+  }
+
+  /** Mark a Received match "Verified" (human-in-the-loop confirmation). */
+  async confirmIntakeItem(intakeId: number, itemId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_ITEM_CONFIRM(intakeId, itemId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Confirm intake item error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to verify checklist item');
+    }
+  }
+
+  /** Reject a match — item returns to Missing, file moves to Unmatched. */
+  async rejectIntakeItem(intakeId: number, itemId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_ITEM_REJECT(intakeId, itemId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Reject intake item error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to reject match');
+    }
+  }
+
+  /** Mark a checklist item Not Applicable (e.g. doesn't apply to this client). */
+  async markIntakeItemNotApplicable(intakeId: number, itemId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.WEB_INTAKE_ITEM_NOT_APPLICABLE(intakeId, itemId));
+      return response.data;
+    } catch (error: any) {
+      console.error('Mark intake item N/A error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update checklist item');
+    }
+  }
+
+  /** Manually satisfy a checklist item with a file from Needs Attention / Unmatched. */
+  async assignIntakeFile(intakeId: number, itemId: number, fileId: number, confidence?: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_ITEM_ASSIGN(intakeId, itemId), {
+        file_id: fileId,
+        confidence,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Assign intake file error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to assign file');
+    }
+  }
+
+  async getIntakeTemplates(): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_INTAKE_TEMPLATES);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get intake templates error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to load templates');
+    }
+  }
+
+  async createIntakeTemplate(data: {
+    name: string;
+    industry_tag?: string | null;
+    items: { label: string; description?: string | null; required?: boolean }[];
+  }): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_TEMPLATES, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Create intake template error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to save template');
     }
   }
 

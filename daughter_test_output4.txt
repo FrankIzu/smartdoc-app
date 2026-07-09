@@ -1,0 +1,1060 @@
+C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend\scripts\test_branham_daughter_query_live.py:10: SyntaxWarning: invalid escape sequence '\.'
+  ..\.venv\Scripts\python.exe scripts\test_branham_daughter_query_live.py
+Γ£à ssl.create_default_context() patched - using safe verify_mode setter
+ΓÜá∩╕Å Skipping aggressive SSL patch for Python 3.12+ (not needed)
+Γ£à httpx SSL patch applied - using patched ssl.create_default_context
+Γ£à Botocore SSL patch applied - bypassing broken options setter
+Γ£à SSL patch module loaded successfully
+   ssl.create_default_context: True, httpx: True, botocore: True, aggressive: False, standard: True
+Γ£à SSL patch imported in global_singletons.py
+Γ£à httpx SSL patch applied - using patched ssl.create_default_context
+Γ£à httpx SSL patch applied in global_singletons.py
+2026-07-08 16:38:36,776 - utils.doc_llm_parser - INFO - Logger configured for utils.doc_llm_parser (PID: 30268)
+2026-07-08 16:38:36,777 - utils.doc_llm_parser - INFO - Module file: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend\utils\doc_llm_parser.py
+2026-07-08 16:38:36,778 - utils.doc_llm_parser - INFO - Backend dir: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend
+2026-07-08 16:38:36,778 - utils.doc_llm_parser - INFO - Loading prompt template from: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\backend\prompts\generic_data_extraction_prompt.txt (PID: 30268)
+2026-07-08 16:38:36,778 - utils.doc_llm_parser - INFO - Path exists: True
+2026-07-08 16:38:36,779 - utils.doc_llm_parser - INFO - Prompt template loaded successfully (length: 2205 chars, PID: 30268)
+INFO:utils.rate_limiter:Rate limiter cleanup task started
+2026-07-08 16:38:36,784 - app - INFO - Rate limiting middleware loaded successfully
+2026-07-08 16:38:36,785 - app - INFO - Loading .env from: C:\llm\projects\grabdocs-app\grabdocs\manager-francis\.env
+2026-07-08 16:38:38,537 - app - INFO - Query Router will be initialized at startup for optimal performance
+INFO:utils.performance_monitor:System monitoring started
+INFO:utils.performance_monitor:Γ£à Performance monitor initialized
+INFO:utils.job_storage:ΓÜá∩╕Å [JOB-STORAGE] Redis not available, using in-memory storage for chat_job:
+INFO:utils.job_storage:ΓÜá∩╕Å [JOB-STORAGE] Redis not available, using in-memory storage for upload_job:
+2026-07-08 16:38:38,591 - app - INFO - Mobile routes blueprint imported successfully
+2026-07-08 16:38:38,591 - app - INFO - Phone authentication routes available via web blueprint
+INFO:utils.chat_cache:ΓÜá∩╕Å Redis not available - using in-memory cache only
+INFO:utils.request_deduplicator:≡ƒº╣ Request deduplicator cleanup thread started
+INFO:utils.async_chat_processor:Γ£à ThreadPoolExecutor created with 4 workers
+INFO:utils.async_chat_processor:Background chat processor started
+INFO:utils.async_chat_processor:Γ£à Async chat processor initialized with 4 workers
+2026-07-08 16:38:39,129 - app - INFO - Γ£à AI File Manager blueprint registered at /api/v1/web/ai-file-manager
+2026-07-08 16:38:39,129 - app - INFO - Γ£à Injected _RealOsThread (pre-patch threading.Thread) into web_routes
+2026-07-08 16:38:39,131 - app - INFO - Γ£à celery_fallback thread class configured (Celery ΓåÆ thread when broker unavailable)
+2026-07-08 16:38:39,131 - app - INFO - Γ£à Chat search thread pool ready (gevent.threadpool, 8 workers)
+2026-07-08 16:38:39,131 - app - INFO - Γ£à Web blueprint registered successfully with /api/v1/web prefix
+INFO:celery_app:Γä╣∩╕Å Celery result backend DISABLED to save Redis connections
+INFO:celery_app:Γ£à main_tasks module imported - all tasks should be registered
+INFO:main_tasks:Γ£à [TASK-REGISTRATION] extract_data_task registered with name: main_tasks.extract_data_task
+2026-07-08 16:38:39,463 - app - INFO - Γ£à Upload retry routes registered
+2026-07-08 16:38:39,467 - app - INFO - Γ£à Webhook monitor routes registered
+2026-07-08 16:38:39,506 - app - INFO - Γ£à Subscription admin routes registered
+2026-07-08 16:38:39,513 - app - INFO - Γ£à Analytics API routes registered (/api/analytics)
+2026-07-08 16:38:39,518 - company_api - INFO - Company API blueprint initialized
+2026-07-08 16:38:39,544 - app - INFO - Γ£à Company management API registered
+2026-07-08 16:38:39,549 - internal_file_sharing_api - INFO - Internal file sharing routes registered
+2026-07-08 16:38:39,553 - app - INFO - System Alerts API routes registered
+INFO:hms_api:Γ£à 100ms configuration complete
+INFO:hms_api:Γ£à SIP Interconnect configuration complete
+INFO:video_api:Local file manager imported successfully
+INFO:video_api:=== VIDEO API BLUEPRINT INITIALIZATION ===
+INFO:video_api:Initializing Local Asset Manager...
+INFO:video_api:≡ƒÄÑ VIDEO API INITIALIZATION
+INFO:video_api:≡ƒÄÑ VIDEO_PROVIDER: 100ms
+INFO:video_api:≡ƒÄÑ FLASK_ENV: development
+INFO:video_provider:≡ƒÄÑ Using 100ms video provider
+INFO:video_api:≡ƒÄÑ Video provider initialized: HMSProvider
+INFO:video_api:Γ£à Video provider is properly configured
+INFO:utils.twilio_sms:Γ£à Twilio SMS service initialized successfully
+INFO:utils.twilio_sms:Γ£à Twilio SIP Interconnect configured
+INFO:video_api:≡ƒô₧ Twilio service initialized: SMS=True, SIP=True
+INFO:video_api:≡ƒÄÑ Environment: FLASK_ENV=development - using 100ms API with real credentials
+INFO:video_api:≡ƒÄÑ Video provider configured: True
+2026-07-08 16:38:39,746 - app - INFO - Γ£à Calendar API blueprint registered successfully
+INFO:notes_api:Notes API blueprint initialized
+2026-07-08 16:38:39,752 - app - INFO - Γ£à Notes API blueprint registered successfully
+2026-07-08 16:38:39,769 - app - INFO - Γ£à Email inbound blueprint registered successfully
+2026-07-08 16:38:39,785 - app - INFO - Compatibility routes for Render deployment registered successfully
+2026-07-08 16:38:39,851 - app - INFO - Mobile routes registered successfully
+C:\llm\projects\grabdocs-app\grabdocs\manager-francis\.venv\Lib\site-packages\transformers\utils\hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+INFO:utils.global_singletons:≡ƒöä Loading SentenceTransformer model: all-MiniLM-L6-v2 (ONE-TIME ONLY)...
+INFO:sentence_transformers.SentenceTransformer:Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+INFO:utils.global_singletons:Γ£à SentenceTransformer model loaded successfully on CPU
+INFO:root:sentence-transformers available and working via singleton
+INFO:root:Smart Chat System available
+INFO:root:LlamaIndex imports successful
+INFO:utils.usage_tracker:Usage tracker initialized
+INFO:utils.conversation_context_manager:OpenAI client initialized for context management
+INFO:utils.conversation_intent_classifier:OpenAI client initialized for conversation intent classification
+INFO:utils.global_singletons:≡ƒöä Loading spaCy model (ONE-TIME ONLY)...
+INFO:utils.global_singletons:Γ£à spaCy model loaded with FULL pipeline
+INFO:utils.conversation_intent_classifier:Γ£à spaCy model retrieved from global singleton for conversation intent
+INFO:utils.conversation_context_detector:OpenAI client initialized for context detection
+INFO:utils.conversation_context_detector:Γ£à spaCy model retrieved from global singleton for context detection
+INFO:utils.conversation_context_manager:Context classifiers initialized
+INFO:utils.conversation_session_manager:Context manager initialized for session management
+INFO:utils.conversation_context_manager:OpenAI client initialized for context management
+INFO:utils.conversation_intent_classifier:OpenAI client initialized for conversation intent classification
+INFO:utils.conversation_intent_classifier:Γ£à spaCy model retrieved from global singleton for conversation intent
+INFO:utils.conversation_context_detector:OpenAI client initialized for context detection
+INFO:utils.conversation_context_detector:Γ£à spaCy model retrieved from global singleton for context detection
+INFO:utils.conversation_context_manager:Context classifiers initialized
+INFO:routes.enhanced_chat_routes:Enhanced conversation management initialized
+2026-07-08 16:38:57,902 - app - INFO - Enhanced chat routes registered successfully
+2026-07-08 16:38:57,920 - app - INFO - Extraction API routes registered successfully
+2026-07-08 16:38:57,945 - app - INFO - Signature envelopes API routes registered successfully
+2026-07-08 16:38:57,946 - app - INFO - Γ£à Async chat processor loaded successfully
+INFO:utils.global_singletons:≡ƒöä Creating Database Engine singleton (ONE-TIME ONLY)...
+INFO:utils.global_singletons:Γ£à Database Engine created and tested (pool: 10+8, timeout: 30s)
+INFO:utils.db_optimizer:Γ£à Database optimizer initialized
+INFO:routes.performance_routes:Γ£à Performance routes initialized
+INFO:utils.memory_optimizer:MemoryOptimizer: Using system RAM 32205 MB
+INFO:utils.memory_optimizer:MemoryOptimizer: 1 worker(s), total=32205 MB, os_reserve=5797 MB, per_worker_usable=26408 MB ΓåÆ cleanup=21126 MB (65.6%), critical=23767 MB (73.8%), max=25351 MB (78.7%), monitor_interval=298s
+INFO:utils.memory_optimizer:MemoryOptimizer initialized with dynamic thresholds:
+INFO:utils.memory_optimizer:  - Cleanup threshold: 21126MB (65.6% of system)
+INFO:utils.memory_optimizer:  - Critical threshold: 23767MB (73.8% of system)
+INFO:utils.memory_optimizer:  - Max limit: 25351MB (78.7% of system)
+INFO:utils.memory_optimizer:Memory monitoring started
+WARNING:utils.search_cache:ΓÜá∩╕Å No Redis URL available for search cache
+INFO:utils.conversation_performance_optimizer:ConversationPerformanceOptimizer initialized
+INFO:utils.conversation_performance_optimizer:Background optimization loop started
+INFO:utils.conversation_performance_optimizer:Background optimization started
+2026-07-08 16:38:58,394 - app - INFO - ΓÅ¡∩╕Å  Skipping component pre-warm (Celery worker / DISABLE_WORKER_PREWARMING) ΓÇö models will lazy-load on first use
+INFO:utils.global_singletons:≡ƒöä Creating Query Router (ONE-TIME ONLY)...
+INFO:query_router:Creating QueryRouter with PostgreSQL backend
+INFO:query_router:LlamaIndex document processor initialized
+INFO:query_router:DocumentSearchHandler: Using PostgreSQL backend for ChromaDB
+INFO:query_router:≡ƒöì Attempting to initialize fused search system...
+INFO:query_router:Γ£à Successfully imported fused search modules (relative)
+INFO:query_router:≡ƒöì Initializing fused search from global singleton...
+INFO:utils.global_singletons:≡ƒöä Creating Fused Intent Search (ONE-TIME ONLY)...
+INFO:faiss.loader:Loading faiss with AVX2 support.
+INFO:faiss.loader:Successfully loaded faiss with AVX2 support.
+INFO:utils.pgvector_client:Γ£à PostgreSQL connection pool established (2-20 connections)
+INFO:utils.pgvector_client:Γä╣∩╕Å Skipping pgvector index creation (3072 dimensions > 2000 limit; FAISS handles searches)
+INFO:utils.pgvector_client:Γ£à Database tables and indexes created/verified
+INFO:utils.pgvector_client:Γ£à Raw PgVectorClient singleton created
+INFO:utils.global_singletons:≡ƒöä Creating PartitionedFaissClient (ONE-TIME ONLY)...
+INFO:utils.faiss_client:[PartitionedFAISS] Loaded stats for 56 workspaces from disk
+INFO:utils.faiss_client:[PartitionedFAISS] Per-workspace indexes found on disk (Redis unavailable or no migration marker) ΓÇö ready for lazy-load
+INFO:utils.global_singletons:Γ£à PartitionedFaissClient created successfully
+INFO:utils.hybrid_vector_client:Γ£à Hybrid vector client initialized
+INFO:utils.pgvector_client:Γ£à Hybrid client initialized with PostgreSQL + FAISS backend
+WARNING:utils.search_result_cache:ΓÜá∩╕Å No Redis configured. Result caching disabled.
+INFO:utils.search_result_cache:Γ£à SearchResultCache initialized with TTL=1800s (Redis: unavailable, using memory)
+INFO:utils.search_result_cache:Γ£à Search result cache initialized
+INFO:utils.hybrid_vector_client:Γ£à Search result cache enabled for hybrid collection
+INFO:utils.pgvector_client:Γ£à Connected to existing safe hybrid collection: user_documents
+INFO:utils.global_singletons:[ADS] ADS_ENABLED=false (default) ΓÇö AdvancedDocumentSearch is DISABLED. UnifiedIndexing is the sole write path. Set ADS_ENABLED=true in .env to re-enable (dev only).
+INFO:utils.global_singletons:≡ƒöä Creating EmbeddingCache singleton (ONE-TIME ONLY)...
+INFO:utils.embedding_cache:ΓÜá∩╕Å No Redis URL provided - using local cache only
+INFO:utils.embedding_cache:Γ£à Database cache available (query_embeddings table)
+INFO:utils.embedding_cache:Embedding cache initialized (Redis: unavailable, DB: available, max_size: 50, ttl: 1h/90d)
+INFO:utils.global_singletons:Γ£à EmbeddingCache singleton created successfully
+DEBUG:utils.fused_intent_search:Fused intent search system initialized (spaCy: unavailable)
+INFO:utils.global_singletons:Γ£à Fused Intent Search created successfully
+INFO:query_router:Γ£à Fused intent search retrieved from global singleton
+INFO:query_router:≡ƒöì Attempting to initialize advanced search system with pgvector...
+WARNING:query_router:ΓÜá∩╕Å AdvancedDocumentSearch singleton returned None
+INFO:query_router:Using pgvector backend for document search (ChromaDB removed)
+INFO:query_router:SMART_CHAT_AVAILABLE: True
+INFO:query_router:Attempting to initialize Smart Chat System from global singleton...
+INFO:query_router:OpenAI API key available: True
+INFO:query_router:Calling get_smart_chat_system with database_url=True, openai_api_key=True
+INFO:utils.global_singletons:≡ƒöä Creating Smart Chat System...
+INFO:utils.global_singletons:   OpenAI API key provided: True
+INFO:utils.global_singletons:   OpenAI API key length: 164
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Starting MergedSmartChatSystem initialization...
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 1: Getting OpenAI client (singleton)...
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 1: OpenAI client initialized
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 2: Initializing ChatGPT Enhancement Orchestrator...
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 3: Initializing ConditionalAPIBatcher...
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 3: ConditionalAPIBatcher initialized
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 4: Initializing ChatGPTEnhancementOrchestrator...
+INFO:utils.enhanced_coreference_resolver:Γ£à spaCy model retrieved from global singleton for coreference
+INFO:utils.dynamic_worker_pool:≡ƒöº Dynamic Worker Pool initialized - 22 CPUs detected
+INFO:utils.multi_turn_task_orchestrator:Multi-Turn Task Orchestrator initialized with 10 workers
+INFO:utils.tool_invocation_layer:Tool Invocation Layer initialized
+INFO:utils.hallucination_mitigation:Hallucination Mitigation System initialized
+INFO:utils.enhanced_fallback_handler:Enhanced Fallback Handler initialized
+INFO:utils.chatgpt_enhancement_orchestrator:ChatGPT Enhancement Orchestrator initialized
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 4: ChatGPT Enhancement Orchestrator initialized
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 5: Setting up pgvector (vector search)...
+INFO:utils.smart_chat_system_merged:Using PostgreSQL backend for pgvector - no local directory needed
+INFO:utils.smart_chat_system_merged:Using existing shared pgvector client
+INFO:utils.smart_chat_system_merged:Connected to pgvector user_documents collection
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 5: pgvector setup complete
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 6: Initializing AdvancedDocumentSearch...
+WARNING:utils.smart_chat_system_merged:ΓÜá∩╕Å [INIT] Step 6: AdvancedDocumentSearch singleton returned None
+INFO:utils.smart_chat_system_merged:≡ƒöä [INIT] Step 6.5: Initializing ExpansionDetector...
+INFO:utils.smart_chat_system_merged:Γ£à [INIT] Step 6.5: ExpansionDetector initialized
+INFO:utils.llm_query_rephraser:Γ£à LLM Query Rephraser initialized
+INFO:utils.llm_reranker:Γ£à LLM Reranker initialized
+INFO:utils.smart_chat_system_merged:Γ£à LLM query rephraser and reranker initialized
+INFO:utils.smart_chat_system_merged:Γ£à Multi-strategy search and multi-tiered deduplicator initialized
+INFO:utils.smart_chat_system_merged:≡ƒôè Dedup thresholds: exactΓëÑ98%, semanticΓëÑ95%, versionΓëÑ85%
+INFO:utils.smart_chat_system_merged:Creating spaCy NLP processor (uses global singleton internally)...
+INFO:utils.smart_chat_system_merged:Γ£à spaCy model retrieved from global singleton
+INFO:utils.faiss_client:[PartitionedFAISS] Reverse map rebuilt: 90148 doc_id entries
+INFO:utils.smart_chat_system_merged:ΓÜá∩╕Å No Redis URL provided, using local cache
+DEBUG:utils.fused_intent_search:ChromaDB collection set: user_documents
+INFO:utils.smart_chat_system_merged:Γ£à Fused search retrieved from global singleton with collection: user_documents
+INFO:utils.smart_chat_system_merged:Merged Smart Chat System initialized with ALL features including fused intent search
+INFO:utils.global_singletons:Γ£à Smart Chat System created successfully
+INFO:query_router:get_smart_chat_system returned: True
+INFO:query_router:Γ£à Smart Chat System retrieved from global singleton
+INFO:query_router:QueryRouter initialized - Smart Chat: True, Enabled: True, Fallback: True
+INFO:utils.global_singletons:Γ£à Query Router created successfully | [QUERY_ROUTER_INIT] duration_ms=3439 trigger=unknown
+INFO:utils.super_merged_analytics:Γ£à Super-merged analytics: using shared OpenAI client
+INFO:utils.super_merged_analytics:ΓÅ▒∩╕Å [SUPER-MERGED-ANALYTICS] Starting LLM call for: 'Where did bro Branham call his daughter fat and ug...'
+INFO:utils.encryption_manager:Γ£à Encryption manager initialized successfully (AES-256-GCM)
+INFO:utils.super_merged_analytics:ΓÅ▒∩╕Å [SUPER-MERGED-ANALYTICS] LLM call completed in 7.10s
+INFO:utils.super_merged_analytics:≡ƒôä query_semantics='document_retrieval' ΓÇö clearing SQL analytics path flags
+INFO:utils.router_analytics_gate:[ANALYTICS-CLASSIFIER] query='Where did bro Branham call his daughter fat and ugly' confidence=0.00 flags=none query_semantics=document_retrieval method=llm
+INFO:utils.router_analytics_gate:≡ƒÜª [Tier B] Analytics gate short-circuit ΓÇö all path flags false, no CoT; returning None (doc search will handle)
+INFO:utils.router_analytics_gate:[ANALYTICS-ROUTER] query='Where did bro Branham call his daughter fat and ugly' confidence=0.00 route=document context_gate=False pre_router=tier_b_shortcircuit path=none
+DEBUG:utils.fused_intent_search:≡ƒöñ Query normalized for search: 'Where did bro Branham call his daughter fat and ug...' ΓåÆ 'where did bro branham call his daughter fat and ug...'
+INFO:utils.fused_intent_search:≡ƒöè [SINGLE-SPEAKER] User 2 is member of single-speaker workspace(s) [2392] ΓåÆ always active
+INFO:utils.fused_intent_search:≡ƒöè [SINGLE-SPEAKER] Global strip enabled; single_speaker workspace_ids=[2392] (scope=[2]; includes user membership when applicable)
+INFO:utils.stop_words_manager:Γ£à Loaded 326 stop words from spaCy
+INFO:utils.single_speaker_retrieval:≡ƒÄñ Single-speaker [neutral] retrieval: 'Where did bro Branham call his daughter fat and ugly' ΓåÆ 'daughter fat ugly'
+INFO:utils.global_singletons:≡ƒöä Creating UnifiedIndexingSystem singleton (ONE-TIME ONLY per worker)...
+INFO:utils.global_singletons:   ΓÜí Using lazy-loading for heavy components to avoid full app initialization
+INFO:utils.indexing_validator:Γ£à IndexingValidator initialized with comprehensive validation
+INFO:utils.unified_indexing:Γ£à UnifiedIndexingSystem: IndexingValidator initialized
+INFO:utils.unified_indexing:≡ƒöì [PGVECTOR INIT] Starting pgvector collection initialization
+INFO:utils.unified_indexing:≡ƒöì [PGVECTOR INIT] DATABASE_URL is available: postgresql://grabdocs_user.uptcttbrdasxttwomquu:gr...
+INFO:utils.unified_indexing:Γ£à UnifiedIndexingSystem: pgvector collection initialized successfully
+INFO:utils.global_singletons:Γ£à UnifiedIndexingSystem singleton created successfully (heavy components will load on-demand)
+DEBUG:utils.fused_intent_search:≡ƒöì Generating new embedding for query: 'daughter fat ugly...'
+DEBUG:utils.fused_intent_search:ΓÅ▒∩╕Å [INTENT ANALYSIS] Starting intent analysis for: 'Where did bro Branham call his daughter fat and ug...'
+INFO:utils.db_cache:Where clause cache initialized (max_size=1000, ttl=0s)
+INFO:utils.db_cache:Where clause cache DISABLED via DISABLE_SEARCH_CACHE=true
+INFO:utils.db_cache:≡ƒöì Building where clause for user 2 (cache miss - ALL workspaces + shared content)
+INFO:utils.db_cache:[CHAT-DEBUG] get_accessible_content_for_user_batched(user_id=2) starting
+INFO:utils.fused_intent_search:ΓÜí [FIX4][worker=30268] Bypassed Call 2 ΓÇö variations=4, standalone=False, topic_q=True, narrative=True, hyde=True, speaker=third_person, expansion=False, cot_mode=False, entities=2
+DEBUG:utils.fused_intent_search:≡ƒÆ╛ Cached embedding for query: 'daughter fat ugly...'
+INFO:utils.db_cache:[CHAT-DEBUG] get_accessible_content_for_user_batched OK for user_id=2 workspaces=7 cross_files=0 meetings=5
+INFO:utils.db_cache:≡ƒôé User 2 has access to:
+INFO:utils.db_cache:   - 7 workspaces: [2, 40, 553, 2095, 2392, 2421, 2467]
+INFO:utils.db_cache:   - 0 cross-workspace shared files (excluding workspace-local)
+INFO:utils.db_cache:   - 5 accessible meetings
+INFO:utils.db_cache:   - 0 shared meeting asset files
+INFO:utils.db_cache:Γ£à Built where clause in 0.556s with 2 OR conditions
+DEBUG:utils.fused_intent_search:Γ£à SearchScope resolved mode=full workspaces=7
+DEBUG:utils.fused_intent_search:Γ£à Where clause built in parallel: 158 chars
+DEBUG:utils.fused_intent_search:≡ƒöì Generating new embedding for query: 'Brother Branham called his daughter fat and ugly i...'
+DEBUG:utils.fused_intent_search:≡ƒöñ Query normalized for search: 'Where did Brother Branham call his daughter fat an...' ΓåÆ 'where did brother branham call his daughter fat an...'
+DEBUG:utils.fused_intent_search:≡ƒöñ Using reformulated query for search: 'where did brother branham call his daughter fat and ugly...'
+INFO:utils.single_speaker_retrieval:≡ƒÄñ Single-speaker [neutral] retrieval: 'where did brother branham call his daughter fat and ugly' ΓåÆ 'daughter fat ugly'
+DEBUG:utils.fused_intent_search:≡ƒöì Generating new embedding for query: 'his daughter fat and ugly...'
+DEBUG:utils.fused_intent_search:≡ƒÆ╛ Cached embedding for query: 'Brother Branham called his daughter fat and ugly i...'
+DEBUG:utils.fused_intent_search:≡ƒÆ╛ Cached embedding for query: 'his daughter fat and ugly...'
+INFO:utils.fused_intent_search:≡ƒÄñ topic_retrieval_query (LLM) embed: 'his daughter fat and ugly'
+INFO:utils.db_cache:Permission cache initialized (max_size=10000, ttl=0s)
+INFO:utils.db_cache:Permission cache DISABLED via DISABLE_SEARCH_CACHE=true
+INFO:utils.db_cache:≡ƒöì Cache miss - fetching workspace IDs for user 2 from DB
+INFO:utils.db_cache:Γ£à Fetched 7 workspaces for user 2 in 0.090s (raw SQL)
+DEBUG:utils.fused_intent_search:Using ChromaDB collection: user_documents
+DEBUG:utils.fused_intent_search:Γ£à Using pre-built where clause from parallel execution
+DEBUG:utils.fused_intent_search:≡ƒôª Found cached entities using exact key: 'Where did bro Branham call his daughter fat and ug...'
+DEBUG:utils.fused_intent_search:≡ƒôà No date range needed for query: Where did bro Branham call his daughter fat and ug
+DEBUG:utils.fused_intent_search:≡ƒôª Found cached entities using exact key: 'Where did bro Branham call his daughter fat and ug...'
+DEBUG:utils.fused_intent_search:≡ƒºá Built spaCy-enhanced where clause: {'$or': [{'workspace_id': {'$in': ['2', '40', '553', '2095', '2392', '2421', '2467']}}, {'video_call_id': {'$in': ['1390', '1551', '1392', '1393', '1021']}}]}
+DEBUG:utils.fused_intent_search:≡ƒöì Final search scope: 10 for intent 'document_search' (complexity: simple)
+DEBUG:utils.fused_intent_search:≡ƒöì Performing search with where_clause: {'$or': [{'workspace_id': {'$in': ['2', '40', '553', '2095', '2392', '2421', '2467']}}, {'video_call_id': {'$in': ['1390', '1551', '1392', '1393', '1021']}}]}
+DEBUG:utils.fused_intent_search:≡ƒôª Found cached entities using fuzzy match: 'Where did bro Branham call his daughter fat and ug...' (matched 4/4 words)
+DEBUG:utils.fused_intent_search:Retrieval: injected cached entities (ORG=None PERSON=['Brother Branham'] PRODUCT=None DOCUMENT_TITLE=None)
+DEBUG:utils.fused_intent_search:[PG-LIMIT] candidate_limit=15000 (narrative=True)
+DEBUG:utils.fused_intent_search:≡ƒöì Final search scope: 10 for intent 'document_search' (complexity: simple)
+INFO:utils.keyword_tsvector_queries:KEYWORD-RESOLVE raw='his daughter fat and ugly' resolved=['his daughter fat and ugly', 'daughter', 'Brother Branham call daughter fat and ugly'] sources=['single_speaker', 'single_speaker', 'subquery'] [extracted=yes topic_kw=yes kw_subq=yes candidates_tried=8]
+WARNING:utils.faiss_baked:[faiss_baked] FAISS version drift: runtime=1.12.0 expected=1.14.2 (pin faiss-cpu==1.14.2 and rebuild indexes after upgrade)
+INFO:utils.faiss_client:[PartitionedFAISS] no baked workspaces present at /opt/faiss_baked
+INFO:utils.hybrid_vector_client:≡ƒöæ [KEYWORD] Batched OR tsquery: 6 sub-queries, n=150
+WARNING:utils.faiss_client:[FAISS-DOC-INDEX-SANITY] ws=2 doc_ntotal=87315 chunk_ntotal=87318 ratio=1.00 ΓÇö doc index suspiciously close to chunk count (possible mis-keyed/duplicated doc index)
+INFO:utils.faiss_client:[PartitionedFAISS] ws 2 loaded: ntotal=87318 faiss_load_source=disk faiss_load_reason=cold_start faiss_ws_state=READY
+INFO:utils.faiss_client:[PartitionedFAISS] ws 40 loaded: ntotal=2 faiss_load_source=disk faiss_load_reason=cold_start faiss_ws_state=READY
+INFO:utils.hybrid_vector_client:≡ƒöó [RRF DEBUG] _fetch_content_batched: requested=220 ids, found=220 rows in DB
+DEBUG:utils.fused_intent_search:≡ƒöì Search results: 220 documents found
+DEBUG:utils.fused_intent_search:Total documents in collection: 89657
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0726 - Love - Shreveport LA.pdf with similarity 1.000
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [22] The conductor said, "I've seen the day when she was twice as pretty as her daughter will ever be. But," said, "I happened to live in the neighborhood, and this girl was a baby upstairs, her mother was in the backyard washing. And all of a sudden, the fire engines run up, and come to find out th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.987
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 1.000
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [52] And the people said, "Did you hear that? Laying in there, we took the blood out of her body, and she's embalmed, laying on the couch, laying in there, and that holy-roller fanatic comes over here and tries to tell us that she's not dead." Said, "That shows what He is, that shows what a smart ma...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.691
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 57-0421S - The Great And Mighty Conqueror - Jeffersonville IN.pdf with similarity 0.984
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [72] Then this girl, when the train stopped out front, she brought a little girl with her, one of those little snickel-fritz kind, you know, like the Elvis Presley type. And when she was standing there, you know, at the train, her mother was on the outside, an old woman standing there, all scarred u...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.975
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.984
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [91] And about that time, a whirlwind started from the heavens, and here It come down right over where I was at. And this big camera shot the picture. And it was a Catholic boy that did the picture taking. And he went down that night... I said, "God has already spoke, I'll just move out now." And th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.945
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-0611 - Show Us The Father And It'll Satisfy Us - Connersville IN.pdf with similarity 0.968
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [242] So when she comeback,she brought a little girl home with her.And her mother was standing out on the ramp of the...to meet her. And when the cars stopped, and this young little smart-aleck was with her, looked over there and she said, "Oh, look at that horrible old wretch." And the little Mary ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.964
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.968
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [41] And so first thing you know, Jairus, he come back and he said... I can hear his wife say, "Where'd you go?" "I was just over at the church saying a prayer for the girl." "Well, she's already unconscious now." "Oh, my." I can just imagine him saying, "If I could only find Jesus. If I only knew w...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.904
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0726 - Love - Shreveport LA.pdf with similarity 0.953
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [21] Here some time ago, a little story was told me of a mother. And a young girl had been away to college. And on the road back, she brought a young girl home with her. And the girl was one of those little modern snicklefritz (we call it, you know.)--- Just kind of a little feisty. So, her mother w...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.667
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.953
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [31] They said, "Why, who touched You?" "Why," said, "everybody's patting You on the back and trying to shake Your hands and so forth, everybody's touching You. All of this bunch of fishermen up and down the bank here." Said, "They..." He said, "Yes, but somebody touched Me different from that." Sai...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.604
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-0610 - Jesus Christ The Same Yesterday, Today, And Forever - Connersville IN.pdf with similarity 0.938
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [97] And so when she got off the train, her mother looked and she recognized her daughter. And she run, threw her arms around her, said, "Darling." Her face was all drawed, and her hands all drawed down. And she... all like that. And she said, "Darling, kiss me, kiss me." And she was trying to kiss ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.911
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.938
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [32] So He turned around with those great, lovely eyes, as He moved, and His pathetic look, a man of sorrow, acquainted with grief, moves right over the audience, probably more than there is standing here. And He looked out there in the audience, He seen the little woman, leveled right there on her....
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.851
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0311 - The Seal Of The Antichrist - Los Angeles CA.pdf with similarity 0.924
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [74] "When her mother come back with the two buckets of water..." Said, "She was a beautiful woman, pretty as she could be." And said, "She looked in there, and the house was on fire. The neighbors was running. And it done broke through." And said, "Her baby was upstairs." That was that child, layin...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.901
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.924
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [88] Many people come and look at it and they said, "It's psychology." People... I've had great men say, "Yes, Brother Branham, I heard them all screaming and pointing towards you. I imagine I seen it, but I believe It was psychology." In a debate where a Baptist preacher at Houston, Texas, before t...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.998
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 57-0421S - The Great And Mighty Conqueror - Jeffersonville IN.pdf with similarity 0.910
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [73] Well, you know, it embarrassed the girl so much, she said, "I don't know," 'cause she was just so prissy, and had so many worldly ideas in her head. And it was her own mother.
+
+[74] When she got off the train, the little old mother run over, to throw her arms around her. She said, "Oh, darling,...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.860
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.910
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [20] And then when you were nailed on like the gopher wood was, then they took the rosin out of this tree, the pine tree, the evergreen, and put it boiled it and poured it into these pores that once was sap of no use, no effect, and poured the rosin out of the other tree into that, and made it as st...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.860
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0422 - Show Us The Father And It'll Satisfy - Spindale NC.pdf with similarity 0.897
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [86] Conductor said, "Be ashamed of you." Said, "Look here, girl, I want to tell you something." And the crowd begin to listen. Said, "You're a beautiful woman today, that's right." Said, "You are. But," said, "your mother was a lot more beautiful woman than you were, or ever will be." And said, "On...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.616
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.897
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [40] How wrong that is. But all the time while that was going on, Jesus had a tugging, 'cause the faith of Jairus has pulled Him over there. That's what you're here for. All the time He felt like that He would cross the sea. And now we had a night or two ago that Jesus said in the Gospel, "I do noth...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.910
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0611E - Faith Is The Sixth Sense - Chautauqua OH.pdf with similarity 0.884
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [37] And his daughter, sitting out there, had gone insane with a disease of the mind that had killed her sister. And she was a beautiful woman. It was on Easter morning. And her mother was sitting out there. And after I got through the prayer line, somebody said, "There's a lady out here in the coal...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 1.000, Final score: 0.751
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.884
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [87] Is the lady... Right there, lady. All right. 87, 88, who has prayer card R-88? Would you raise you hand? 88, all right, sir. 89, raise your hand? 89, all right. 90?
+
+[78] Now, the prayer cards are give out at six o'clock in the afternoon to whosoever wants them. Just as... Billy says there's ha...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.567
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-0610 - Jesus Christ The Same Yesterday, Today, And Forever - Connersville IN.pdf with similarity 0.871
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [96] A little lady went away to college here not long ago. And when she come home... She'd learned so much. She used to go to church, but when she come back, she just knowed so much she didn't want... Oh, she was just a smart-aleck. That's about what the whole lot of it learns, too. So when she come...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.861
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.871
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [28] And I imagine somebody run and told the priest, and here they all come down and said, "Well, we'll see what He can do now, we'll just look around. Let's test His religion. Let's see what He believes. If He don't believe according to our doctrine, we won't have nothing to do with Him." Still tim...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.582
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-1129A - The Faith That Was Once Delivered To The Saints - West Palm Beach FL.pdf with similarity 0.859
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [92] Here some time ago when I was a boy, I was coming down a pole. I was working for a light company and I had to turn off electric lights. And I went over there, I had to collect a bill across the street. There was a little old girl in there, and I knocked on the door, and she come to the door and...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.575
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.859
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [15] That's where that life come out of the animal or, not the animal, but out of the Son of God, coming back, witnessing to your heart that He has accepted your faith in glory, and you've got to get well. Now, we're speaking of a miracle that took place in the New Testament, the healing of Jairus' ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.596
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-0607E - A Testimony - Connersville IN.pdf with similarity 0.847
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [28] And I come to find out later she was a little war orphan. The Russians had killed her father and mother, both, in the massacre up there towards the border. She was just a little orphan, wandering about, and people would take her. And her little ragged skirts hanging down. Her little chopped-off...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.590
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.847
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [22] Now, watch what He did. He crossed that entire sea to go over on the other side, to save one man that really was wanting to see Him come, and he was a maniac of Gadarea. The maniac run out, being demon possessed, here come all the preachers out and looked at him, said, "We don't want no such a ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.813
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-1114 - The Darkest Hour, Then Jesus Comes Along - San Fernando CA.pdf with similarity 0.836
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [60] So, her daddy was a deacon in the church. So, he couldn't come. So, he asked me---Brother Hall did---if I'd go over there. I said, "Sure." And her mother and father said, "If that... To satisfy her, all right. But I wouldn't even stay in the house where that hypocrite was." So, I went down ther...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.548, Final score: 0.969
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.836
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [45] Jesus said, "I am the resurrection, and life: he that believeth in Me, though he were dead, yet shall he live: and whosoever liveth and believeth in Me shall never die." Said, "Believest thou this?" She said, "Yea, Lord. I believe that You're just exactly what You confess to be. I believe that ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.652
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 51-0722A - Life Story - Toledo OH.pdf with similarity 0.824
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [95] back I slipped around anyhow and went down into the basement, the isolated place, a very cheap like hospital. And there, down there they had a little cheesecloth laying over her face to keep the flies off. And her little spasms she was having with that meningitis had [unclear words] And the fli...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.557
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.824
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [86] The Courier Journal, and Times News... No, it was the... Oh, I'll get the name of the paper just in a minute, if I could think of it, the Louisville paper. Great article: "Mystic Light Appears Over Local Baptist Evangelist While Baptizing At River." Very mystic thing, people could not understan...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.856
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0122 - The Junction Time - Sturgis MI.pdf with similarity 0.813
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [186] And you all talking about juvenile delinquency and things. I think it's parent delinquency. Some of you let your girls go out and run around all night with a cigarette smoking, cocktail-drinking party. Come in the next morning with her clothes half off of her, old make-up all over her face and...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.593
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.813
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [9] So, Brother Jack gives me the assurance that it's going to be cool. But the one thing that's nice, friends, and everywhere you go when you meet born-again children of God, they're all the same, no matter what country. We've went into the Hottentots of Africa, and we've went into the Germans, we'...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.551
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0401 - Wisdom Versus Faith - Jeffersonville IN.pdf with similarity 0.803
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [202] Get some old pictures. Look at grandmother her long skirts, braid of hair hanging down her back. She wasn't so attractive to look at.
+
+[203] Look at the modern one today: a little skinned down dress, that every form (she can't move without sinning); walking, tipping down the street with all th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.567
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.803
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [19] Now, we find out that the gopher wood, the first thing the ark being made out of gopher wood, it had to be cut down, and its own life dried out. That's the sign of the sinner. The sinner before he can get right with God has to dispel all his sin, get white. Then the gopher wood was the lightest...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.779
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 59-1227M - A Super Sign - Jeffersonville IN.pdf with similarity 0.792
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [118] A few years ago, there was a girl who went off to college, and, with a lot of her colleagues there, she become a very little smart aleck, from her old country teaching that she had had as a mother in a country home. And one day she decided, some two years later, to visit her mother again. She ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.582
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.792
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [25] An insurance agent here some time ago, come to me and said, "Billy, I want to sell you some insurance." I said... I haven't got any of that kind. So I said to him, "I've got insurance." And my wife stopped and looked around at me. She knowed I didn't have any insurance, especially what he was s...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.540
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.789
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [96] There's something about the woman's strength. Yes, sir. But you're here for somebody else, and that somebody else is a relative to your husband and that is his, I believe, grandmother. That's right. Isn't that right? That's right. She's dying with cancer. That is right. Your husband would like ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.539
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-1006E - The Power Of God - Chicago IL.pdf with similarity 0.782
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [55] Well, my little girl, Rebekah (You know, the one that sits in the meeting and prays for the sick.)... And so then, she come out and looked. She said, "Oh, daddy, look at that poor thing." I said, "Isn't that awful, honey?" And she said, "Oh, I can't look at it." And she went back in the house. ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.514
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.782
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [39] That doctor done all that he could do. He walked away from the house. I can see little Jairus walking up-and-down the floor. All the time in his heart, he was thinking, "If I only knew where Jesus was. If I only could find Jesus." All right. Walks back and forth. So he thinks, "I believe I'll g...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.764
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 51-0727 - The Church Of The Living God - Erie PA.pdf with similarity 0.772
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [37] And she wanted me to see her body. Now, I wish to make this statement I'm have a mixed audience here. But I want you to understand me, as your brother. And over her body, when they taken the sheet off of her, she wasn't, didn't look like a human; it looked like a skeleton. As a lady, how they'r...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.847
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.772
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [56] Where your faith lays; whatever you believe. It's according to your faith. Jairus' was, "Come, lay Your hands on my girl. She'll be all right if You just lay Your hands on her." Here He come. They was going on a little drive till the heart got settled down. Walked along side of Jesus with his h...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.787
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 63-0116 - The Evening Messenger - Mesa AZ.pdf with similarity 0.762
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [31] His daughter played the piano in the church of The Open Door, which Dr. Cobbles is pastor; just a great mammoth old Jewish synagogue. And the man himself belonged to the Church of Christ, denominational church of Christ, and was converted into believing the gospel of the full gospel, a very fin...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.635
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.762
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [77] Now, was that Q, or what was it? R's, prayer card R's. We've been calling all around, remember last night I called different places; 1 to 20 and... 40 to 50 or... And all around. So tonight let's call where? Let's say... Let's take 85 to 100. Who has... Did you say a hundred? Give out a hundred...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.546
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0110 - The Queen Of Sheba - Tifton GA.pdf with similarity 0.753
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [74] of my little girls. I got two little girls, and one of them's name is Rebekah, the older, and the other one's name is Sarah, a little short fellow. And they're both Daddy's little girls.
+
+[75] And here some time ago I'd been out on a meeting, and Mama and the girls were waiting up to see me; an...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.478
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.752
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [38] So, He made a way for Jairus. And one day his little girl got sick. You know God can get right next to you with your children. And so his little girl got sick. Well, the reasonable thing for anybody to do when a child gets sick or anybody, send for your doctor. The doctor come, and looked her o...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.712
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-1117 - Jehovah-Jireh - San Fernando CA.pdf with similarity 0.744
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [44] You remember, Dad, when you walked down at the altar there, with mother there? The children's all raised and everything now. Remember how beautiful she was in that wedding dress she had on, those shiny eyes, those rosy cheeks? That was back before Max Factor come in to view, maybe. But, didn't ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.735
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.744
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [114] Sister, there's someone thinks that, out there, I was reading mind. I want you to just put your hand on mine. I don't want to read your mind, I don't read your mind. I want you, not to even think of what's wrong with you, I want you to think of something else. And if the Holy Spirit will revea...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.625
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0221M - Marriage And Divorce - Jeffersonville IN.pdf with similarity 0.735
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [137] And Jesse, his wife, and all of them looked around and said, "Yes, our oldest son, he's a great, tall, handsome man. He will look just right for the king's crown. He's smart, he's educated, he's a fine man. I know he will be just right. He speaks his word proper."
+
+[138] When they brought him ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.510
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.735
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [9] Some of the brothers was telling me around thirty or thirty-five visions. That's ten times as many as I can get to here. And I knelt on my knees and prayed for around three hundred people besides what come to the car after the service was over. So happy for that. My heart is certainly warmly mov...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.510
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 63-0608 - Conferences - Tucson AZ.pdf with similarity 0.726
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [2] Just... I was thinking, when I looked over here at my daughter, Rebekah. Remember one time, being off in a meeting. And she was a little fellow then, her. And she's got a little sister, four years smaller. And so Becky is blue-eyed and kind of tall, and Sarah was brown-eyed and kind of short. So...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.526
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.726
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [8] I want to say to you, my Indian brother and sister in the Lord Jesus, that that... I have been a preacher for twenty-three years, and I have had thousands of revivals. And by the grace of God, right into a million souls now, led to Christ, in our meetings. But I have never had a meeting on the N...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.547
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 57-0922E - Hebrews, Chapter Seven #2 - Jeffersonville IN.pdf with similarity 0.718
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: He would make you miserable, all your life." And
+
+I said, "Well, there's fine little Christian boys here that you could go
+
+with. And there your daddy and mother despises the thoughts of you
+
+going out, but you go anyhow, and you think, 'I'm sweet sixteen.'"
+
+359 She started wearing makeup and runni...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.656
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.718
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [18] You know it's... One night when Billy Paul, here, my boy, he was a little, bitty fellow, we was living in a little, two-roomed cabin. And my wife had put this floor wax on the linoleum, on the floor, and it was real slick on the floor, and we had an old bucket out in the other room, the kitchen...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.686
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0518 - Adoption #2 - Jeffersonville IN.pdf with similarity 0.709
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [161] "Yes, your daughter." That's what the Holy Spirit has to say about the church today. No wonder we can't have a revival, see. Now, that's true. "What about your son? Same thing." "What?"
+
+[162] "Well, You know You always said that those sheep should herd in that pasture up there on that sheep f...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.769
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.709
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [20] Jesus and them went up... I mean, the disciples went away without Christ. Jesus went up on the mountain, alone, to pray. There was a battle to be fought just across the other side. Him being the King of all prophets, the Son of God, virgin-born, knowing what the Father would have Him do, He kne...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.476
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0311 - The Seal Of The Antichrist - Los Angeles CA.pdf with similarity 0.701
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [73] Seen that girl shun her mother, and walked away like that with this little prissy thing. And the first thing you know, when a conductor, there, happened to know the reason, he jumped up on a little old box there, and said, "Looky here, people. You see how you're watching that poor woman there, ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.492
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.701
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [38] Say, "I was just testing, but truly, I had a friend to come by and tell me, and I believe on Him. I, really in my heart, believe He is the Son of God. Oh, if we could only get over the lake and back in time before she dies." And about that time, I see a little boy coming up the street hollering...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.643
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0717 - Be Not Afraid - Klamath Falls OR.pdf with similarity 0.693
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [97] And to keep the baby from forgetting me, mother had my picture sitting there, and she'd say to Rebekah, and she'd say, "Daddy, daddy."
+
+[98] But when I come back, I'd lost about twenty-five pounds, and nearly all my hair was gone. I said, "Hi, sweetheart." She was scared; she cried. She was afr...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.667
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.693
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [46] She walks down there... As a lady belonging to a certain church, Christian Science, said to me sometime ago. She said, "Brother Branham, you put too much exercise in what you talk about." Said, "You brag too much on Jesus being divine." I said, "He was divine." She said, "He couldn't have been ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.556
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 50-0827A - Prodigal - Cleveland OH.pdf with similarity 0.685
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [113] I can see her put her arms around him and hug him. She just loved him and turned her head... He don't want a kiss in public... No affections... Next... The Bible said they would be this way. Paul speaks it: without natural affections. That's the way it is today. The child rules the home now in...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.692
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.685
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [59] What if Jesus comes into the church and does the same thing today? You know what these people say? Mental telepathy, a devil. Goes to show that's what they said back there, the people that wouldn't humble their hearts to God. One day, He went up, around Samaria, sat down on a well, sent His dis...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.463
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0603 - The End-Time Evangelism - Jeffersonville IN.pdf with similarity 0.678
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [76] So it was the sons of God, which was Seth's sons from the lineage of God, through Adam; and the daughters of Cain, Satan, "And when they saw they were pretty, fair."
+
+[77] And we notice in there, that bringing up pictures like, of a few years ago, say a hundred years ago, how the beauty of wome...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.459
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.678
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [83] Now, if you can't raise up, speak to somebody near you, and they can pack you. And now, if they're not all there, we'll see, 'cause it may be somebody deaf and dumb. All right. Let's have those prayer card (50, wasn't it?) prayer card 50 to 60. Well, let's make it prayer card 50 to 65, while we...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.480
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0801M - The God Of This Evil Age - Jeffersonville IN.pdf with similarity 0.670
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [117] Now you take an ordinary woman on the street today. A lot of you has read the story; you never heard it, 'cause before my day. Pearl O'Brien, how many ever heard of her? Sure, she was supposed to be the world's most beautiful woman. Why there ain't a school kid that goes in the schoolhouse tod...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.518
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.670
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [69] Kind loving Father, as my strength is so swiftly going, and my legs will hardly hold me any longer, truly I understand why You could lay in the back of a boat after a healing service and not even the waves wake You up. Now I ask for mercy. There's many mothers, and dads, and sisters, and brothe...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.710
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-1120 - What Is That In Your Hand? - San Fernando CA.pdf with similarity 0.663
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [13] And I want her and my little girl, Sarah... I got a little Rebekah, a little Sarah and a Joseph. How many remembers when I first come to California several years ago, told you I was going to have a Joseph? Let's see your hands. And the strange thing was, the next child was born was a girl. But ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.645
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.663
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [8] to get some thirty-two specials for my rifle. I'm going deer hunting." And he said, "Well, go downtown for a certain store." I could get it. So, I said, "All right." Now, I went out, and I couldn't find the place, so I looked around. There was a man standing on the corner. He looked like an inte...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.472
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0402 - Believest Thou This? - Tulsa OK.pdf with similarity 0.656
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [39] Gene, could you kidnap her for me? Could you kidnap that little girl for me? Isn't she a pretty little thing? Would you like to go home with me and play with my little Sarah, about this high? Oh, you would? I'd like for you to. She's just about your size and she's Daddy's little girl. And I bet...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.490
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.656
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [11] Most gracious Lord, these happy-hearted people tonight, full of joy, it's because of Your presence and Your visitation to us. We thank You for sending the air conditioning tonight, fixing it up for us, so we can feel more comfortable to worship Thee. We pray tonight, God, that You'll forgive us...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.669
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 51-0729A - The Resurrection Of Lazarus - Erie PA.pdf with similarity 0.649
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [78] I got a daughter. She's six years old. Let me ever catch her laid out like that; she'll get a son-tan. But it'll be Charlie Branham's son tanning her with a board just as hard as I can. I'll have her going home with a real tanning she won't forget about for a long time. Some of the people out h...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.507
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.649
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [13] Now, let's get that in our minds, and remember that He is ever present; and there's no other creature that could be omnipresent except God Himself---no other creature. The devil is a great force. The devil has a great power, and the devil is great in his power; but he's under the power of God. ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.664
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0722 - Show Us The Father And It Will Suffice Us - Salem OR.pdf with similarity 0.642
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [30] got two little girls. They're getting big now. They're still my girls. I used to tell a little story about one time I was waiting mother was, for me to come home. I'd been out on a meeting, and the little girls was waiting up with me---for me, rather. And so the sandman come along and they got ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.659
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.642
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [21] Christ laying on this ship, both God and man; God was in Him. A woman here not long ago was speaking to me. She was a... Well, I don't mean to make light of anybody's religion. That's up to them; but she belonged to the group that said don't believe in the virgin birth and believes that Christ ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.659
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 57-0324 - Why Some People Can't Keep The Victory - Oakland CA.pdf with similarity 0.635
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [68] Sometime ago, a little girl went off to college and she come back bringing a little girl with a little feist. And when she got back, she was getting off the train, and there her old mother was standing out there. And the little girl that she had with her said, "Who is that old, miserable-lookin...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.437
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.635
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [24] Now, out here on this little old sea, tossed about, ten thousand devils of the sea swore they'd drown Him while He was laying back there tired. You know, the devil takes advantage of you when you get tired or wore out. He does you the same way. You just get a little tired and wore out, and get ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.654
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 58-0521 - Behold, I Stand At The Door And Knock - Bangor ME.pdf with similarity 0.629
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [29] And over in the ladies' dormitory, a little girl stepped out of there. She was the most pitiful looking sight I ever seen: her little ragged hair; and her little skirt's all ragged; and she had a (she was a afflicted child), she had a brace around her, here. Her picture is in the book, the deta...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.619
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.629
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [29] Then this maniac, when he came to his right mind after the devils had left him, he wanted to follow the Lord Jesus. Everybody that ever gets in their right mind wants to follow the Lord Jesus. I don't want to hurt your feelings, sinner, but that's true. You come to your right mind, you'll follo...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.475
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0828E - Sir, We Would See Jesus - Lausanne.pdf with similarity 0.622
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: In the back was a leather strap, come over her shoulder and this brace, over her big shoe, and back this way and hit on this band around here. She had two crutches, and the only way she could walk, by the strap that come across this way and hooked to the toe of her shoe. Only way she could make a mo...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.644
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.618
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [34] And so then when his little girl got sick, why, of course the only thing there is to do is send for the doctor, 'cause they believed that the days of miracles is past, and wasn't no such as that, and that stuff on the other side of the lake over there was nothing but fanaticism, so nothing to t...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.671
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0814 - Divine Love And Sovereign Grace - Prince Albert SK.pdf with similarity 0.616
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [61] My little girl, Rebekah, very spiritual little child, about nine years old now, she came out the next morning real early, and she looked down. I was standing out there looking at the old mother possum, just... Nobody there yet, real early. And there she was laying there, dew all over her like f...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.610
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.616
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [52] Simple, uneducated ministers speaking the truth, God confirming the Word... Oh, we got a lot of quacks; I know that. We have to admit that. We got a lot of fanatics there's nothing to. That's right, but just remember, every time you see a bogus dollar, remember, there's a real one it was made o...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.640
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 58-1130 - Watchman, What Of The Night? - Jeffersonville IN.pdf with similarity 0.610
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [182] So, we got in the car and went down. And I met his little wife. And him being Mexican, though he didn't look it, he was white-skinned, fair. But he was a Mexican, which Mexicans many times are blondes because they come between the Spanish and the Indians. And there are some of those Indians wi...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.444
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.610
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [55] Here he starts walking, walk on the waters, just as soon as he heard the Word. Faith cometh by hearing, hearing of the Word. See, Peter heard the Word. That's right. Martha heard that Jesus was coming. She went to Him and got the resurrection of her brother, see. It's according to your faith. T...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.548, Final score: 0.518
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0720 - A Testimony On The Sea - Salem OR.pdf with similarity 0.604
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [152] Here the other day I seen the most hideous sight I ever seen. I was down at Clifton's Cafeteria, and I was waiting for Brother Arganbright to come up. And here come a woman. I never seen anything like it in my life. She had green in here, and red, and all different colors. Might have been a ni...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.630
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.604
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [59] Walks on up to the house. Them saying, "Oh, she's gone. She's gone. Poor little thing she died yesterday..." [Gap in the audio.] been embalmed, the blood out of her. All of a sudden her lips begins to turn pink. The wrinkling in her forehead starts. Her big blue eyes open up. She said, "Daddy."...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.462
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0809A - I Will Restore Unto You, Saith The Lord - Los Angeles CA.pdf with similarity 0.598
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [5] She said, "Just a minute, daddy, that is the truth, the law is looking for me now," see. And she was... It exposed some way, I forget how it was. Anyhow there was another alcoholic there, and she had been healed. The Holy Spirit called her out of the balcony. But anyhow, this little dope addict,...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.459
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.598
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [76] Now, heavenly Father, I commit myself unto Thee with this audience of people, praying that the great Holy Spirit will come tonight, and through this... Nothing that I ever deserved; gifts and calling are without repentance. Born in a cradle, Lord, You was there. The great Pillar of Fire has fol...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.716
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 59-1227M - A Super Sign - Jeffersonville IN.pdf with similarity 0.592
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [121] And her mother, when she seen her daughter, run to her and throwed her arms around her, started to kissing her.
+
+[122] She pushed away, said, "I don't know you. You've got the wrong person," because she didn't want to be affiliated with such a person that someone else would laugh at and make f...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.456
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.592
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [84] There's gifts of prophecy; there's prophets and gifts of prophecy. Now, there's gifts of prophecy; that's just in the Church, but a prophet is born a prophet. Every prophet that was ever in the world was born a prophet. Gifts and callings are without repentance. That's the five major gifts of t...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.477
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.588
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [48] verse and read just a little portion of the Scripture here for a context tonight: And he said unto her, Daughter, be of a good comfort: thy faith has made thee whole; go in peace. And while he yet spake these words, there come one from the ruler of the synagogue's house, saying to him, Thy daug...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.588
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 63-0630E - Is Your Life Worthy Of The Gospel? - Jeffersonville IN.pdf with similarity 0.587
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [84] every son that comes to God, has got to go through that hour of testing. This is the age of women, this nation is, where she has to go through that testing. If she can be a pretty woman, and act like a sister, the Lord's blessings upon her. But when she can get herself to--to know this, and dis...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.617
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.587
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [95] Are you believing? That's what Jesus said for you to do. All things are possible to them that believe. Amen. Praise the Lord. You believe God healed you of that back trouble, lady? You believe He make you well? You do it? All right. You can have your healing then. Your faith makes you whole. Am...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.527
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 63-0118 - Spirit Of Truth - Phoenix AZ.pdf with similarity 0.581
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [77] I tell you, when I left home they was my little girl... We're kind of... You people can have them if you want them, now, see, but I'm scared of a cat. And so, I just don't like that superstitious feeling you get around them. And so, we don't have them around the house, and I believe the cat can...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.429
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.581
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [97] How could you disbelieve? Well, what more can He do? If thou canst believe, all things are possible, if thou canst believe. Amen. But you got to believe. Jesus said, "If you can believe, then all things are possible." Praise the Lord. How wonderful. Have faith. Something happened. I couldn't se...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.408
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0221M - Marriage And Divorce - Jeffersonville IN.pdf with similarity 0.575
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [120] Look at the big buck deer: big fine horns, great specie, and the little humble doe. Look at the big rooster with all of his pretty feathers and the little brown hen. Look at the birds: the cock and the hen. Why? Why was it such of all the creatures of God? Every creature, in the male is the pr...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.489
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.575
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [98] We worship Thee, Lord Jesus. We give Thee praise and glory. Thou art the Rose of Sharon, the Lily of the valley, the Morning Star. Amen. How wonderful He is. All right, little lady, you setting just below her there a bit got hay fever hadn't you? You believe the Lord Jesus will make you well. I...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.549
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 57-0421S - The Great And Mighty Conqueror - Jeffersonville IN.pdf with similarity 0.570
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [75] And it happened to be, the conductor on that train, knew the story. He walked around there, and put his hands on that girl's shoulder, turned her around before that audience, said, "Shame on you! Shame on you!" Said, "I've seen the time that when your mother was ten times as pretty as you are."...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.605
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.570
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [51] All right. Now call up your... Oh, this is the patient. Now, I want... Remember, to you Christian people, these things are terrible. And it's not a practice of something. It's absolutely the Lord Jesus Christ in His resurrected power. As a power given to the people, not to heal, but to preach, ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.466
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 51-0928 - At Thy Word - New York NY.pdf with similarity 0.565
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [32] I looked at her, she had a big brace around her like this, a big metal brace. And one leg was shorter than the other, and it was limp, just hanging loose on the inside of her brace as it run down on a big high built shoe that had a place in the toe here that come up, a strap went over her shoul...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.400
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.565
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [58] Come. How do you do, sir. I suppose, maybe, us being strangers in this life, but God knows both of us. He's fed us, He's been with us, and all that we have comes from God. I'm only trying to contact your spirit, my dear brother, just so that God's blessings could rest. Now, just a moment. It ha...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.631
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0401 - Wisdom Versus Faith - Jeffersonville IN.pdf with similarity 0.560
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [201] How many men in here and women is past fifty years old raise up your hands. (I didn't I oughtn't to ask the women but I we all admit the truth.) I want to ask you a question. Do you see today that women are twice as pretty, nearly, as they used to be, on the run, the average, across the world?...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.397
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.560
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [4] A cancer, what is it? A germ. What's a tumor? A germ. What's tuberculosis? A germ. All those diseases are germs called cancer, tumor, tuberculosis. That's medical terms. What they are is demons, in the light of the Scripture. They are tormentors comes into your body to shorten your days on the e...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.460
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0724 - A Personal Experience With God - Chicago IL.pdf with similarity 0.555
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [33] And the old mother drug her baby down like that, and she was just pushing ushers every way. And she wanted to get to the platform. I said looked at the baby. I said. "Yes, auntie. That's the little girl." And I said, "Well, he's a young fellow, had black slick hair." She said, "Yes, that's righ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.533
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.555
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [6] Now, that little germ that was in the animal that started off, one little germ, making it course there's billions of them, little cells. But that one little cell being broke let the life of the animal out. But the life could not now, it answered of a good conscious towards God, but could not com...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.593
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 61-0128 - Why? - Phoenix AZ.pdf with similarity 0.550
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [4] I got two little girls at home. One of them's pretty good size now. About I guess it's been about four or five years ago, my little Rebekah was quite young then, about eight. Little Sarah was about four. I'd been out on meetings. And they're Daddy's little girls. We all feel that way, our childr...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.530
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.550
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [17] Now, Jesus put much time in prayer. One day there He told His disciples, He said, "Now, cross over to the other side." He sent them away while He went up in the mountain to pray. While He was up there alone, really a storm coming up. I believe, I don't know, but I believe if I'd been the discip...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.590
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0501E - The Faith That Was Once Delivered To The Saints - Chicago IL.pdf with similarity 0.545
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [5] just so many I and especially at this time, the wife and her condition. She's had to go through a whole lot, my wife has. She's stood between me and the public; that's millions, See. And so at thirty-six years old the other day, she's almost completely snow white headed. And just come on because...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.410
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.545
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [16] You remember when He stood there looking out upon the harvest, and He said... He was the Lord of the harvest. He said, "The harvest is ripe and laborers are but few; Pray ye the Lord of the harvest, that He will send laborers into His harvest." In other words, "Pray to Me that I will send labor...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.556
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 57-1006 - Questions And Answers On Hebrews Part III - Jeffersonville IN.pdf with similarity 0.540
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [81] And our American women's been privileged to go and eat hog or die. Even in all animals and so forth, when that thing prevails, it takes place and it degrades the whole race of it. There's a little bird in Africa, and she's a little pick bird. Now, usually, the female is always the ugliest of th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.552
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.540
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [19] I thought, Poor, little fellow. That's right. "God, I'm afraid to go too, 'less You go with me. Father, I know that it's all right. You ordained ministers to go preach the Gospel, but if You don't go with me, I'm afraid. You come go with me." So I got up and felt around, got him by the hand. We...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.612
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 64-0830M - Questions And Answers #3 - Jeffersonville IN.pdf with similarity 0.535
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [188] And of course, I know women wants to look pretty; that's nature, and that's what they should be, see. They should be that way. And so, that's fine, but just don't---don't, otherwise like this, don't look like the world (see?); don't pattern after the world. Things wrong... You want it cut off,...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.609
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.535
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [21] And that's about the way it is today. When God comes down in an old-fashioned Holy Spirit, God-sent revival, people are borned again of the Spirit of God, and people are being healed, and signs and wonders, the Holy Ghost comes in and moves over the audience, shows supernatural signs, the peopl...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.609
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0422 - Show Us The Father And It'll Satisfy - Spindale NC.pdf with similarity 0.530
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [85] And the girl, being a little smarter, what she'd learned in school, she was ashamed of her mother. And when she got off the platform, her mother said, "Darling, I'm so glad to see you." She turned her back and walked away because her little friend had done that. It happened to be, the conductor...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.545
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 59-0419A - My Life Story - Los Angeles CA.pdf with similarity 0.526
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [242] And I waited till he got out. I couldn't stand to see her die, and her mother laying down there in the undertaker's establishment. I tell you, the way of a transgressor is hard. And I went, slipped in the door, and when Sam went out and the nurse went out, I went down into the basement. It's a...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.572
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.526
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [37] "Why, Jairus, have you gone off at the deep end?" she'd say. "How could this be?" "Well, look, honey. I knowed He healed some people on the other side. Our baby's laying dying." I can hear his wife say, "You know, honey, I was just testing you a little bit." You know, the wife can do that right...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.379
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-1003 - Painted-Face Jezebel - Chicago IL.pdf with similarity 0.521
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [21] Now, when she begin to flirt with Ahab, Ahab married her. He thought, "That's just the one for me." PAINTED-FACE JEZEBEL 9 And a many man's made a mistake like that. A many man has done it. You ought to see her on wash day, or when she gets cleaned up. Really, might change your mind altogether....
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.377
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.521
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [40] That's the way to do it. Gets his hat and puts it on. The first thing you know, here comes the ministerial group coming out. "Jairus, why, the very audacity. Do you mean to tell me that your going... Where you going?" "The doctor just give my child up. My only hope I've got to go down to that P...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.569
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0421 - What Visions Are - Spindale NC.pdf with similarity 0.517
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [68] I looked at her again; she raised up her little head, and her little old ragged haircut and her little skirts hanging real low and ragged. I found out she was a little Finnish war orphan; she didn't have any father or mother, and she was living in a tent. The Russians had killed her father and ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.595
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.517
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [43] Now the centurion, the Gentile, didn't want that. He said, "I'm not even worthy that You come under my roof." He said, "I'm a man, I have authority. I say to this one, 'Go do it,' and he does it. I say to this one, 'Come here,' and he does it, 'cause I have supreme rule over this man. And I rec...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.595
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0429E - The Choosing Of A Bride - Los Angeles CA.pdf with similarity 0.513
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [141] I want to ask you, and say something here to you, and I want you to notice in a few minutes. Of all of the species in the world---birds, animals---we find that on the animal life (all besides human), it is the male that is pretty, and not the female. Why that? Look at the deer; the beautiful b...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.435
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.513
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [51] I can see Jesus moving, unconscious of any trouble. Amen. You can't imagine Jesus praying to find out now to go out and fast a few days to see if He's got enough faith to do it. God done told Him, and He knowed what was going to happen. He moves right along. He looks over to Jairus, Jairus look...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.592
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 61-0411 - But It Wasn't So From The Beginning - .pdf with similarity 0.508
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [132] And I want you American women to let this soak into you. You have to put on these little old dirty clothes to get out and mow the yard, when the men are getting off from work. You let your daughters do the same thing. Now, I've got two girls. They may do it some time, but, brother, when they d...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.475
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.508
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [57] want to just give a little illustration quickly, of His life, for the next two or three minutes. When His ministry first started, they found a success when He prayed for the sick, and laid hands on them. It was a marvelous thing how they got well. His fame begin to spread abroad, everywhere. Th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.454
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.506
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [57] So Jairus got to feeling pretty good after he'd met Jesus. Went walking along. Said, "I got a real hope now. My girl's going to be all right. Yep. He'll go in there, and He'll minister in some way; and He'll lay His hands on her, and first thing you know that girl will start getting better. She...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.411
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0429E - The Choosing Of A Bride - Los Angeles CA.pdf with similarity 0.504
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [71] And I said, "Well, why do you always look that cow in the face?" I said, "She looks all right, a good heavy cow." He
+
+[72] said, "I want to tell you, boy. You got a lot to learn." And I realized it, after he told me. Said, "I don't care how she is made up. She might be beef plumb to the hoof. B...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.368
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.504
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [67] "I'll go away, and I will come again, and I will be with you, even in you, as long as the world exists, and you will do the same things like I do, and the world won't believe you, because they didn't believe Me, but the believer will believe to the end of the world." There you are. There you ar...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.556
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0121E - The Marriage Of The Lamb - Phoenix AZ.pdf with similarity 0.500
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [246] Here some time ago, I was preaching something like that. I spoke to a young lady standing back there. She looked horrible, a minister's daughter. And she met me outside the church. And if she didn't comb me down! She said, "You ignorant thing," little sassy, painted-up lips, short bobbed hair....
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.450
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.500
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [80] Would you play: Abide With Me, if you would, sisters? Just may He just abide with us now. How many of you that raised your hand just a few moments ago, everywhere in the building, you're glad now you raised your hand? Raise up your hand again, will you? Everywhere, all around upstairs, downstai...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.429
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 57-0421S - The Great And Mighty Conqueror - Jeffersonville IN.pdf with similarity 0.496
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [69] We think today on the terms of the people, get our minds upon things of the world. But let me tell you something, brother, never let me be ashamed of the Gospel! Oh, brother, I'm just an old-fashioned, born again, Holy Ghost borned, of the Spirit of God. I was born that way, that's all I am, an...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.406
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.496
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [60] You're having trouble with your neck, sitting there, aren't you, lady? sitting there with the little yellow scarf. Isn't that right? You was praying just then. You had your head down and you asked God, "If You'll let Brother Branham turn around and speak to me, I'll accept my healing." Isn't th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.677
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-1109 - How The Angel Came To Me - Owensboro KY.pdf with similarity 0.492
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [24] He called me over to his home to his little girl. He had heard of some things, and he called me to his little girl who was laying with... The doctors didn't exactly know what was the matter with her, I think they called it something like a... You get palsy, and shake, and it's a Saint Vitas Dan...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.514
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.492
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [67] All right. Would you come? Are you believing with all your heart? And realizing that one of these days that you and I are going to have to stand in His presence to give an account of our lives. Then it behooves us to live like Christians, doesn't it? To live true and to live upright before God....
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.383
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 58-0720E - The Placing Of Deacons - Jeffersonville IN.pdf with similarity 0.488
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [39] And this morning, as I was leaving and going up to Eighth and Tenth Street or, Penn and Tenth, rather, nobody had said a thing, the wife and the two girls. And little Joseph took ahold of my shoulder again, he said, "Daddy, I sure liked that preaching this morning," he said. I said, "Well, I've...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.543
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.488
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [57] All right. Come. How do you do, lady? Do you believe with all your heart? Believe that Jesus Christ the Son of God is here to make you well? to heal you? Well, if you're conscious of His presence, you know that something's here besides your brother, isn't it? I'm not reading her mind, now; stop...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.401
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-1106 - Do You Now Believe? - Owensboro KY.pdf with similarity 0.484
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [35] And stepping out of there come a little girl, about twelve years old, and she had two crutches under her arm. She had a big thing around her like this, as a brace. And one limb was limp and shorter than the other. She had no control of this leg. And it set in braces, and around her hip. And a b...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.378
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.484
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [7] My wife one time... We was driving downtown. Oh, it's been two or three years ago; and there was a young lady on the street which we knew her. She said, "Hello, Sister Branham." And Meda was looking that way. And I didn't hear her speak to her. And I said, "Hey, that girl spoke to you." She said...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.399
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0701 - To Take On The Whole Armor Of God - Santa Maria CA.pdf with similarity 0.480
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [93] better bypass that, 'cause I promised I wasn't going to get into them things again, see. But how it is, that was his first tool. He's bringing it right back again in the last days. Sisters, don't get mixed up in that stuff. Stay away from it!
+
+[94] Did you notice, in every sex that there is, th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.418
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.480
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [48] And I'm not mistaken, I believe this a minister and his wife sitting right there. I can't call your name, but it sounds Jewish. Isn't that right? Wasn't you to my house and your wife was prayed for, or something sometime ago? I remember them. And... All right. I guess that's just... If I happen...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.460
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 51-0722A - Life Story - Toledo OH.pdf with similarity 0.477
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [46] When I got married... I met this girl. I'm so happy, my boy setting present this afternoon to know this about his mother. She was a lady, every ounce of it. She was a Christian girl. And I met her, and she was very nice. And I started going with her. And she neither smoked, drank, danced, or we...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.374
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.477
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [10] Now, we're going to approach His Word tonight, and read from His Word, and get right into the service. Now, I want you to pray for me now as we go into the Word. But first of all, let's address Him and [Microphone makes feedback sound.] and He will let us have His grace [Microphone feedback aga...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.395
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-1108A - Life Story - Owensboro KY.pdf with similarity 0.473
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [88] And she put her arms around me, and I kissed her goodbye. That was it. The Angels come packed her away. I took off home. Just as I got home, not knowing it, here come someone running and said, "Brother Branham?" "Yeah." Said, "You're baby's dying, also." "Baby dying?" "Yeah." Little, fat health...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.441
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.472
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [21] His little girl got sick. So, well, I guess the reasonable thing to do, he probably called in the doctor. The doctor said, "Well, we'll give her some of these homeopathic drugs," or whatever they was practicing with, "and she'll be all right in a few days." So, he give her the drugs and she got...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.393
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-1205 - The Resurrection - West Palm Beach FL.pdf with similarity 0.469
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [51] And when I got back there, there stood a great big woman with about enough clothes on that you could put in a aspirin box. And that woman, she had... And enough jewelry on (Now, that I ain't making fun. I'm stating facts, because I'm in the pulpit.) that would've fed poor children, and paid my ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.529
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.469
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [12] Now, our subject tonight is a great outstanding instance in the Bible. I love to rehearse His works here on earth, when He was here in a corporal body, and as He has said that He would be with us and manifest Himself to us until the end of the age... And the Bible says that Jesus Christ is the ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.350
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 63-0623E - The Flashing Red Light Of The Sign Of His Coming - Jeffersonville IN.pdf with similarity 0.466
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [53] Multiplying of people upon the earth. And yet, such birth control and all of the things that goes on don't even check it; it's going just the same, because we're at the end time.
+
+[54] And then notice, immediately there come a time that it said the women was very fair, very pretty. And we check...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.390
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.466
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [50] Now there's others, perhaps, in here that's been healed of all different kinds of diseases and things, but I never healed anyone. And nobody else ever healed anyone, outside of God. "I'm the Lord that heals all thy diseases." I'm just His servant, was born in this world. Like Brother Caubles wa...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.587
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 52-0810E - Jesus Christ The Same Yesterday, Today, And Forever - Chicago IL.pdf with similarity 0.462
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [11] I have a little blond-headed girl setting back there of six years old. She's my sweetheart. And you know what? You couldn't hurt that child without hurting me. See, that's my baby, see. I love her. And I got another little fellow at home, just about--a little over a year old, she's just trying ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.494
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.462
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [61] All right. Excuse me, lady. I believe I recognize you. You're the lady that sang here the other night. But in knowing anything of you otherwise, you're the judge. I know nothing about you as far as no more than just seen you that you was singing here when I something another. But God knows all ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.388
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 50-0816 - Looking To The Unseen - Cleveland OH.pdf with similarity 0.459
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [26] And so finally when the meeting ended, about eight days, I was going to go home. And on... And that day, the mother give consent to come over. Said, "We'll all leave the house if he wants you to come over just to satisfy her. So but we'll leave the house. We won't even stay while he's there." H...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.491
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.459
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [22] I said, "He was a man when He went down to the grave of Lazarus, crying. He was a man then, but when He straightened up His little figure and said, 'Lazarus, come forth'; and a man that had been dead four days stood on his feet. That was more than a man; that was Christ; that was God speaking o...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.407
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0301 - He Careth For You - Phoenix AZ.pdf with similarity 0.455
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [125] And she had got down into the gutter with this girl. And then when she come home, the train stopped in front, and the girl, sitting at the window, looked out.
+
+[126] And there was an old woman out there that was all scarred, all over her face, and her neck drawed way in, her little hands bony,...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.342
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.455
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [23] It's true. He hung on Calvary begging for mercy. That was a man. When He hung on Calvary begging for mercy, that was a man. But on Easter morning, when the Angel of the Lord rolled the stone away, and He come up, He proved He was God. No wonder the poet said: Living, He loved me; dying, He save...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.342
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 51-0415A - Life Story - Phoenix AZ.pdf with similarity 0.452
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [22] And so I remember one day we were getting mar... When they were young, when I was just a little bitty fellow... Daddy was eighteen years old; mama was fifteen when I was born, just children. And we was children with them, growed up with them. I think that's a good thing. I do. My little girl, w...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.382
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.452
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [26] And I know one thing, brother, that there's a good old-fashioned baptism of the Holy Ghost, and every time when the heart beats we're going one step closer to that great place called death. And I want to say this, when I come to the end of the road I know Him in the power of His resurrection, t...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.576
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0626 - The Unfailing Realities Of The Living God - Jeffersonville IN.pdf with similarity 0.449
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [32] And, Satan, you who have afflicted this child, you're going to have to turn her loose, for we command you to let the child go, so she'll be well. I rebuke thee, Satan: charge thee by the resurrection of Jesus Christ the Son of God, Who triumphed over you, and all your powers was spoiled. And yo...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.514
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.449
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [28] Oh, how wonderful. Then this maniac run down to Him and the Lord Jesus rebuked them spirits. And a lot of people say that religion will run you crazy; not the religion of the Lord Jesus Christ won't. It'll give you a right mind. And you're not in your right mind until you have met the Lord Jesu...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.360
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.448
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [20] And then when He came to them... We'll notice over at the other shore, there's a little fellow by the name of Jairus. And he was a nice little man. I believe that Jairus was a secret believer. He didn't want people to know about it. There's a lot of people like that in Phoenix tonight, that the...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.422
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-1211E - The Laodicean Church Age - Jeffersonville IN.pdf with similarity 0.445
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [164] So Mother said one day she was coming down to see her daughter. Well, they wondered what in the world they would do with her. So when she come down she looked like something out of a relic book---one of them little high-necked dresses, you know, and long sleeves, and her hair peeled back here,...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.358
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.445
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [30] I just wonder if people around the country today about got the same attitude. That's right. Going to cost a little something, why, you don't want it. Want everything on a silver platter. That's the reason you don't enjoy it. One of the greatest meetings that was ever held, I guess it was... I d...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.379
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 59-0329M - Water Baptism - Jeffersonville IN.pdf with similarity 0.442
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [37] Lord, we bring to You, this little boy, placed from the loved ones arms to ours. And in belief and faith in the Bible, and in the Christ of the Bible we dedicate this little boy to You, that his life will be used to the glory of God. Bless his home, his parents, his loved ones, and may he live ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.377
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.442
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [32] You see, it's not the big things you do. It's the little things you leave undone. You've got to sacrifice. Why, that's the reason the people up north come into a meeting. Why, they come by the thousands times thousands. They like to get out in the cold; they like to do something for God. That's...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.356
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 50-0200 - Here We Have No Continuing City - Little Rock AR.pdf with similarity 0.439
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [47] Well, I went and had to tell her mother. And that didn't work so good. She said, "William." She said, "She's your wife. You may take her if you want to." But said, "I don't want my daughter drug out among that bunch of trash." Um. Trash? Friends, I found out this, that what she thought was tras...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.397
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.439
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [42] Well, the first thing you know, somebody come running up around the street and said, "Hey, you know what's happening, pastor?" "What?" Why, all the people are around, of course, weeping and sympathizing with him, the good, honest people of the church. He's going to lose his daughter, and as one...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.402
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-1203 - The Law Having A Shadow - Binghamton NY.pdf with similarity 0.436
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [49] But notice, this woman when she was sitting over there at that table, that young woman, I thought, Oh, my! And I looked over here and seen an old fellow sitting there, and there sat two fellows drunk, one with a great big long army overcoat on, and a dear old mother sitting there, old enough to...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.504
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.436
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [50] Peter one night, he had to have the Word preached to him. He was out on the sea in a little old boat that was just about all ready to sink, and all hopes was gone. And the first thing you know, while they were screaming and going on, afraid they was going to die on the sea, well, Jesus come wal...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.504
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0121E - The Marriage Of The Lamb - Phoenix AZ.pdf with similarity 0.433
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [211] I said, "She looks like a hain't to me." I said, "I never seen such a sight in my life as a minister's wife. That don't look like the wife of a holy man."
+
+[212] And neither does the church of the living God---depending on her fashions, her tea parties, and bunco parties, and card games, and d...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.502
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.433
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [53] The Bible said they acted like they were drunk. Is that right? Well, Peter stood up on a little old stump there, soap box, or whatever he was standing on, said, "You men of Judea, you that dwell in Jerusalem, let this be known unto you and hearken unto my words: These are not drunk, like ye sup...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.532
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 50-0827A - Prodigal - Cleveland OH.pdf with similarity 0.430
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [115] Not long ago, a young lady come in from college. Her mother had washed over a board to send her to college. And when she drove into the station, she had a--brought young girl with her, and she'd got away from God and away from church. The young girl was with her. And the young girl setting in ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.500
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.430
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [54] Then step out in the open and start walking. Amen. Step out of the little old theology you're wrapped around tonight and say, "God, I want the Holy Ghost. I don't care what anybody says." Peter said, "Lord, if it's You..." You say, "I'm afraid I'll make a mistake." Well, you're sure making a mi...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.371
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-1002 - The Kinsman Redeemer - Jeffersonville IN.pdf with similarity 0.427
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [48] A woman that's beautiful, that beauty will fade just as sure... You give it a few years. Maybe today she's twisting down the street, some little half-dressed woman---sending more souls to hell than all the barrooms in the country. But she'll twist herself down the street, thinking she's somethi...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.348
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0429E - The Choosing Of A Bride - Los Angeles CA.pdf with similarity 0.424
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [75] That wild, starey, Ricketta look: better stay away from her, boy. All that there blue stuff, over the top of her eyes---I wouldn't want that. I don't think that's becoming to a Christian. I don't care how much the television, and the paper, says it's pretty. It's the most horrible-looking, hide...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.326
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.424
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [58] So, Jairus turned his little head to see what Jesus said about it. I can see those lovely eyes looked over to him, said, "Fear not. Only believe, and thou shalt see the glory of God." Glory. That was the Word. Jairus stuck his chest out, just as brave as he could be and walked over yonder. Here...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.347
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-0604 - The Angel Of The Lord - Connersville IN.pdf with similarity 0.421
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [23] So, well, finally the little girl cried so hard... I went down one afternoon. The mother and father left the room---wouldn't even come in, nothing. I went and had prayer for them and went on out. The poor little thing cried so hard that day. She said if she could get healed... She believed that...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.553
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.421
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [73] Now, watch. Jesus knew he was there and knew how long he'd been sick. Is that right? Said, "Take up your bed and go to your house." Walked on away and multitudes, thousands times thousands of twisted, lame, halt, and blind. He did just as the Father showed Him. And if that's what He did then, H...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.523
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 63-0630E - Is Your Life Worthy Of The Gospel? - Jeffersonville IN.pdf with similarity 0.418
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [86] I've got two young girls setting here. I don't know what the outcome of them kids will be. I just pray for them. Kids, today, I don't... You can't tell. I don't know. They're not immune from that. They've got to stand on their own two feet, before Jesus Christ, and give an answer. They can't go...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.461
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.418
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [74] One woman couldn't even get to Him. She just touched the border of His garment. He didn't feel it, not by His physical feeling, but He turned and told her, and she was healed. Said her faith made her well. Many places in the Bible, certainly. It's based upon your faith. When the blind... When t...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.551
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-1114 - The Darkest Hour, Then Jesus Comes Along - San Fernando CA.pdf with similarity 0.415
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [69] So, she went into the room. They lived in a lovely big home, and her married daughter lived close to them. And she knelt down and she said, "Dear Heavenly Father, we have served You in Your church for years. And there my poor little dying daughter, laying in there. And that impostor William Bra...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.549
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.415
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [68] And I know that in this building just now, you'll never know how weak that made... Look at the sweat on top of my hand, see. I'm just about to crumble and hit the platform. It's all getting milky all around over the building and everything. Remember, the Lord turned around and said, "Strength h...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.342
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-0609A - Demonology, Religious Realm - Connersville IN.pdf with similarity 0.412
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [223] And sitting in a chair, here, sat an elderly lady, as old as my mother, fifty-five, fifty-eight years old. She had on a little pair of those little ungodly clothes they wear.
+
+[224] They claim it's cool. Science says, "You're crazy." Certainly, it's not, you just want to show your naked self. ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.320
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.412
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [83] Now, the only thing you were saved. Many here got saved awhile ago, raised up their hands. They were saved nineteen hundred years ago. They just accepted it now. Fountain was opened, whosoever will. There's where it was paid for. You just now accepted it. Now, the only thing that a man could do...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.341
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 61-0808 - Thy House - Tifton GA.pdf with similarity 0.409
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [281] Hasn't that little girl got pretty hair too, Honey? She's a cookie, with her little pony tail hanging down there too, little strawberry blonde. [Someone asks Brother Branham something.] No,
+
+[282] I'm going to be out and see if that old get that old Cadillac started if I can, Brother Welch. Ex...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.386
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.409
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [88] Now, this lady, standing here. I suppose, sister, you and I are strangers? Did you raise your hand to one another? I don't know you. You don't me, and--and here we are meeting for the first time. Is that right? That's the first time. Now, the lady, now would you just raise up your hand so the p...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.339
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0311 - The Seal Of The Antichrist - Los Angeles CA.pdf with similarity 0.407
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [63] Here not long ago, a man wanted to introduce me to his wife, a great holiness organization, said, "My wife is going to play the piano tonight, Brother Branham." And I looked at her, and the woman... I ain't making fun of the woman; I don't believe in doing that. I'm only telling what's the trut...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.406
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf with similarity 0.407
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [89] But here is a very similar picture of what happened up at Samaria one day. The Lord Jesus, a Man in flesh and a Samaritan woman, and they met and begin to talk to one another. And Jesus carried a conversation with her. He said, "Bring Me a drink." She said, "It's not customary for Jews to have ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.453
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-0626 - The Unfailing Realities Of The Living God - Jeffersonville IN.pdf with similarity 0.404
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [34] Who is this little fellow? Oh, a growth over her eye. Now, she's almost a young lady. I don't know whether I can lift her up or not. But she's awfully pretty. Her name is Wilson, Lela, Lela? Lisa Wilson. Isn't she a pretty little thing? She's got a growth over her eye. Well, Jesus heals growths...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.540
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.404
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [66] All right. (Is this the little boy?) Come here, sonny. All right. This is a very fine boy. He's just a little excited, of course, the child, like. And that's anointing touching the little lad now. Look, honey boy, when our Lord Jesus was here on earth, He would take little children like you, an...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.480
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0119 - The God Who Is Rich In Mercy - Phoenix AZ.pdf with similarity 0.401
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [17] A lot of water's went down the river since you and I and Brother Brown come here the first time, with Brother Outlaw, and Brother Garcia, and Brother Fuller. I wonder if them men would be in here tonight? Brother Garcia? Brother Fuller? Brother Outlaw? Are they here? Raise up your hands if you ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.377
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.401
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [6] And what I read here is His Word. It will never change; it'll never pass away. It's eternally right. Mine may fail, 'cause I'm just a man, speak like any other man, make mistakes and everything. But when He speaks, mark His words; it's the truth, see. And this is His Word. Primarily this is the ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.448
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-1003 - Painted-Face Jezebel - Chicago IL.pdf with similarity 0.399
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [48] And when he come down through there, little Miss Jezebel, she thought, "Well, I'm a vamp anyhow, you know." Said, "I'm all pretty." And she goes over there and gets her makeup kit, you know, and she begins to fix her face all up with all that makeup and stuff, and you know. And I seen women do ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.313
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.399
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [8] No matter how weak, how sick, how far in sin, whatever the condition is, He's there to make intercession upon what we confess that He has did for us. And anything that was included in the atonement---"wounded for our transgressions, bruised for our iniquities, the chastisement of our peace was u...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.477
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0822E - A Thinking Man's Filter - Jeffersonville IN.pdf with similarity 0.396
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [90] See? She pulled through one filter, and he come through another. He won't think she's pretty, not at all. That's not beauty to a real man of God.
+
+[91] Remember, one time before the blood of Jesus Christ become the filter, as we'll get to in a few minutes), the sons of God looked upon the daugh...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.353
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.396
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [9] Now, in His presence see. Hebrews 3:1 said, "He's the High Priest of our profession." Profess and confess is the same word. Profess anything or confess anything; confess means "to say the same thing." If God said, "By His stripes we're healed," then I say, "By His stripes I was healed." He said ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.445
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 59-1129 - Let Us See God - San Jose CA.pdf with similarity 0.394
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [11] See, each one has... I hope I don't leave no one out. The lady that plays the piano, the singers, the choirs, and all that's been, I certainly appreciate it with all my heart.
+
+[12] And the boys here, Gene and Leo, they wish to express their feelings to you, also, for the buying of the tapes an...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.373
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.394
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [10] When I was so sick, that I couldn't hold a mouthful of food on my stomach, the best doctors in the nation that examined me, said, "It's impossible for him to get well." And I read God's Word, and I asked God to help me. And I ate corn bread, beans, and onions. And I took a big mouthful, and my ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.399
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0429E - The Choosing Of A Bride - Los Angeles CA.pdf with similarity 0.391
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [60] Could you imagine a Christian doing a thing like that? No, sir, I could not. A true Christian will not look for such beauty queens, and chorus girls, and sex queens. He'll look for Christian character.
+
+[61] Now, you can't have all things. There might be one girl that is real pretty. And the ot...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.309
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.391
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [11] that when Jesus died, He healed me. And I accepted it. It had to be so. I wasn't confessing what I felt; I was confessing what I believed. I believed His Word was eternally the truth; it couldn't pass away. It was absolutely the truth. And my feelings had nothing to do with it. That's right. Th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.441
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0225 - Glorified Jesus - Phoenix AZ.pdf with similarity 0.389
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [69] And there was a little Finnish girl stepped out. She had a brace on her leg, 'cause she couldn't move her leg. And it was a great big thing around her, and a belt over her, hitched in her toe. And the way she'd move with her two crutches, she'd set them out and pull her little shoulder and that...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.328
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.389
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [12] As I've often quoted this little story, one of the greatest things enemies that God has---or, the human race has (and God's all your enemy is His enemy, of course) is sight and time. A man says, "Show me, I'll believe it. I can't believe it unless I see it." Seeing is believing; you've heard th...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.469
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 56-0615 - An Exodus - Indianapolis IN.pdf with similarity 0.386
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [43] All night I thought about that old possum. Next morning I went out... I've got a little girl. She's ten years old, and she just saw her first vision recently. A very spiritual child. And, I found her going out on the porch with her little pajamas on, about six-thirty in the morning. I went out ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.437
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.386
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [13] Now, what is faith? "Faith is the substance of things hoped for, the evidence of things not seen." You'd say, "That shirt is white." Yes. Well now, if your faith says that you're going to be healed (just as sure as you're... this is true to you and just as real that your sight says that's white...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.306
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 60-1211E - The Laodicean Church Age - Jeffersonville IN.pdf with similarity 0.384
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [26] Where's Sister Creech at? I haven't seen her. Is she around? Back there. Oh, Sister Creech, how thankful I am that God has give you a child like that. Why, you don't realize how thankful. At the age where teen-age girls are snickering, and laughing, and going-on, you know, with a bunch of nonse...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.525
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.384
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [14] Many people think that symptoms... When they see symptoms: That's what they look at. You can't be saved on what you see. You've got to be saved on what you believe. Is that right? You're not saved by feelings; you're not healed by feelings. Why, when I was first converted and received the Holy ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.326
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 61-0125 - Why? - Beaumont TX.pdf with similarity 0.381
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [32] I looked over on this side and there sat an old grandma, about as old as my grandmother. And the poor old thing had on these tights or shorts, or ever what you call it; and her poor old arms, flabby flesh; and she had her toenails painted the same color of her lips, and great big black spots un...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.345
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 58-0316E - Door To The Heart - Harrisonburg VA.pdf with similarity 0.379
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [17] But he caught on to that. I tell you, he comes through the house now, he's just about as high as he is wide. Girls get in chairs, under the bed, or anywhere, he knows how to bite too. He makes other gums shine now. I was talking to him awhile ago. He said, "Come home, daddy. I'm digging some wo...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.344
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.379
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [22] is? If I have to have Him, you know... That's the way a lot of people think though. That's right. "I really believe it, but for my social prestige, I just can't confess it like that." The world's full of them tonight. Looking to men, scared of men. "Don't fear men who can kill the body, but fea...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.344
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 59-1004M - Who Is This? - Clarksville IN.pdf with similarity 0.377
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [173] And the father was going to come to Christ. Said, "Now, when you have your meeting, I'm ready to be baptized," him and his family. And I couldn't tell him. I hated to tell him. I knew the baby was going to die.
+
+[174] Went back and told my wife. Told, oh, a lot of friends and my neighbors and ...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.490
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.377
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [23] Finally the hour come when the doctor walked out and told Jairus, said, "Jairus, you're a priest here at the temple and a fine man. I've liked you, and I've been your doctor for many years (Perhaps he said these words.), but I hate to tell you, but your child is going to die." "Oh, my! Going to...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.322
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 52-0720A - Life Story - Hammond IN.pdf with similarity 0.374
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [159] And I went out with her and started going with her. And I was the went to work for the public utilities of Indiana. And I had gotten a hold of a little money and I had bought me an old car, and I thought, "Well, that was a real opportunity."
+
+[160] But her father was the President of the Broth...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.342
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.374
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [24] So I can see him get his little coat, and throw it on him, and pull his hat down or whatever he had, and start off down the street. I can hear some of his members say, "Where are you going?" "I'm going to find Jesus." "Well now, looky here. Don't you disgrace our church, to fool with such a fan...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.321
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-1206 - Expectation - Binghamton NY.pdf with similarity 0.372
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [66] She said, "I's that kind of a woman." She said, "I couldn't have no children. And I promised the Lord, if He would give me a child, that I would raise it for His glory." Said, "I's a wash woman." And she said, "And I's a Christian." And she said, "And the Lord give me a fine boy. And I raised h...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.456
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.372
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [29] And I can see little Jairus, he didn't care. He'd already contacted Jesus. A man once contact Jesus, he's a different man. That's right. Oh, he was smiling. He didn't care. There stood all the priests. "Good evening, brethren." Walk on. He didn't care. Not a bit of red in his face. He'd contact...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.516
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 52-0720A - Life Story - Hammond IN.pdf with similarity 0.370
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [247] And during this time, her mother and father had separated. And I said... We went to tell her mother. And I said, "Misses Mrs. Brumbach," I said, "I have found the wonderful people," like that.
+
+[248] And she was sitting on the porch, you know. Now don't get mad at me if you are here. So she sa...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.381
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.370
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [30] Come on down at the house, and here the people was out in the yard a screaming and a carrying on. "There comes our pastor with that fanatic." I can hear some of them say, "If your doctor has said there's nothing can be done for the girl, you ought to have knowed not to fool around with them fan...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.339
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 65-0429E - The Choosing Of A Bride - Los Angeles CA.pdf with similarity 0.367
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [91] And the boy got out of the car, and he certainly didn't look like a groom to me, or would to anybody, I guess. Yet, I could buy a pretty good pair of shoes for a dollar-and-a-half; and he had on a pair that was run over, and his trousers was real baggy. And he had on one of these old moleskin j...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.338
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.367
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [31] I can see some of his neighbors run out and say... Why, they wanted him to move out of the neighborhood, perhaps. But he went right on in. There the people... And Jesus said, "Give peace or, place. Why all this to-do? Why screaming and weeping? Don't do that." Said, "The girl's not dead; she sl...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.385
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 62-0707 - Jehovah-Jireh #3 - Grass Valley CA.pdf with similarity 0.365
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [8] But I'll say that I've seen something happen among your people here that I haven't seen in any American city anywhere. I've seen Christians recognize they're wrong, to the Word of God, and stand and ask for mercy. That sounds to me like a revival could break in here. It would be wonderful. As mu...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.379
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.365
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [32] So Jesus put them all out of the house. You know, that's a pretty good lesson right there. Those who wouldn't believe Him got put out. I imagine there'd be a whole lot of that at the resurrection, don't you imagine so? He put them out. Said, "Get them out." He took the ones who really believed....
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.316
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 53-0613 - God's Provided Way - Connersville IN.pdf with similarity 0.363
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [37] And she pulled out a cigarette. She just shows her colors, what she is, when she does it. Now, let your face get red. And you men that will let your wife smoke cigarettes, it shows who's the boss around the house. That's right. Let them lay out here in these little old beach clothes and things....
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.336
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.363
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [37] Peter asked Him one night, said, "If it be You, bid me come to You on the water." Jesus said, "Come." That's all Peter had to hear, "Come." He jumped out of the boat and started running to meet Him. And even on His road, when fear come, he saw the big waves, big whitecaps bursting probably as h...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.336
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 55-0612 - The Presence Of The Lord Jesus - Macon GA.pdf with similarity 0.361
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [17] And so, that night going in, a little Finnish girl stepped out. Her little ragged hair, and she had a little skirt on and little rags hanging down from it. And she had two crutches under her arm, and she had a great big brace wrapped around her like this and buckled in the back. And she had one...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.448
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0302 - The Resurrection Of Jairus' Daughter - Phoenix AZ.pdf with similarity 0.361
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [38] Kind heavenly Father, we approach Thee to thank Thee for this written Word, to realize what a supreme sacrifice has been paid that we could have this Word tonight. It's the most persecuted Book in all the world and yet the greatest seller of all literature that was ever written. It is the absol...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.000, Final score: 0.335
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Found document 54-0331 - The Resurrection Of Jairus' Daughter - Louisville KY.pdf with similarity 0.360
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Document content: [32] So, here comes the man now. Jesus going with little Jairus to his daughter, sick. Now, they're going along. I can see Jairus walking along now. All the priests looking at Him and said, "Ah, so that's what you choose." "Yup. This is it." walking right along. He got close to Jesus. He'd had a cha...
+DEBUG:utils.fused_intent_search:≡ƒöì DEBUG: Keyword score: 0.500, Final score: 0.360
+DEBUG:utils.fused_intent_search:FUSED_SEARCH_TRACE: Semantic search completed - results_count: 8
+DEBUG:utils.fused_intent_search:[ANCHOR-BOOST] Skipped ΓÇö disabled, narrative query, or no prior docs
+INFO:utils.keyword_tsvector_queries:KEYWORD-RESOLVE raw='Where did bro Branham call his daughter fat and ugly' resolved=['his daughter fat and ugly', 'daughter', 'Where did bro Branham call his daughter fat and ugly'] sources=['single_speaker', 'single_speaker', 'raw'] [extracted=yes topic_kw=yes kw_subq=yes candidates_tried=8]
+INFO:utils.hybrid_vector_client:≡ƒöæ [KEYWORD] Batched OR tsquery: 5 sub-queries, n=150
+INFO:utils.fused_intent_search:[FTS-RESCUE] tier=1 hits=0 df_rejected=1 strict_qs=5 relaxed_candidates=1
+DEBUG:utils.fused_intent_search:[HYDE] Skipped ΓÇö narrative=True, passage=False, top_score=0.924, threshold=0.40
+INFO:utils.fused_intent_search:[EVIDENCE-SPAN] Extracted snippets for 8 results (window=3)
+INFO:utils.global_singletons:≡ƒöä Loading CrossEncoder model (ONE-TIME ONLY): BAAI/bge-reranker-base...
+INFO:utils.global_singletons:≡ƒôè Memory before CrossEncoder: 4277.0MB process, 3549.2MB system available
+INFO:sentence_transformers.cross_encoder.CrossEncoder:Use pytorch device: cpu
+INFO:utils.global_singletons:Γ£à CrossEncoder model loaded successfully in 1.99s (+223.2MB)
+≡ƒö┤ Celery Redis URL: redis://localhost:6379/0
+
+Info: spaCy imports successful
+Info: LangChain imports successful
+Info: LlamaIndex imports successful
+Info: ChatGPT Enhancement imports successful
+Info: LLM query rephraser and reranker imports successful
+Info: Multi-strategy search and content deduplicator imports successful
+[sim] try_analytics_query returned: None (None expected for non-analytics query)
+[sim] _analytics_intent.requires_narrative_search = True
+[sim] _analytics_intent.hyde_passage = 'Brother Branham called his daughter fat and ugly in a specific context or document.'
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]
+Batches: 100%|ΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûê| 1/1 [00:01<00:00,  1.14s/it]
+Batches: 100%|ΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûêΓûê| 1/1 [00:01<00:00,  1.14s/it]
+INFO:utils.fused_intent_search:[CROSS-ENCODER] Reranked 8 results (8 pairs); top score=0.021
+
+Search took 10031ms
+Result type: FusedSearchResult
+comprehensive_intent.requires_narrative_search = True
+comprehensive_intent.hyde_passage = None
+
+Returned 8 search result(s)
+------------------------------------------------------------------------------------------
+
+[1] file_id=2379 score=1.0 fts_rescue=0
+    file: 53-0611 - Show Us The Father And It'll Satisfy Us - Connersville IN.pdf
+    >>> [242] So when she comeback,she brought a little girl home with her.And her mother was standing out on the ramp of the...to meet her. And when the cars stopped, and this young little smart-aleck was with her, looked over there and she said, "Oh, look ...
+
+[2] file_id=2537 score=1.0 fts_rescue=0
+    file: 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf
+    >>> [88] Many people come and look at it and they said, "It's psychology." People... I've had great men say, "Yes, Brother Branham, I heard them all screaming and pointing towards you. I imagine I seen it, but I believe It was psychology." In a debate wh...
+
+[3] file_id=2724 score=1.0 fts_rescue=0
+    file: 57-0421S - The Great And Mighty Conqueror - Jeffersonville IN.pdf
+    >>> [72] Then this girl, when the train stopped out front, she brought a little girl with her, one of those little snickel-fritz kind, you know, like the Elvis Presley type. And when she was standing there, you know, at the train, her mother was on the o...
+
+[4] file_id=2378 score=1.0 fts_rescue=0
+    file: 53-0610 - Jesus Christ The Same Yesterday, Today, And Forever - Connersville IN.pdf
+    >>> [97] And so when she got off the train, her mother looked and she recognized her daughter. And she run, threw her arms around her, said, "Darling." Her face was all drawed, and her hands all drawed down. And she... all like that. And she said, "Darli...
+
+[5] file_id=2655 score=1.0 fts_rescue=0
+    file: 56-0726 - Love - Shreveport LA.pdf
+    >>> [22] The conductor said, "I've seen the day when she was twice as pretty as her daughter will ever be. But," said, "I happened to live in the neighborhood, and this girl was a baby upstairs, her mother was in the backyard washing. And all of a sudden...
+
+[6] file_id=2657 score=1.0 fts_rescue=0
+    file: 56-0731 - Raising Jairus' Daughter - Shreveport LA.pdf
+    >>> [40] How wrong that is. But all the time while that was going on, Jesus had a tugging, 'cause the faith of Jairus has pulled Him over there. That's what you're here for. All the time He felt like that He would cross the sea. And now we had a night or...
+
+[7] file_id=2593 score=1.0 fts_rescue=0
+    file: 55-1114 - The Darkest Hour, Then Jesus Comes Along - San Fernando CA.pdf
+    >>> [60] So, her daddy was a deacon in the church. So, he couldn't come. So, he asked me---Brother Hall did---if I'd go over there. I said, "Sure." And her mother and father said, "If that... To satisfy her, all right. But I wouldn't even stay in the hou...
+
+[8] file_id=2537 score=1.0 fts_rescue=0
+    file: 55-0227E - The Healing Of Jairus' Daughter - Phoenix AZ.pdf
+    >>> [91] And about that time, a whirlwind started from the heavens, and here It come down right over where I was at. And this big camera shot the picture. And it was a Catholic boy that did the picture taking. And he went down that night... I said, "God ...
+
+==========================================================================================
+Target file_id 3486 present in top-10: False
+All returned file_ids (top-10): ['2379', '2537', '2724', '2378', '2655', '2657', '2593', '2537']
+==========================================================================================
+==========================================================================================
+LIVE PIPELINE TEST
+Query: Where did bro Branham call his daughter fat and ugly
+Workspace: 2
+==========================================================================================

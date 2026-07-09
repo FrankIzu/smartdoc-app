@@ -321,6 +321,7 @@ function RootLayoutNav() {
           <Stack.Screen name="quick-reach" options={{ headerShown: false }} />
           <Stack.Screen name="join-meeting" options={{ headerShown: false }} />
           <Stack.Screen name="upload-links" options={{ headerShown: false }} />
+          <Stack.Screen name="intake" options={{ headerShown: false }} />
           <Stack.Screen name="signatures" options={{ headerShown: false }} />
           <Stack.Screen name="workspaces" options={{ headerShown: false }} />
           <Stack.Screen name="scanner" options={{ headerShown: false }} />
