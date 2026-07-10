@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -20,12 +21,18 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
-import { FRONTEND_URL } from '../../constants/Config';
+import {
+  pickDocumentsLikeFilesScreen,
+  pickGalleryImagesLikeFilesScreen,
+} from '../../components/signatures/DocumentSourcePicker';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { intakeDetailScreenKey, intakesListScreenKey } from '../../services/userScopedCache';
+import { useFileStore } from '../../stores/fileStore';
 import { screenCache } from '../../utils/screenCache';
+import { checklistFileStillClassifying, getFullPublicUploadUrl, getUploadToBaseUrl } from '../../utils/uploadLinkHelpers';
 import {
+  INTAKE_ACTIVE_POLL_STATUSES,
   INTAKE_DUE_BADGE_LABELS,
   INTAKE_ITEM_STATUS_LABELS,
   INTAKE_REMINDER_PRESETS,
@@ -33,9 +40,11 @@ import {
   INTAKE_STATUS_LABELS,
   type Intake,
   type IntakeFileRow,
+  type IntakeItem,
   type ReminderPreset,
 } from '../../types/intake';
 import { useAuth } from '../context/auth';
+import { UploadOptionsModal } from '../components/UploadOptionsModal';
 
 const INTAKE_DETAIL_CACHE_MS = 30_000;
 
@@ -64,15 +73,6 @@ function formatDate(dateString: string | undefined | null): string {
   const date = parseUtc(dateString);
   if (isNaN(date.getTime())) return '';
   return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-/** Backend public_url is often `/upload-to/{token}` — prepend configured frontend origin for share/copy. */
-function getFullPublicUploadUrl(url: string): string {
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
-  }
-  const path = url.startsWith('/') ? url : `/${url}`;
-  return `${FRONTEND_URL}${path}`;
 }
 
 function getFileTypeFromFilename(filename: string): string {
@@ -125,6 +125,16 @@ export default function IntakeDetailScreen() {
   const [editAutoVerify, setEditAutoVerify] = useState(false);
   const [editSenders, setEditSenders] = useState<{ name: string; email: string }[]>([{ name: '', email: '' }]);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [templateNameForSave, setTemplateNameForSave] = useState('');
+  const [templateIndustryForSave, setTemplateIndustryForSave] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [uploadingItemId, setUploadingItemId] = useState<number | null>(null);
+  const [classifyingFileIds, setClassifyingFileIds] = useState<Record<number, true>>({});
+  const [regeneratingCode, setRegeneratingCode] = useState(false);
+  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const [uploadTargetItemId, setUploadTargetItemId] = useState<number | null>(null);
 
   const intakeId = Number(id);
   const detailCacheKey = intakeDetailScreenKey(user?.id, intakeId);
@@ -186,6 +196,47 @@ export default function IntakeDetailScreen() {
     }, [user, intakeId, loadIntake])
   );
 
+  useEffect(() => {
+    if (!intake || !INTAKE_ACTIVE_POLL_STATUSES.includes(intake.status)) return;
+    const interval = setInterval(() => {
+      loadIntake(true);
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [intake?.status, intake?.id, loadIntake]);
+
+  useEffect(() => {
+    const fileIds = Object.keys(classifyingFileIds).map(Number);
+    if (fileIds.length === 0) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      for (const fileId of fileIds) {
+        if (cancelled) return;
+        try {
+          const response = await apiService.getFileById(fileId);
+          const file = response.file;
+          if (file && !checklistFileStillClassifying(file.file_kind, file.processing_status)) {
+            setClassifyingFileIds((prev) => {
+              const next = { ...prev };
+              delete next[fileId];
+              return next;
+            });
+            loadIntake(true);
+          }
+        } catch {
+          // keep polling
+        }
+      }
+    };
+
+    const interval = setInterval(poll, 2000);
+    poll();
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [classifyingFileIds, loadIntake]);
+
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
@@ -198,9 +249,9 @@ export default function IntakeDetailScreen() {
     loadIntake(true);
   }, [invalidateIntakeCaches, loadIntake]);
 
-  const copyToClipboard = async (text: string) => {
-    await Clipboard.setStringAsync(text);
-    Alert.alert('Copied', 'Copied to clipboard');
+  const copyUploadCode = async (code: string) => {
+    await Clipboard.setStringAsync(code);
+    Alert.alert('Copied', 'Upload code copied');
   };
 
   const handleShareLink = async () => {
@@ -223,7 +274,7 @@ export default function IntakeDetailScreen() {
     try {
       const response = await apiService.sendIntake(intake.id);
       if (response.success) {
-        Alert.alert('Sent', 'Intake sent to client');
+        Alert.alert('Sent', response.resent ? 'Upload link resent to client' : 'Intake sent to client');
         reloadAfterMutation();
       } else {
         Alert.alert('Error', response.message || 'Failed to send Intake');
@@ -233,6 +284,189 @@ export default function IntakeDetailScreen() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleRegenerateCode = () => {
+    const linkId = intake?.upload_link?.id;
+    if (!linkId) return;
+    Alert.alert(
+      'Regenerate upload code',
+      'Generate a new upload code? The old code will stop working.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Regenerate',
+          style: 'destructive',
+          onPress: async () => {
+            setRegeneratingCode(true);
+            try {
+              const response = await apiService.regenerateUploadLinkCode(linkId);
+              if (response.success) {
+                reloadAfterMutation();
+                const newCode = response.upload_code || response.upload_link?.upload_code;
+                Alert.alert('Done', newCode ? `New code: ${newCode}` : 'Upload code regenerated');
+              } else {
+                Alert.alert('Error', response.message || 'Failed to regenerate code');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to regenerate code');
+            } finally {
+              setRegeneratingCode(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSaveAsTemplate = async () => {
+    const validItems = (intake?.items || []).filter((i) => i.label.trim());
+    if (validItems.length === 0) {
+      Alert.alert('Error', 'Add at least one checklist item first');
+      return;
+    }
+    if (!templateNameForSave.trim()) {
+      Alert.alert('Error', 'Template name is required');
+      return;
+    }
+    setSavingTemplate(true);
+    try {
+      const response = await apiService.createIntakeTemplate({
+        name: templateNameForSave.trim(),
+        industry_tag: templateIndustryForSave.trim() || null,
+        items: validItems.map((i) => ({
+          label: i.label.trim(),
+          description: i.description?.trim() || null,
+          required: i.required,
+        })),
+      });
+      if (response.success) {
+        setShowSaveTemplateModal(false);
+        setTemplateNameForSave('');
+        setTemplateIndustryForSave('');
+        Alert.alert('Saved', 'Template saved');
+      } else {
+        Alert.alert('Error', response.message || 'Failed to save template');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to save template');
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const uploadFileToItem = async (itemId: number, asset: { uri: string; name: string; type?: string }) => {
+    if (!intake) return;
+    setUploadingItemId(itemId);
+    try {
+      const response = await apiService.uploadIntakeItem(intake.id, itemId, {
+        uri: asset.uri,
+        name: asset.name,
+        type: asset.type || 'application/octet-stream',
+      });
+      if (response.success) {
+        if (response.file?.id) {
+          setClassifyingFileIds((prev) => ({ ...prev, [response.file.id]: true }));
+        }
+        reloadAfterMutation();
+      } else {
+        Alert.alert('Error', response.message || 'Failed to upload file');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to upload file');
+    } finally {
+      setUploadingItemId(null);
+      setUploadTargetItemId(null);
+    }
+  };
+
+  const openUploadOptions = (item: IntakeItem) => {
+    if (!intake || item.status !== 'pending' || intake.status === 'archived') return;
+    setUploadTargetItemId(item.id);
+    setShowUploadOptions(true);
+  };
+
+  const dismissUploadModal = () => {
+    setShowUploadOptions(false);
+    setUploadTargetItemId(null);
+  };
+
+  const handleUploadFromFiles = async () => {
+    if (!uploadTargetItemId || uploadingItemId != null) return;
+    setShowUploadOptions(false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      await useFileStore.getState().forceResetDocumentPicker();
+      const assets = await pickDocumentsLikeFilesScreen();
+      const asset = assets?.[0];
+      if (!asset) return;
+      await uploadFileToItem(uploadTargetItemId, {
+        uri: asset.uri,
+        name: asset.name || 'upload',
+        type: asset.mimeType || 'application/octet-stream',
+      });
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to upload file');
+      setUploadTargetItemId(null);
+    }
+  };
+
+  const handleUploadFromGallery = async () => {
+    if (!uploadTargetItemId || uploadingItemId != null) return;
+    setShowUploadOptions(false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      const assets = await pickGalleryImagesLikeFilesScreen();
+      const asset = assets?.[0];
+      if (!asset) return;
+      await uploadFileToItem(uploadTargetItemId, {
+        uri: asset.uri,
+        name: asset.name || 'upload',
+        type: asset.mimeType || 'image/jpeg',
+      });
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to upload file');
+      setUploadTargetItemId(null);
+    }
+  };
+
+  const handleUploadFromCamera = async () => {
+    if (!uploadTargetItemId || uploadingItemId != null) return;
+    setShowUploadOptions(false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission required', 'Camera permission is required to take photos.');
+        setUploadTargetItemId(null);
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets?.[0]) {
+        setUploadTargetItemId(null);
+        return;
+      }
+      const asset = result.assets[0];
+      await uploadFileToItem(uploadTargetItemId, {
+        uri: asset.uri,
+        name: `photo_${Date.now()}.${asset.type?.includes('heic') ? 'heic' : 'jpg'}`,
+        type: asset.mimeType || asset.type || 'image/jpeg',
+      });
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to upload photo');
+      setUploadTargetItemId(null);
+    }
+  };
+
+  const handleUploadByLink = () => {
+    setShowUploadOptions(false);
+    setUploadTargetItemId(null);
+    router.push('/upload-by-link-code');
   };
 
   const handleRemindNow = async () => {
@@ -508,8 +742,9 @@ export default function IntakeDetailScreen() {
     },
     linkBoxText: { fontSize: 11, color: colors.textSecondary },
     iconButton: { backgroundColor: '#007AFF', padding: 10, borderRadius: 8 },
-    codeText: { fontSize: 12, color: colors.textSecondary },
-    codeValue: { fontFamily: 'monospace', fontWeight: '700', color: '#007AFF' },
+    codeText: { fontSize: 12, color: colors.textSecondary, marginTop: 4 },
+    codeValue: { fontFamily: 'monospace', fontWeight: '700', color: '#007AFF', fontSize: 15 },
+    codeActionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
     itemRow: {
       paddingVertical: 12,
       borderBottomWidth: 1,
@@ -713,16 +948,31 @@ export default function IntakeDetailScreen() {
         {intake.client_name && <Text style={dynamicStyles.clientText}>{intake.client_name}</Text>}
 
         <View style={dynamicStyles.actionsRow}>
-          {intake.status === 'draft' && (
+          {intake.status !== 'archived' && (
             <TouchableOpacity style={[dynamicStyles.actionButton, dynamicStyles.actionButtonPrimary]} onPress={handleSend} disabled={busy}>
               <Ionicons name="paper-plane" size={15} color="#fff" />
-              <Text style={[dynamicStyles.actionButtonText, dynamicStyles.actionButtonTextPrimary]}>Send to Client</Text>
+              <Text style={[dynamicStyles.actionButtonText, dynamicStyles.actionButtonTextPrimary]}>
+                {intake.sent_at ? 'Resend to Client' : 'Send to Client'}
+              </Text>
             </TouchableOpacity>
           )}
           {intake.status === 'waiting_for_client' && (
             <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleRemindNow} disabled={busy}>
               <Ionicons name="refresh" size={15} color={colors.text} />
               <Text style={dynamicStyles.actionButtonText}>Send Reminder Now</Text>
+            </TouchableOpacity>
+          )}
+          {intake.status !== 'archived' && (intake.items?.length ?? 0) > 0 && (
+            <TouchableOpacity
+              style={dynamicStyles.actionButton}
+              onPress={() => {
+                setTemplateNameForSave(intake.title);
+                setShowSaveTemplateModal(true);
+              }}
+              disabled={busy}
+            >
+              <Ionicons name="bookmark-outline" size={15} color={colors.text} />
+              <Text style={dynamicStyles.actionButtonText}>Template</Text>
             </TouchableOpacity>
           )}
           {intake.status !== 'archived' && (
@@ -753,17 +1003,31 @@ export default function IntakeDetailScreen() {
               <View style={dynamicStyles.linkBox}>
                 <Text style={dynamicStyles.linkBoxText} numberOfLines={1}>{clientShareUrl}</Text>
               </View>
-              <TouchableOpacity style={dynamicStyles.iconButton} onPress={() => copyToClipboard(clientShareUrl)}>
-                <Ionicons name="copy-outline" size={18} color="#fff" />
-              </TouchableOpacity>
               <TouchableOpacity style={dynamicStyles.iconButton} onPress={handleShareLink}>
                 <Ionicons name="share-outline" size={18} color="#fff" />
               </TouchableOpacity>
             </View>
             {intake.upload_link.upload_code && (
-              <Text style={dynamicStyles.codeText}>
-                Or share upload code: <Text style={dynamicStyles.codeValue}>{intake.upload_link.upload_code}</Text>
-              </Text>
+              <View style={{ marginTop: 8 }}>
+                <View style={dynamicStyles.codeActionRow}>
+                  <TouchableOpacity onPress={() => copyUploadCode(intake.upload_link!.upload_code!)}>
+                    <Text style={dynamicStyles.codeValue}>{intake.upload_link.upload_code}</Text>
+                  </TouchableOpacity>
+                  {intake.upload_link.id ? (
+                    <TouchableOpacity
+                      style={[dynamicStyles.smallActionBtn, dynamicStyles.naBtn]}
+                      onPress={handleRegenerateCode}
+                      disabled={regeneratingCode}
+                    >
+                      <Ionicons name="refresh" size={14} color={colors.text} />
+                      <Text style={[dynamicStyles.smallActionBtnText, { color: colors.text, marginLeft: 4 }]}>
+                        {regeneratingCode ? 'Regenerating...' : 'Regenerate'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <Text style={dynamicStyles.codeText}>{getUploadToBaseUrl()}</Text>
+              </View>
             )}
           </View>
         )}
@@ -773,6 +1037,8 @@ export default function IntakeDetailScreen() {
           <Text style={dynamicStyles.cardTitle}>Checklist</Text>
           {orderedItems.map((item) => {
             const itemColor = ITEM_STATUS_COLORS[item.status] || ITEM_STATUS_COLORS.pending;
+            const isClassifying = item.matched_file_id != null && classifyingFileIds[item.matched_file_id];
+            const isUploading = uploadingItemId === item.id;
             return (
               <View key={item.id} style={dynamicStyles.itemRow}>
                 <View style={dynamicStyles.itemTopRow}>
@@ -782,6 +1048,7 @@ export default function IntakeDetailScreen() {
                     <Text style={[dynamicStyles.badgeText, { color: itemColor.text }]}>{INTAKE_ITEM_STATUS_LABELS[item.status]}</Text>
                   </View>
                   {item.auto_verified && <Text style={dynamicStyles.itemOptional}>auto-verified</Text>}
+                  {isClassifying && <ActivityIndicator size="small" color="#F59E0B" style={{ marginLeft: 4 }} />}
                 </View>
                 {item.matched_file_name && (
                   item.matched_file_id ? (
@@ -797,6 +1064,20 @@ export default function IntakeDetailScreen() {
                 )}
                 {item.description && <Text style={dynamicStyles.itemDescription}>{item.description}</Text>}
                 <View style={dynamicStyles.itemButtonsRow}>
+                  {item.status === 'pending' && intake.status !== 'archived' && (
+                    <TouchableOpacity
+                      style={[dynamicStyles.smallActionBtn, dynamicStyles.naBtn]}
+                      onPress={() => openUploadOptions(item)}
+                      disabled={isUploading || busy}
+                    >
+                      {isUploading ? (
+                        <ActivityIndicator size="small" color="#007AFF" />
+                      ) : (
+                        <Ionicons name="cloud-upload-outline" size={14} color="#007AFF" />
+                      )}
+                      <Text style={[dynamicStyles.smallActionBtnText, { color: '#007AFF', marginLeft: 4 }]}>Upload</Text>
+                    </TouchableOpacity>
+                  )}
                   {item.status === 'matched' && (
                     <TouchableOpacity style={[dynamicStyles.smallActionBtn, dynamicStyles.verifyBtn]} onPress={() => handleConfirmItem(item.id)}>
                       <Ionicons name="checkmark" size={14} color="#fff" />
@@ -1111,6 +1392,54 @@ export default function IntakeDetailScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Save Template modal */}
+      <Modal visible={showSaveTemplateModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSaveTemplateModal(false)}>
+        <SafeAreaView style={dynamicStyles.editContainer} edges={['left', 'right', 'bottom']}>
+          <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
+            <TouchableOpacity onPress={() => setShowSaveTemplateModal(false)}>
+              <Text style={dynamicStyles.linkText}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={dynamicStyles.modalTitle}>Template</Text>
+            <TouchableOpacity onPress={handleSaveAsTemplate} disabled={savingTemplate}>
+              <Text style={dynamicStyles.linkText}>{savingTemplate ? 'Saving...' : 'Save'}</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ padding: 16 }}>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Template name</Text>
+              <TextInput
+                style={dynamicStyles.input}
+                value={templateNameForSave}
+                onChangeText={setTemplateNameForSave}
+                placeholder="e.g. Individual Tax Prep Checklist"
+                placeholderTextColor={colors.textLight}
+                autoFocus
+              />
+            </View>
+            <View style={dynamicStyles.inputGroup}>
+              <Text style={dynamicStyles.label}>Industry tag (optional)</Text>
+              <TextInput
+                style={dynamicStyles.input}
+                value={templateIndustryForSave}
+                onChangeText={setTemplateIndustryForSave}
+                placeholder="e.g. accounting"
+                placeholderTextColor={colors.textLight}
+              />
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      <UploadOptionsModal
+        visible={showUploadOptions}
+        isUploading={uploadingItemId != null}
+        onDismiss={dismissUploadModal}
+        onFiles={handleUploadFromFiles}
+        onCamera={handleUploadFromCamera}
+        onGallery={handleUploadFromGallery}
+        onLink={handleUploadByLink}
+      />
 
       {/* iOS date picker (edit) */}
       <Modal visible={showDatePicker} animationType="slide" transparent onRequestClose={() => setShowDatePicker(false)}>

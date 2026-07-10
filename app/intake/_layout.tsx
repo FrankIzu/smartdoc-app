@@ -5,6 +5,7 @@ export default function IntakeLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="create" />
+      <Stack.Screen name="template/[id]" />
       <Stack.Screen
         name="[id]"
         options={{

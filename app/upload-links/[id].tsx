@@ -24,6 +24,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { uploadLinkDetailScreenKey, uploadLinksListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
+import { getUploadToBaseUrl } from '../../utils/uploadLinkHelpers';
 import { useAuth } from '../context/auth';
 
 interface UploadLink {
@@ -37,6 +38,7 @@ interface UploadLink {
   upload_count: number;
   max_uploads?: number;
   url: string;
+  upload_code?: string | null;
   uploaded_files: UploadedFile[];
 }
 
@@ -73,6 +75,7 @@ export default function UploadLinkDetailsScreen() {
   const [showDocumentViewer, setShowDocumentViewer] = useState(false);
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const [regeneratingCode, setRegeneratingCode] = useState(false);
 
   const linkId = Number(id);
   const detailCacheKey = uploadLinkDetailScreenKey(user?.id, linkId);
@@ -161,12 +164,52 @@ export default function UploadLinkDetailsScreen() {
     }
   };
 
+  const handleCopyCode = async () => {
+    if (!uploadLink?.upload_code) return;
+    Clipboard.setString(uploadLink.upload_code);
+    Alert.alert('Copied', 'Upload code copied to clipboard');
+  };
+
+  const handleRegenerateCode = () => {
+    if (!uploadLink) return;
+    Alert.alert(
+      'Regenerate upload code',
+      'Generate a new upload code? The old code will stop working.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Regenerate',
+          style: 'destructive',
+          onPress: async () => {
+            setRegeneratingCode(true);
+            try {
+              const response = await apiService.regenerateUploadLinkCode(uploadLink.id);
+              if (response.success) {
+                invalidateUploadLinkCaches();
+                await loadUploadLink(true);
+                const newCode = response.upload_code || response.upload_link?.upload_code;
+                Alert.alert('Done', newCode ? `New code: ${newCode}` : 'Upload code regenerated');
+              } else {
+                Alert.alert('Error', response.message || 'Failed to regenerate code');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to regenerate code');
+            } finally {
+              setRegeneratingCode(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleShareLink = async () => {
     if (!uploadLink) return;
     
     try {
       const fullUrl = getFullUrl(uploadLink.url);
-      const message = `Upload files using this link: ${fullUrl}\n\nLink: ${uploadLink.name}\n${uploadLink.description ? `Description: ${uploadLink.description}` : ''}`;
+      const codeLine = uploadLink.upload_code ? `\n\nOr enter upload code: ${uploadLink.upload_code} at ${getUploadToBaseUrl()}` : '';
+      const message = `Upload files using this link: ${fullUrl}${codeLine}\n\nLink: ${uploadLink.name}\n${uploadLink.description ? `Description: ${uploadLink.description}` : ''}`;
       
       if (Platform.OS === 'ios' || Platform.OS === 'android') {
         await Share.share({
@@ -676,6 +719,48 @@ export default function UploadLinkDetailsScreen() {
       height: 100,
       textAlignVertical: 'top',
     },
+    codeSection: {
+      marginTop: 12,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    codeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 6,
+    },
+    codeValue: {
+      fontSize: 18,
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      fontWeight: '700',
+      color: '#007AFF',
+      flex: 1,
+    },
+    codeHint: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginBottom: 8,
+    },
+    codeActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    codeActionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+      gap: 4,
+    },
+    codeActionText: {
+      fontSize: 12,
+      fontWeight: '500',
+      color: colors.text,
+    },
   }), [colors]);
 
   const handleFilePress = async (file: UploadedFile) => {
@@ -833,6 +918,47 @@ export default function UploadLinkDetailsScreen() {
               </View>
 
               <Text style={dynamicStyles.linkUrl}>{getFullUrl(uploadLink.url)}</Text>
+
+              <View style={dynamicStyles.codeSection}>
+                <Text style={dynamicStyles.codeHint}>
+                  Or tell recipients to enter the code at {getUploadToBaseUrl()}
+                </Text>
+                {uploadLink.upload_code ? (
+                  <>
+                    <View style={dynamicStyles.codeRow}>
+                      <Text style={dynamicStyles.codeValue}>{uploadLink.upload_code}</Text>
+                    </View>
+                    <View style={dynamicStyles.codeActions}>
+                      <TouchableOpacity style={dynamicStyles.codeActionBtn} onPress={handleCopyCode}>
+                        <Ionicons name="copy-outline" size={14} color="#007AFF" />
+                        <Text style={dynamicStyles.codeActionText}>Copy code</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={dynamicStyles.codeActionBtn}
+                        onPress={handleRegenerateCode}
+                        disabled={regeneratingCode}
+                      >
+                        <Ionicons name="refresh" size={14} color="#007AFF" />
+                        <Text style={dynamicStyles.codeActionText}>
+                          {regeneratingCode ? 'Regenerating...' : 'Regenerate'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <View style={dynamicStyles.codeActions}>
+                    <Text style={dynamicStyles.codeHint}>No upload code yet.</Text>
+                    <TouchableOpacity
+                      style={dynamicStyles.codeActionBtn}
+                      onPress={handleRegenerateCode}
+                      disabled={regeneratingCode}
+                    >
+                      <Ionicons name="refresh" size={14} color="#007AFF" />
+                      <Text style={dynamicStyles.codeActionText}>Generate code</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
             </View>
 
             {/* Actions */}

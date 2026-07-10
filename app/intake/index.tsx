@@ -21,11 +21,14 @@ import {
   INTAKE_STATUS_LABELS,
   type Intake,
   type IntakeStatus,
+  type IntakeTemplate,
 } from '../../types/intake';
 import { useAuth } from '../context/auth';
 
 const INTAKES_LIST_CACHE_MS = 30_000;
 const INTAKES_PAGE_SIZE = 20;
+
+type ListTab = 'active' | 'archived' | 'templates';
 
 type PaginatedIntakesCache = {
   items: Intake[];
@@ -71,7 +74,12 @@ export default function IntakeListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [showArchived, setShowArchived] = useState(false);
+  const [activeTab, setActiveTab] = useState<ListTab>('active');
+  const [templates, setTemplates] = useState<IntakeTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<number | null>(null);
+
+  const showArchived = activeTab === 'archived';
 
   const hasMoreRef = useRef(true);
   const loadingMoreRef = useRef(false);
@@ -146,6 +154,21 @@ export default function IntakeListScreen() {
     }
   }, [user]);
 
+  const loadTemplates = useCallback(async () => {
+    if (!user) return;
+    setTemplatesLoading(true);
+    try {
+      const response = await apiService.getIntakeTemplates();
+      if (response.success) {
+        setTemplates(response.templates || []);
+      }
+    } catch (error: any) {
+      console.error('Load intake templates error:', error);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [user]);
+
   const loadMoreIntakes = useCallback(() => {
     if (loading || refreshing || loadingMoreRef.current || !hasMoreRef.current) return;
     void loadIntakes(showArchived, false, true);
@@ -160,26 +183,67 @@ export default function IntakeListScreen() {
       const now = Date.now();
       if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
         lastLoadTimeRef.current = now;
-        loadIntakes(showArchived);
+        if (activeTab === 'templates') {
+          loadTemplates();
+        } else {
+          loadIntakes(showArchived);
+        }
       }
-    }, [user, showArchived, loadIntakes])
+    }, [user, activeTab, showArchived, loadIntakes, loadTemplates])
   );
 
   const handleRefresh = () => {
     if (!user) return;
     setRefreshing(true);
+    if (activeTab === 'templates') {
+      loadTemplates().finally(() => setRefreshing(false));
+      return;
+    }
     pageRef.current = 1;
     hasMoreRef.current = true;
     if (listCacheKey) screenCache.invalidate(listCacheKey);
     loadIntakes(showArchived, true);
   };
 
-  const handleToggleArchived = (archived: boolean) => {
-    setShowArchived(archived);
+  const handleTabChange = (tab: ListTab) => {
+    setActiveTab(tab);
+    if (tab === 'templates') {
+      loadTemplates();
+      return;
+    }
     pageRef.current = 1;
     hasMoreRef.current = true;
     setHasMore(true);
-    loadIntakes(archived);
+    loadIntakes(tab === 'archived');
+  };
+
+  const handleDeleteTemplate = (template: IntakeTemplate) => {
+    Alert.alert(
+      'Delete template',
+      `Delete "${template.name}"? Existing intakes are not affected.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingTemplateId(template.id);
+            try {
+              const response = await apiService.deleteIntakeTemplate(template.id);
+              if (response.success) {
+                setTemplates((prev) => prev.filter((t) => t.id !== template.id));
+              } else {
+                Alert.alert('Error', response.message || 'Failed to delete template');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete template');
+            } finally {
+              setDeletingTemplateId(null);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
@@ -342,13 +406,63 @@ export default function IntakeListScreen() {
       fontSize: 11,
       color: colors.textLight,
     },
+    templateCard: {
+      backgroundColor: colors.card,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+    },
+    templateName: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    templateMeta: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 4,
+    },
+    templatePreview: {
+      fontSize: 11,
+      color: colors.textLight,
+      marginTop: 4,
+    },
+    templateActions: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 12,
+    },
+    templateActionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+      gap: 4,
+    },
+    templateActionPrimary: {
+      backgroundColor: '#007AFF',
+    },
+    templateActionText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    templateActionTextPrimary: {
+      color: '#fff',
+    },
   }), [colors]);
 
   const renderIntake = ({ item }: { item: Intake }) => {
     const statusColor = STATUS_COLORS[item.status] || STATUS_COLORS.draft;
     const dueColor = item.due_badge ? DUE_BADGE_COLORS[item.due_badge] : null;
     const lastFile = timeAgo(item.last_file_received_at);
-    const lastReminder = timeAgo(item.last_reminder_sent_at);
 
     return (
       <TouchableOpacity style={dynamicStyles.card} onPress={() => router.push(`/intake/${item.id}`)}>
@@ -378,17 +492,56 @@ export default function IntakeListScreen() {
             {item.progress?.received ?? 0}/{item.progress?.total ?? 0} &middot; {item.progress?.percent ?? 0}%
           </Text>
         </View>
-        {(lastFile || lastReminder) && (
+        {lastFile && (
           <View style={dynamicStyles.metaRow}>
-            {lastFile && <Text style={dynamicStyles.metaText}>Last file: {lastFile}</Text>}
-            {lastReminder && <Text style={dynamicStyles.metaText}>Reminder sent {lastReminder}</Text>}
+            <Text style={dynamicStyles.metaText}>Last file: {lastFile}</Text>
           </View>
         )}
       </TouchableOpacity>
     );
   };
 
-  if (loading) {
+  const renderTemplate = ({ item }: { item: IntakeTemplate }) => (
+    <View style={dynamicStyles.templateCard}>
+      <Text style={dynamicStyles.templateName}>{item.name}</Text>
+      {item.industry_tag && (
+        <Text style={dynamicStyles.templateMeta}>{item.industry_tag}</Text>
+      )}
+      <Text style={dynamicStyles.templateMeta}>
+        {item.items?.length ?? 0} item{(item.items?.length ?? 0) === 1 ? '' : 's'}
+      </Text>
+      {item.items && item.items.length > 0 && (
+        <Text style={dynamicStyles.templatePreview} numberOfLines={1}>
+          {item.items.slice(0, 4).map((i) => i.label).join(' · ')}
+          {item.items.length > 4 ? ' …' : ''}
+        </Text>
+      )}
+      <View style={dynamicStyles.templateActions}>
+        <TouchableOpacity
+          style={[dynamicStyles.templateActionBtn, dynamicStyles.templateActionPrimary]}
+          onPress={() => router.push(`/intake/create?template=${item.id}`)}
+        >
+          <Text style={[dynamicStyles.templateActionText, dynamicStyles.templateActionTextPrimary]}>Use</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={dynamicStyles.templateActionBtn}
+          onPress={() => router.push(`/intake/template/${item.id}`)}
+        >
+          <Ionicons name="pencil" size={14} color={colors.text} />
+          <Text style={dynamicStyles.templateActionText}>Edit</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={dynamicStyles.templateActionBtn}
+          onPress={() => handleDeleteTemplate(item)}
+          disabled={deletingTemplateId === item.id}
+        >
+          <Ionicons name="trash-outline" size={14} color="#FF3B30" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (loading && activeTab !== 'templates') {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
@@ -420,29 +573,73 @@ export default function IntakeListScreen() {
 
       <View style={dynamicStyles.tabsRow}>
         <TouchableOpacity
-          style={[dynamicStyles.tabButton, !showArchived && dynamicStyles.tabButtonActive]}
-          onPress={() => handleToggleArchived(false)}
+          style={[dynamicStyles.tabButton, activeTab === 'active' && dynamicStyles.tabButtonActive]}
+          onPress={() => handleTabChange('active')}
         >
-          <Text style={[dynamicStyles.tabButtonText, !showArchived && dynamicStyles.tabButtonTextActive]}>
+          <Text style={[dynamicStyles.tabButtonText, activeTab === 'active' && dynamicStyles.tabButtonTextActive]}>
             Active
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[dynamicStyles.tabButton, showArchived && dynamicStyles.tabButtonActive]}
-          onPress={() => handleToggleArchived(true)}
+          style={[dynamicStyles.tabButton, activeTab === 'archived' && dynamicStyles.tabButtonActive]}
+          onPress={() => handleTabChange('archived')}
         >
           <Ionicons
             name="archive-outline"
             size={14}
-            color={showArchived ? '#1D4ED8' : colors.textSecondary}
+            color={activeTab === 'archived' ? '#1D4ED8' : colors.textSecondary}
           />
-          <Text style={[dynamicStyles.tabButtonText, showArchived && dynamicStyles.tabButtonTextActive]}>
+          <Text style={[dynamicStyles.tabButtonText, activeTab === 'archived' && dynamicStyles.tabButtonTextActive]}>
             Archived
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[dynamicStyles.tabButton, activeTab === 'templates' && dynamicStyles.tabButtonActive]}
+          onPress={() => handleTabChange('templates')}
+        >
+          <Ionicons
+            name="copy-outline"
+            size={14}
+            color={activeTab === 'templates' ? '#1D4ED8' : colors.textSecondary}
+          />
+          <Text style={[dynamicStyles.tabButtonText, activeTab === 'templates' && dynamicStyles.tabButtonTextActive]}>
+            Templates
           </Text>
         </TouchableOpacity>
       </View>
 
-      {intakes.length === 0 ? (
+      {activeTab === 'templates' ? (
+        templatesLoading && templates.length === 0 ? (
+          <View style={dynamicStyles.centerContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+          </View>
+        ) : templates.length === 0 ? (
+          <View style={dynamicStyles.emptyContainer}>
+            <Ionicons name="documents-outline" size={64} color={colors.textLight} />
+            <Text style={dynamicStyles.emptyTitle}>No saved templates yet</Text>
+            <Text style={dynamicStyles.emptyDescription}>
+              Build a checklist on New Intake or an existing intake, then choose Template.
+            </Text>
+            <TouchableOpacity
+              style={dynamicStyles.createButton}
+              onPress={() => router.push('/intake/create')}
+            >
+              <Text style={dynamicStyles.createButtonText}>New Intake</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <FlatList
+            data={templates}
+            renderItem={renderTemplate}
+            keyExtractor={(item) => `template-${item.id}`}
+            contentContainerStyle={dynamicStyles.listContainer}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#007AFF" />
+            }
+            showsVerticalScrollIndicator={false}
+          />
+        )
+      ) : intakes.length === 0 ? (
         <View style={dynamicStyles.emptyContainer}>
           <Ionicons name="clipboard-outline" size={64} color={colors.textLight} />
           <Text style={dynamicStyles.emptyTitle}>

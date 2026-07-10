@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Clipboard,
   FlatList,
   Platform,
   Pressable,
@@ -15,11 +16,11 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { FRONTEND_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { uploadLinksListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
+import { buildUploadLinkUrl, getUploadToBaseUrl } from '../../utils/uploadLinkHelpers';
 import { useAuth } from '../context/auth';
 
 interface UploadLink {
@@ -33,6 +34,7 @@ interface UploadLink {
   upload_count: number;
   max_uploads?: number;
   url: string;
+  upload_code?: string | null;
 }
 
 const UPLOAD_LINKS_LIST_CACHE_MS = 30_000;
@@ -464,6 +466,32 @@ export default function UploadLinksScreen() {
     menuItemTextDanger: {
       color: '#FF3B30',
     },
+    codeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 6,
+      marginTop: 8,
+    },
+    codeLabel: {
+      fontSize: 11,
+      color: colors.textSecondary,
+    },
+    codeValue: {
+      fontSize: 12,
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      fontWeight: '700',
+      color: '#007AFF',
+    },
+    copyCodeBtn: {
+      padding: 4,
+    },
+    listHint: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      paddingHorizontal: 16,
+      paddingBottom: 8,
+    },
   }), [colors, selectedLink]);
 
   const renderUploadLink = ({ item }: { item: UploadLink }) => {
@@ -529,6 +557,38 @@ export default function UploadLinksScreen() {
         <Text style={dynamicStyles.createdDate}>
           Created {formatDate(item.created_at)}
         </Text>
+
+        {item.upload_code ? (
+          <View style={dynamicStyles.codeRow}>
+            <Text style={dynamicStyles.codeLabel}>Code:</Text>
+            <Text style={dynamicStyles.codeValue}>{item.upload_code}</Text>
+            <TouchableOpacity
+              style={dynamicStyles.copyCodeBtn}
+              onPress={(e) => {
+                e.stopPropagation?.();
+                Clipboard.setString(item.upload_code || '');
+                Alert.alert('Copied', 'Upload code copied');
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="copy-outline" size={14} color="#007AFF" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={dynamicStyles.copyCodeBtn}
+              onPress={(e) => {
+                e.stopPropagation?.();
+                const fullUrl = buildUploadLinkUrl(item.token || item.url);
+                Clipboard.setString(fullUrl);
+                Alert.alert('Copied', 'Upload link copied');
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="link-outline" size={14} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Text style={[dynamicStyles.codeLabel, { marginTop: 8, textAlign: 'right' }]}>No code</Text>
+        )}
       </TouchableOpacity>
     );
   };
@@ -580,6 +640,11 @@ export default function UploadLinksScreen() {
           renderItem={renderUploadLink}
           keyExtractor={(item) => `upload-link-${item.id}`}
           contentContainerStyle={dynamicStyles.listContainer}
+          ListHeaderComponent={
+            <Text style={dynamicStyles.listHint}>
+              Upload codes work at {getUploadToBaseUrl()}
+            </Text>
+          }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

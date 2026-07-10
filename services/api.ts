@@ -192,6 +192,7 @@ const MOBILE_ENDPOINTS = {
   WEB_UPLOAD_LINKS: '/api/v1/web/upload-links',
   WEB_UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/web/upload-links/${id}`,
   WEB_UPLOAD_LINK_SEND_EMAIL: (id: number) => `/api/v1/web/upload-links/${id}/send-email`,
+  WEB_UPLOAD_LINK_REGENERATE_CODE: (id: number) => `/api/v1/web/upload-links/${id}/regenerate-code`,
   WEB_FILES_UPLOADED_VIA_LINKS: '/api/v1/web/files/uploaded-via-links',
   WEB_UPLOAD_TO: (token: string) => `/api/v1/web/upload-to/${token}`,
   WEB_UPLOAD_TO_BY_CODE: (code: string) => `/api/v1/web/upload-to/by-code/${code}`,
@@ -207,6 +208,9 @@ const MOBILE_ENDPOINTS = {
   WEB_INTAKE_ITEM_REJECT: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/reject`,
   WEB_INTAKE_ITEM_NOT_APPLICABLE: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/not-applicable`,
   WEB_INTAKE_ITEM_ASSIGN: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/assign`,
+  WEB_INTAKE_ITEM_UPLOAD: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/upload`,
+  INTAKE_TEMPLATES: '/api/v1/mobile/intake-templates',
+  INTAKE_TEMPLATE_BY_ID: (id: number) => `/api/v1/mobile/intake-templates/${id}`,
   WEB_INTAKE_TEMPLATES: '/api/v1/web/intake-templates',
   WEB_INTAKE_TEMPLATE_BY_ID: (id: number) => `/api/v1/web/intake-templates/${id}`,
   
@@ -4963,6 +4967,7 @@ class ApiService {
       url: token ? `upload-to/${token}` : (link.url || ''),
       upload_count: link.upload_count ?? link.current_uploads ?? 0,
       uploaded_files: link.uploaded_files ?? [],
+      upload_code: link.upload_code ?? null,
     };
   }
 
@@ -5058,6 +5063,18 @@ class ApiService {
     } catch (error: any) {
       console.error('Share upload link error:', error);
       throw new Error(error.response?.data?.message || 'Failed to share upload link');
+    }
+  }
+
+  async regenerateUploadLinkCode(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_REGENERATE_CODE(id));
+      const res = response.data;
+      const upload_link = this.normalizeWebUploadLink(res.upload_link ?? res.link);
+      return { ...res, success: res.success !== false, upload_link, upload_code: res.upload_code ?? upload_link?.upload_code };
+    } catch (error: any) {
+      console.error('Regenerate upload link code error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to regenerate upload code');
     }
   }
 
@@ -5222,13 +5239,47 @@ class ApiService {
     }
   }
 
+  /** Owner uploads a file directly onto a pending checklist item. */
+  async uploadIntakeItem(
+    intakeId: number,
+    itemId: number,
+    file: { uri: string; name: string; type?: string },
+  ): Promise<ApiResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', {
+        uri: file.uri,
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+      } as any);
+      const response = await this.client.post(
+        MOBILE_ENDPOINTS.WEB_INTAKE_ITEM_UPLOAD(intakeId, itemId),
+        formData,
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Upload intake item error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to upload file');
+    }
+  }
+
   async getIntakeTemplates(): Promise<ApiResponse> {
     try {
-      const response = await this.client.get(MOBILE_ENDPOINTS.WEB_INTAKE_TEMPLATES);
+      const response = await this.client.get(MOBILE_ENDPOINTS.INTAKE_TEMPLATES);
       return response.data;
     } catch (error: any) {
       console.error('Get intake templates error:', error);
       throw new Error(error.response?.data?.message || 'Failed to load templates');
+    }
+  }
+
+  async getIntakeTemplate(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.INTAKE_TEMPLATE_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get intake template error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to load template');
     }
   }
 
@@ -5238,11 +5289,38 @@ class ApiService {
     items: { label: string; description?: string | null; required?: boolean }[];
   }): Promise<ApiResponse> {
     try {
-      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_TEMPLATES, data);
+      const response = await this.client.post(MOBILE_ENDPOINTS.INTAKE_TEMPLATES, data);
       return response.data;
     } catch (error: any) {
       console.error('Create intake template error:', error);
       throw new Error(error.response?.data?.message || 'Failed to save template');
+    }
+  }
+
+  async updateIntakeTemplate(
+    id: number,
+    data: {
+      name: string;
+      industry_tag?: string | null;
+      items: { label: string; description?: string | null; required?: boolean }[];
+    },
+  ): Promise<ApiResponse> {
+    try {
+      const response = await this.client.put(MOBILE_ENDPOINTS.INTAKE_TEMPLATE_BY_ID(id), data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Update intake template error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to update template');
+    }
+  }
+
+  async deleteIntakeTemplate(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.delete(MOBILE_ENDPOINTS.INTAKE_TEMPLATE_BY_ID(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Delete intake template error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to delete template');
     }
   }
 

@@ -9,7 +9,7 @@ export type IntakeItemStatus = 'pending' | 'matched' | 'confirmed' | 'not_applic
 export type IntakeDueBadge = 'on_track' | 'due_tomorrow' | 'overdue';
 export type IntakeMatchSource = 'ai' | 'filename' | 'manual';
 export type IntakeFileMatchStatus = 'auto_matched' | 'needs_review' | 'unmatched' | 'manually_matched';
-export type IntakeFileSource = 'file_request_link' | 'email_alias' | 'gmail_sync' | 'outlook_sync';
+export type IntakeFileSource = 'file_request_link' | 'email_alias' | 'gmail_sync' | 'outlook_sync' | 'owner_upload';
 export type ReminderPreset = 'gentle' | 'standard' | 'urgent' | 'custom';
 
 export interface IntakeAuthorizedSender {
@@ -56,6 +56,7 @@ export interface IntakeFileRow {
 }
 
 export interface IntakeUploadLink {
+  id: number;
   link_token: string;
   upload_code: string | null;
   public_url: string;
@@ -83,6 +84,7 @@ export interface Intake {
   reminder_repeat_every_hours: number;
   reminder_max_count: number;
   last_reminder_sent_at: string | null;
+  sent_at: string | null;
   created_at: string | null;
   updated_at: string | null;
   completed_at: string | null;
@@ -96,9 +98,12 @@ export interface Intake {
 }
 
 export interface IntakeTemplateItem {
+  id?: number;
+  template_id?: number;
   label: string;
   description: string | null;
   required: boolean;
+  sort_order?: number;
 }
 
 export interface IntakeTemplate {
@@ -136,7 +141,10 @@ export const INTAKE_SOURCE_LABELS: Record<string, string> = {
   email_alias: 'Email Forward',
   gmail_sync: 'Gmail Sync',
   outlook_sync: 'Outlook Sync',
+  owner_upload: 'Owner Upload',
 };
+
+export const INTAKE_ACTIVE_POLL_STATUSES: IntakeStatus[] = ['draft', 'waiting_for_client', 'in_review'];
 
 export const INTAKE_REMINDER_PRESETS: Record<'gentle' | 'standard' | 'urgent', { first: number; repeat: number; max: number }> = {
   gentle: { first: 72, repeat: 120, max: 3 },

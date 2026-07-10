@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -44,6 +44,7 @@ function toLocalDateString(d: Date): string {
 
 export default function CreateIntakeScreen() {
   const router = useRouter();
+  const { template: templateParam } = useLocalSearchParams<{ template?: string }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const [submitting, setSubmitting] = useState(false);
@@ -74,7 +75,26 @@ export default function CreateIntakeScreen() {
     (async () => {
       try {
         const response = await apiService.getIntakeTemplates();
-        if (response.success) setTemplates(response.templates || []);
+        if (response.success) {
+          const loaded = response.templates || [];
+          setTemplates(loaded);
+          const templateId = templateParam ? Number(templateParam) : NaN;
+          if (!isNaN(templateId) && templateId > 0) {
+            const template = loaded.find((t: IntakeTemplate) => t.id === templateId);
+            if (template) {
+              setSelectedTemplateId(templateId);
+              setItems(
+                template.items.length > 0
+                  ? template.items.map((i: IntakeTemplate['items'][0]) => ({
+                      label: i.label,
+                      description: i.description || '',
+                      required: i.required,
+                    }))
+                  : [{ label: '', description: '', required: true }],
+              );
+            }
+          }
+        }
       } catch (error) {
         console.error('Load intake templates error:', error);
       }
@@ -91,10 +111,11 @@ export default function CreateIntakeScreen() {
     })();
   }, []);
 
-  const applyTemplate = (templateId: number | null) => {
+  const applyTemplate = (templateId: number | null, sourceTemplates?: IntakeTemplate[]) => {
     setSelectedTemplateId(templateId);
     if (templateId === null) return;
-    const template = templates.find((t) => t.id === templateId);
+    const list = sourceTemplates ?? templates;
+    const template = list.find((t) => t.id === templateId);
     if (!template) return;
     setItems(
       template.items.length > 0
@@ -505,7 +526,7 @@ export default function CreateIntakeScreen() {
           <View style={dynamicStyles.sectionHeaderRow}>
             <Text style={[dynamicStyles.sectionTitle, { marginBottom: 0 }]}>Checklist</Text>
             <TouchableOpacity onPress={() => setShowSaveTemplateModal(true)}>
-              <Text style={dynamicStyles.linkText}>Save as template</Text>
+              <Text style={dynamicStyles.linkText}>Template</Text>
             </TouchableOpacity>
           </View>
           {items.map((item, idx) => (
@@ -710,14 +731,14 @@ export default function CreateIntakeScreen() {
         </View>
       </Modal>
 
-      {/* Save as template modal */}
+      {/* Save Template modal */}
       <Modal visible={showSaveTemplateModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSaveTemplateModal(false)}>
         <SafeAreaView style={dynamicStyles.saveTemplateModalContainer} edges={['left', 'right', 'bottom']}>
           <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
             <TouchableOpacity onPress={() => setShowSaveTemplateModal(false)}>
               <Text style={dynamicStyles.linkText}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={dynamicStyles.modalTitle}>Save as template</Text>
+            <Text style={dynamicStyles.modalTitle}>Template</Text>
             <TouchableOpacity onPress={handleSaveAsTemplate} disabled={savingTemplate}>
               <Text style={dynamicStyles.linkText}>{savingTemplate ? 'Saving...' : 'Save'}</Text>
             </TouchableOpacity>
