@@ -1017,6 +1017,15 @@ function DashboardScreen() {
               onPress={() => handleQuickAction('upload')}
             />
             <QuickActionCard
+              key="action-intake"
+              title="Intake"
+              subtitle="Collect client documents with a checklist"
+              icon="checkbox-outline"
+              color="#14B8A6"
+              onPress={() => handleQuickAction('intake')}
+              isNew={true}
+            />
+            <QuickActionCard
               key="action-calendar"
               title="Calendar"
               subtitle="Events, invites, and external calendars"
@@ -1049,15 +1058,6 @@ function DashboardScreen() {
               icon="link"
               color="#8E44AD"
               onPress={() => handleQuickAction('upload-links')}
-            />
-            <QuickActionCard
-              key="action-intake"
-              title="Intake"
-              subtitle="Collect client documents with a checklist"
-              icon="checkbox-outline"
-              color="#14B8A6"
-              onPress={() => handleQuickAction('intake')}
-              isNew={true}
             />
             <QuickActionCard
               key="action-forms"

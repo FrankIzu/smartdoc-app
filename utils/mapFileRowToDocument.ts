@@ -1,4 +1,5 @@
 import type { FileRowModel } from '../types/folder';
+import { resolveDocumentListStatus } from './fileDisplayStatus';
 import { removeFileExtension } from './fileUtils';
 
 export interface MappedDocumentRow {
@@ -29,17 +30,12 @@ function getFileTypeFromExtension(filename?: string): string {
   return ext || 'file';
 }
 
-export function mapFileRowToDocument(doc: FileRowModel): MappedDocumentRow {
+export function mapFileRowToDocument(
+  doc: FileRowModel,
+  options?: { isUserReprocessing?: boolean }
+): MappedDocumentRow {
   const originalName = doc.original_filename || doc.filename || 'Untitled';
-  const isPending =
-    doc.file_kind?.toLowerCase() === 'pending' ||
-    doc.processing_status === 'pending' ||
-    doc.processing_status === 'processing';
-  const status = isPending
-    ? 'pending'
-    : doc.processing_status === 'error'
-      ? 'error'
-      : 'processed';
+  const status = resolveDocumentListStatus(doc, options);
 
   return {
     id: String(doc.id),

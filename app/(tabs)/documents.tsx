@@ -42,6 +42,11 @@ import { ExternalFile } from '../../services/externalFileServices';
 import { useFileStore } from '../../stores/fileStore';
 import type { DeletedFolderGroup, FolderRowModel } from '../../types/folder';
 import { toAlertMessage } from '../../utils/alertUtils';
+import {
+  docNeedsClassificationPollFromRow,
+  isFileKindPending,
+  resolveDocumentListStatus,
+} from '../../utils/fileDisplayStatus';
 import { removeFileExtension } from '../../utils/fileUtils';
 import { mapFileRowToDocument } from '../../utils/mapFileRowToDocument';
 import { shareDocumentFile } from '../../utils/shareDocumentFile';
@@ -398,16 +403,11 @@ export default function QuickFilesScreen() {
   const useFolderModeRef = React.useRef(useFolderMode);
   useFolderModeRef.current = useFolderMode;
 
-  /** True when a file still needs classification polling (pending status, or legacy list missing json_data). */
+  /** True when a file still needs classification polling (file_kind pending, or receipt/invoice json_data). */
   const docNeedsClassificationPoll = useCallback((doc: Document) => {
-    if (doc.status === 'pending' || doc.status === 'processing') return true;
-    // Folder-mode file rows omit json_data even when fully processed — never poll for it there.
-    if (useFolderModeRef.current) return false;
-    const kind = doc.file_kind?.toLowerCase();
-    if (kind === 'receipt' || kind === 'invoice') {
-      return !doc.json_data;
-    }
-    return false;
+    return docNeedsClassificationPollFromRow(doc, {
+      useFolderMode: useFolderModeRef.current,
+    });
   }, []);
 
   // Polling for pending files (classification polling)
@@ -421,6 +421,8 @@ export default function QuickFilesScreen() {
   // Persists locked-bookmark file IDs across renders so the filter can be applied
   // immediately on subsequent loads without waiting for the background refresh.
   const lockedFileIdsRef = React.useRef<Set<string>>(new Set());
+  /** User-triggered reprocess/retry — keep spinner until processing_status clears (matches web). */
+  const reprocessingFileIdsRef = React.useRef<Set<number>>(new Set());
 
   useEffect(() => {
     apiCacheRef.current = null;
@@ -474,8 +476,8 @@ export default function QuickFilesScreen() {
   };
 
   const getFileIcon = (type: string, status: string, fileKind?: string) => {
-    // Show spinning icon for pending or processing status
-    if (status === 'pending' || status === 'processing') return 'time-outline';
+    // Spinner only while classifying (file_kind pending) or explicit user retry
+    if (isFileKindPending(fileKind) || status === 'processing') return 'time-outline';
     if (status === 'error') return 'alert-circle-outline';
     
     // Handle form type specifically
@@ -757,7 +759,11 @@ export default function QuickFilesScreen() {
       .filter(
         (f) => !isLockedBookmarkFile(f.id, fileIdsInLockedBookmarks, f.in_locked_bookmark)
       )
-      .map((f) => mapFileRowToDocument(f) as Document);
+      .map((f) =>
+        mapFileRowToDocument(f, {
+          isUserReprocessing: reprocessingFileIdsRef.current.has(f.id),
+        }) as Document
+      );
     setDocuments(filterPendingTrash(mapped));
     hasMoreRef.current = folderSystem.filesHasMore;
     setHasMore(folderSystem.filesHasMore);
@@ -913,8 +919,8 @@ export default function QuickFilesScreen() {
     // Optimistic files (pending status) should always appear first, then sort by selected criteria
     combined.sort((a, b) => {
         // Always put pending files first
-        const aIsPending = a.status === 'pending' || a.file_kind === 'pending';
-        const bIsPending = b.status === 'pending' || b.file_kind === 'pending';
+        const aIsPending = isFileKindPending(a.file_kind) || a.status === 'pending';
+        const bIsPending = isFileKindPending(b.file_kind) || b.status === 'pending';
         
         if (aIsPending && !bIsPending) return -1; // a comes first
         if (!aIsPending && bIsPending) return 1;  // b comes first
@@ -1322,13 +1328,12 @@ export default function QuickFilesScreen() {
                   if (!Number.isNaN(parsed)) totalAmount = parsed;
                 }
               }
-              // Determine status: pending if file_kind is 'pending' or processing_status is 'pending'/'processing'
-              const isPending = doc.file_kind?.toLowerCase() === 'pending' || 
-                               doc.processing_status === 'pending' || 
-                               doc.processing_status === 'processing';
-              const status = isPending ? 'pending' as const : 
-                            doc.processing_status === 'error' ? 'error' as const :
-                            'processed' as const;
+              const fileIdNum = Number(doc.id);
+              const status = resolveDocumentListStatus(doc, {
+                isUserReprocessing:
+                  Number.isFinite(fileIdNum) &&
+                  reprocessingFileIdsRef.current.has(fileIdNum),
+              });
               
               return {
                 id: String(doc.id),
@@ -1507,7 +1512,7 @@ export default function QuickFilesScreen() {
     // Avoid two rows (optimistic + server pending) with the same display name briefly showing duplicate spinners
     const pendingNameKeys = new Set(pendingUploads.map((u) => u.name.trim().toLowerCase()));
     const withoutDupServerPending = filteredAndSortedDocuments.filter((doc) => {
-      if (doc.status !== 'pending' && doc.status !== 'processing') return true;
+      if (!isFileKindPending(doc.file_kind) && doc.status !== 'processing') return true;
       return !pendingNameKeys.has(doc.name.trim().toLowerCase());
     });
     return [...placeholders, ...withoutDupServerPending];
@@ -2230,7 +2235,7 @@ export default function QuickFilesScreen() {
       accessibilityLabel={`${item.name}${item.file_kind ? `, ${item.file_kind.replace(/_/g, ' ')}` : ''}`}
     >
       <DocumentListIcon
-        pending={item.status === 'pending' || item.status === 'processing'}
+        pending={isFileKindPending(item.file_kind) || item.status === 'processing'}
         iconName={getFileIcon(item.type, item.status, item.file_kind) as React.ComponentProps<typeof Ionicons>['name']}
         iconColor={
           item.listKind === 'bookmark'
