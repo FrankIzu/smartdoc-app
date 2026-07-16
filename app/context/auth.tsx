@@ -137,16 +137,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setUser(parsedUser);
             }
           } else {
+            // Explicit unauthenticated response from backend
             await forceReset();
           }
         } catch (error) {
-          console.warn('⚠️ Auth check failed, clearing stored user:', error);
-          await forceReset();
+          // Network / transient failures must NOT wipe a logged-in session.
+          // Meeting heartbeat/leave 401s used to clear the token; keep local user so
+          // join/leave never drops users onto a Sign In wall.
+          console.warn('⚠️ Auth check failed; keeping stored session:', error);
+          try {
+            setUser(JSON.parse(userData));
+          } catch {
+            await forceReset();
+          }
         }
       }
     } catch (error) {
       console.error('Error checking session:', error);
-      await forceReset();
+      // Only wipe if we cannot even read stored user
+      try {
+        const fallback = await secureStorage.getItem('user');
+        if (fallback) {
+          setUser(JSON.parse(fallback));
+        } else {
+          await forceReset();
+        }
+      } catch {
+        await forceReset();
+      }
     } finally {
       setLoading(false);
     }

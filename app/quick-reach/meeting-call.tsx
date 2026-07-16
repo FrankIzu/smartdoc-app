@@ -372,11 +372,13 @@ function parseMeetingsArrayFromMobileResponse(meetingsResponse: any): any[] {
 
 export default function MeetingCallScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading, refreshSession } = useAuth();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const isAuthenticated = !!user;
-  
+  const [authRecovering, setAuthRecovering] = useState(false);
+  const authRecoverAttemptedRef = useRef(false);
+
   console.log('🔄 MeetingCallScreen rendered, isAuthenticated:', isAuthenticated);
   
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -423,6 +425,38 @@ export default function MeetingCallScreen() {
       console.warn('📱 Invited meetings could not be loaded; list may be incomplete. Pull to refresh.');
     }
   }, [invitedLoadFailed]);
+
+  // Users reach this screen from inside the logged-in app (join/leave). Never show a Sign In wall —
+  // recover session quietly, or return home if recovery fails.
+  useEffect(() => {
+    if (authLoading || user) {
+      authRecoverAttemptedRef.current = false;
+      setAuthRecovering(false);
+      return;
+    }
+    if (authRecoverAttemptedRef.current) return;
+    authRecoverAttemptedRef.current = true;
+    let cancelled = false;
+    setAuthRecovering(true);
+    (async () => {
+      try {
+        await refreshSession();
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setAuthRecovering(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user, refreshSession]);
+
+  useEffect(() => {
+    if (authLoading || authRecovering || user) return;
+    if (!authRecoverAttemptedRef.current) return;
+    router.replace('/(tabs)' as any);
+  }, [authLoading, authRecovering, user, router]);
 
   const loadMeetings = useCallback(async (opts?: { silent?: boolean }) => {
     if (!isAuthenticated) {
@@ -1727,35 +1761,8 @@ export default function MeetingCallScreen() {
     </View>
   );
 
-  // Show authentication required message if not logged in
-  if (!isAuthenticated) {
-    return (
-      <SafeAreaView style={dynamicStyles.container}>
-        <View style={dynamicStyles.header}>
-          <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color="#007AFF" />
-          </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
-          <View style={dynamicStyles.headerSpacer} />
-        </View>
-        <View style={dynamicStyles.loadingContainer}>
-          <Ionicons name="lock-closed" size={64} color={colors.textLight} />
-          <Text style={dynamicStyles.loadingText}>Authentication Required</Text>
-          <Text style={[dynamicStyles.loadingText, { fontSize: 16, marginTop: 8 }]}>
-            Please log in to view your meetings
-          </Text>
-          <TouchableOpacity 
-            style={[dynamicStyles.actionButton, { marginTop: 20 }]} 
-            onPress={() => router.push('/(auth)/sign-in')}
-          >
-            <Text style={dynamicStyles.actionButtonText}>Sign In</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (loading) {
+  // Never show a Sign In wall here — spinner while auth settles or list loads.
+  if (authLoading || authRecovering || !isAuthenticated || loading) {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>

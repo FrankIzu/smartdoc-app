@@ -279,10 +279,45 @@ async function currentCachedUserId(): Promise<string | null> {
   }
 }
 
+/** Axios config flag: 401 must not clear the app login session. */
+type SessionAwareAxiosConfig = { skipSessionExpiry?: boolean };
+
+/**
+ * Meeting / auth-flow 401s are often "not allowed for this room" or bad credentials —
+ * not "wipe the user's GrabDocs login". Clearing session here is what surfaces
+ * Meeting Call → "Authentication Required" after join/leave.
+ */
+function shouldSkipSessionExpiryOn401(url?: string): boolean {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  if (
+    u.includes('/login') ||
+    u.includes('/signup') ||
+    u.includes('/register') ||
+    u.includes('/otp') ||
+    u.includes('/verify')
+  ) {
+    return true;
+  }
+  // Reach / video presence — room-scoped failures must not log the user out of the app
+  if (
+    u.includes('/heartbeat') ||
+    u.includes('/recording-status') ||
+    u.includes('/leave') ||
+    u.includes('/join-by-id') ||
+    u.includes('/api/v1/video/') ||
+    u.includes('/api/v1/mobile/meetings/')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // Main API Service Class
 class ApiService {
   public client: AxiosInstance;
   private onSessionExpired?: () => void;
+  private sessionExpiryInFlight = false;
 
   setOnSessionExpired(callback: () => void) {
     this.onSessionExpired = callback;
@@ -419,8 +454,31 @@ class ApiService {
         // });
 
         if (error.response?.status === 401) {
-          await this.clearAuthData();
-          this.onSessionExpired?.();
+          const reqUrl = String(error.config?.url || '');
+          const skip =
+            shouldSkipSessionExpiryOn401(reqUrl) ||
+            !!(error.config as SessionAwareAxiosConfig | undefined)?.skipSessionExpiry;
+
+          if (!skip && !this.sessionExpiryInFlight) {
+            // Confirm the app session is actually dead before wiping login.
+            // A single flaky/unauthorized meeting API must not force Sign In.
+            this.sessionExpiryInFlight = true;
+            try {
+              const stillAuthed = await this.probeSessionStillValid();
+              if (!stillAuthed) {
+                await this.clearAuthData();
+                this.onSessionExpired?.();
+              } else {
+                console.warn(
+                  '🔐 401 on',
+                  reqUrl,
+                  '— app session still valid; not signing user out'
+                );
+              }
+            } finally {
+              this.sessionExpiryInFlight = false;
+            }
+          }
         }
 
         // Gateway / proxy errors (502, 503, 504) mean the network path is broken.
@@ -448,6 +506,20 @@ class ApiService {
       await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TOKEN); // Clear device token on logout
     } catch (error) {
       console.warn('Failed to clear auth data:', error);
+    }
+  }
+
+  /** Quiet auth-check used before wiping session on 401. Never triggers logout itself. */
+  private async probeSessionStillValid(): Promise<boolean> {
+    try {
+      const response = await this.client.get(MOBILE_ENDPOINTS.AUTH_CHECK, {
+        skipSessionExpiry: true,
+        timeout: 10000,
+      } as any);
+      const data = response?.data;
+      return !!(data?.success && (data?.data || data?.user));
+    } catch {
+      return false;
     }
   }
 

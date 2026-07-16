@@ -249,7 +249,9 @@ export default function HMSMeetingInterfaceScreen() {
   const reconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // In-meeting dismissable banners (recording started, peer joined)
-  const [bannerQueue, setBannerQueue] = useState<{ message: string; type: 'recording' | 'joined' }[]>([]);
+  const [bannerQueue, setBannerQueue] = useState<
+    { message: string; subtitle?: string; type: 'recording' | 'joined' }[]
+  >([]);
   const dismissBanner = useCallback(() => setBannerQueue(prev => prev.slice(1)), []);
 
   // Collect peer names over a 2s window, then collapse into one banner
@@ -530,8 +532,14 @@ export default function HMSMeetingInterfaceScreen() {
         );
         if (response.data?.is_recording && !recordingNotificationShownRef.current) {
           recordingNotificationShownRef.current = true;
-          const roomName = response.data?.room_name || 'This meeting';
-          setBannerQueue(prev => [...prev, { message: `${roomName} is being recorded. By staying, you consent to being recorded.`, type: 'recording' }]);
+          setBannerQueue((prev) => [
+            ...prev,
+            {
+              message: 'This meeting is being recorded',
+              subtitle: 'By staying, you consent to recording.',
+              type: 'recording',
+            },
+          ]);
         }
       } catch {
         // Silently fail - recording status is non-critical
@@ -1295,10 +1303,29 @@ export default function HMSMeetingInterfaceScreen() {
             <View style={styles.networkOverlay} pointerEvents="box-none">
               {bannerQueue.length > 0 && (
                 <View style={styles.networkBanner}>
-                  <View style={[styles.networkDot, { backgroundColor: bannerQueue[0].type === 'recording' ? '#FF3B30' : '#007AFF' }]} />
-                  <Text style={[styles.networkBannerTitle, { flex: 1 }]}>{bannerQueue[0].message}</Text>
-                  <TouchableOpacity style={styles.networkLeaveButton} onPress={dismissBanner}>
-                    <Text style={styles.networkLeaveButtonText}>OK</Text>
+                  {bannerQueue[0].type !== 'recording' ? (
+                    <View style={[styles.networkDot, { backgroundColor: '#007AFF' }]} />
+                  ) : null}
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.networkBannerTitle} numberOfLines={2}>
+                      {bannerQueue[0].message}
+                    </Text>
+                    {bannerQueue[0].subtitle ? (
+                      <Text style={styles.networkBannerSubtitle} numberOfLines={2}>
+                        {bannerQueue[0].subtitle}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.networkLeaveButton,
+                      bannerQueue[0].type === 'recording' && styles.networkGotItButton,
+                    ]}
+                    onPress={dismissBanner}
+                  >
+                    <Text style={styles.networkLeaveButtonText}>
+                      {bannerQueue[0].type === 'recording' ? 'Got it' : 'OK'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -1805,6 +1832,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 6,
     paddingHorizontal: 14,
+  },
+  networkGotItButton: {
+    backgroundColor: '#3A3A3C',
   },
   networkLeaveButtonText: {
     color: '#fff',
