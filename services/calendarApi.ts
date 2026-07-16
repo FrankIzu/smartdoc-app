@@ -5,6 +5,13 @@ const client = () => apiClient.client;
 
 export type CalendarParticipantInput = { email: string; name?: string; type?: string };
 
+export type CalendarEventOrigin = 'created' | 'participant_copy' | 'external_sync';
+
+export type CalendarEventPermissions = {
+  is_organizer?: boolean;
+  can_remove_from_calendar?: boolean;
+};
+
 /** Event object from list/detail/create/update (fields depend on endpoint). */
 export type CalendarEvent = {
   id: number;
@@ -19,8 +26,12 @@ export type CalendarEvent = {
   video_call_id?: number | string | null;
   status?: string;
   event_type?: string;
+  /** Whose calendar copy this row is on — not organizer authority. */
   user_id?: number;
+  source_event_id?: number | null;
+  event_origin?: CalendarEventOrigin | string;
   organizer?: { id?: number; name?: string; email?: string };
+  permissions?: CalendarEventPermissions;
   participants?: {
     id?: number;
     email?: string;
@@ -33,6 +44,40 @@ export type CalendarEvent = {
   linked_category_record_id?: number | null;
   [key: string]: unknown;
 };
+
+/** Prefer API `permissions`; fall back to organizer / participant flags when list/offline omit them. */
+export function calendarEventIsOrganizer(
+  event: CalendarEvent | null | undefined,
+  user: { id?: number | null; email?: string | null } | null | undefined
+): boolean {
+  if (!event || !user) return false;
+  if (typeof event.permissions?.is_organizer === 'boolean') {
+    return event.permissions.is_organizer;
+  }
+  const userId = user.id != null ? Number(user.id) : null;
+  if (userId != null && Number(event.organizer?.id) === userId) return true;
+  const email = (user.email || '').trim().toLowerCase();
+  if (!email || !Array.isArray(event.participants)) return false;
+  return event.participants.some(
+    (p) => !!p.is_organizer && (p.email || '').trim().toLowerCase() === email
+  );
+}
+
+export function calendarEventCanRemoveFromCalendar(
+  event: CalendarEvent | null | undefined,
+  user: { id?: number | null; email?: string | null } | null | undefined,
+  opts?: { canManageEvent?: boolean }
+): boolean {
+  if (!event || !user) return false;
+  if (opts?.canManageEvent) return false;
+  if (typeof event.permissions?.can_remove_from_calendar === 'boolean') {
+    return event.permissions.can_remove_from_calendar;
+  }
+  if (calendarEventIsOrganizer(event, user)) return false;
+  const email = (user.email || '').trim().toLowerCase();
+  if (!email || !Array.isArray(event.participants)) return false;
+  return event.participants.some((p) => (p.email || '').trim().toLowerCase() === email);
+}
 
 export type CalendarStats = Record<string, number>;
 
@@ -116,8 +161,14 @@ export async function calendarUpdateEvent(id: number, body: Record<string, unkno
   return data.event;
 }
 
+/** Organizer cancel — soft-deletes for everyone and emails participants. */
 export async function calendarDeleteEvent(id: number) {
   await client().delete(`/api/v1/calendar/events/${id}`);
+}
+
+/** Participant-only — soft-deletes this user's calendar copy; no emails. */
+export async function calendarRemoveFromCalendar(id: number) {
+  await client().post(`/api/v1/calendar/events/${id}/remove-from-calendar`);
 }
 
 export async function calendarRsvp(eventId: number, status: 'accepted' | 'declined' | 'tentative', response_comment?: string) {

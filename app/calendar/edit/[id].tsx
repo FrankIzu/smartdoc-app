@@ -26,6 +26,7 @@ import { calendarIsCompanyAdmin, useCalendarProfile } from '../../../hooks/useCa
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import {
   calendarCategoriesWithRecords,
+  calendarEventIsOrganizer,
   calendarGetEvent,
   calendarSearchCompanyMembers,
   calendarSyncGoogleWithStaleConnectionRecovery,
@@ -76,7 +77,7 @@ export default function CalendarEditScreen() {
   const eventId = Number(idParam);
   const router = useRouter();
   const colors = useThemeColors();
-  const { profile, refresh } = useCalendarProfile();
+  const { profile, loading: profileLoading, refresh } = useCalendarProfile();
   const isAdmin = calendarIsCompanyAdmin(profile);
   const networkState = useNetworkState();
   const deviceOffline = useMemo(
@@ -179,6 +180,19 @@ export default function CalendarEditScreen() {
   const load = useCallback(async () => {
     if (!Number.isFinite(eventId)) return;
     const event = await calendarGetEvent(eventId);
+    // Wait for profile before gating — null profile is "not loaded yet", not "not organizer".
+    if (profile) {
+      const isOrganizer = calendarEventIsOrganizer(event, profile);
+      const canManage =
+        isOrganizer || (event.event_type === 'company' && calendarIsCompanyAdmin(profile));
+      if (!canManage) {
+        Alert.alert('Not allowed', 'Only the organizer can edit this event.', [
+          { text: 'OK', onPress: () => router.replace(`/calendar/${eventId}` as any) },
+        ]);
+        return;
+      }
+    }
+
     setTitle(event.title || '');
     setDescription(htmlToPlainText(event.description || ''));
     setNotesField(
@@ -230,7 +244,7 @@ export default function CalendarEditScreen() {
     } else {
       setReminderMinutes([15]);
     }
-  }, [eventId]);
+  }, [eventId, profile, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -239,6 +253,7 @@ export default function CalendarEditScreen() {
         setLoading(false);
         return;
       }
+      if (profileLoading) return;
       setLoading(true);
       try {
         await load();
@@ -251,7 +266,7 @@ export default function CalendarEditScreen() {
     return () => {
       cancelled = true;
     };
-  }, [eventId, load]);
+  }, [eventId, load, profileLoading]);
 
   const durationLabel = useMemo(() => {
     const preset = DURATION_PRESETS.find((p) => p.minutes === durationMin);
@@ -451,7 +466,19 @@ export default function CalendarEditScreen() {
       await invalidateCalendarListCache();
       router.replace(`/calendar/${eventId}` as any);
     } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.error || e?.message || 'Update failed');
+      const status = e?.response?.status;
+      const msg =
+        e?.response?.data?.error ||
+        e?.message ||
+        (status === 403 ? 'Only the organizer can edit this event' : 'Update failed');
+      Alert.alert('Error', msg, [
+        {
+          text: 'OK',
+          onPress: () => {
+            if (status === 403) router.replace(`/calendar/${eventId}` as any);
+          },
+        },
+      ]);
     } finally {
       setSubmitting(false);
     }

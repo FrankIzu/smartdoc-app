@@ -1086,7 +1086,7 @@ function DashboardScreen() {
             <QuickActionCard
               key="action-chat"
               title="Secure Messaging"
-              subtitle="Private encrypted messages for teammates"
+              subtitle="Private encrypted messaging"
               icon="chatbubbles"
               color="#FF2D55"
               onPress={() => handleQuickAction('chat')}

@@ -19,8 +19,11 @@ import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalen
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
   calendarDeleteEvent,
+  calendarEventCanRemoveFromCalendar,
+  calendarEventIsOrganizer,
   calendarEventMeeting,
   calendarGetEvent,
+  calendarRemoveFromCalendar,
   calendarResendInvite,
   calendarRsvp,
   calendarSyncGoogleWithStaleConnectionRecovery,
@@ -28,6 +31,7 @@ import {
   noteDelete,
   notesForCalendarEvent,
   noteUpdate,
+  type CalendarEvent,
 } from '../../services/calendarApi';
 import {
   getCalendarEventDetailOffline,
@@ -54,7 +58,7 @@ export default function CalendarEventDetailScreen() {
   );
 
   const [loading, setLoading] = useState(true);
-  const [event, setEvent] = useState<any | null>(null);
+  const [event, setEvent] = useState<CalendarEvent | null>(null);
   const [meetingInfo, setMeetingInfo] = useState<any | null>(null);
   const [notes, setNotes] = useState<any[]>([]);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -70,7 +74,7 @@ export default function CalendarEventDetailScreen() {
     if (deviceOffline) {
       const cached = await getCalendarEventDetailOffline(eventId);
       if (cached) {
-        setEvent(cached);
+        setEvent(cached as CalendarEvent);
         setMeetingInfo(null);
       } else {
         setEvent(null);
@@ -92,7 +96,7 @@ export default function CalendarEventDetailScreen() {
     } catch (e: any) {
       const cached = await getCalendarEventDetailOffline(eventId);
       if (cached) {
-        setEvent(cached);
+        setEvent(cached as CalendarEvent);
         setMeetingInfo(null);
         if (!isCalendarFetchOfflineError(e)) {
           Alert.alert('Error', e?.response?.data?.error || e?.message || 'Failed to load event');
@@ -226,11 +230,22 @@ export default function CalendarEventDetailScreen() {
 
   const userNumericId = profile?.id ?? null;
   const isPersonalAccount = useMemo(() => (profile?.company_id ?? 0) === 0, [profile?.company_id]);
-  const isOrganizer = !!(event && userNumericId != null && Number(event.organizer?.id) === userNumericId);
+  const isOrganizer = calendarEventIsOrganizer(event, profile);
   const isAdmin = calendarIsCompanyAdmin(profile);
-  const canEditDelete =
+  /** Organizer authority, or company-admin for company events (matches web). */
+  const canManageEvent = !!(
     event &&
-    (event.event_type === 'company' ? isAdmin : isOrganizer);
+    (isOrganizer || (event.event_type === 'company' && isAdmin))
+  );
+  const canRemoveFromCalendar = calendarEventCanRemoveFromCalendar(event, profile, {
+    canManageEvent,
+  });
+
+  const leaveEventAndGoToList = useCallback(async () => {
+    await removeCalendarEventDetailOffline(eventId);
+    await invalidateCalendarListCache();
+    router.replace('/calendar' as any);
+  }, [eventId, router]);
 
   const handleEdit = useCallback(() => {
     if (deviceOffline) {
@@ -240,29 +255,80 @@ export default function CalendarEventDetailScreen() {
     router.push(`/calendar/edit/${eventId}` as any);
   }, [deviceOffline, eventId, router]);
 
-  const handleDelete = () => {
+  const performRemoveFromCalendar = useCallback(async () => {
+    try {
+      await calendarRemoveFromCalendar(eventId);
+      await leaveEventAndGoToList();
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.error || 'Could not remove event from your calendar');
+    }
+  }, [eventId, leaveEventAndGoToList]);
+
+  const handleRemoveFromCalendar = useCallback(() => {
     if (deviceOffline) {
-      Alert.alert('Offline', 'Delete requires a connection.');
+      Alert.alert('Offline', 'Removing from calendar requires a connection.');
       return;
     }
-    Alert.alert('Delete event', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await calendarDeleteEvent(eventId);
-            await removeCalendarEventDetailOffline(eventId);
-            await invalidateCalendarListCache();
-            router.replace('/calendar' as any);
-          } catch (e: any) {
-            Alert.alert('Error', e?.response?.data?.error || 'Delete failed');
-          }
+    Alert.alert(
+      'Remove from my calendar',
+      'This removes the event from your calendar only. Other participants will not be notified.',
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            void performRemoveFromCalendar();
+          },
         },
-      },
-    ]);
-  };
+      ]
+    );
+  }, [deviceOffline, performRemoveFromCalendar]);
+
+  const handleCancelEvent = useCallback(() => {
+    if (deviceOffline) {
+      Alert.alert('Offline', 'Canceling requires a connection.');
+      return;
+    }
+    Alert.alert(
+      'Cancel event',
+      'This cancels the event for everyone. Participants will be notified.',
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel event',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await calendarDeleteEvent(eventId);
+              await leaveEventAndGoToList();
+            } catch (e: any) {
+              const data = e?.response?.data;
+              if (data?.code === 'use_remove_from_calendar') {
+                Alert.alert(
+                  'Remove from calendar?',
+                  data?.error ||
+                    'You are not the organizer. Remove this event from your calendar only?',
+                  [
+                    { text: 'Keep', style: 'cancel' },
+                    {
+                      text: 'Remove',
+                      style: 'destructive',
+                      onPress: () => {
+                        void performRemoveFromCalendar();
+                      },
+                    },
+                  ]
+                );
+                return;
+              }
+              Alert.alert('Error', data?.error || 'Cancel failed');
+            }
+          },
+        },
+      ]
+    );
+  }, [deviceOffline, eventId, leaveEventAndGoToList, performRemoveFromCalendar]);
 
   const saveNote = async () => {
     if (deviceOffline) {
@@ -366,13 +432,6 @@ export default function CalendarEventDetailScreen() {
         <Text style={styles.h1} numberOfLines={1}>
           {event.title || 'Event'}
         </Text>
-        {canEditDelete ? (
-          <TouchableOpacity style={{ flexShrink: 0 }} onPress={handleEdit} accessibilityLabel="Edit">
-            <Text style={{ color: '#007AFF', fontSize: 17, fontWeight: '600' }}>Edit</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ minWidth: 36, flexShrink: 0 }} />
-        )}
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>
@@ -549,7 +608,7 @@ export default function CalendarEventDetailScreen() {
                   <Text style={{ color: colors.text }}>{p.name || p.email}</Text>
                   <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{p.status || '—'}</Text>
                 </View>
-                {p.status === 'needs-action' && !p.is_organizer && (isOrganizer || canEditDelete) && p.id ? (
+                {p.status === 'needs-action' && !p.is_organizer && canManageEvent && p.id ? (
                   <TouchableOpacity
                     onPress={async () => {
                       if (deviceOffline) {
@@ -560,7 +619,12 @@ export default function CalendarEventDetailScreen() {
                         await calendarResendInvite(eventId, p.id);
                         Alert.alert('Sent', 'Invitation resent');
                       } catch (e: any) {
-                        Alert.alert('Error', e?.response?.data?.error || 'Resend failed');
+                        const status = e?.response?.status;
+                        Alert.alert(
+                          'Error',
+                          e?.response?.data?.error ||
+                            (status === 403 ? 'Only the organizer can resend invitations' : 'Resend failed')
+                        );
                       }
                     }}
                   >
@@ -572,13 +636,29 @@ export default function CalendarEventDetailScreen() {
           </View>
         ) : null}
 
-        {canEditDelete ? (
+        {canManageEvent ? (
           <View style={{ marginTop: 24, gap: 10 }}>
             <TouchableOpacity style={styles.btn} onPress={handleEdit} accessibilityLabel="Edit event">
               <Text style={styles.btnText}>Edit event</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.btnDanger]} onPress={handleDelete}>
-              <Text style={styles.btnText}>Delete event</Text>
+            <TouchableOpacity
+              style={[styles.btn, styles.btnDanger]}
+              onPress={handleCancelEvent}
+              accessibilityLabel="Cancel event"
+            >
+              <Text style={styles.btnText}>Cancel event</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {canRemoveFromCalendar ? (
+          <View style={{ marginTop: 24 }}>
+            <TouchableOpacity
+              style={[styles.btn, styles.btnDanger]}
+              onPress={handleRemoveFromCalendar}
+              accessibilityLabel="Remove from my calendar"
+            >
+              <Text style={styles.btnText}>Remove from my calendar</Text>
             </TouchableOpacity>
           </View>
         ) : null}
