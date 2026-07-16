@@ -816,10 +816,10 @@ export default function UserChatScreen() {
       if (response.success && (response as any).chat) {
         const newChat: Chat = {
           id: (response as any).chat.id,
-          title: (response as any).chat.display_name || (selectedRecipient.type === 'user' ? `Chat with ${selectedRecipient.data.username}` : selectedRecipient.data.name || 'Workspace Chat'),
+          title: (response as any).chat.display_name || (selectedRecipient.type === 'user' ? (selectedRecipient.data.first_name || selectedRecipient.data.username || 'User') : selectedRecipient.data.name || 'Workspace Chat'),
           type: selectedRecipient.type === 'user' ? 'user_direct' : 'workspace',
           participants: (response as any).chat.participants || [],
-          last_message: 'Start a conversation',
+          last_message: 'Send a secure message',
           updated_at: new Date().toISOString(),
           created_at: new Date().toISOString(),
           unread_count: 0,
@@ -1823,8 +1823,10 @@ export default function UserChatScreen() {
                   <Ionicons name="chatbubbles-outline" size={64} color={colors.textSecondary} />
                   <Text style={dynamicStyles.emptyText}>
                     {selectedRecipient 
-                      ? `Chat with ${selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}`
-                      : 'Type @ to search for a user or workspace'}
+                      ? (selectedRecipient.type === 'user'
+                          ? (selectedRecipient.data.first_name || selectedRecipient.data.username || 'User')
+                          : selectedRecipient.data.name)
+                      : 'Type @ to find teammates or workspaces to message privately'}
                   </Text>
                 </View>
               ) : messagesLoading ? (
@@ -1979,8 +1981,10 @@ export default function UserChatScreen() {
                   <Ionicons name="chatbubbles-outline" size={64} color={colors.textSecondary} />
                   <Text style={dynamicStyles.emptyText}>
                     {selectedRecipient 
-                      ? `Chat with ${selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}`
-                      : 'Type @ to search for a user or workspace'}
+                      ? (selectedRecipient.type === 'user'
+                          ? (selectedRecipient.data.first_name || selectedRecipient.data.username || 'User')
+                          : selectedRecipient.data.name)
+                      : 'Type @ to find teammates or workspaces to message privately'}
                   </Text>
                 </View>
               ) : messagesLoading ? (

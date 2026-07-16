@@ -2294,7 +2294,7 @@ export default function ChatsScreen() {
                 // The backend timestamps are already in the correct format
                 
                 // For document_focused: title is "Document: {filename}" when we have file context; else use history.title
-                // For user_direct: title is "Chat with {user first name}" (backend sends this; fallback if missing)
+                // For user_direct: title is recipient name (backend Secure Messaging titles; fallback if missing)
                 const resolveTitle = (): string => {
                   if (chatType === 'document_focused') {
                     const pc = historyData.persistent_context || historyData.persistentContext;
@@ -2307,8 +2307,8 @@ export default function ChatsScreen() {
                   if (chatType === 'user_direct') {
                     const t = history.title?.trim();
                     if (t) return t;
-                    if (historyData.selected_user_names?.[0]) return `Chat with ${historyData.selected_user_names[0]}`;
-                    return 'Chat with User';
+                    if (historyData.selected_user_names?.[0]) return historyData.selected_user_names[0];
+                    return 'Secure message';
                   }
                   return String(history.title || 'Untitled Chat');
                 };
@@ -6614,7 +6614,7 @@ export default function ChatsScreen() {
               // Web chat.tsx returns: { success: true, chat: Chat, existing: boolean }
               newChat = {
                 id: (response as any).chat.id,
-                title: (response as any).chat.display_name || `Chat with ${(selectedUser as any).first_name || (selectedUser as any).last_name || selectedUser.username || 'User'}`,
+                title: (response as any).chat.display_name || ((selectedUser as any).first_name || (selectedUser as any).last_name || selectedUser.username || 'User'),
                 type: 'user_direct',
                 participants: (response as any).chat.participants || [selectedUser],
                 last_message: (response as any).chat.latest_message?.content || 'Start a conversation',
