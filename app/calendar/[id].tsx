@@ -3,14 +3,14 @@ import { useNetworkState } from 'expo-network';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LinkifiedText from '../../components/LinkifiedText';
@@ -18,31 +18,52 @@ import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
-  calendarDeleteEvent,
-  calendarEventCanRemoveFromCalendar,
-  calendarEventIsOrganizer,
-  calendarEventMeeting,
-  calendarGetEvent,
-  calendarRemoveFromCalendar,
-  calendarResendInvite,
-  calendarRsvp,
-  calendarSyncGoogleWithStaleConnectionRecovery,
-  noteCreate,
-  noteDelete,
-  notesForCalendarEvent,
-  noteUpdate,
-  type CalendarEvent,
+    calendarDeleteEvent,
+    calendarEventCanRemoveFromCalendar,
+    calendarEventIsOrganizer,
+    calendarEventMeeting,
+    calendarGetEvent,
+    calendarRemoveFromCalendar,
+    calendarResendInvite,
+    calendarRsvp,
+    calendarSyncGoogleWithStaleConnectionRecovery,
+    noteCreate,
+    noteDelete,
+    notesForCalendarEvent,
+    noteUpdate,
+    type CalendarEvent,
 } from '../../services/calendarApi';
 import {
-  getCalendarEventDetailOffline,
-  invalidateCalendarListCache,
-  isCalendarFetchOfflineError,
-  removeCalendarEventDetailOffline,
-  saveCalendarEventDetailOffline,
+    getCalendarEventDetailOffline,
+    invalidateCalendarListCache,
+    isCalendarFetchOfflineError,
+    removeCalendarEventDetailOffline,
+    saveCalendarEventDetailOffline,
 } from '../../utils/calendarCache';
 import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
 import { navigateJoinMeeting } from '../../utils/calendarReachJoin';
 import { calendarDisplayLocation, formatUtcIsoForDevice } from '../../utils/calendarTime';
+
+function rsvpStatusBadge(status?: string | null): {
+  label: string;
+  backgroundColor: string;
+  color: string;
+} | null {
+  const s = String(status ?? '').toLowerCase().trim();
+  if (!s) return null;
+  switch (s) {
+    case 'accepted':
+      return { label: 'accepted', backgroundColor: '#DCFCE7', color: '#166534' };
+    case 'declined':
+      return { label: 'declined', backgroundColor: '#FEE2E2', color: '#991B1B' };
+    case 'tentative':
+      return { label: 'tentative', backgroundColor: '#FEF3C7', color: '#92400E' };
+    case 'needs-action':
+      return { label: 'needs action', backgroundColor: '#F3F4F6', color: '#4B5563' };
+    default:
+      return { label: s, backgroundColor: '#F3F4F6', color: '#4B5563' };
+  }
+}
 
 export default function CalendarEventDetailScreen() {
   const { id: idParam } = useLocalSearchParams<{ id?: string }>();
@@ -199,6 +220,17 @@ export default function CalendarEventDetailScreen() {
           backgroundColor: colors.surface,
           marginBottom: 12,
         },
+        statusPill: {
+          alignSelf: 'flex-start',
+          paddingHorizontal: 12,
+          paddingVertical: 4,
+          borderRadius: 999,
+        },
+        statusPillText: {
+          fontSize: 13,
+          fontWeight: '600',
+          textTransform: 'lowercase',
+        },
         btn: {
           backgroundColor: '#007AFF',
           padding: 14,
@@ -240,6 +272,12 @@ export default function CalendarEventDetailScreen() {
   const canRemoveFromCalendar = calendarEventCanRemoveFromCalendar(event, profile, {
     canManageEvent,
   });
+  const myRsvpBadge = useMemo(() => {
+    const email = (profile?.email || '').trim().toLowerCase();
+    if (!email || !Array.isArray(event?.participants)) return null;
+    const me = event.participants.find((p) => (p.email || '').trim().toLowerCase() === email);
+    return rsvpStatusBadge(me?.status);
+  }, [event?.participants, profile?.email]);
 
   const leaveEventAndGoToList = useCallback(async () => {
     await removeCalendarEventDetailOffline(eventId);
@@ -442,15 +480,20 @@ export default function CalendarEventDetailScreen() {
         ) : null}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
           {(!isPersonalAccount || event.event_type === 'company') ? (
-            <View style={styles.pill}>
+            <View style={[styles.pill, { marginBottom: 0 }]}>
               <Text style={{ color: colors.text, fontSize: 13 }}>
                 {event.event_type === 'company' ? 'Company' : 'Personal'}
               </Text>
             </View>
           ) : null}
+          {myRsvpBadge ? (
+            <View style={[styles.statusPill, { backgroundColor: myRsvpBadge.backgroundColor }]}>
+              <Text style={[styles.statusPillText, { color: myRsvpBadge.color }]}>{myRsvpBadge.label}</Text>
+            </View>
+          ) : null}
           {String(event.status ?? '').toLowerCase() === 'cancelled' ? (
-            <View style={[styles.pill, { backgroundColor: '#FEE2E2' }]}>
-              <Text style={{ color: '#991B1B', fontSize: 13, fontWeight: '600' }}>Cancelled</Text>
+            <View style={[styles.statusPill, { backgroundColor: '#FEE2E2' }]}>
+              <Text style={[styles.statusPillText, { color: '#991B1B' }]}>cancelled</Text>
             </View>
           ) : null}
         </View>
@@ -592,7 +635,9 @@ export default function CalendarEventDetailScreen() {
         {Array.isArray(event.participants) && event.participants.length > 0 ? (
           <View style={{ marginTop: 16 }}>
             <Text style={styles.label}>Participants</Text>
-            {event.participants.map((p: any) => (
+            {event.participants.map((p: any) => {
+              const statusBadge = rsvpStatusBadge(p.status);
+              return (
               <View
                 key={String(p.id ?? p.email)}
                 style={{
@@ -604,9 +649,15 @@ export default function CalendarEventDetailScreen() {
                   borderColor: colors.border,
                 }}
               >
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, gap: 6 }}>
                   <Text style={{ color: colors.text }}>{p.name || p.email}</Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{p.status || '—'}</Text>
+                  {statusBadge ? (
+                    <View style={[styles.statusPill, { backgroundColor: statusBadge.backgroundColor }]}>
+                      <Text style={[styles.statusPillText, { color: statusBadge.color }]}>{statusBadge.label}</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ color: colors.textSecondary, fontSize: 12 }}>—</Text>
+                  )}
                 </View>
                 {p.status === 'needs-action' && !p.is_organizer && canManageEvent && p.id ? (
                   <TouchableOpacity
@@ -632,7 +683,8 @@ export default function CalendarEventDetailScreen() {
                   </TouchableOpacity>
                 ) : null}
               </View>
-            ))}
+              );
+            })}
           </View>
         ) : null}
 

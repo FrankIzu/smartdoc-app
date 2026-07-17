@@ -557,7 +557,7 @@ export default function CreateIntakeScreen() {
                 style={dynamicStyles.descInput}
                 value={item.description}
                 onChangeText={(v) => updateItem(idx, 'description', v)}
-                placeholder="Optional hint for the AI matcher and client"
+                placeholder="Describe what this document looks like (optional)"
                 placeholderTextColor={colors.textLight}
               />
             </View>

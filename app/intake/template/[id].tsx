@@ -236,7 +236,7 @@ export default function EditIntakeTemplateScreen() {
                 style={[dynamicStyles.input, { marginTop: 8 }]}
                 value={item.description}
                 onChangeText={(v) => updateItem(idx, 'description', v)}
-                placeholder="Description (optional)"
+                placeholder="Describe what this document looks like (optional)"
                 placeholderTextColor={colors.textLight}
               />
               <View style={dynamicStyles.switchRow}>
