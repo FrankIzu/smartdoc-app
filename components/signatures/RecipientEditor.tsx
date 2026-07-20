@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { RecipientInput } from '../../types/signature';
 
@@ -59,6 +59,33 @@ export default function RecipientEditor({ recipients, onChange }: Props) {
             value={r.name ?? ''}
             onChangeText={(name) => update(i, { name })}
           />
+          {r.role === 'signer' ? (
+            <>
+              <View style={styles.switchRow}>
+                <Text style={{ color: colors.text, flex: 1 }}>Require phone verification</Text>
+                <Switch
+                  value={Boolean(r.phone_verification_required)}
+                  onValueChange={(phone_verification_required) =>
+                    update(i, {
+                      phone_verification_required,
+                      ...(phone_verification_required ? {} : { phone_number: undefined }),
+                    })
+                  }
+                />
+              </View>
+              {r.phone_verification_required ? (
+                <TextInput
+                  style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                  placeholder="Phone (E.164, e.g. +12405551234)"
+                  placeholderTextColor={colors.textSecondary}
+                  value={r.phone_number ?? ''}
+                  onChangeText={(phone_number) => update(i, { phone_number })}
+                  keyboardType="phone-pad"
+                  autoCapitalize="none"
+                />
+              ) : null}
+            </>
+          ) : null}
           <TouchableOpacity onPress={() => remove(i)}>
             <Text style={{ color: '#dc2626' }}>Remove</Text>
           </TouchableOpacity>
@@ -78,8 +105,27 @@ export default function RecipientEditor({ recipients, onChange }: Props) {
 
 const styles = StyleSheet.create({
   row: { marginBottom: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  role: { fontSize: 12, marginBottom: 6, fontWeight: '600' },
-  input: { borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 8, fontSize: 16 },
+  role: { fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    fontSize: 16,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
   addRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  addBtn: { paddingVertical: 10, paddingHorizontal: 16, borderWidth: 1, borderRadius: 8 },
+  addBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
 });

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import UnifiedSignerShell from '../../../components/signatures/UnifiedSignerShell';
+import SignerPhoneVerificationGate from '../../../components/signatures/SignerPhoneVerificationGate';
 import { capturePageRef } from '../../../components/signatures/PdfFieldRenderer';
 import { useSignerEngine } from '../../../hooks/useSignerEngine';
 import { useSignerUIState } from '../../../hooks/useSignerUIState';
@@ -67,9 +68,19 @@ export default function SessionSignScreen() {
     );
   }
 
+  const needsPhoneGate =
+    engine.session.phoneVerificationRequired && !engine.session.phoneVerified;
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <UnifiedSignerShell
+      {needsPhoneGate ? (
+        <SignerPhoneVerificationGate
+          envelopeId={envelopeId!}
+          phoneMasked={engine.session.phoneMasked}
+          onVerified={() => engine.hydrate()}
+        />
+      ) : (
+        <UnifiedSignerShell
         session={engine.session}
         fieldValues={engine.fieldValues}
         state={engine.state}
@@ -83,6 +94,7 @@ export default function SessionSignScreen() {
         onDecline={() => void engine.decline()}
         onReloadConflict={() => void engine.reloadAfterConflict()}
       />
+      )}
     </SafeAreaView>
   );
 }

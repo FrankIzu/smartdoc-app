@@ -49,6 +49,8 @@ export interface EnvelopeRecipient {
   name?: string | null;
   user_id?: number | null;
   auth_required?: boolean;
+  phone_verification_required?: boolean;
+  phone_number?: string | null;
   status: string;
   notified_at?: string | null;
   viewed_at?: string | null;
@@ -175,6 +177,9 @@ export interface RecipientInput {
   role?: RecipientRole;
   order_index?: number;
   auth_required?: boolean;
+  phone_verification_required?: boolean;
+  /** E.164 format, e.g. +12405551234 */
+  phone_number?: string;
 }
 
 export interface FieldAssignmentInput {
@@ -215,6 +220,9 @@ export interface SignerSessionPayload {
   };
   recipient?: EnvelopeRecipient;
   field_assignments?: EnvelopeFieldAssignment[];
+  phone_verification_required?: boolean;
+  phone_masked?: string | null;
+  phone_verified?: boolean;
 }
 
 export type WizardStep =
@@ -334,4 +342,7 @@ export interface NormalizedSignerSession {
   readonly envelopeRevision: number;
   readonly chain?: SignerSessionPayload['chain'];
   readonly recipientId?: number;
+  readonly phoneVerificationRequired: boolean;
+  readonly phoneMasked?: string | null;
+  readonly phoneVerified: boolean;
 }

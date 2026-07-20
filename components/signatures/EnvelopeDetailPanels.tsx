@@ -72,6 +72,12 @@ function RecipientRow({
             </Text>
           ) : null}
         </View>
+        {recipient.phone_verification_required && recipient.role === 'signer' ? (
+          <Text style={[styles.phoneNote, { color: colors.textSecondary }]}>
+            Phone verification required
+            {recipient.phone_number ? ` (${recipient.phone_number})` : ''}
+          </Text>
+        ) : null}
         {recipient.decline_reason ? (
           <Text style={[styles.declineReason, { color: '#B91C1C' }]} numberOfLines={2}>
             Reason: {recipient.decline_reason}
@@ -260,6 +266,7 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   recipientTime: { fontSize: 11 },
+  phoneNote: { fontSize: 11, marginTop: 4 },
   declineReason: { fontSize: 11, marginTop: 4 },
   deliveryError: {
     fontSize: 11,

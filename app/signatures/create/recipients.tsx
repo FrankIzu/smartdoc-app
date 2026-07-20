@@ -41,6 +41,8 @@ export default function RecipientsScreen() {
             role: r.role,
             order_index: r.order_index,
             auth_required: r.auth_required,
+            phone_verification_required: r.phone_verification_required,
+            phone_number: r.phone_number ?? undefined,
           })),
         );
       }
@@ -54,10 +56,26 @@ export default function RecipientsScreen() {
       Alert.alert('Add signers', 'At least one signer email is required.');
       return;
     }
+    const missingPhone = signers.find(
+      (r) => r.phone_verification_required && !(r.phone_number ?? '').trim(),
+    );
+    if (missingPhone) {
+      Alert.alert(
+        'Phone required',
+        `Signer ${missingPhone.email || missingPhone.name || ''} requires a phone number when phone verification is enabled.`,
+      );
+      return;
+    }
     setSaving(true);
     try {
       await updateEnvelopeDraft(envelopeId!, { reminder_enabled: reminderEnabled });
-      await putRecipients(envelopeId!, recipients.filter((r) => r.email.trim()));
+      await putRecipients(
+        envelopeId!,
+        recipients.filter((r) => r.email.trim()).map((r) => ({
+          ...r,
+          phone_number: r.phone_verification_required ? r.phone_number?.trim() : undefined,
+        })),
+      );
       await saveDraftStep(user?.id, envelopeId!, 'assign_fields');
       router.push(`/signatures/create/assign-fields?envelopeId=${envelopeId}` as any);
     } catch (e: unknown) {

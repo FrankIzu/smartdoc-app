@@ -134,6 +134,9 @@ export function normalizeSignerPayload(
     envelopeRevision: payload.envelope_revision ?? payload.envelope?.envelope_revision ?? 1,
     chain: payload.chain,
     recipientId: payload.recipient?.id ?? payload.envelope?.inbox_context?.recipient_id,
+    phoneVerificationRequired: Boolean(payload.phone_verification_required),
+    phoneMasked: payload.phone_masked ?? null,
+    phoneVerified: Boolean(payload.phone_verified),
   });
 }
 

@@ -4,6 +4,7 @@ import {
   EnvelopeApiError,
   getSignSession,
   getSignView,
+  isPhoneVerificationRequiredError,
   makeIdempotencyKey,
   sessionAutosave,
   sessionDecline,
@@ -194,6 +195,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
 
   const flushAutosave = useCallback(async () => {
     if (!session) return;
+    if (session.phoneVerificationRequired && !session.phoneVerified) return;
     const delta = { ...pendingDeltaRef.current };
     if (Object.keys(delta).length === 0) return;
     const seq = ++autosaveSeqRef.current;
@@ -223,13 +225,18 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         });
         return;
       }
+      if (isPhoneVerificationRequiredError(e)) {
+        setError('Phone verification required before continuing.');
+        await hydrate();
+        return;
+      }
       setState('offline_dirty');
       errorLogger.logError(e instanceof Error ? e : new Error(String(e)), {
         errorType: 'signature_autosave_failed',
         metadata: { envelopeSessionId: envelopeSessionIdRef.current },
       });
     }
-  }, [isTokenMode, opts.envelopeId, opts.token, persistCache, session]);
+  }, [hydrate, isTokenMode, opts.envelopeId, opts.token, persistCache, session]);
 
   const scheduleAutosave = useCallback(
     (key: string, value: unknown) => {
@@ -244,6 +251,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
 
   const setFieldValue = useCallback(
     (key: string, value: unknown) => {
+      if (session?.phoneVerificationRequired && !session.phoneVerified) return;
       void (async () => {
         const stored = await normalizeFieldValueForCache(opts.sessionKey, key, value);
         setFieldValues((prev) => {
@@ -255,7 +263,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         scheduleAutosave(key, stored);
       })();
     },
-    [opts.sessionKey, persistCache, scheduleAutosave],
+    [opts.sessionKey, persistCache, scheduleAutosave, session?.phoneVerificationRequired, session?.phoneVerified],
   );
 
   const runCompositing = useCallback(
@@ -287,6 +295,10 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
 
   const submit = useCallback(async () => {
     if (!session) return;
+    if (session.phoneVerificationRequired && !session.phoneVerified) {
+      setError('Phone verification required before continuing.');
+      return;
+    }
     setState('compositing');
     setError(null);
     const idempotencyKey =
@@ -355,6 +367,10 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       if (e instanceof EnvelopeApiError && e.staleRevision) {
         setState('conflict_409');
         setError('Session outdated. Please reload and try again.');
+      } else if (isPhoneVerificationRequiredError(e)) {
+        setState('active');
+        setError('Phone verification required before continuing.');
+        await hydrate();
       } else {
         setState('active');
         setError(e instanceof Error ? e.message : 'Submit failed');
@@ -366,6 +382,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     }
   }, [
     flushAutosave,
+    hydrate,
     isTokenMode,
     loadId,
     opts,
@@ -377,6 +394,10 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
   const decline = useCallback(
     async (reason?: string) => {
       if (!session) return;
+      if (session.phoneVerificationRequired && !session.phoneVerified) {
+        setError('Phone verification required before continuing.');
+        return;
+      }
       const key = makeIdempotencyKey();
       try {
         if (isTokenMode && opts.token) {
@@ -389,10 +410,15 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         setState('declined');
         opts.onDeclined?.();
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Decline failed');
+        if (isPhoneVerificationRequiredError(e)) {
+          setError('Phone verification required before continuing.');
+          await hydrate();
+        } else {
+          setError(e instanceof Error ? e.message : 'Decline failed');
+        }
       }
     },
-    [isTokenMode, opts, session],
+    [hydrate, isTokenMode, opts, session],
   );
 
   const reloadAfterConflict = useCallback(async () => {

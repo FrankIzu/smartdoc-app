@@ -16,6 +16,7 @@ export class EnvelopeApiError extends Error {
   status?: number;
   data?: unknown;
   staleRevision?: boolean;
+  errorCode?: string;
 
   constructor(message: string, status?: number, data?: unknown) {
     super(message);
@@ -23,7 +24,13 @@ export class EnvelopeApiError extends Error {
     this.status = status;
     this.data = data;
     this.staleRevision = status === 409;
+    const payload = data as { error_code?: string } | undefined;
+    this.errorCode = payload?.error_code;
   }
+}
+
+export function isPhoneVerificationRequiredError(err: unknown): boolean {
+  return err instanceof EnvelopeApiError && err.errorCode === 'PHONE_VERIFICATION_REQUIRED';
 }
 
 export function makeIdempotencyKey(): string {
@@ -358,5 +365,46 @@ export async function tokenAttachmentViewed(token: string, documentKey: string) 
     'POST',
     `/sign/${encodeURIComponent(token)}/attachment-viewed`,
     { data: { document_key: documentKey } },
+  );
+}
+
+export interface SignerOtpRequestResponse {
+  success: boolean;
+  sent: boolean;
+  phone_masked?: string;
+  expires_in_minutes?: number;
+}
+
+export interface SignerOtpVerifyResponse {
+  success: boolean;
+  phone_verified: boolean;
+}
+
+// Signer phone OTP (envelope signing — not login OTP)
+export async function sessionRequestOtp(envelopeId: string | number) {
+  return request<SignerOtpRequestResponse>('POST', `/${envSeg(envelopeId)}/session-request-otp`, {
+    data: {},
+  });
+}
+
+export async function sessionVerifyOtp(envelopeId: string | number, code: string) {
+  return request<SignerOtpVerifyResponse>('POST', `/${envSeg(envelopeId)}/session-verify-otp`, {
+    data: { code },
+  });
+}
+
+export async function tokenRequestOtp(token: string) {
+  return request<SignerOtpRequestResponse>(
+    'POST',
+    `/sign/${encodeURIComponent(token)}/request-otp`,
+    { data: {} },
+  );
+}
+
+export async function tokenVerifyOtp(token: string, code: string) {
+  return request<SignerOtpVerifyResponse>(
+    'POST',
+    `/sign/${encodeURIComponent(token)}/verify-otp`,
+    { data: { code } },
   );
 }

@@ -81,6 +81,16 @@ export default function ReviewSendScreen() {
         <Text style={[styles.section, { color: colors.text }]}>
           Signers: {(envelope?.recipients ?? []).filter((r) => r.role === 'signer').length}
         </Text>
+        {(envelope?.recipients ?? [])
+          .filter((r) => r.role === 'signer')
+          .map((r, i) => (
+            <Text key={i} style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 4 }}>
+              {r.name || r.email}
+              {r.phone_verification_required
+                ? ` — Phone verification${r.phone_number ? ` (${r.phone_number})` : ''}`
+                : ''}
+            </Text>
+          ))}
         <Text style={[styles.section, { color: colors.text }]}>
           Field assignments: {envelope?.field_assignments?.length ?? 0}
         </Text>
