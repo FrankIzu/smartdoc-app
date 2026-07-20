@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,6 +21,7 @@ import {
 
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN_SEC = 60;
+const CONTENT_LOAD_DELAY_MS = 1500;
 
 interface Props {
   envelopeId: string;
@@ -40,6 +42,7 @@ export default function SignerPhoneVerificationGate({
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [contentLoading, setContentLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const inputRef = useRef<TextInput>(null);
   const requestedRef = useRef(false);
@@ -78,6 +81,14 @@ export default function SignerPhoneVerificationGate({
     return () => clearTimeout(t);
   }, [cooldown]);
 
+  useEffect(() => {
+    if (!contentLoading) return;
+    const timer = setTimeout(() => {
+      void onVerified();
+    }, CONTENT_LOAD_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [contentLoading, onVerified]);
+
   const verify = async (otpCode: string) => {
     if (otpCode.length !== OTP_LENGTH || verifying) return;
     setVerifying(true);
@@ -87,7 +98,7 @@ export default function SignerPhoneVerificationGate({
         ? await tokenVerifyOtp(token, otpCode)
         : await sessionVerifyOtp(envelopeId, otpCode);
       if (res.phone_verified) {
-        await onVerified();
+        setContentLoading(true);
       } else {
         setError('Verification failed. Please try again.');
         setCode('');
@@ -114,6 +125,23 @@ export default function SignerPhoneVerificationGate({
       void verify(digits);
     }
   };
+
+  if (contentLoading) {
+    return (
+      <View style={[styles.wrap, { backgroundColor: colors.background }]}>
+        <View style={[styles.card, styles.successCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.checkCircle}>
+            <Ionicons name="checkmark" size={28} color="#16a34a" />
+          </View>
+          <Text style={[styles.title, styles.successTitle, { color: colors.text }]}>Phone verified</Text>
+          <Text style={[styles.subtitle, styles.successSubtitle, { color: colors.textSecondary }]}>
+            Now loading your content…
+          </Text>
+          <ActivityIndicator color={colors.primary} size="large" />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -185,7 +213,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 24,
   },
+  successCard: { alignItems: 'center' },
+  checkCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
   title: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  successTitle: { textAlign: 'center', marginBottom: 4 },
+  successSubtitle: { textAlign: 'center', marginBottom: 20 },
   subtitle: { fontSize: 14, lineHeight: 20, marginBottom: 24 },
   otpRow: {
     flexDirection: 'row',
