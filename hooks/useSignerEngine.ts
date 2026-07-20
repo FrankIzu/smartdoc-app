@@ -93,24 +93,28 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
   const envelopeSessionIdRef = useRef(`sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const fieldValuesRef = useRef(fieldValues);
   const pendingSubmissionRef = useRef(pendingSubmission);
+  const optsRef = useRef(opts);
   fieldValuesRef.current = fieldValues;
   pendingSubmissionRef.current = pendingSubmission;
+  optsRef.current = opts;
 
   const isTokenMode = Boolean(opts.token);
   const loadId = opts.envelopeId ?? opts.token ?? opts.sessionKey;
+  const loadKey = `${isTokenMode ? 'token' : 'session'}:${loadId}:${userId ?? 'anon'}`;
 
   const persistCache = useCallback(
     async (patch: Partial<SessionCacheData>) => {
-      const existing = (await loadSessionCache(userId, opts.sessionKey)) ?? {
-        sessionKey: opts.sessionKey,
+      const o = optsRef.current;
+      const existing = (await loadSessionCache(userId, o.sessionKey)) ?? {
+        sessionKey: o.sessionKey,
         fieldValues: {},
         updatedAt: new Date().toISOString(),
         sessionGeneratedAtRevision: session?.sessionGeneratedAtRevision ?? 1,
         attachmentViewedKeys: [],
         completedFieldKeys: [],
         autosaveSeq: 0,
-        envelopeId: opts.envelopeId,
-        tokenKey: opts.token,
+        envelopeId: o.envelopeId,
+        tokenKey: o.token,
       };
       await saveSessionCache(userId, {
         ...existing,
@@ -120,7 +124,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
           patch.sessionGeneratedAtRevision ?? session?.sessionGeneratedAtRevision ?? 1,
       });
     },
-    [opts.envelopeId, opts.sessionKey, opts.token, session?.sessionGeneratedAtRevision, userId],
+    [session?.sessionGeneratedAtRevision, userId],
   );
 
   const persistPendingSubmission = useCallback(
@@ -133,15 +137,16 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
   );
 
   const hydrate = useCallback(async () => {
-    setState('hydrating');
+    const o = optsRef.current;
+    setState((prev) => (prev === 'initializing' ? 'hydrating' : prev));
     setError(null);
     try {
-      const cached = await loadSessionCache(userId, opts.sessionKey);
+      const cached = await loadSessionCache(userId, o.sessionKey);
       let payload;
-      if (isTokenMode && opts.token) {
-        payload = await getSignView(opts.token);
-      } else if (opts.envelopeId) {
-        payload = await getSignSession(opts.envelopeId);
+      if (isTokenMode && o.token) {
+        payload = await getSignView(o.token);
+      } else if (o.envelopeId) {
+        payload = await getSignSession(o.envelopeId);
       } else {
         throw new Error('Missing envelope id or token');
       }
@@ -172,10 +177,10 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
           payload.recipient?.status === 'declined' ||
           payload.envelope?.status === 'completed';
         if (recipientSigned) {
-          await clearSessionCache(userId, opts.sessionKey);
+          await clearSessionCache(userId, o.sessionKey);
           setPendingSubmission(null);
           setState('completed');
-          opts.onCompleted?.();
+          optsRef.current.onCompleted?.();
           return;
         }
         setState('active');
@@ -187,11 +192,11 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       setError(msg);
       setState('initializing');
     }
-  }, [isTokenMode, loadId, opts, opts.envelopeId, opts.sessionKey, opts.token, userId]);
+  }, [isTokenMode, loadId, userId]);
 
   useEffect(() => {
     void hydrate();
-  }, [hydrate]);
+  }, [loadKey, hydrate]);
 
   const flushAutosave = useCallback(async () => {
     if (!session) return;
@@ -204,10 +209,11 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     inFlightAutosaveRef.current = controller;
     setState((s) => (s === 'active' || s === 'offline_dirty' ? 'autosaving' : s));
     try {
-      if (isTokenMode && opts.token) {
-        await tokenAutosave(opts.token, delta, session.sessionGeneratedAtRevision, controller.signal);
-      } else if (opts.envelopeId) {
-        await sessionAutosave(opts.envelopeId, delta, session.sessionGeneratedAtRevision, controller.signal);
+      const o = optsRef.current;
+      if (isTokenMode && o.token) {
+        await tokenAutosave(o.token, delta, session.sessionGeneratedAtRevision, controller.signal);
+      } else if (o.envelopeId) {
+        await sessionAutosave(o.envelopeId, delta, session.sessionGeneratedAtRevision, controller.signal);
       }
       if (controller.signal.aborted || seq < autosaveSeqRef.current) return;
       pendingDeltaRef.current = {};
@@ -236,7 +242,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         metadata: { envelopeSessionId: envelopeSessionIdRef.current },
       });
     }
-  }, [hydrate, isTokenMode, opts.envelopeId, opts.token, persistCache, session]);
+  }, [hydrate, isTokenMode, persistCache, session]);
 
   const scheduleAutosave = useCallback(
     (key: string, value: unknown) => {
@@ -253,7 +259,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     (key: string, value: unknown) => {
       if (session?.phoneVerificationRequired && !session.phoneVerified) return;
       void (async () => {
-        const stored = await normalizeFieldValueForCache(opts.sessionKey, key, value);
+        const stored = await normalizeFieldValueForCache(optsRef.current.sessionKey, key, value);
         setFieldValues((prev) => {
           const next = { ...prev, [key]: stored };
           fieldValuesRef.current = next;
@@ -263,21 +269,22 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         scheduleAutosave(key, stored);
       })();
     },
-    [opts.sessionKey, persistCache, scheduleAutosave, session?.phoneVerificationRequired, session?.phoneVerified],
+    [persistCache, scheduleAutosave, session?.phoneVerificationRequired, session?.phoneVerified],
   );
 
   const runCompositing = useCallback(
     async (manifest: CompositingManifest, idempotencyKey: string): Promise<CompositingManifest> => {
-      if (!opts.compositePage) return manifest;
+      const o = optsRef.current;
+      if (!o.compositePage) return manifest;
       let current = manifest;
       for (const doc of current.docs) {
         for (let p = doc.completedPages; p < doc.totalPages; p++) {
-          const b64 = await opts.compositePage(doc.documentKey, p);
+          const b64 = await o.compositePage(doc.documentKey, p);
           if (!b64) {
             throw new Error(`Failed to render page ${p + 1} of ${doc.documentKey}`);
           }
           const { writeCompositePage } = await import('../services/compositingEngine');
-          current = await writeCompositePage(opts.sessionKey, current, doc.documentKey, p, b64);
+          current = await writeCompositePage(o.sessionKey, current, doc.documentKey, p, b64);
           await persistPendingSubmission({
             envelopeId: String(loadId),
             idempotencyKey,
@@ -290,7 +297,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       }
       return current;
     },
-    [loadId, opts.compositePage, opts.sessionKey, persistPendingSubmission],
+    [loadId, persistPendingSubmission],
   );
 
   const submit = useCallback(async () => {
@@ -299,6 +306,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       setError('Phone verification required before continuing.');
       return;
     }
+    const o = optsRef.current;
     setState('compositing');
     setError(null);
     const idempotencyKey =
@@ -309,7 +317,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       let manifest =
         pendingSubmissionRef.current?.manifest ??
         createManifest({
-          sessionKey: opts.sessionKey,
+          sessionKey: o.sessionKey,
           envelopeId: String(loadId),
           idempotencyKey,
           docs: session.documents
@@ -325,7 +333,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         startedAt,
       });
 
-      if (!isManifestComplete(manifest) && opts.compositePage) {
+      if (!isManifestComplete(manifest) && o.compositePage) {
         manifest = await runCompositing(manifest, idempotencyKey);
       }
 
@@ -349,20 +357,20 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         session_generated_at_revision: session.sessionGeneratedAtRevision,
       };
       setState('awaiting_server');
-      if (isTokenMode && opts.token) {
-        await tokenSubmit(opts.token, payload, idempotencyKey);
-      } else if (opts.envelopeId) {
-        await sessionSubmit(opts.envelopeId, payload, idempotencyKey);
+      if (isTokenMode && o.token) {
+        await tokenSubmit(o.token, payload, idempotencyKey);
+      } else if (o.envelopeId) {
+        await sessionSubmit(o.envelopeId, payload, idempotencyKey);
       }
-      await clearSessionCache(userId, opts.sessionKey);
+      await clearSessionCache(userId, o.sessionKey);
       await gcSessionFiles(
-        opts.sessionKey,
+        o.sessionKey,
         Object.keys(fieldValuesRef.current),
         manifest.docs.map((d) => d.documentKey),
       );
       setPendingSubmission(null);
       setState('completed');
-      opts.onCompleted?.();
+      optsRef.current.onCompleted?.();
     } catch (e: unknown) {
       if (e instanceof EnvelopeApiError && e.staleRevision) {
         setState('conflict_409');
@@ -385,10 +393,10 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     hydrate,
     isTokenMode,
     loadId,
-    opts,
     persistPendingSubmission,
     runCompositing,
     session,
+    userId,
   ]);
 
   const decline = useCallback(
@@ -398,17 +406,18 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         setError('Phone verification required before continuing.');
         return;
       }
+      const o = optsRef.current;
       const key = makeIdempotencyKey();
       try {
-        if (isTokenMode && opts.token) {
-          await tokenDecline(opts.token, reason, key);
-        } else if (opts.envelopeId) {
-          await sessionDecline(opts.envelopeId, reason, key);
+        if (isTokenMode && o.token) {
+          await tokenDecline(o.token, reason, key);
+        } else if (o.envelopeId) {
+          await sessionDecline(o.envelopeId, reason, key);
         }
-        await clearSessionCache(userId, opts.sessionKey);
+        await clearSessionCache(userId, o.sessionKey);
         setPendingSubmission(null);
         setState('declined');
-        opts.onDeclined?.();
+        optsRef.current.onDeclined?.();
       } catch (e: unknown) {
         if (isPhoneVerificationRequiredError(e)) {
           setError('Phone verification required before continuing.');
@@ -418,7 +427,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         }
       }
     },
-    [hydrate, isTokenMode, opts, session],
+    [hydrate, isTokenMode, session, userId],
   );
 
   const reloadAfterConflict = useCallback(async () => {

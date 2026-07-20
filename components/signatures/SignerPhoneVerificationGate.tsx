@@ -46,6 +46,8 @@ export default function SignerPhoneVerificationGate({
   const [cooldown, setCooldown] = useState(0);
   const inputRef = useRef<TextInput>(null);
   const requestedRef = useRef(false);
+  const onVerifiedRef = useRef(onVerified);
+  onVerifiedRef.current = onVerified;
 
   const requestOtp = useCallback(async () => {
     setSending(true);
@@ -84,10 +86,10 @@ export default function SignerPhoneVerificationGate({
   useEffect(() => {
     if (!contentLoading) return;
     const timer = setTimeout(() => {
-      void onVerified();
+      void onVerifiedRef.current();
     }, CONTENT_LOAD_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [contentLoading, onVerified]);
+  }, [contentLoading]);
 
   const verify = async (otpCode: string) => {
     if (otpCode.length !== OTP_LENGTH || verifying) return;

@@ -46,6 +46,10 @@ export default function SessionSignScreen() {
     compositePage,
   });
 
+  const handlePhoneVerified = useCallback(() => {
+    void engine.hydrate();
+  }, [engine.hydrate]);
+
   useEffect(() => {
     sessionRef.current = engine.session;
   }, [engine.session]);
@@ -59,7 +63,11 @@ export default function SessionSignScreen() {
     },
   });
 
-  if (!engine.session || engine.state === 'initializing' || engine.state === 'hydrating') {
+  const showInitialLoading =
+    engine.state === 'initializing' ||
+    (engine.state === 'hydrating' && !engine.session);
+
+  if (showInitialLoading) {
     return (
       <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator color={colors.primary} />
@@ -77,7 +85,7 @@ export default function SessionSignScreen() {
         <SignerPhoneVerificationGate
           envelopeId={envelopeId!}
           phoneMasked={engine.session.phoneMasked}
-          onVerified={() => engine.hydrate()}
+          onVerified={handlePhoneVerified}
         />
       ) : (
         <UnifiedSignerShell

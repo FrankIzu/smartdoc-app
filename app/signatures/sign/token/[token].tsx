@@ -46,6 +46,10 @@ export default function TokenSignScreen() {
     compositePage,
   });
 
+  const handlePhoneVerified = useCallback(() => {
+    void engine.hydrate();
+  }, [engine.hydrate]);
+
   useEffect(() => {
     sessionRef.current = engine.session;
   }, [engine.session]);
@@ -60,7 +64,11 @@ export default function TokenSignScreen() {
     },
   });
 
-  if (!engine.session || engine.state === 'initializing' || engine.state === 'hydrating') {
+  const showInitialLoading =
+    engine.state === 'initializing' ||
+    (engine.state === 'hydrating' && !engine.session);
+
+  if (showInitialLoading) {
     return (
       <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator color={colors.primary} />
@@ -78,7 +86,7 @@ export default function TokenSignScreen() {
           envelopeId={engine.session.envelopeId}
           token={token}
           phoneMasked={engine.session.phoneMasked}
-          onVerified={() => engine.hydrate()}
+          onVerified={handlePhoneVerified}
         />
       ) : (
         <UnifiedSignerShell
