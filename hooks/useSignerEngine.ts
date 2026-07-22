@@ -32,7 +32,7 @@ import type {
   PendingSubmission,
   SessionState,
 } from '../types/signature';
-import { normalizeSignerPayload } from '../utils/signatureRuntime';
+import { isFieldEditable, normalizeSignerPayload } from '../utils/signatureRuntime';
 import { errorLogger } from '../services/errorLogger';
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
@@ -52,7 +52,7 @@ function mergeFieldValuesIfAllowed(
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(local)) {
-    if (!session.editableFieldKeys.has(key)) continue;
+    if (!isFieldEditable(session.editableFieldKeys, key)) continue;
     const stillExists = session.documents.some((d) => d.fields.some((f) => f.key === key));
     if (!stillExists) continue;
     merged[key] = value;
@@ -93,39 +93,46 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
   const envelopeSessionIdRef = useRef(`sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const fieldValuesRef = useRef(fieldValues);
   const pendingSubmissionRef = useRef(pendingSubmission);
+  const sessionRef = useRef(session);
   const optsRef = useRef(opts);
+  const userIdRef = useRef(userId);
+  const hydrateInFlightRef = useRef(false);
   fieldValuesRef.current = fieldValues;
   pendingSubmissionRef.current = pendingSubmission;
+  sessionRef.current = session;
   optsRef.current = opts;
+  userIdRef.current = userId;
 
   const isTokenMode = Boolean(opts.token);
-  const loadId = opts.envelopeId ?? opts.token ?? opts.sessionKey;
-  const loadKey = `${isTokenMode ? 'token' : 'session'}:${loadId}:${userId ?? 'anon'}`;
+  // Prefer real envelope/token ids only — never fall back to a placeholder sessionKey.
+  const rawLoadId = opts.token ?? opts.envelopeId;
+  const loadId = Array.isArray(rawLoadId) ? String(rawLoadId[0] ?? '') : String(rawLoadId ?? '');
+  // Do NOT include userId — auth refreshes were recreating hydrate and re-fetching in a loop.
+  const loadKey =
+    loadId && loadId !== 'undefined' ? `${isTokenMode ? 'token' : 'session'}:${loadId}` : '';
 
-  const persistCache = useCallback(
-    async (patch: Partial<SessionCacheData>) => {
-      const o = optsRef.current;
-      const existing = (await loadSessionCache(userId, o.sessionKey)) ?? {
-        sessionKey: o.sessionKey,
-        fieldValues: {},
-        updatedAt: new Date().toISOString(),
-        sessionGeneratedAtRevision: session?.sessionGeneratedAtRevision ?? 1,
-        attachmentViewedKeys: [],
-        completedFieldKeys: [],
-        autosaveSeq: 0,
-        envelopeId: o.envelopeId,
-        tokenKey: o.token,
-      };
-      await saveSessionCache(userId, {
-        ...existing,
-        ...patch,
-        fieldValues: patch.fieldValues ?? fieldValuesRef.current,
-        sessionGeneratedAtRevision:
-          patch.sessionGeneratedAtRevision ?? session?.sessionGeneratedAtRevision ?? 1,
-      });
-    },
-    [session?.sessionGeneratedAtRevision, userId],
-  );
+  const persistCache = useCallback(async (patch: Partial<SessionCacheData>) => {
+    const o = optsRef.current;
+    const uid = userIdRef.current;
+    const rev = sessionRef.current?.sessionGeneratedAtRevision ?? 1;
+    const existing = (await loadSessionCache(uid, o.sessionKey)) ?? {
+      sessionKey: o.sessionKey,
+      fieldValues: {},
+      updatedAt: new Date().toISOString(),
+      sessionGeneratedAtRevision: rev,
+      attachmentViewedKeys: [],
+      completedFieldKeys: [],
+      autosaveSeq: 0,
+      envelopeId: o.envelopeId,
+      tokenKey: o.token,
+    };
+    await saveSessionCache(uid, {
+      ...existing,
+      ...patch,
+      fieldValues: patch.fieldValues ?? fieldValuesRef.current,
+      sessionGeneratedAtRevision: patch.sessionGeneratedAtRevision ?? rev,
+    });
+  }, []);
 
   const persistPendingSubmission = useCallback(
     async (pending: PendingSubmission | null) => {
@@ -138,26 +145,40 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
 
   const hydrate = useCallback(async () => {
     const o = optsRef.current;
-    setState((prev) => (prev === 'initializing' ? 'hydrating' : prev));
+    const uid = userIdRef.current;
+    const tokenMode = Boolean(o.token);
+    const id = String(o.envelopeId ?? o.token ?? o.sessionKey ?? '');
+    if (!id || id === 'undefined') {
+      setError('Missing envelope id or token');
+      return;
+    }
+    if (hydrateInFlightRef.current) return;
+    hydrateInFlightRef.current = true;
+
+    // Never blank the phone OTP gate with a full-screen loader on re-hydrate.
+    setState((prev) => (prev === 'initializing' && !sessionRef.current ? 'hydrating' : prev));
     setError(null);
     try {
-      const cached = await loadSessionCache(userId, o.sessionKey);
+      const cached = await loadSessionCache(uid, o.sessionKey);
       let payload;
-      if (isTokenMode && o.token) {
+      if (tokenMode && o.token) {
         payload = await getSignView(o.token);
       } else if (o.envelopeId) {
         payload = await getSignSession(o.envelopeId);
       } else {
         throw new Error('Missing envelope id or token');
       }
-      const normalized = normalizeSignerPayload(String(loadId), payload);
+      const normalized = normalizeSignerPayload(id, payload);
       setSession(normalized);
+      sessionRef.current = normalized;
 
       const serverValues: Record<string, unknown> = {};
-      for (const doc of normalized.documents) {
-        for (const f of doc.fields) {
-          const a = payload.field_assignments?.find((x) => x.field_key === f.key);
-          if (a?.draft_value_json != null) serverValues[f.key] = a.draft_value_json;
+      const recipientFields = payload.fields ?? payload.field_assignments ?? [];
+      for (const a of recipientFields) {
+        if (a.signed_value_json != null) {
+          serverValues[a.field_key] = a.signed_value_json;
+        } else if (a.draft_value_json != null) {
+          serverValues[a.field_key] = a.draft_value_json;
         }
       }
 
@@ -177,7 +198,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
           payload.recipient?.status === 'declined' ||
           payload.envelope?.status === 'completed';
         if (recipientSigned) {
-          await clearSessionCache(userId, o.sessionKey);
+          await clearSessionCache(uid, o.sessionKey);
           setPendingSubmission(null);
           setState('completed');
           optsRef.current.onCompleted?.();
@@ -190,13 +211,23 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to load signing session';
       setError(msg);
-      setState('initializing');
+      // Keep existing session (e.g. phone gate) mounted — do not bounce back to initializing.
+      if (!sessionRef.current) {
+        setState('initializing');
+      } else {
+        setState('active');
+      }
+    } finally {
+      hydrateInFlightRef.current = false;
     }
-  }, [isTokenMode, loadId, userId]);
+  }, []);
 
+  // Load once per envelope/token. Do not depend on hydrate identity.
   useEffect(() => {
+    if (!loadKey) return;
     void hydrate();
-  }, [loadKey, hydrate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: stable loadKey only
+  }, [loadKey]);
 
   const flushAutosave = useCallback(async () => {
     if (!session) return;
@@ -362,7 +393,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       } else if (o.envelopeId) {
         await sessionSubmit(o.envelopeId, payload, idempotencyKey);
       }
-      await clearSessionCache(userId, o.sessionKey);
+      await clearSessionCache(userIdRef.current, o.sessionKey);
       await gcSessionFiles(
         o.sessionKey,
         Object.keys(fieldValuesRef.current),
@@ -396,7 +427,6 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     persistPendingSubmission,
     runCompositing,
     session,
-    userId,
   ]);
 
   const decline = useCallback(
@@ -414,7 +444,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         } else if (o.envelopeId) {
           await sessionDecline(o.envelopeId, reason, key);
         }
-        await clearSessionCache(userId, o.sessionKey);
+        await clearSessionCache(userIdRef.current, o.sessionKey);
         setPendingSubmission(null);
         setState('declined');
         optsRef.current.onDeclined?.();
@@ -427,7 +457,7 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         }
       }
     },
-    [hydrate, isTokenMode, session, userId],
+    [hydrate, isTokenMode, session],
   );
 
   const reloadAfterConflict = useCallback(async () => {

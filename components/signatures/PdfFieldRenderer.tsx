@@ -25,7 +25,7 @@ import { captureRef } from 'react-native-view-shot';
 import AlignmentDebugOverlay from './prepare/AlignmentDebugOverlay';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { RuntimeDocument } from '../../types/signature';
-import { fieldImageUri } from '../../utils/signatureRuntime';
+import { fieldImageUri, isFieldEditable } from '../../utils/signatureRuntime';
 import {
   buildAlignmentOverlays,
   computeFitScale,
@@ -210,7 +210,7 @@ export default function PdfFieldRenderer({
             {hasValidDimensions &&
               pageFields.map((f) => {
               if (!f.rect) return null;
-              const editable = editableKeys.has(f.key);
+              const editable = isFieldEditable(editableKeys, f.key);
               const val = fieldValues[f.key];
 
               const pixelRect = fieldToPixelRect(

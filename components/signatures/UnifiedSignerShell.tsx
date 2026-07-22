@@ -11,6 +11,7 @@ import {
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { PendingSubmission, SessionState } from '../../types/signature';
 import type { NormalizedSignerSession } from '../../types/signature';
+import { isSignFieldType } from '../../utils/signatureRuntime';
 import SigningOrderStrip from './SigningOrderStrip';
 import PdfFieldRenderer from './PdfFieldRenderer';
 import FormFieldRenderer from './FormFieldRenderer';
@@ -54,7 +55,7 @@ export default function UnifiedSignerShell({
   const busy = ['compositing', 'uploading', 'awaiting_server', 'autosaving', 'checking_submission'].includes(state);
 
   const handleFieldPress = (key: string, type: string) => {
-    if (type === 'signature' || type === 'initials') {
+    if (isSignFieldType(type)) {
       ui.setSignatureModalFieldKey(key);
     }
   };

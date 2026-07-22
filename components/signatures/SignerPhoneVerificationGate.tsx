@@ -22,6 +22,27 @@ import {
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN_SEC = 60;
 const CONTENT_LOAD_DELAY_MS = 1500;
+/** Prevent remount / Strict Mode / hydrate loops from SMS-spamming. */
+const AUTO_OTP_DEDUP_MS = 55_000;
+
+const autoOtpSentAt = new Map<string, number>();
+
+function otpDedupeKey(envelopeId: string, token?: string): string {
+  return token ? `tok:${token}` : `env:${envelopeId}`;
+}
+
+/** Returns remaining cooldown seconds if we should skip auto-send; else 0. */
+function claimAutoOtpSend(key: string): number {
+  const now = Date.now();
+  const last = autoOtpSentAt.get(key) ?? 0;
+  const elapsed = now - last;
+  if (last > 0 && elapsed < AUTO_OTP_DEDUP_MS) {
+    return Math.ceil((AUTO_OTP_DEDUP_MS - elapsed) / 1000);
+  }
+  // Claim immediately so concurrent remounts cannot double-send.
+  autoOtpSentAt.set(key, now);
+  return 0;
+}
 
 interface Props {
   envelopeId: string;
@@ -45,37 +66,58 @@ export default function SignerPhoneVerificationGate({
   const [contentLoading, setContentLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const inputRef = useRef<TextInput>(null);
-  const requestedRef = useRef(false);
   const onVerifiedRef = useRef(onVerified);
+  const autoStartedRef = useRef(false);
   onVerifiedRef.current = onVerified;
 
-  const requestOtp = useCallback(async () => {
-    setSending(true);
-    setError('');
-    try {
-      const res = token
-        ? await tokenRequestOtp(token)
-        : await sessionRequestOtp(envelopeId);
-      if (res.phone_masked) setMaskedPhone(res.phone_masked);
-      setCooldown(RESEND_COOLDOWN_SEC);
-    } catch (e: unknown) {
-      const msg =
-        e instanceof EnvelopeApiError
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : 'Failed to send code';
-      setError(msg);
-    } finally {
-      setSending(false);
-    }
-  }, [envelopeId, token]);
-
   useEffect(() => {
-    if (requestedRef.current) return;
-    requestedRef.current = true;
-    void requestOtp();
-  }, [requestOtp]);
+    if (phoneMasked) setMaskedPhone(phoneMasked);
+  }, [phoneMasked]);
+
+  const requestOtp = useCallback(
+    async (opts?: { manual?: boolean }) => {
+      setSending(true);
+      setError('');
+      try {
+        const res = token
+          ? await tokenRequestOtp(token)
+          : await sessionRequestOtp(envelopeId);
+        if (res.phone_masked) setMaskedPhone(res.phone_masked);
+        const key = otpDedupeKey(envelopeId, token);
+        autoOtpSentAt.set(key, Date.now());
+        setCooldown(RESEND_COOLDOWN_SEC);
+      } catch (e: unknown) {
+        const msg =
+          e instanceof EnvelopeApiError
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : 'Failed to send code';
+        setError(msg);
+        // Allow retry after a failed auto-send.
+        if (!opts?.manual) {
+          autoOtpSentAt.delete(otpDedupeKey(envelopeId, token));
+        }
+      } finally {
+        setSending(false);
+      }
+    },
+    [envelopeId, token],
+  );
+
+  // Auto-send once per envelope/token (survives remounts via module Map).
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    const key = otpDedupeKey(envelopeId, token);
+    const remaining = claimAutoOtpSend(key);
+    if (remaining > 0) {
+      setCooldown(remaining);
+      return;
+    }
+    void requestOtp({ manual: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once per gate instance; Map dedupes remounts
+  }, []);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -131,11 +173,19 @@ export default function SignerPhoneVerificationGate({
   if (contentLoading) {
     return (
       <View style={[styles.wrap, { backgroundColor: colors.background }]}>
-        <View style={[styles.card, styles.successCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View
+          style={[
+            styles.card,
+            styles.successCard,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
           <View style={styles.checkCircle}>
             <Ionicons name="checkmark" size={28} color="#16a34a" />
           </View>
-          <Text style={[styles.title, styles.successTitle, { color: colors.text }]}>Phone verified</Text>
+          <Text style={[styles.title, styles.successTitle, { color: colors.text }]}>
+            Phone verified
+          </Text>
           <Text style={[styles.subtitle, styles.successSubtitle, { color: colors.textSecondary }]}>
             Now loading your content…
           </Text>
@@ -193,7 +243,7 @@ export default function SignerPhoneVerificationGate({
         <TouchableOpacity
           style={[styles.resendBtn, { opacity: sending || cooldown > 0 ? 0.5 : 1 }]}
           disabled={sending || cooldown > 0}
-          onPress={() => void requestOtp()}
+          onPress={() => void requestOtp({ manual: true })}
         >
           <Text style={{ color: colors.primary, fontWeight: '600' }}>
             {sending

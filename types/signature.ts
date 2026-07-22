@@ -194,7 +194,9 @@ export interface FieldAssignmentInput {
 export interface SignerSourcePayload {
   document_key: string;
   document_id?: number;
-  source_type: DocumentSourceType;
+  /** Backend signer-view sources use ``type``; envelope CRUD uses ``source_type``. */
+  source_type?: DocumentSourceType;
+  type?: DocumentSourceType;
   display_name?: string;
   interactive?: boolean;
   document_role?: string;
@@ -204,11 +206,20 @@ export interface SignerSourcePayload {
   settings?: Record<string, unknown>;
 }
 
+export interface SignerFieldAssignmentRow {
+  field_key: string;
+  recipient_id: number;
+}
+
 export interface SignerSessionPayload {
   success?: boolean;
   envelope?: Envelope;
   sources?: SignerSourcePayload[];
   is_my_turn?: boolean;
+  /** Recipient-scoped assignments (signer-view primary source for editable keys). */
+  fields?: EnvelopeFieldAssignment[];
+  /** All envelope assignments (for “assigned to other signer” hints). */
+  all_fields?: SignerFieldAssignmentRow[];
   editable_field_keys?: string[];
   session_generated_at_revision?: number;
   envelope_revision?: number;

@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { RuntimeDocument } from '../../types/signature';
-import { hasFieldSignature } from '../../utils/signatureRuntime';
+import { hasFieldSignature, isFieldEditable, isSignFieldType } from '../../utils/signatureRuntime';
 
 interface Props {
   document: RuntimeDocument;
@@ -27,7 +27,7 @@ export default function FormFieldRenderer({
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
       <Text style={[styles.docTitle, { color: colors.text }]}>{document.title}</Text>
       {document.fields.map((f) => {
-        const editable = editableKeys.has(f.key);
+        const editable = isFieldEditable(editableKeys, f.key);
         const val = fieldValues[f.key];
         return (
           <View key={f.key} style={[styles.fieldRow, { borderColor: colors.border }]}>
@@ -41,7 +41,7 @@ export default function FormFieldRenderer({
                 onValueChange={(v) => onCheckboxToggle(f.key, v)}
                 disabled={!editable}
               />
-            ) : f.type === 'signature' || f.type === 'initials' ? (
+            ) : isSignFieldType(f.type) ? (
               <Text
                 style={{ color: colors.primary }}
                 onPress={() => editable && onFieldPress(f.key, f.type)}

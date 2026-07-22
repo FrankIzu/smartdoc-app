@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import UnifiedSignerShell from '../../../components/signatures/UnifiedSignerShell';
@@ -12,14 +12,24 @@ import { invalidateEnvelopeListCache } from '../../../hooks/useEnvelopeList';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import type { NormalizedSignerSession } from '../../../types/signature';
 
+function paramToString(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return String(value[0] ?? '').trim();
+  return String(value ?? '').trim();
+}
+
 export default function SessionSignScreen() {
-  const { envelopeId } = useLocalSearchParams<{ envelopeId: string }>();
+  const params = useLocalSearchParams<{ envelopeId: string }>();
+  const envelopeId = useMemo(() => paramToString(params.envelopeId), [params.envelopeId]);
   const router = useRouter();
   const colors = useThemeColors();
   const ui = useSignerUIState();
   const pageCaptureRef = useRef<View>(null);
   const sessionRef = useRef<NormalizedSignerSession | null>(null);
-  const sessionKey = `env_${envelopeId}`;
+  const hydrateRef = useRef<() => Promise<void>>(async () => {});
+  const sessionKey = envelopeId ? `env_${envelopeId}` : 'env_pending';
+
+  const setActiveDocIndex = ui.setActiveDocIndex;
+  const setActivePage = ui.setActivePage;
 
   const compositePage = useCallback(
     async (docKey: string, pageIndex: number) => {
@@ -27,16 +37,16 @@ export default function SessionSignScreen() {
       if (!sess) return null;
       const docIndex = sess.documents.findIndex((d) => d.documentKey === docKey);
       if (docIndex < 0) return null;
-      ui.setActiveDocIndex(docIndex);
-      ui.setActivePage(pageIndex);
+      setActiveDocIndex(docIndex);
+      setActivePage(pageIndex);
       await new Promise((r) => setTimeout(r, 350));
       return capturePageRef(pageCaptureRef);
     },
-    [ui],
+    [setActiveDocIndex, setActivePage],
   );
 
   const engine = useSignerEngine({
-    envelopeId: envelopeId!,
+    envelopeId: envelopeId || undefined,
     sessionKey,
     onCompleted: () => {
       invalidateEnvelopeListCache('inbox');
@@ -46,9 +56,11 @@ export default function SessionSignScreen() {
     compositePage,
   });
 
+  hydrateRef.current = engine.hydrate;
+
   const handlePhoneVerified = useCallback(() => {
-    void engine.hydrate();
-  }, [engine.hydrate]);
+    void hydrateRef.current();
+  }, []);
 
   useEffect(() => {
     sessionRef.current = engine.session;
@@ -63,15 +75,14 @@ export default function SessionSignScreen() {
     },
   });
 
-  const showInitialLoading =
-    engine.state === 'initializing' ||
-    (engine.state === 'hydrating' && !engine.session);
-
-  if (showInitialLoading) {
+  // Only block on first load — once we have a session (including phone-gated), keep UI mounted.
+  if (!engine.session) {
     return (
       <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator color={colors.primary} />
-        <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Loading…</Text>
+        <Text style={{ color: colors.textSecondary, marginTop: 12 }}>
+          {engine.error || 'Loading…'}
+        </Text>
       </SafeAreaView>
     );
   }
@@ -83,25 +94,25 @@ export default function SessionSignScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {needsPhoneGate ? (
         <SignerPhoneVerificationGate
-          envelopeId={envelopeId!}
+          envelopeId={envelopeId}
           phoneMasked={engine.session.phoneMasked}
           onVerified={handlePhoneVerified}
         />
       ) : (
         <UnifiedSignerShell
-        session={engine.session}
-        fieldValues={engine.fieldValues}
-        state={engine.state}
-        error={engine.error}
-        pendingSubmission={engine.pendingSubmission}
-        ui={ui}
-        envelopeId={envelopeId!}
-        pageCaptureRef={pageCaptureRef}
-        onFieldValue={engine.setFieldValue}
-        onSubmit={() => void engine.submit()}
-        onDecline={() => void engine.decline()}
-        onReloadConflict={() => void engine.reloadAfterConflict()}
-      />
+          session={engine.session}
+          fieldValues={engine.fieldValues}
+          state={engine.state}
+          error={engine.error}
+          pendingSubmission={engine.pendingSubmission}
+          ui={ui}
+          envelopeId={envelopeId}
+          pageCaptureRef={pageCaptureRef}
+          onFieldValue={engine.setFieldValue}
+          onSubmit={() => void engine.submit()}
+          onDecline={() => void engine.decline()}
+          onReloadConflict={() => void engine.reloadAfterConflict()}
+        />
       )}
     </SafeAreaView>
   );
