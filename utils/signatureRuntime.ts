@@ -12,7 +12,7 @@ import type {
   WizardSourceDraft,
   WizardStep,
 } from '../types/signature';
-import { makeFieldKey } from './fieldKeys';
+import { makeFieldKey, parseFieldKey } from './fieldKeys';
 
 function resolveSignerSourceType(source: SignerSourcePayload): SignerSourcePayload['source_type'] {
   return source.source_type ?? source.type;
@@ -335,9 +335,37 @@ export function documentRequiresPrepare(doc: EnvelopeDocument): boolean {
 export function fieldImageUri(val: unknown): string | null {
   if (!val || typeof val !== 'object') return null;
   const o = val as Record<string, unknown>;
-  if (typeof o.imageUri === 'string') return o.imageUri;
-  if (typeof o.image === 'string') return o.image;
+  // Prefer in-memory data URLs for reliable RN Image rendering; fall back to cached file path.
+  if (typeof o.image === 'string' && o.image.trim()) return o.image;
+  if (typeof o.imageUri === 'string' && o.imageUri.trim()) return o.imageUri;
   return null;
+}
+
+export function runtimeFieldsToWizard(fields: RuntimeField[]): WizardField[] {
+  return fields.map((f) => {
+    const { fieldId, rev } = parseFieldKey(f.key);
+    return {
+      id: fieldId,
+      rev,
+      type: f.type,
+      label: f.label,
+      required: f.required,
+      page: f.rect?.page,
+      x: f.rect?.x,
+      y: f.rect?.y,
+      w: f.rect?.w,
+      h: f.rect?.h,
+    };
+  });
+}
+
+export function fieldValueForWizardField(
+  field: WizardField,
+  fieldValues: Record<string, unknown>,
+): unknown {
+  const key = makeFieldKey(field.id, field.rev ?? 1);
+  if (fieldValues[key] !== undefined) return fieldValues[key];
+  return fieldValues[field.id];
 }
 
 export function hasFieldSignature(val: unknown): boolean {

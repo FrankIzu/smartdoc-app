@@ -79,5 +79,21 @@ export function nextPageToComposite(manifest: CompositingManifest): { docKey: st
 }
 
 export function isManifestComplete(manifest: CompositingManifest): boolean {
-  return manifest.docs.every((d) => d.completedPages >= d.totalPages);
+  if (manifest.docs.length === 0) return false;
+  return manifest.docs.every((d) => d.totalPages > 0 && d.completedPages >= d.totalPages);
+}
+
+export function manifestMatchesFillableDocs(
+  manifest: CompositingManifest,
+  docs: Array<{ documentKey: string; totalPages: number }>,
+): boolean {
+  if (manifest.docs.length !== docs.length) return false;
+  return docs.every((doc) => {
+    const entry = manifest.docs.find((m) => m.documentKey === doc.documentKey);
+    return !!entry && entry.totalPages === doc.totalPages;
+  });
+}
+
+export function stripDataUrlPrefix(dataUrl: string): string {
+  return dataUrl.replace(/^data:image\/\w+;base64,/, '');
 }

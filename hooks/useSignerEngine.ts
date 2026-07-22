@@ -17,6 +17,9 @@ import {
   createManifest,
   finalizeManifest,
   isManifestComplete,
+  manifestMatchesFillableDocs,
+  stripDataUrlPrefix,
+  writeCompositePage,
 } from '../services/compositingEngine';
 import { gcSessionFiles } from '../services/signatureFileGC';
 import {
@@ -43,7 +46,10 @@ export interface UseSignerEngineOptions {
   sessionKey: string;
   onCompleted?: () => void;
   onDeclined?: () => void;
+  /** Legacy per-page capture from visible PdfFieldRenderer. */
   compositePage?: (docKey: string, pageIndex: number) => Promise<string | null>;
+  /** Preferred: capture all pages for a fillable doc off-screen (FillCaptureHost). */
+  compositeDocument?: (docKey: string) => Promise<string[] | null>;
 }
 
 function mergeFieldValuesIfAllowed(
@@ -71,7 +77,7 @@ async function normalizeFieldValueForCache(
   if (typeof img === 'string' && img.startsWith('data:')) {
     const base64 = img.replace(/^data:image\/\w+;base64,/, '');
     const uri = await writeSignatureImage(sessionKey, key, base64);
-    return { imageUri: uri };
+    return { image: img, imageUri: uri };
   }
   if (typeof o.imageUri === 'string') return value;
   return value;
@@ -189,10 +195,24 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       setFieldValues(merged);
       fieldValuesRef.current = merged;
 
-      if (cached?.pendingSubmission) {
+      let pending = cached?.pendingSubmission ?? null;
+      if (pending?.manifest) {
+        const fillableRows = normalized.documents
+          .filter((d) => d.sourceType === 'fillable' && d.interactive && d.pages.length > 0)
+          .map((d) => ({ documentKey: d.documentKey, totalPages: d.pages.length }));
+        if (
+          fillableRows.length > 0 &&
+          !manifestMatchesFillableDocs(pending.manifest, fillableRows)
+        ) {
+          pending = null;
+          await persistCache({ pendingSubmission: undefined });
+        }
+      }
+
+      if (pending) {
         setState('checking_submission');
-        setPendingSubmission(cached.pendingSubmission);
-        pendingSubmissionRef.current = cached.pendingSubmission;
+        setPendingSubmission(pending);
+        pendingSubmissionRef.current = pending;
         const recipientSigned =
           payload.recipient?.status === 'signed' ||
           payload.recipient?.status === 'declined' ||
@@ -308,15 +328,46 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
   const runCompositing = useCallback(
     async (manifest: CompositingManifest, idempotencyKey: string): Promise<CompositingManifest> => {
       const o = optsRef.current;
-      if (!o.compositePage) return manifest;
       let current = manifest;
+
+      if (o.compositeDocument) {
+        for (const doc of current.docs) {
+          const captured = await o.compositeDocument(doc.documentKey);
+          if (!captured || captured.length < doc.totalPages) {
+            throw new Error(`Failed to prepare ${doc.documentKey}. Please try again.`);
+          }
+          for (let p = 0; p < doc.totalPages; p++) {
+            const pageData = captured[p];
+            if (!pageData) {
+              throw new Error(`Failed to render page ${p + 1} of ${doc.documentKey}`);
+            }
+            current = await writeCompositePage(
+              o.sessionKey,
+              current,
+              doc.documentKey,
+              p,
+              stripDataUrlPrefix(pageData),
+            );
+            await persistPendingSubmission({
+              envelopeId: String(loadId),
+              idempotencyKey,
+              step: 'compositing',
+              manifest: current,
+              lastCompletedOp: { docKey: doc.documentKey, pageIndex: p },
+              startedAt: pendingSubmissionRef.current?.startedAt ?? new Date().toISOString(),
+            });
+          }
+        }
+        return current;
+      }
+
+      if (!o.compositePage) return manifest;
       for (const doc of current.docs) {
         for (let p = doc.completedPages; p < doc.totalPages; p++) {
           const b64 = await o.compositePage(doc.documentKey, p);
           if (!b64) {
             throw new Error(`Failed to render page ${p + 1} of ${doc.documentKey}`);
           }
-          const { writeCompositePage } = await import('../services/compositingEngine');
           current = await writeCompositePage(o.sessionKey, current, doc.documentKey, p, b64);
           await persistPendingSubmission({
             envelopeId: String(loadId),
@@ -347,16 +398,22 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     const startedAt = pendingSubmissionRef.current?.startedAt ?? new Date().toISOString();
     try {
       await flushAutosave();
-      let manifest =
-        pendingSubmissionRef.current?.manifest ??
-        createManifest({
-          sessionKey: o.sessionKey,
-          envelopeId: String(loadId),
-          idempotencyKey,
-          docs: session.documents
-            .filter((d) => d.sourceType === 'fillable' && d.interactive)
-            .map((d) => ({ documentKey: d.documentKey, totalPages: d.pages.length })),
-        });
+
+      const fillableDocRows = session.documents
+        .filter((d) => d.sourceType === 'fillable' && d.interactive && d.pages.length > 0)
+        .map((d) => ({ documentKey: d.documentKey, totalPages: d.pages.length }));
+
+      let manifest = createManifest({
+        sessionKey: o.sessionKey,
+        envelopeId: String(loadId),
+        idempotencyKey,
+        docs: fillableDocRows,
+      });
+
+      const pendingManifest = pendingSubmissionRef.current?.manifest;
+      if (pendingManifest && manifestMatchesFillableDocs(pendingManifest, fillableDocRows)) {
+        manifest = pendingManifest;
+      }
 
       await persistPendingSubmission({
         envelopeId: String(loadId),
@@ -366,15 +423,19 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         startedAt,
       });
 
-      if (!isManifestComplete(manifest) && o.compositePage) {
+      const canComposite = Boolean(o.compositeDocument || o.compositePage);
+      if (!isManifestComplete(manifest) && canComposite && fillableDocRows.length > 0) {
         manifest = await runCompositing(manifest, idempotencyKey);
       }
 
-      if (manifest.docs.length > 0 && !isManifestComplete(manifest)) {
+      if (fillableDocRows.length > 0 && !isManifestComplete(manifest)) {
         throw new Error('Document preparation incomplete. Please try again.');
       }
 
       const doc_pages = await finalizeManifest(manifest);
+      if (fillableDocRows.length > 0 && Object.keys(doc_pages).length === 0) {
+        throw new Error('Could not prepare signed document pages. Please try again.');
+      }
       await persistPendingSubmission({
         envelopeId: String(loadId),
         idempotencyKey,

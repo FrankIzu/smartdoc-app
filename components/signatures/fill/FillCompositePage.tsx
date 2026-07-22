@@ -2,7 +2,7 @@ import React, { forwardRef } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import type { WizardField } from '../../../types/signature';
 import { fieldToPixelRect } from '../../../utils/fillable';
-import { fieldImageUri } from '../../../utils/signatureRuntime';
+import { fieldImageUri, fieldValueForWizardField, isSignFieldType } from '../../../utils/signatureRuntime';
 
 interface Props {
   pageImageUrl: string;
@@ -35,10 +35,10 @@ const FillCompositePage = forwardRef<View, Props>(function FillCompositePage(
           pageWidth,
           pageHeight,
         );
-        const val = fieldValues[field.id];
+        const val = fieldValueForWizardField(field, fieldValues);
         const fontSize = Math.max(10, Math.min(rect.height * 0.55, 28));
 
-        if (field.type === 'signature' || field.type === 'initials') {
+        if (isSignFieldType(field.type)) {
           const uri = fieldImageUri(val);
           if (!uri) return null;
           return (
