@@ -32,7 +32,7 @@ import type {
   PendingSubmission,
   SessionState,
 } from '../types/signature';
-import { isFieldEditable, normalizeSignerPayload } from '../utils/signatureRuntime';
+import { isFieldEditable, normalizeSignerPayload, shapeSignerValuesForApi } from '../utils/signatureRuntime';
 import { errorLogger } from '../services/errorLogger';
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
@@ -241,10 +241,12 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
     setState((s) => (s === 'active' || s === 'offline_dirty' ? 'autosaving' : s));
     try {
       const o = optsRef.current;
+      const shaped = await shapeSignerValuesForApi(session, delta);
+      if (Object.keys(shaped).length === 0) return;
       if (isTokenMode && o.token) {
-        await tokenAutosave(o.token, delta, session.sessionGeneratedAtRevision, controller.signal);
+        await tokenAutosave(o.token, shaped, session.sessionGeneratedAtRevision, controller.signal);
       } else if (o.envelopeId) {
-        await sessionAutosave(o.envelopeId, delta, session.sessionGeneratedAtRevision, controller.signal);
+        await sessionAutosave(o.envelopeId, shaped, session.sessionGeneratedAtRevision, controller.signal);
       }
       if (controller.signal.aborted || seq < autosaveSeqRef.current) return;
       pendingDeltaRef.current = {};
@@ -381,8 +383,9 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
         startedAt,
       });
       setState('uploading');
+      const shapedValues = await shapeSignerValuesForApi(session, fieldValuesRef.current);
       const payload = {
-        values: fieldValuesRef.current,
+        values: shapedValues,
         doc_pages,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         session_generated_at_revision: session.sessionGeneratedAtRevision,

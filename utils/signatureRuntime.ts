@@ -344,6 +344,67 @@ export function hasFieldSignature(val: unknown): boolean {
   return fieldImageUri(val) != null;
 }
 
+function lookupFieldType(session: NormalizedSignerSession, fieldKey: string): string | undefined {
+  const bareKey = fieldKey.includes(':') ? fieldKey.slice(0, fieldKey.lastIndexOf(':')) : fieldKey;
+  for (const doc of session.documents) {
+    for (const f of doc.fields) {
+      if (f.key === fieldKey || f.key === bareKey) return f.type;
+      const bareField = f.key.includes(':') ? f.key.slice(0, f.key.lastIndexOf(':')) : f.key;
+      if (bareField === bareKey) return f.type;
+    }
+  }
+  return undefined;
+}
+
+/** Match web ``shapeSignerFieldValueForApi`` — backend requires ``{ image: string }`` for signatures. */
+export async function shapeSignerFieldValueForApi(
+  raw: unknown,
+  fieldType?: string | null,
+): Promise<unknown> {
+  const looksLikeSignature =
+    raw &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    (typeof (raw as Record<string, unknown>).imageUri === 'string' ||
+      typeof (raw as Record<string, unknown>).image === 'string');
+
+  if (!isSignFieldType(fieldType) && !looksLikeSignature) return raw;
+
+  if (typeof raw === 'string' && raw.trim()) {
+    return { image: raw };
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+
+  const o = raw as Record<string, unknown>;
+  if (typeof o.image === 'string' && o.image.trim()) {
+    return { image: o.image };
+  }
+  if (typeof o.imageUri === 'string' && o.imageUri.trim()) {
+    const uri = o.imageUri;
+    if (uri.startsWith('data:')) {
+      return { image: uri };
+    }
+    const { readFileBase64 } = await import('../services/signatureSessionCache');
+    const b64 = await readFileBase64(uri);
+    return { image: `data:image/png;base64,${b64}` };
+  }
+  return raw;
+}
+
+export async function shapeSignerValuesForApi(
+  session: NormalizedSignerSession,
+  values: Record<string, unknown>,
+  editableKeys: ReadonlySet<string> = session.editableFieldKeys,
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(values)) {
+    if (!isFieldEditable(editableKeys, key)) continue;
+    const fieldType = lookupFieldType(session, key);
+    out[key] = await shapeSignerFieldValueForApi(val, fieldType);
+  }
+  return out;
+}
+
 export function envelopeDocsToWizardSources(docs: EnvelopeDocument[]): WizardSourceDraft[] {
   return docs.map((d) => ({
     localId: `doc_${d.id}`,
