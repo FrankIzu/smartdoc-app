@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { PendingSubmission, SessionState } from '../../types/signature';
 import type { NormalizedSignerSession } from '../../types/signature';
@@ -32,6 +33,7 @@ interface Props {
   onFieldValue: (key: string, value: unknown) => void;
   onSubmit: () => void;
   onDecline: () => void;
+  onBack?: () => void;
   onReloadConflict: () => void;
 }
 
@@ -48,6 +50,7 @@ export default function UnifiedSignerShell({
   onFieldValue,
   onSubmit,
   onDecline,
+  onBack,
   onReloadConflict,
 }: Props) {
   const colors = useThemeColors();
@@ -71,6 +74,21 @@ export default function UnifiedSignerShell({
 
   return (
     <View style={[styles.wrap, { backgroundColor: colors.background }]}>
+      {onBack ? (
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={onBack}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+            {session.envelopeTitle}
+          </Text>
+        </View>
+      ) : null}
       <SigningOrderStrip
         position={session.chain?.position}
         total={session.chain?.total}
@@ -170,13 +188,17 @@ export default function UnifiedSignerShell({
             style={styles.declineBtn}
             disabled={busy || !session.isMyTurn}
             onPress={() =>
-              Alert.alert('Decline', 'Decline to sign this envelope?', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Decline', style: 'destructive', onPress: onDecline },
-              ])
+              Alert.alert(
+                'Decline to sign?',
+                'This notifies the sender that you are refusing to sign. Your progress will be saved as a draft if you leave using Back instead.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Decline to sign', style: 'destructive', onPress: onDecline },
+                ],
+              )
             }
           >
-            <Text style={{ color: '#dc2626' }}>Decline</Text>
+            <Text style={{ color: '#dc2626' }}>Decline to sign</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.submitBtn, { backgroundColor: colors.primary, opacity: busy || !session.isMyTurn ? 0.5 : 1 }]}
@@ -204,6 +226,16 @@ export default function UnifiedSignerShell({
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+  },
+  backBtn: { padding: 4 },
+  headerTitle: { flex: 1, fontSize: 16, fontWeight: '600' },
   centered: { alignItems: 'center', justifyContent: 'center' },
   banner: { padding: 12 },
   resumeBox: { margin: 14, padding: 12, borderRadius: 8, borderWidth: 1 },

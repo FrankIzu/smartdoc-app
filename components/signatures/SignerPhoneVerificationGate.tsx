@@ -49,6 +49,7 @@ interface Props {
   token?: string;
   phoneMasked?: string | null;
   onVerified: () => void | Promise<void>;
+  onBack?: () => void;
 }
 
 export default function SignerPhoneVerificationGate({
@@ -56,6 +57,7 @@ export default function SignerPhoneVerificationGate({
   token,
   phoneMasked,
   onVerified,
+  onBack,
 }: Props) {
   const colors = useThemeColors();
   const [code, setCode] = useState('');
@@ -200,6 +202,16 @@ export default function SignerPhoneVerificationGate({
       style={[styles.wrap, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {onBack ? (
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={onBack}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </TouchableOpacity>
+      ) : null}
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.title, { color: colors.text }]}>Verify your phone</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
@@ -260,6 +272,7 @@ export default function SignerPhoneVerificationGate({
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, justifyContent: 'center', padding: 20 },
+  backBtn: { alignSelf: 'flex-start', marginBottom: 12, padding: 4 },
   card: {
     borderRadius: 12,
     borderWidth: 1,
