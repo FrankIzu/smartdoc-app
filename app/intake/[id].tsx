@@ -513,6 +513,42 @@ export default function IntakeDetailScreen() {
     );
   };
 
+  const handleUnarchive = () => {
+    if (!intake) return;
+    Alert.alert(
+      'Restore Intake',
+      'Restore this Intake? It will return to the Active list with its previous workflow status.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              const response = await apiService.unarchiveIntake(intake.id);
+              if (response.success) {
+                invalidateIntakeCaches();
+                if (response.intake) {
+                  setIntake(response.intake);
+                  if (detailCacheKey) screenCache.set(detailCacheKey, response.intake);
+                } else {
+                  reloadAfterMutation();
+                }
+                Alert.alert('Restored', 'Intake restored to Active');
+              } else {
+                Alert.alert('Error', response.message || 'Failed to restore Intake');
+              }
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to restore Intake');
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleConfirmItem = async (itemId: number) => {
     if (!intake) return;
     try {
@@ -711,8 +747,10 @@ export default function IntakeDetailScreen() {
       backgroundColor: colors.surface,
     },
     actionButtonPrimary: { backgroundColor: '#007AFF' },
+    actionButtonRestore: { backgroundColor: '#DBEAFE' },
     actionButtonText: { fontSize: 13, fontWeight: '500', color: colors.text, marginLeft: 6 },
     actionButtonTextPrimary: { color: '#fff' },
+    actionButtonTextRestore: { color: '#1D4ED8' },
     card: {
       backgroundColor: colors.card,
       borderRadius: 12,
@@ -981,6 +1019,16 @@ export default function IntakeDetailScreen() {
               <Text style={dynamicStyles.actionButtonText}>Archive</Text>
             </TouchableOpacity>
           )}
+          {intake.status === 'archived' && (
+            <TouchableOpacity
+              style={[dynamicStyles.actionButton, dynamicStyles.actionButtonRestore]}
+              onPress={handleUnarchive}
+              disabled={busy}
+            >
+              <Ionicons name="arrow-undo-outline" size={15} color="#1D4ED8" />
+              <Text style={[dynamicStyles.actionButtonText, dynamicStyles.actionButtonTextRestore]}>Restore</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Progress */}
@@ -1090,7 +1138,7 @@ export default function IntakeDetailScreen() {
                       <Text style={[dynamicStyles.smallActionBtnText, { color: '#B91C1C' }]}>Reject</Text>
                     </TouchableOpacity>
                   )}
-                  {item.status === 'pending' && (
+                  {item.status === 'pending' && intake.status !== 'archived' && (
                     <TouchableOpacity style={[dynamicStyles.smallActionBtn, dynamicStyles.naBtn]} onPress={() => handleNotApplicable(item.id)}>
                       <Text style={[dynamicStyles.smallActionBtnText, { color: colors.text, marginLeft: 0 }]}>Mark N/A</Text>
                     </TouchableOpacity>

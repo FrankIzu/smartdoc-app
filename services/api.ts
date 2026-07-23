@@ -204,6 +204,7 @@ const MOBILE_ENDPOINTS = {
   WEB_INTAKE_BY_ID: (id: number) => `/api/v1/web/intakes/${id}`,
   WEB_INTAKE_SEND: (id: number) => `/api/v1/web/intakes/${id}/send`,
   WEB_INTAKE_REMIND: (id: number) => `/api/v1/web/intakes/${id}/remind`,
+  WEB_INTAKE_UNARCHIVE: (id: number) => `/api/v1/web/intakes/${id}/unarchive`,
   WEB_INTAKE_ITEM_CONFIRM: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/confirm`,
   WEB_INTAKE_ITEM_REJECT: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/reject`,
   WEB_INTAKE_ITEM_NOT_APPLICABLE: (intakeId: number, itemId: number) => `/api/v1/web/intakes/${intakeId}/items/${itemId}/not-applicable`,
@@ -5239,6 +5240,17 @@ class ApiService {
     } catch (error: any) {
       console.error('Archive intake error:', error);
       throw new Error(error.response?.data?.message || 'Failed to archive Intake');
+    }
+  }
+
+  /** Restore an archived intake — recomputes workflow status from checklist progress. */
+  async unarchiveIntake(id: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKE_UNARCHIVE(id));
+      return response.data;
+    } catch (error: any) {
+      console.error('Unarchive intake error:', error);
+      throw new Error(error.response?.data?.message || 'Failed to restore Intake');
     }
   }
 
