@@ -40,7 +40,7 @@ export function LimitErrorProvider({ children }: { children: React.ReactNode }) 
           Linking.openURL(actionUrl).catch(() => {});
         } else {
           // In-app route: /settings?tab=billing -> (tabs)/settings with tab
-          router.push('/(tabs)/settings');
+          router.navigate('/(tabs)/settings');
         }
       };
 

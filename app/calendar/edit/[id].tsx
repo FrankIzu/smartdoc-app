@@ -20,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import MinimizableBottomSheet from '../../../components/MinimizableBottomSheet';
 import LinkifiedMultilineInput from '../../../components/LinkifiedMultilineInput';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../../hooks/useCalendarProfile';
@@ -691,9 +692,15 @@ export default function CalendarEditScreen() {
           ) : null}
         </View>
 
-        <TouchableOpacity style={[styles.btn, submitting && { opacity: 0.6 }]} disabled={submitting} onPress={save}>
-          <Text style={styles.btnText}>{submitting ? 'Saving…' : 'Save'}</Text>
-        </TouchableOpacity>
+        <FeedbackTouchable
+          style={[styles.btn, submitting && { opacity: 0.6 }]}
+          disabled={submitting}
+          loading={submitting}
+          onPress={save}
+          spinnerColor="#fff"
+        >
+          <Text style={styles.btnText}>Save</Text>
+        </FeedbackTouchable>
       </ScrollView>
       </KeyboardAvoidingView>
 

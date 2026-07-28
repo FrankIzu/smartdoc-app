@@ -43,10 +43,12 @@ import {
   floatingDialogSurfaceStyle,
   modalScrimOverlayStyle,
 } from '../../../utils/dialogSurfaceStyles';
+import { sanitizeDisplayFilename } from '../../../utils/displayFilename';
 import { draftsCache, isNetworkError } from '../../../utils/draftsCache';
 import { syncSingleLocalDraft } from '../../../utils/draftsOfflineSync';
 import { saveLastOpenedDraft } from '../../../utils/lastOpenedDraft';
 import { secureStorage } from '../../../utils/storage';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { AnimatedHeaderContainer } from '../../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../../components/TapToToggleHeaderView';
 import { useAuth } from '../../context/auth';
@@ -86,7 +88,7 @@ function textToSimpleHtml(text: string): string {
 
 function stripExtension(name?: string): string {
   if (!name) return 'Untitled Note';
-  return name.replace(/\.[^./\\]+$/, '');
+  return sanitizeDisplayFilename(name).replace(/\.[^./\\]+$/, '');
 }
 
 function isDefaultUntitledName(name?: string): boolean {
@@ -2518,13 +2520,15 @@ export default function DraftEditScreen() {
                 >
                   <Text style={dynamicStyles.modalBtnSecondaryText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
+                <FeedbackTouchable
                   style={[dynamicStyles.modalBtn, { marginBottom: 0, marginLeft: 12, minWidth: 100, paddingVertical: 10, paddingHorizontal: 16 }]}
                   onPress={handleCreateShareLink}
                   disabled={linkLoading}
+                  loading={linkLoading}
+                  spinnerColor="#fff"
                 >
-                  {linkLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={dynamicStyles.modalBtnText}>Create Link</Text>}
-                </TouchableOpacity>
+                  <Text style={dynamicStyles.modalBtnText}>Create Link</Text>
+                </FeedbackTouchable>
               </View>
 
               {/* Existing Share Links */}
@@ -2577,27 +2581,33 @@ export default function DraftEditScreen() {
                                     >
                                       <Ionicons name="copy-outline" size={16} color="#fff" />
                                     </TouchableOpacity>
-                                    <TouchableOpacity
+                                    <FeedbackTouchable
                                       style={[dynamicStyles.shareLinkRevokeBtn, { paddingVertical: 6, paddingHorizontal: 10 }]}
                                       onPress={() => handleRevokeShare(share.id)}
+                                      spinnerColor="#fff"
+                                      replaceWithSpinner={false}
                                     >
                                       <Ionicons name="ban-outline" size={16} color="#fff" />
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
+                                    </FeedbackTouchable>
+                                    <FeedbackTouchable
                                       style={[dynamicStyles.shareLinkDeleteBtn, { padding: 6 }]}
                                       onPress={() => handleDeleteShare(share.id)}
+                                      spinnerColor="#fff"
+                                      replaceWithSpinner={false}
                                     >
                                       <Ionicons name="trash-outline" size={16} color="#fff" />
-                                    </TouchableOpacity>
+                                    </FeedbackTouchable>
                                   </View>
                                 )}
                                 {isRevoked && (
-                                  <TouchableOpacity
+                                  <FeedbackTouchable
                                     style={[dynamicStyles.shareLinkDeleteBtn, { padding: 6 }]}
                                     onPress={() => handleDeleteShare(share.id)}
+                                    spinnerColor="#fff"
+                                    replaceWithSpinner={false}
                                   >
                                     <Ionicons name="trash-outline" size={16} color="#fff" />
-                                  </TouchableOpacity>
+                                  </FeedbackTouchable>
                                 )}
                               </View>
                             </View>
@@ -2682,13 +2692,15 @@ export default function DraftEditScreen() {
                       onChangeText={setShareMessage}
                       multiline
                     />
-                    <TouchableOpacity
+                    <FeedbackTouchable
                       style={[dynamicStyles.modalBtn, dynamicStyles.modalBtnGreen, { marginBottom: 0 }]}
                       onPress={handleSendInviteEmail}
                       disabled={sendingEmail}
+                      loading={sendingEmail}
+                      spinnerColor="#fff"
                     >
-                      {sendingEmail ? <ActivityIndicator size="small" color="#fff" /> : <Text style={dynamicStyles.modalBtnText}>Send Email</Text>}
-                    </TouchableOpacity>
+                      <Text style={dynamicStyles.modalBtnText}>Send Email</Text>
+                    </FeedbackTouchable>
                   </View>
                 </>
               ) : (

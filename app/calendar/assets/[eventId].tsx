@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { calendarAssetContent, calendarMeetingAssets } from '../../../services/calendarApi';
 
@@ -188,10 +189,16 @@ export default function CalendarEventAssetsScreen() {
         <ScrollView contentContainerStyle={{ paddingBottom: 48 }}>
           {assets.length > 0 ? (
             assets.map((asset) => (
-              <TouchableOpacity key={asset.key} style={styles.row} onPress={() => openAsset(asset)}>
+              <FeedbackTouchable
+                key={asset.key}
+                style={styles.row}
+                onPress={() => openAsset(asset)}
+                spinnerColor="#007AFF"
+                replaceWithSpinner={false}
+              >
                 <Text style={styles.label}>{asset.title}</Text>
                 {asset.description ? <Text style={{ color: colors.textSecondary, marginTop: 4 }}>{asset.description}</Text> : null}
-              </TouchableOpacity>
+              </FeedbackTouchable>
             ))
           ) : (
             <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 32, paddingHorizontal: 24 }}>

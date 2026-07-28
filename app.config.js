@@ -59,6 +59,17 @@ const baseExpo = {
       NSBiometricUsageDescription:
         "GrabDocs uses biometric authentication (Face ID or Touch ID) for secure and convenient access to your account and documents.",
       ITSAppUsesNonExemptEncryption: false,
+      // Allow canOpenURL / preferred open for calendar Join → native meeting apps
+      LSApplicationQueriesSchemes: [
+        "zoommtg",
+        "zoomus",
+        "msteams",
+        "googlemeet",
+        "comgooglemeet",
+        "wbx",
+        "comgooglemaps",
+        "maps",
+      ],
       UIBackgroundModes: ["voip", "audio"],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
@@ -121,6 +132,11 @@ const baseExpo = {
         data: [
           { scheme: "https", host: "api.grabdocs.com", pathPrefix: "/meeting" },
           { scheme: "https", host: "app.grabdocs.com", pathPrefix: "/meeting" },
+          { scheme: "https", host: "app.grabdocs.com", pathPrefix: "/join-meeting" },
+          { scheme: "https", host: "grabdocs.com", pathPrefix: "/join-meeting" },
+          { scheme: "https", host: "grabdocs.com", pathPrefix: "/meeting" },
+          { scheme: "https", host: "www.grabdocs.com", pathPrefix: "/join-meeting" },
+          { scheme: "https", host: "www.grabdocs.com", pathPrefix: "/meeting" },
         ],
         category: ["BROWSABLE", "DEFAULT"],
       },
@@ -142,6 +158,7 @@ const baseExpo = {
     "./plugins/android-pip",
     "./plugins/android-large-screen",
     "./plugins/android-disable-release-lint",
+    "./plugins/android-autofill-highlight",
     "./plugins/ios-pip",
     "expo-dev-client",
     "expo-font",

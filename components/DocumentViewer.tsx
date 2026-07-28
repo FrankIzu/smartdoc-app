@@ -18,7 +18,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
     useAnimatedStyle,
     useSharedValue,
@@ -29,6 +29,7 @@ import { WebView } from 'react-native-webview';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiClient } from '../services/api';
+import { sanitizeDisplayFilename } from '../utils/displayFilename';
 import { secureStorage } from '../utils/storage';
 
 // Conditionally import react-native-pdf (only works in development builds, not Expo Go)
@@ -2329,24 +2330,22 @@ export default function DocumentViewer({
         }
       });
 
-    // Pan gesture for dragging when zoomed
-    // On Android, configure activeOffset to make it more responsive
+    // Pan only when zoomed so it cannot steal taps meant for chrome (e.g. Back).
     const panGesture = Gesture.Pan()
       .minPointers(1)
       .maxPointers(1)
-      .activeOffsetX([-10, 10]) // Activate after 10px horizontal movement
-      .activeOffsetY([-10, 10]) // Activate after 10px vertical movement
+      .activeOffsetX([-10, 10])
+      .activeOffsetY([-10, 10])
       .onUpdate((e) => {
-        // Only pan if zoomed in
         if (scale.value > 1) {
           translateX.value = savedTranslateX.value + e.translationX;
           translateY.value = savedTranslateY.value + e.translationY;
         }
       })
       .onEnd(() => {
+        if (scale.value <= 1) return;
         savedTranslateX.value = translateX.value;
         savedTranslateY.value = translateY.value;
-        // Constrain panning to image bounds
         const maxTranslateX = (imageWidth * scale.value - maxWidth) / 2;
         const maxTranslateY = (imageHeight * scale.value - maxHeight) / 2;
         if (Math.abs(translateX.value) > maxTranslateX) {
@@ -2863,7 +2862,7 @@ export default function DocumentViewer({
         <Ionicons name="document-text-outline" size={64} color="#007AFF" />
         <Text style={dynamicStyles.placeholderText}>Document Preview</Text>
         <Text style={dynamicStyles.placeholderSubtext}>
-          {fileName}{'\n'}
+          {sanitizeDisplayFilename(fileName)}{'\n'}
           Preview for this document type is not yet implemented.
         </Text>
       </View>
@@ -2922,29 +2921,49 @@ export default function DocumentViewer({
       animationType="slide"
       presentationStyle="fullScreen"
       statusBarTranslucent
+      onRequestClose={onClose}
     >
-      <SafeAreaView 
-        style={dynamicStyles.container} 
-        edges={['left', 'right', 'bottom']}
-      >
-        <View style={dynamicStyles.header}>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color={colors.primary} />
-          </TouchableOpacity>
-          <Text style={dynamicStyles.title} numberOfLines={1} ellipsizeMode="tail">
-            {getViewerTitle()}
-          </Text>
-          <View style={styles.placeholder} />
-        </View>
-        <View style={[styles.content, isImageFile(resolveViewerFileType(), fileKind, fileCategory) && styles.imageViewerContent]}>
-          {renderContent()}
-        </View>
-      </SafeAreaView>
+      {/* Required so gesture-handler + header presses work reliably inside Modal */}
+      <GestureHandlerRootView style={styles.modalRoot}>
+        <SafeAreaView
+          style={dynamicStyles.container}
+          edges={['left', 'right', 'bottom']}
+        >
+          <View style={dynamicStyles.header} pointerEvents="box-none">
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={onClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <Ionicons name="arrow-back" size={24} color={colors.primary} />
+            </TouchableOpacity>
+            <Text style={dynamicStyles.title} numberOfLines={1} ellipsizeMode="tail">
+              {getViewerTitle()}
+            </Text>
+            <View style={styles.placeholder} />
+          </View>
+          <View
+            style={[
+              styles.content,
+              isImageFile(resolveViewerFileType(), fileKind, fileCategory) && styles.imageViewerContent,
+            ]}
+            // Keep zoom/pan gestures from competing with the header back control
+            collapsable={false}
+          >
+            {renderContent()}
+          </View>
+        </SafeAreaView>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  modalRoot: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     // backgroundColor removed - using dynamicStyles
@@ -2966,6 +2985,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 2,
   },
   title: {
     flex: 1,

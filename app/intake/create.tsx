@@ -15,6 +15,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { INTAKE_REMINDER_PRESETS, type IntakeTemplate, type ReminderPreset } from '../../types/intake';
@@ -171,6 +173,14 @@ export default function CreateIntakeScreen() {
         setShowSaveTemplateModal(false);
         setTemplateNameForSave('');
         setTemplateIndustryForSave('');
+        if (response.already_exists || response.unchanged) {
+          Alert.alert(
+            'Already saved',
+            response.message || 'No changes were made — this template is already saved.',
+          );
+        } else {
+          Alert.alert('Saved', 'Template saved');
+        }
         const templatesResponse = await apiService.getIntakeTemplates();
         if (templatesResponse.success) setTemplates(templatesResponse.templates || []);
       } else {
@@ -657,58 +667,53 @@ export default function CreateIntakeScreen() {
       </ScrollView>
 
       <View style={dynamicStyles.footer}>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[dynamicStyles.createButton, submitting && dynamicStyles.disabledButton]}
           onPress={handleSubmit}
           disabled={submitting}
+          loading={submitting}
+          spinnerColor="#fff"
         >
-          <Text style={dynamicStyles.createButtonText}>{submitting ? 'Creating...' : 'Create Intake'}</Text>
-        </TouchableOpacity>
+          <Text style={dynamicStyles.createButtonText}>Create Intake</Text>
+        </FeedbackTouchable>
       </View>
 
       {/* Destination folder picker */}
-      <Modal visible={showFolderPicker} animationType="slide" transparent onRequestClose={() => setShowFolderPicker(false)}>
-        <View style={dynamicStyles.modalOverlay}>
-          <View style={dynamicStyles.modalCard}>
-            <View style={dynamicStyles.modalHeader}>
-              <Text style={dynamicStyles.modalTitle}>Destination folder</Text>
-              <TouchableOpacity onPress={() => setShowFolderPicker(false)}>
-                <Ionicons name="close" size={22} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView>
-              <TouchableOpacity
-                style={dynamicStyles.modalOption}
-                onPress={() => {
-                  setDestinationFolderId(null);
-                  setShowFolderPicker(false);
-                }}
-              >
-                <Text style={[dynamicStyles.modalOptionText, destinationFolderId === null && dynamicStyles.modalOptionSelected]}>
-                  Leave files where they land
-                </Text>
-              </TouchableOpacity>
-              {folders.map((f) => (
-                <TouchableOpacity
-                  key={f.id}
-                  style={dynamicStyles.modalOption}
-                  onPress={() => {
-                    setDestinationFolderId(f.id);
-                    setShowFolderPicker(false);
-                  }}
-                >
-                  <Text style={[dynamicStyles.modalOptionText, destinationFolderId === f.id && dynamicStyles.modalOptionSelected]}>
-                    {f.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <AdaptiveListPickerModal
+        visible={showFolderPicker}
+        onClose={() => setShowFolderPicker(false)}
+        title="Destination folder"
+        itemCount={folders.length + 1}
+      >
+        <TouchableOpacity
+          style={dynamicStyles.modalOption}
+          onPress={() => {
+            setDestinationFolderId(null);
+            setShowFolderPicker(false);
+          }}
+        >
+          <Text style={[dynamicStyles.modalOptionText, destinationFolderId === null && dynamicStyles.modalOptionSelected]}>
+            Leave files where they land
+          </Text>
+        </TouchableOpacity>
+        {folders.map((f) => (
+          <TouchableOpacity
+            key={f.id}
+            style={dynamicStyles.modalOption}
+            onPress={() => {
+              setDestinationFolderId(f.id);
+              setShowFolderPicker(false);
+            }}
+          >
+            <Text style={[dynamicStyles.modalOptionText, destinationFolderId === f.id && dynamicStyles.modalOptionSelected]}>
+              {f.name}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </AdaptiveListPickerModal>
 
       {/* iOS date picker */}
-      <Modal visible={showDatePicker} animationType="slide" transparent onRequestClose={() => setShowDatePicker(false)}>
+      <Modal visible={showDatePicker} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setShowDatePicker(false)}>
         <View style={dynamicStyles.modalOverlay}>
           <View style={dynamicStyles.modalCard}>
             <View style={dynamicStyles.modalHeader}>
@@ -739,9 +744,11 @@ export default function CreateIntakeScreen() {
               <Text style={dynamicStyles.linkText}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Template</Text>
-            <TouchableOpacity onPress={handleSaveAsTemplate} disabled={savingTemplate}>
-              <Text style={dynamicStyles.linkText}>{savingTemplate ? 'Saving...' : 'Save'}</Text>
-            </TouchableOpacity>
+            <FeedbackTouchable onPress={handleSaveAsTemplate} disabled={savingTemplate} loading={savingTemplate} spinnerColor="#007AFF" replaceWithSpinner={false}>
+              <Text style={[dynamicStyles.linkText, savingTemplate && { opacity: 0.5 }]}>
+                {savingTemplate ? 'Saving...' : 'Save'}
+              </Text>
+            </FeedbackTouchable>
           </View>
           <View style={{ padding: 16 }}>
             <View style={dynamicStyles.inputGroup}>

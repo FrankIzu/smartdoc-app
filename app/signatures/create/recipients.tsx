@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import RecipientEditor from '../../../components/signatures/RecipientEditor';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { useAuth } from '../../context/auth';
@@ -99,13 +100,16 @@ export default function RecipientsScreen() {
           <Text style={{ color: colors.text, flex: 1 }}>Send reminders</Text>
           <Switch value={reminderEnabled} onValueChange={setReminderEnabled} />
         </View>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[styles.nextBtn, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
           disabled={saving}
-          onPress={() => void handleNext()}
+          loading={saving}
+          onPress={handleNext}
+          spinnerColor="#fff"
+          replaceWithSpinner={false}
         >
           <Text style={styles.nextText}>{saving ? 'Saving…' : 'Next: Assign fields'}</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </ScrollView>
     </SafeAreaView>
   );

@@ -20,6 +20,7 @@ import SignatureCreateChooser from '../../components/signatures/SignatureCreateC
 import { useEnvelopeList, ENVELOPE_LIST_PAGE_SIZE } from '../../hooks/useEnvelopeList';
 import { invalidateSignatureActivityCache, useSignatureAllList } from '../../hooks/useSignatureAllList';
 import type { SignatureActivityItem } from '../../hooks/useSignatureAllList';
+import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { EnvelopeTab } from '../../services/envelopeApi';
 import { deleteFillableTemplate } from '../../services/fillableApi';
@@ -61,7 +62,7 @@ export default function SignaturesHubScreen() {
   const validTab = (t?: string): EnvelopeTab =>
     TABS.some((x) => x.key === t) ? (t as EnvelopeTab) : 'all';
   const [tab, setTab] = useState<EnvelopeTab>(() => validTab(params.tab));
-  const [chooserOpen, setChooserOpen] = useState(false);
+  const chooserSheet = useMinimizableSheet();
   const [viewerFile, setViewerFile] = useState<{ id: string; name: string } | null>(null);
   const [allVisibleCount, setAllVisibleCount] = useState(ENVELOPE_LIST_PAGE_SIZE);
   const isAllTab = tab === 'all';
@@ -155,7 +156,9 @@ export default function SignaturesHubScreen() {
 
   const showInitialSpinner =
     isAllTab
-      ? (loading || activityLoading) && allItems.length === 0 && !refreshing
+      ? // Wait for envelopes AND fillable/submission activity — otherwise the list
+        // paints envelopes first and other rows "pop in" a few seconds later.
+        (loading || activityLoading) && !refreshing
       : loading && envelopes.length === 0 && !refreshing;
 
   const handleLoadMore = useCallback(() => {
@@ -206,52 +209,46 @@ export default function SignaturesHubScreen() {
       const templateId = envelopeFillableTemplateId(envelope);
 
       return {
-        onViewCompletedPdf: () => {
-          void (async () => {
-            try {
-              const full = await loadEnvelopeForActions(envelope);
-              const fileId = envelopeFinalFileId(full);
-              if (!fileId) {
-                Alert.alert('Not available', 'The signed PDF is not ready yet.');
-                return;
-              }
-              setViewerFile({ id: String(fileId), name: title });
-            } catch (e: unknown) {
-              Alert.alert('Could not open PDF', e instanceof Error ? e.message : 'Try again.');
+        onViewCompletedPdf: async () => {
+          try {
+            const full = await loadEnvelopeForActions(envelope);
+            const fileId = envelopeFinalFileId(full);
+            if (!fileId) {
+              Alert.alert('Not available', 'The signed PDF is not ready yet.');
+              return;
             }
-          })();
+            setViewerFile({ id: String(fileId), name: title });
+          } catch (e: unknown) {
+            Alert.alert('Could not open PDF', e instanceof Error ? e.message : 'Try again.');
+          }
         },
-        onShare: () => {
-          void (async () => {
-            try {
-              const full = await loadEnvelopeForActions(envelope);
-              const fileId = envelopeFinalFileId(full);
-              if (!fileId) {
-                Alert.alert('Cannot share', 'No signed PDF is available yet.');
-                return;
-              }
-              await handleShareFile(fileId, title);
-            } catch (e: unknown) {
-              Alert.alert('Could not share', e instanceof Error ? e.message : 'Try again.');
+        onShare: async () => {
+          try {
+            const full = await loadEnvelopeForActions(envelope);
+            const fileId = envelopeFinalFileId(full);
+            if (!fileId) {
+              Alert.alert('Cannot share', 'No signed PDF is available yet.');
+              return;
             }
-          })();
+            await handleShareFile(fileId, title);
+          } catch (e: unknown) {
+            Alert.alert('Could not share', e instanceof Error ? e.message : 'Try again.');
+          }
         },
         onViewSubmissions: templateId
           ? () => router.push(hubTemplateSubmissionsRoute(templateId))
           : undefined,
-        onViewAuditTrail: () => {
-          void (async () => {
-            try {
-              const auditFileId = await resolveEnvelopeAuditFileId(eid, envelope.audit_file_id);
-              if (!auditFileId) {
-                Alert.alert('Not available', 'The audit trail PDF could not be generated.');
-                return;
-              }
-              setViewerFile({ id: String(auditFileId), name: `Audit trail — ${title}` });
-            } catch (e: unknown) {
-              Alert.alert('Could not open audit trail', e instanceof Error ? e.message : 'Try again.');
+        onViewAuditTrail: async () => {
+          try {
+            const auditFileId = await resolveEnvelopeAuditFileId(eid, envelope.audit_file_id);
+            if (!auditFileId) {
+              Alert.alert('Not available', 'The audit trail PDF could not be generated.');
+              return;
             }
-          })();
+            setViewerFile({ id: String(auditFileId), name: `Audit trail — ${title}` });
+          } catch (e: unknown) {
+            Alert.alert('Could not open audit trail', e instanceof Error ? e.message : 'Try again.');
+          }
         },
       };
     },
@@ -325,16 +322,13 @@ export default function SignaturesHubScreen() {
           }
           onShare={
             row.kind === 'fillable' && row.template?.file_id
-              ? () => {
-                  void handleShareFile(row.template!.file_id, row.template!.name || 'Document');
-                }
+              ? () => handleShareFile(row.template!.file_id, row.template!.name || 'Document')
               : row.kind === 'submission' && row.submission?.filled_file_id
-                ? () => {
-                    void handleShareFile(
+                ? () =>
+                    handleShareFile(
                       row.submission!.filled_file_id,
                       submissionDisplayTitle(row.submission!),
-                    );
-                  }
+                    )
                 : row.kind === 'envelope' && row.envelope
                   ? envelopeActionHandlers(row.envelope).onShare
                   : undefined
@@ -492,13 +486,14 @@ export default function SignaturesHubScreen() {
           }
         />
       )}
-      <TouchableOpacity style={styles.fab} onPress={() => setChooserOpen(true)}>
+      <TouchableOpacity style={styles.fab} onPress={() => chooserSheet.open()}>
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
 
       <SignatureCreateChooser
-        visible={chooserOpen}
-        onClose={() => setChooserOpen(false)}
+        visible={chooserSheet.visible}
+        expandNonce={chooserSheet.expandNonce}
+        onClose={chooserSheet.close}
         onPrepare={() => router.push(hubPrepareRoute())}
         onFill={() => router.push(hubFillRoute())}
       />

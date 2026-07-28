@@ -9,7 +9,7 @@
  * - All geometry paths go through utils/fillable/ exclusively
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import Toast from 'react-native-toast-message';
 import type { WizardField, FieldType } from '../types/signature';
@@ -42,7 +42,11 @@ import {
   DEFAULT_ZOOM,
   NUDGE_COMPRESS_MS,
 } from '../utils/fillable';
-import { getFillableTemplate, saveFillableTemplateFields } from '../services/fillableApi';
+import {
+  getFillableTemplate,
+  saveFillableTemplateFields,
+  waitForFillablePageImages,
+} from '../services/fillableApi';
 
 export type PrepareTool = 'cursor' | FieldType;
 
@@ -86,6 +90,8 @@ export interface PrepareEditorState {
   isGestureLocked: boolean;
   gestureLock: React.MutableRefObject<boolean>;
   fieldClipboard: React.MutableRefObject<WizardField[]>;
+  /** Reactive clipboard size — ref alone does not re-render the properties sheet. */
+  clipboardCount: number;
   sortedAllFields: WizardField[];
 }
 
@@ -128,7 +134,10 @@ export interface PrepareEditorActions {
   ) => void;
   undo: () => void;
   redo: () => void;
+  /** Snapshot selection into clipboard (does not place fields). */
   copySelected: () => void;
+  /** Copy selection into clipboard and immediately place offset clones. */
+  duplicateSelected: () => void;
   paste: () => void;
 }
 
@@ -157,7 +166,9 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
   const [isGestureLocked, setIsGestureLocked] = useState(false);
 
   const gestureLock = useRef(false);
+  const gestureLockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fieldClipboard = useRef<WizardField[]>([]);
+  const [clipboardCount, setClipboardCount] = useState(0);
   // Debounce ref for label/property update undo compression
   const lastUpdateOpRef = useRef<{ fieldId: string; key: string; ts: number } | null>(null);
 
@@ -213,6 +224,28 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
   const setGestureLocked = useCallback((locked: boolean) => {
     gestureLock.current = locked;
     setIsGestureLocked(locked);
+    // Safety: never leave chrome (page nav / tools) disabled if a gesture
+    // finalize was missed after selecting/dragging a field.
+    if (gestureLockTimeoutRef.current) {
+      clearTimeout(gestureLockTimeoutRef.current);
+      gestureLockTimeoutRef.current = null;
+    }
+    if (locked) {
+      gestureLockTimeoutRef.current = setTimeout(() => {
+        if (!gestureLock.current) return;
+        gestureLock.current = false;
+        setIsGestureLocked(false);
+        gestureLockTimeoutRef.current = null;
+      }, 2000);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (gestureLockTimeoutRef.current) {
+        clearTimeout(gestureLockTimeoutRef.current);
+      }
+    };
   }, []);
 
   // ─── push op helpers ─────────────────────────────────────────────────────
@@ -227,7 +260,11 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const tpl = await getFillableTemplate(templateId);
+      let tpl = await getFillableTemplate(templateId);
+      // Newly uploaded docs may not have page images yet — poll until ready.
+      if (!(tpl.page_images ?? []).length) {
+        tpl = await waitForFillablePageImages(templateId);
+      }
       const allFields = tpl.json_fields?.fields ?? [];
       setFields(allFields.filter((f) => !f.deleted));
       setDeletedFields(allFields.filter((f) => f.deleted));
@@ -274,11 +311,12 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
 
   // ─── navigation ─────────────────────────────────────────────────────────
   const goToPage = useCallback((page: number) => {
-    if (gestureLock.current) return;
+    // Header pagination must remain usable even if a field drag left lock stuck.
+    if (gestureLock.current) setGestureLocked(false);
     setCurrentPage(page);
     setSelectedFieldIds([]);
     setPrimarySelectedFieldId(null);
-  }, []);
+  }, [setGestureLocked]);
 
   // ─── dimensions ─────────────────────────────────────────────────────────
   const setPageDimensions = useCallback((page: number, dim: PageDimensions) => {
@@ -383,14 +421,15 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
   }, [currentPage, pushOp]);
 
   const setPrepareTool = useCallback((tool: PrepareTool) => {
-    if (gestureLock.current) return;
+    // Tool palette taps should recover from a stuck field gesture lock.
+    if (gestureLock.current) setGestureLocked(false);
     if (tool === 'cursor') {
       setPrepareTool_('cursor');
       return;
     }
     addFieldOfType(tool);
     setPrepareTool_('cursor');
-  }, [addFieldOfType]);
+  }, [addFieldOfType, setGestureLocked]);
 
   // ─── soft delete ─────────────────────────────────────────────────────────
   const softDeleteFields = useCallback((
@@ -467,7 +506,8 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
 
   // ─── selection ───────────────────────────────────────────────────────────
   const selectField = useCallback((fieldId: string, multi: boolean) => {
-    if (gestureLock.current) return;
+    // A tap-to-select must not be blocked by a leftover drag lock.
+    if (gestureLock.current) setGestureLocked(false);
     if (multi) {
       const { selectedIds, primaryId } = toggleSelection(selectedRef.current, fieldId);
       setSelectedFieldIds(selectedIds);
@@ -480,10 +520,10 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
     setFields((prev) =>
       prev.map((f) => f.id === fieldId ? { ...f, lastTouchedAt: Date.now() } : f),
     );
-  }, []);
+  }, [setGestureLocked]);
 
   const jumpToField = useCallback((fieldId: string) => {
-    if (gestureLock.current) return;
+    if (gestureLock.current) setGestureLocked(false);
     const field = fieldsRef.current.find((f) => f.id === fieldId);
     if (!field || field.x == null || field.y == null || field.w == null || field.h == null) return;
 
@@ -519,7 +559,7 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
     setFields((prev) =>
       prev.map((f) => f.id === fieldId ? { ...f, lastTouchedAt: Date.now() } : f),
     );
-  }, [pageDimensions, applyProgrammaticScroll]);
+  }, [pageDimensions, applyProgrammaticScroll, setGestureLocked]);
 
   const clearSelection = useCallback(() => {
     if (gestureLock.current) return;
@@ -570,7 +610,7 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
 
   // ─── undo ────────────────────────────────────────────────────────────────
   const undo = useCallback(() => {
-    if (gestureLock.current) return;
+    if (gestureLock.current) setGestureLocked(false);
     setUndoStack((prev) => {
       if (!prev.length) return prev;
       const op = prev[prev.length - 1];
@@ -581,11 +621,11 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
       setIsDirty(true);
       return prev.slice(0, -1);
     });
-  }, []);
+  }, [setGestureLocked]);
 
   // ─── redo ────────────────────────────────────────────────────────────────
   const redo = useCallback(() => {
-    if (gestureLock.current) return;
+    if (gestureLock.current) setGestureLocked(false);
     setRedoStack((prev) => {
       if (!prev.length) return prev;
       const op = prev[prev.length - 1];
@@ -596,33 +636,50 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
       setIsDirty(true);
       return prev.slice(0, -1);
     });
-  }, []);
+  }, [setGestureLocked]);
 
   // ─── clipboard ───────────────────────────────────────────────────────────
-  const copySelected = useCallback(() => {
-    fieldClipboard.current = fieldsRef.current.filter((f) =>
+  const snapshotSelectionToClipboard = useCallback((): WizardField[] => {
+    const selected = fieldsRef.current.filter((f) =>
       selectedRef.current.includes(f.id),
     );
+    fieldClipboard.current = selected;
+    setClipboardCount(selected.length);
+    return selected;
   }, []);
 
-  const paste = useCallback(() => {
-    const clipboard = fieldClipboard.current;
+  const copySelected = useCallback(() => {
+    snapshotSelectionToClipboard();
+  }, [snapshotSelectionToClipboard]);
+
+  const pasteClipboardFields = useCallback((clipboard: WizardField[]) => {
     if (!clipboard.length) return;
-    const newFields = clipboard.map((f) =>
-      normalizeField({
-        ...f,
+    const newFields = clipboard.map((f) => {
+      // New fields must not reuse server revision from the source.
+      const { rev: _rev, deleted: _deleted, ...rest } = f;
+      return normalizeField({
+        ...rest,
         id: generateUUID(),
         x: (f.x ?? 0) + PASTE_OFFSET,
         y: (f.y ?? 0) + PASTE_OFFSET,
         lastTouchedAt: Date.now(),
-      }),
-    );
+      });
+    });
     setFields((prev) => [...prev, ...newFields]);
     const newIds = newFields.map((f) => f.id);
     setSelectedFieldIds(newIds);
-    setPrimarySelectedFieldId(newIds[newIds.length - 1]);
+    setPrimarySelectedFieldId(newIds[newIds.length - 1] ?? null);
     pushOp({ type: 'add', fieldIds: newIds });
   }, [pushOp]);
+
+  const paste = useCallback(() => {
+    pasteClipboardFields(fieldClipboard.current);
+  }, [pasteClipboardFields]);
+
+  const duplicateSelected = useCallback(() => {
+    const selected = snapshotSelectionToClipboard();
+    pasteClipboardFields(selected);
+  }, [snapshotSelectionToClipboard, pasteClipboardFields]);
 
   return {
     fields, deletedFields, isDirty, isSaving, isLoading, loadError, templateName,
@@ -635,7 +692,7 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
     canRedo: redoStack.length > 0,
     overlayRenderVersion,
     isGestureLocked,
-    gestureLock, fieldClipboard,
+    gestureLock, fieldClipboard, clipboardCount,
     sortedAllFields,
     load, save,
     goToPage,
@@ -647,6 +704,6 @@ export function usePrepareEditor(): PrepareEditorState & PrepareEditorActions {
     setGestureLocked,
     commitDrag, commitResize,
     undo, redo,
-    copySelected, paste,
+    copySelected, duplicateSelected, paste,
   };
 }

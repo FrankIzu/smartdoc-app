@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { calendarRsvpFromEmail } from '../../services/calendarApi';
 
@@ -70,12 +71,22 @@ export default function CalendarEmailRsvpScreen() {
         <Text style={styles.text}>{result || 'Respond to this calendar invitation.'}</Text>
         {!result ? (
           <>
-            <TouchableOpacity style={styles.btn} disabled={loading} onPress={() => submit('accepted')}>
+            <FeedbackTouchable
+              style={styles.btn}
+              disabled={loading}
+              spinnerColor="#fff"
+              onPress={() => submit('accepted')}
+            >
               <Text style={styles.btnText}>Accept</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.decline]} disabled={loading} onPress={() => submit('declined')}>
+            </FeedbackTouchable>
+            <FeedbackTouchable
+              style={[styles.btn, styles.decline]}
+              disabled={loading}
+              spinnerColor="#fff"
+              onPress={() => submit('declined')}
+            >
               <Text style={styles.btnText}>Decline</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </>
         ) : (
           <TouchableOpacity style={styles.btn} onPress={() => router.replace('/calendar' as any)}>

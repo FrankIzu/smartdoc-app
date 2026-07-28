@@ -101,7 +101,16 @@ export default function ProcessScanScreen() {
         // continue with original
       }
 
-      // Navigate immediately — upload runs in background
+      // Navigate immediately — upload runs in background.
+      // Pop scanner (+ this review screen) off the stack first so Back from
+      // Files returns to the homepage, not the camera.
+      try {
+        if (router.canDismiss()) {
+          router.dismissAll();
+        }
+      } catch {
+        // dismissAll throws when there is nothing to dismiss
+      }
       router.replace('/(tabs)/documents');
 
       (async () => {

@@ -12,6 +12,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { workspacesListScreenKey } from '../../services/userScopedCache';
@@ -52,13 +53,24 @@ export default function WorkspacesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [busyWorkspaceId, setBusyWorkspaceId] = useState<number | null>(null);
 
   const hasMoreRef = useRef(true);
   const loadingMoreRef = useRef(false);
   const offsetRef = useRef(0);
   const onEndReachedCalledDuringMomentumRef = useRef(false);
+  /** Prevents double-delete while the API/list refresh is still in flight. */
+  const deletingIdsRef = useRef<Set<number>>(new Set());
 
   const workspacesCacheKey = workspacesListScreenKey(user?.id);
+
+  const handleBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)' as any);
+    }
+  }, [router]);
 
   const loadWorkspaces = async (forceRefresh = false, append = false) => {
     if (!user) return;
@@ -142,6 +154,10 @@ export default function WorkspacesScreen() {
   };
 
   const handleDeleteWorkspace = (workspace: Workspace) => {
+    if (deletingIdsRef.current.has(workspace.id) || busyWorkspaceId === workspace.id) {
+      return;
+    }
+
     Alert.alert(
       'Delete Workspace',
       `Are you sure you want to delete "${workspace.name}"? This action cannot be undone.`,
@@ -151,17 +167,24 @@ export default function WorkspacesScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            if (deletingIdsRef.current.has(workspace.id)) return;
+            deletingIdsRef.current.add(workspace.id);
+            setBusyWorkspaceId(workspace.id);
             try {
               const response = await apiService.deleteWorkspace(workspace.id);
               if (response.success) {
-                Alert.alert('Success', 'Workspace deleted successfully');
+                // Remove immediately so the user cannot tap delete again while refresh runs.
+                setWorkspaces((prev) => prev.filter((w) => w.id !== workspace.id));
                 if (workspacesCacheKey) screenCache.invalidate(workspacesCacheKey);
-                loadWorkspaces(true);
+                await loadWorkspaces(true);
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete workspace');
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to delete workspace');
+            } finally {
+              deletingIdsRef.current.delete(workspace.id);
+              setBusyWorkspaceId((current) => (current === workspace.id ? null : current));
             }
           },
         },
@@ -170,6 +193,7 @@ export default function WorkspacesScreen() {
   };
 
   const handleToggleActive = async (workspace: Workspace) => {
+    setBusyWorkspaceId(workspace.id);
     try {
       const response = await apiService.updateWorkspace(workspace.id, {
         is_active: !workspace.is_active
@@ -182,6 +206,8 @@ export default function WorkspacesScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update workspace');
+    } finally {
+      setBusyWorkspaceId(null);
     }
   };
 
@@ -210,16 +236,28 @@ export default function WorkspacesScreen() {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
       backgroundColor: colors.card,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
+      zIndex: 2,
+      elevation: 2,
     },
     headerTitle: {
+      flex: 1,
       fontSize: 18,
       fontWeight: '600',
       color: colors.text,
+      textAlign: 'center',
+      marginHorizontal: 4,
+    },
+    headerIconButton: {
+      minWidth: 44,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 3,
     },
     loadingContainer: {
       flex: 1,
@@ -393,25 +431,31 @@ export default function WorkspacesScreen() {
         
         {workspace.can_manage && (
           <View style={dynamicStyles.workspaceActions}>
-            <TouchableOpacity
+            <FeedbackTouchable
               style={[dynamicStyles.actionButton, { backgroundColor: workspace.is_active ? '#FF6B6B' : '#4ECDC4' }]}
               onPress={() => handleToggleActive(workspace)}
+              loading={busyWorkspaceId === workspace.id}
+              spinnerColor="#fff"
             >
               <Ionicons 
                 name={workspace.is_active ? 'pause' : 'play'} 
                 size={16} 
                 color="#fff" 
               />
-            </TouchableOpacity>
+            </FeedbackTouchable>
             
             {/* Don't show delete button for default/personal workspace */}
             {!workspace.is_personal && (
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={[dynamicStyles.actionButton, { backgroundColor: '#FF6B6B' }]}
                 onPress={() => handleDeleteWorkspace(workspace)}
+                loading={busyWorkspaceId === workspace.id}
+                disabled={busyWorkspaceId != null}
+                spinnerColor="#fff"
+                accessibilityLabel={`Delete workspace ${workspace.name}`}
               >
                 <Ionicons name="trash" size={16} color="#fff" />
-              </TouchableOpacity>
+              </FeedbackTouchable>
             )}
           </View>
         )}
@@ -439,11 +483,25 @@ export default function WorkspacesScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity
+            style={dynamicStyles.headerIconButton}
+            onPress={handleBack}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle}>Team Workspace</Text>
-          <View style={{ width: 24 }} />
+          <Text style={dynamicStyles.headerTitle} numberOfLines={1} pointerEvents="none">Team Workspace</Text>
+          <TouchableOpacity
+            style={dynamicStyles.headerIconButton}
+            onPress={() => router.push('/workspaces/create')}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Create workspace"
+          >
+            <Ionicons name="add" size={28} color="#007AFF" />
+          </TouchableOpacity>
         </View>
         <View style={dynamicStyles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
@@ -456,12 +514,24 @@ export default function WorkspacesScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity
+          style={dynamicStyles.headerIconButton}
+          onPress={handleBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle}>Team Workspace</Text>
-        <TouchableOpacity onPress={() => router.push('/workspaces/create')}>
-          <Ionicons name="add" size={24} color="#007AFF" />
+        <Text style={dynamicStyles.headerTitle} numberOfLines={1} pointerEvents="none">Team Workspace</Text>
+        <TouchableOpacity
+          style={dynamicStyles.headerIconButton}
+          onPress={() => router.push('/workspaces/create')}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Create workspace"
+        >
+          <Ionicons name="add" size={28} color="#007AFF" />
         </TouchableOpacity>
       </View>
 

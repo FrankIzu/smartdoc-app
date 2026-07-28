@@ -13,11 +13,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { toAlertMessage } from '../../utils/alertUtils';
 import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
+import { sanitizeDisplayFilename } from '../../utils/displayFilename';
 import { useAuth } from '../context/auth';
 
 type FileInviteRow = {
@@ -43,7 +45,7 @@ type TrashedDraftRow = {
 
 function stripExtension(name?: string): string {
   if (!name) return 'Untitled';
-  return name.replace(/\.[^./\\]+$/, '');
+  return sanitizeDisplayFilename(name).replace(/\.[^./\\]+$/, '');
 }
 
 const TRASHED_PAGE_SIZE = 15;
@@ -605,24 +607,25 @@ export default function DraftsDeletedAndSharedScreen() {
                       <Text style={[dynamicStyles.rowMeta, { marginTop: 2 }]}>Role: {inv.role}</Text>
                     ) : null}
                     <View style={dynamicStyles.actions}>
-                      <TouchableOpacity
+                      <FeedbackTouchable
                         style={[dynamicStyles.actionBtn, dynamicStyles.accept]}
                         onPress={() => handleAccept(inv.share_id)}
                         disabled={actionLoading[inv.share_id]}
+                        loading={actionLoading[inv.share_id]}
+                        spinnerColor="#fff"
                       >
-                        {actionLoading[inv.share_id] ? (
-                          <ActivityIndicator color="#fff" size="small" />
-                        ) : (
-                          <Text style={dynamicStyles.actionText}>Accept</Text>
-                        )}
-                      </TouchableOpacity>
-                      <TouchableOpacity
+                        <Text style={dynamicStyles.actionText}>Accept</Text>
+                      </FeedbackTouchable>
+                      <FeedbackTouchable
                         style={[dynamicStyles.actionBtn, dynamicStyles.reject]}
                         onPress={() => handleReject(inv.share_id)}
                         disabled={actionLoading[inv.share_id]}
+                        loading={actionLoading[inv.share_id]}
+                        spinnerColor="#007AFF"
+                        replaceWithSpinner={false}
                       >
                         <Text style={dynamicStyles.rejectText}>Decline</Text>
-                      </TouchableOpacity>
+                      </FeedbackTouchable>
                     </View>
                   </View>
                 ))
@@ -644,7 +647,7 @@ export default function DraftsDeletedAndSharedScreen() {
           onPress={handleCloseTrashedKebabMenu}
         >
           <View style={dynamicStyles.kebabMenuContainer}>
-            <TouchableOpacity
+            <FeedbackTouchable
               style={dynamicStyles.kebabMenuItem}
               onPress={() => {
                 const row = selectedTrashedDraftForMenu;
@@ -657,11 +660,13 @@ export default function DraftsDeletedAndSharedScreen() {
                   selectedTrashedDraftForMenu.restoring === true ||
                   (selectedTrashedDraftForMenu.lifecycle_state || '').toLowerCase() === 'restoring')
               }
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
             >
               <Ionicons name="arrow-undo-outline" size={20} color="#007AFF" />
               <Text style={dynamicStyles.kebabMenuText}>Restore</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </FeedbackTouchable>
+            <FeedbackTouchable
               style={dynamicStyles.kebabMenuItem}
               onPress={() => {
                 const row = selectedTrashedDraftForMenu;
@@ -674,10 +679,12 @@ export default function DraftsDeletedAndSharedScreen() {
                   selectedTrashedDraftForMenu.restoring === true ||
                   (selectedTrashedDraftForMenu.lifecycle_state || '').toLowerCase() === 'restoring')
               }
+              spinnerColor="#EF4444"
+              replaceWithSpinner={false}
             >
               <Ionicons name="trash-outline" size={20} color="#EF4444" />
               <Text style={[dynamicStyles.kebabMenuText, { color: '#EF4444' }]}>Delete forever</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
         </TouchableOpacity>
       </Modal>

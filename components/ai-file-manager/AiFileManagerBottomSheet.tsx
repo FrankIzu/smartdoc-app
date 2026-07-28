@@ -71,7 +71,7 @@ export default function AiFileManagerBottomSheet({
   const handleHandoff = useCallback(
     (query: string) => {
       onClose();
-      router.push(`/(tabs)/chats?initialQuery=${encodeURIComponent(query)}&autosubmit=1`);
+      router.navigate(`/(tabs)/chats?initialQuery=${encodeURIComponent(query)}&autosubmit=1` as any);
     },
     [onClose, router]
   );

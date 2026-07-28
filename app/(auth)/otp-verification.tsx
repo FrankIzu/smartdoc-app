@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Animated,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -14,11 +14,13 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { Colors } from '../../constants/Colors';
 import { API_BASE_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 import { useAuth } from '../context/auth';
+import deviceSecurityService from '../../services/deviceSecurity';
 
 interface OtpVerificationParams {
   username: string;
@@ -105,6 +107,7 @@ export default function OtpVerificationScreen() {
   const hiddenInputRef = useRef<TextInput>(null);
   const cursorAnim = useRef(new Animated.Value(1)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
+  const needsKeyboardRestoreRef = useRef(false);
 
   // Blinking cursor animation
   useEffect(() => {
@@ -130,12 +133,72 @@ export default function OtpVerificationScreen() {
     ]).start();
   }, [shakeAnim]);
 
-  // Auto-focus on mount
+  /**
+   * Open / restore the soft keyboard.
+   * On Android, dismissing the keypad often leaves the TextInput focused, so a
+   * plain focus() is a no-op — blur first, then focus again.
+   */
+  const focusInput = useCallback((opts?: { force?: boolean }) => {
+    if (isLoading && !opts?.force) return;
+    const input = hiddenInputRef.current;
+    if (!input) return;
+
+    const reopen = () => {
+      hiddenInputRef.current?.focus();
+    };
+
+    if (typeof input.isFocused === 'function' && input.isFocused()) {
+      input.blur();
+      requestAnimationFrame(() => {
+        setTimeout(reopen, Platform.OS === 'android' ? 40 : 16);
+      });
+      return;
+    }
+    reopen();
+  }, [isLoading]);
+
+  // Auto-focus on mount (retry once — first attempt can miss after navigation)
   useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      setTimeout(() => hiddenInputRef.current?.focus(), 250);
-    });
-    return () => cancelAnimationFrame(id);
+    const open = () => {
+      const input = hiddenInputRef.current;
+      if (!input) return;
+      if (typeof input.isFocused === 'function' && input.isFocused()) {
+        input.blur();
+        setTimeout(() => hiddenInputRef.current?.focus(), Platform.OS === 'android' ? 40 : 16);
+      } else {
+        input.focus();
+      }
+    };
+    const t1 = setTimeout(open, 200);
+    const t2 = setTimeout(open, 500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
+
+  // After verify finishes, restore keyboard if we asked for it while loading.
+  useEffect(() => {
+    if (isLoading || !needsKeyboardRestoreRef.current) return;
+    needsKeyboardRestoreRef.current = false;
+    const t = setTimeout(() => focusInput({ force: true }), 60);
+    return () => clearTimeout(t);
+  }, [isLoading, focusInput]);
+
+  // If the user dismisses the keypad while the field stays focused, keep UI in sync.
+  useEffect(() => {
+    const hide = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setIsFocused((focused) => {
+          if (focused && hiddenInputRef.current && !hiddenInputRef.current.isFocused?.()) {
+            return false;
+          }
+          return focused;
+        });
+      },
+    );
+    return () => hide.remove();
   }, []);
 
   // Countdown timer
@@ -144,10 +207,6 @@ export default function OtpVerificationScreen() {
     const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
     return () => clearInterval(timer);
   }, [timeLeft]);
-
-  const focusInput = () => {
-    hiddenInputRef.current?.focus();
-  };
 
   const handleOtpChange = (text: string) => {
     if (isLoading) return;
@@ -223,6 +282,17 @@ export default function OtpVerificationScreen() {
         const completeLoginWithOtpVerified = async (): Promise<boolean> => {
           if (!params.username || !params.tempPassword) return false;
 
+          let deviceInfo: Record<string, unknown> | undefined;
+          try {
+            const fingerprint = await deviceSecurityService.getDeviceFingerprint();
+            deviceInfo = {
+              fingerprint,
+              rememberDevice: trustDevice,
+            };
+          } catch {
+            deviceInfo = { rememberDevice: trustDevice };
+          }
+
           const loginResponse = await fetch(`${API_BASE_URL}/api/v1/mobile/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -232,6 +302,7 @@ export default function OtpVerificationScreen() {
               password: params.tempPassword,
               otpVerified: true,
               rememberDevice: trustDevice,
+              deviceInfo,
             }),
           });
 
@@ -282,6 +353,10 @@ export default function OtpVerificationScreen() {
           // refreshSession() (calls checkAuth) is skipped here: a transient network failure
           // cannot nuke the freshly-written JWT when we use setUserFromExternal directly.
           await setUserFromExternal(userData, loginData.token);
+          await deviceSecurityService.setLastLoginData({
+            timestamp: new Date().toISOString(),
+            authMethod: 'password',
+          });
           void continueToMainApp(loginData.user);
           return true;
         };
@@ -299,11 +374,13 @@ export default function OtpVerificationScreen() {
         setError(data.message || 'Incorrect code. Please try again.');
         setOtpValue('');
         triggerShake();
-        requestAnimationFrame(() => hiddenInputRef.current?.focus());
+        // Focus while editable=false (isLoading) is ignored — restore after finally.
+        needsKeyboardRestoreRef.current = true;
       }
     } catch (err) {
       setError('Network error. Please try again.');
       console.error('OTP verification error:', err);
+      needsKeyboardRestoreRef.current = true;
     } finally {
       setIsLoading(false);
     }
@@ -338,7 +415,9 @@ export default function OtpVerificationScreen() {
       if (response.ok && data.success) {
         setTimeLeft(600);
         setOtpValue('');
-        requestAnimationFrame(() => hiddenInputRef.current?.focus());
+        needsKeyboardRestoreRef.current = true;
+        // isResending clears in finally; restore keyboard after that tick.
+        setTimeout(() => focusInput({ force: true }), 80);
       } else {
         setError(data.message || 'Failed to resend code');
       }
@@ -395,12 +474,15 @@ export default function OtpVerificationScreen() {
             : undefined}
           importantForAutofill="yes"
           editable={!isLoading}
+          showSoftInputOnFocus
           style={styles.hiddenInput}
           caretHidden
+          // Allow programmatic focus; taps go through the Pressable overlay.
+          accessible={false}
         />
 
-        {/* Visual digit boxes */}
-        <Pressable onPress={focusInput}>
+        {/* Visual digit boxes — tap restores keyboard even after manual dismiss */}
+        <Pressable onPress={() => focusInput()}>
           <Animated.View style={[styles.otpContainer, { transform: [{ translateX: shakeAnim }] }]}>
             {Array.from({ length: OTP_LENGTH }).map((_, i) => {
               const digit = otpValue[i];
@@ -447,35 +529,31 @@ export default function OtpVerificationScreen() {
           <Text style={styles.trustDeviceLabel}>Trust this device for 60 days</Text>
         </View>
 
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[
             styles.verifyButton,
             (isLoading || otpValue.length < OTP_LENGTH) && styles.buttonDisabled,
           ]}
           onPress={() => handleVerifyOtp()}
           disabled={isLoading || otpValue.length < OTP_LENGTH}
+          loading={isLoading}
+          spinnerColor="#fff"
         >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.verifyButtonText}>Verify Code</Text>
-          )}
-        </TouchableOpacity>
+          <Text style={styles.verifyButtonText}>Verify Code</Text>
+        </FeedbackTouchable>
 
         <View style={styles.resendContainer}>
           <Text style={styles.resendText}>Didn&apos;t receive the code? </Text>
-          <TouchableOpacity
+          <FeedbackTouchable
             onPress={handleResendOtp}
             disabled={isResending || timeLeft > 540}
+            loading={isResending}
+            spinnerColor={Colors.primary}
           >
-            {isResending ? (
-              <ActivityIndicator size="small" color={Colors.primary} />
-            ) : (
-              <Text style={[styles.resendLink, timeLeft > 540 && styles.resendLinkDisabled]}>
-                Resend Code
-              </Text>
-            )}
-          </TouchableOpacity>
+            <Text style={[styles.resendLink, timeLeft > 540 && styles.resendLinkDisabled]}>
+              Resend Code
+            </Text>
+          </FeedbackTouchable>
         </View>
 
         <TouchableOpacity
@@ -547,9 +625,11 @@ const styles = StyleSheet.create({
   },
   hiddenInput: {
     position: 'absolute',
+    // Keep tiny + non-interactive; Pressable owns taps. Use near-zero opacity —
+    // fully transparent inputs sometimes fail to open the soft keyboard on Android.
     width: 1,
     height: 1,
-    opacity: 0,
+    opacity: 0.01,
     pointerEvents: 'none',
   },
   otpContainer: {

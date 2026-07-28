@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FeedbackTouchable } from './FeedbackTouchable';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../utils/dialogSurfaceStyles';
 
@@ -9,7 +10,7 @@ export interface ActionMenuItem {
   label: string;
   icon?: keyof typeof Ionicons.glyphMap;
   iconColor?: string;
-  onPress: () => void;
+  onPress: () => void | Promise<void>;
   destructive?: boolean;
 }
 
@@ -24,18 +25,24 @@ interface Props {
 
 export default function ActionMenuModal({ visible, title, message, items, onClose }: Props) {
   const colors = useThemeColors();
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const run = (item: ActionMenuItem) => {
-    item.onPress();
+  useEffect(() => {
+    if (!visible) setBusyId(null);
+  }, [visible]);
+
+  const handleClose = () => {
+    if (busyId) return;
     onClose();
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <TouchableOpacity
         style={modalScrimOverlayStyle(colors.isDark, styles.overlay)}
         activeOpacity={1}
-        onPress={onClose}
+        onPress={handleClose}
+        disabled={!!busyId}
       >
         <View
           style={[
@@ -68,32 +75,47 @@ export default function ActionMenuModal({ visible, title, message, items, onClos
                 ) : null}
               </View>
             ) : null}
-            {items.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                style={styles.row}
-                onPress={() => run(item)}
-                accessibilityRole="button"
-                accessibilityLabel={item.label}
-              >
-                {item.icon ? (
-                  <Ionicons
-                    name={item.icon}
-                    size={20}
-                    color={item.destructive ? '#EF4444' : item.iconColor ?? colors.text}
-                  />
-                ) : null}
-                <Text
-                  style={[
-                    styles.rowLabel,
-                    { color: item.destructive ? '#EF4444' : colors.text },
-                    !item.icon && styles.rowLabelNoIcon,
-                  ]}
+            {items.map((item) => {
+              const spinnerColor = item.destructive
+                ? '#EF4444'
+                : item.iconColor ?? colors.text;
+              return (
+                <FeedbackTouchable
+                  key={item.id}
+                  style={styles.row}
+                  disabled={!!busyId && busyId !== item.id}
+                  spinnerColor={spinnerColor}
+                  onPress={async () => {
+                    setBusyId(item.id);
+                    try {
+                      await Promise.resolve(item.onPress());
+                      onClose();
+                    } finally {
+                      setBusyId(null);
+                    }
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.label}
                 >
-                  {item.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  {item.icon ? (
+                    <Ionicons
+                      name={item.icon}
+                      size={20}
+                      color={item.destructive ? '#EF4444' : item.iconColor ?? colors.text}
+                    />
+                  ) : null}
+                  <Text
+                    style={[
+                      styles.rowLabel,
+                      { color: item.destructive ? '#EF4444' : colors.text },
+                      !item.icon && styles.rowLabelNoIcon,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </FeedbackTouchable>
+              );
+            })}
         </View>
       </TouchableOpacity>
     </Modal>

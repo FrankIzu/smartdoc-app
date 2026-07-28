@@ -5,6 +5,7 @@ import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { GoogleLogo } from '../../components/GoogleLogo';
 import { Colors } from '../../constants/Colors';
 import { STORAGE_KEYS } from '../../constants/Config';
@@ -494,15 +495,18 @@ export default function SignUpScreen() {
           </Text>
         </View>
 
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[styles.button, loading && styles.buttonDisabled]}
           onPress={handleSignUp}
           disabled={loading}
+          loading={loading}
+          spinnerColor="#fff"
+          replaceWithSpinner={false}
         >
           <Text style={styles.buttonText}>
             {isLoading ? 'Creating Account...' : 'Sign Up'}
           </Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
 
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
@@ -512,34 +516,43 @@ export default function SignUpScreen() {
 
         <View style={styles.socialSection}>
           {Platform.OS === 'android' ? (
-            <TouchableOpacity
+            <FeedbackTouchable
               style={[styles.socialButtonFull, styles.googleButton, loading && styles.buttonDisabled]}
               onPress={handleGoogleSignUp}
               disabled={loading}
+              loading={loading}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
             >
               <GoogleLogo size={20} />
               <Text style={styles.socialButtonFullText}>Sign up with Google</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           ) : (
             <>
               <Text style={styles.socialLabel}>Sign up with</Text>
               <View style={styles.socialRow}>
-                <TouchableOpacity
+                <FeedbackTouchable
                   style={[styles.socialButtonSquare, styles.googleButton, loading && styles.buttonDisabled]}
                   onPress={handleGoogleSignUp}
                   disabled={loading}
+                  loading={loading}
+                  spinnerColor="#007AFF"
+                  replaceWithSpinner={false}
                 >
                   <GoogleLogo size={24} />
-                </TouchableOpacity>
+                </FeedbackTouchable>
                 {appleSignInAvailable && (
-                  <TouchableOpacity
+                  <FeedbackTouchable
                     style={[styles.socialButtonSquare, styles.appleButtonSquare, loading && styles.buttonDisabled]}
                     onPress={handleAppleSignUp}
                     disabled={loading}
+                    loading={loading}
+                    spinnerColor="#fff"
+                    replaceWithSpinner={false}
                     activeOpacity={0.8}
                   >
                     <Ionicons name="logo-apple" size={24} color="#fff" />
-                  </TouchableOpacity>
+                  </FeedbackTouchable>
                 )}
               </View>
             </>

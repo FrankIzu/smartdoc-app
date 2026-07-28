@@ -1,3 +1,5 @@
+import { sanitizeDisplayFilename } from './displayFilename';
+
 /**
  * Removes the file extension from a filename
  * @param filename - The filename to process
@@ -5,12 +7,13 @@
  */
 export function removeFileExtension(filename: string): string {
   if (!filename) return '';
-  
-  const lastDotIndex = filename.lastIndexOf('.');
+
+  const cleaned = sanitizeDisplayFilename(filename);
+  const lastDotIndex = cleaned.lastIndexOf('.');
   if (lastDotIndex === -1 || lastDotIndex === 0) {
     // No extension found or filename starts with dot (hidden file)
-    return filename;
+    return cleaned;
   }
-  
-  return filename.substring(0, lastDotIndex);
+
+  return cleaned.substring(0, lastDotIndex);
 }

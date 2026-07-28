@@ -27,7 +27,8 @@ export function useSignatureAllList(enabled: boolean, envelopes: Envelope[]) {
   const userId = user?.id ?? null;
   const [templates, setTemplates] = useState<FillableTemplateListItem[]>([]);
   const [submissions, setSubmissions] = useState<Awaited<ReturnType<typeof listFillSubmissions>>>([]);
-  const [loading, setLoading] = useState(false);
+  // Start loading when the All tab is active so the hub never paints a partial list.
+  const [loading, setLoading] = useState(enabled);
   const loadSeqRef = useRef(0);
   const userIdRef = useRef(userId);
 
@@ -86,7 +87,7 @@ export function useSignatureAllList(enabled: boolean, envelopes: Envelope[]) {
         }
       }
     },
-    [enabled, fetchAll, userId],
+    [commitEntry, enabled, fetchAll, userId],
   );
 
   const revalidateIfStale = useCallback(async () => {
@@ -105,15 +106,16 @@ export function useSignatureAllList(enabled: boolean, envelopes: Envelope[]) {
   useEffect(() => {
     userIdRef.current = userId;
     loadSeqRef.current += 1;
-    setTemplates([]);
-    setSubmissions([]);
 
     if (!enabled || !userId) {
+      setTemplates([]);
+      setSubmissions([]);
       setLoading(false);
       return;
     }
 
     let cancelled = false;
+    // Apply memory cache before clearing — avoids an empty paint while envelopes already show.
     const hit = readSignatureActivityMemory(userId);
     if (hit) {
       const applied = applyEntry(hit);
@@ -122,11 +124,11 @@ export function useSignatureAllList(enabled: boolean, envelopes: Envelope[]) {
       setLoading(false);
       if (!isSignatureActivityStale(hit)) return;
       void loadAll({ background: true });
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
+    setTemplates([]);
+    setSubmissions([]);
     setLoading(true);
     void (async () => {
       const stored = await readSignatureActivityStorage(userId);

@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   ScrollView,
   StyleSheet,
   Switch,
@@ -12,11 +13,16 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { uploadLinksListScreenKey } from '../../services/userScopedCache';
+import { screenCache } from '../../utils/screenCache';
+import { useAuth } from '../context/auth';
 
 export default function CreateUploadLinkScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const colors = useThemeColors();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -62,6 +68,8 @@ export default function CreateUploadLinkScreen() {
       const response = await apiService.createUploadLink(data);
       
       if (response.success) {
+        const listKey = uploadLinksListScreenKey(user?.id);
+        if (listKey) screenCache.invalidate(listKey);
         Alert.alert(
           'Success',
           'File request created successfully!',
@@ -278,14 +286,26 @@ export default function CreateUploadLinkScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity
+          onPress={() => {
+            Keyboard.dismiss();
+            router.back();
+          }}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={dynamicStyles.title}>Create File Request</Text>
         <View style={dynamicStyles.placeholder} />
       </View>
 
-      <ScrollView style={dynamicStyles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={dynamicStyles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={dynamicStyles.section}>
           <Text style={dynamicStyles.sectionTitle}>Basic Information</Text>
           
@@ -446,15 +466,18 @@ export default function CreateUploadLinkScreen() {
       </ScrollView>
 
       <View style={dynamicStyles.footer}>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[dynamicStyles.createButton, loading && dynamicStyles.disabledButton]}
           onPress={handleCreate}
           disabled={loading}
+          loading={loading}
+          spinnerColor="#fff"
+          replaceWithSpinner={false}
         >
           <Text style={dynamicStyles.createButtonText}>
             {loading ? 'Creating...' : 'Create File Request'}
           </Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </View>
     </SafeAreaView>
   );

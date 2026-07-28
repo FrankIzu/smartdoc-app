@@ -6,6 +6,7 @@ import {
   Alert,
   Clipboard,
   FlatList,
+  Keyboard,
   Modal,
   Platform,
   RefreshControl,
@@ -18,11 +19,13 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
 import { FRONTEND_URL } from '../../constants/Config';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { uploadLinkDetailScreenKey, uploadLinksListScreenKey } from '../../services/userScopedCache';
+import { sanitizeDisplayFilename } from '../../utils/displayFilename';
 import { screenCache } from '../../utils/screenCache';
 import { getUploadToBaseUrl } from '../../utils/uploadLinkHelpers';
 import { useAuth } from '../context/auth';
@@ -76,6 +79,9 @@ export default function UploadLinkDetailsScreen() {
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [regeneratingCode, setRegeneratingCode] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
 
   const linkId = Number(id);
   const detailCacheKey = uploadLinkDetailScreenKey(user?.id, linkId);
@@ -224,10 +230,21 @@ export default function UploadLinkDetailsScreen() {
   };
 
   const handleEmailShare = () => {
-    setShareModalVisible(true);
     setEmails('');
     setShareMessage('');
+    setShareModalVisible(true);
   };
+
+  /** Dismiss keyboard before tearing down modals so underlying back taps stay responsive. */
+  const closeShareModal = useCallback(() => {
+    Keyboard.dismiss();
+    setShareModalVisible(false);
+  }, []);
+
+  const closeRenameModal = useCallback(() => {
+    Keyboard.dismiss();
+    setRenameModalVisible(false);
+  }, []);
 
   const handleSendEmails = async () => {
     if (!emails.trim()) {
@@ -250,8 +267,11 @@ export default function UploadLinkDetailsScreen() {
       });
 
       if (response.success) {
-        Alert.alert('Success', `Upload link shared with ${emailList.length} recipient(s)`);
-        setShareModalVisible(false);
+        // Close modal first; Alert + Modal together leaves iOS touches flaky.
+        closeShareModal();
+        setTimeout(() => {
+          Alert.alert('Success', `Upload link shared with ${emailList.length} recipient(s)`);
+        }, 150);
       } else {
         Alert.alert('Error', response.message || 'Failed to share upload link');
       }
@@ -265,6 +285,7 @@ export default function UploadLinkDetailsScreen() {
   const handleToggleActive = async () => {
     if (!uploadLink) return;
 
+    setTogglingActive(true);
     try {
       const response = await apiService.updateUploadLink(uploadLink.id, {
         is_active: !uploadLink.is_active
@@ -284,6 +305,8 @@ export default function UploadLinkDetailsScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update link');
+    } finally {
+      setTogglingActive(false);
     }
   };
 
@@ -301,6 +324,7 @@ export default function UploadLinkDetailsScreen() {
       return;
     }
     if (!uploadLink) return;
+    setRenaming(true);
     try {
       const response = await apiService.updateUploadLink(uploadLink.id, { link_name: trimmed });
       if (response.success) {
@@ -312,14 +336,21 @@ export default function UploadLinkDetailsScreen() {
         });
         const listKey = uploadLinksListScreenKey(user?.id);
         if (listKey) screenCache.invalidate(listKey);
-        setRenameModalVisible(false);
+        closeRenameModal();
       } else {
         Alert.alert('Error', response.message || 'Failed to rename');
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to rename');
+    } finally {
+      setRenaming(false);
     }
   };
+
+  const handleBack = useCallback(() => {
+    Keyboard.dismiss();
+    router.back();
+  }, [router]);
 
   const handleDeleteLink = () => {
     if (!uploadLink) return;
@@ -333,6 +364,7 @@ export default function UploadLinkDetailsScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            setDeleting(true);
             try {
               const response = await apiService.deleteUploadLink(uploadLink.id);
               if (response.success) {
@@ -343,6 +375,8 @@ export default function UploadLinkDetailsScreen() {
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to delete link');
+            } finally {
+              setDeleting(false);
             }
           },
         },
@@ -460,6 +494,8 @@ export default function UploadLinkDetailsScreen() {
       backgroundColor: colors.card,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
+      zIndex: 2,
+      elevation: 2,
     },
     title: {
       fontSize: 18,
@@ -814,7 +850,7 @@ export default function UploadLinkDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={dynamicStyles.title}>File Request</Text>
@@ -832,7 +868,7 @@ export default function UploadLinkDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={dynamicStyles.title}>File Request</Text>
@@ -849,15 +885,16 @@ export default function UploadLinkDetailsScreen() {
   const limitReached = uploadLink.max_uploads && uploadLink.upload_count >= uploadLink.max_uploads;
 
   return (
+    <>
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={dynamicStyles.title}>File Request</Text>
-        <TouchableOpacity onPress={handleDeleteLink}>
+        <FeedbackTouchable onPress={handleDeleteLink} loading={deleting} spinnerColor="#FF3B30" hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Ionicons name="trash" size={24} color="#FF3B30" />
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </View>
 
       <FlatList
@@ -933,29 +970,37 @@ export default function UploadLinkDetailsScreen() {
                         <Ionicons name="copy-outline" size={14} color="#007AFF" />
                         <Text style={dynamicStyles.codeActionText}>Copy code</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity
+                      <FeedbackTouchable
                         style={dynamicStyles.codeActionBtn}
                         onPress={handleRegenerateCode}
                         disabled={regeneratingCode}
+                        loading={regeneratingCode}
+                        spinnerColor="#007AFF"
+                        replaceWithSpinner={false}
                       >
                         <Ionicons name="refresh" size={14} color="#007AFF" />
                         <Text style={dynamicStyles.codeActionText}>
                           {regeneratingCode ? 'Regenerating...' : 'Regenerate'}
                         </Text>
-                      </TouchableOpacity>
+                      </FeedbackTouchable>
                     </View>
                   </>
                 ) : (
                   <View style={dynamicStyles.codeActions}>
                     <Text style={dynamicStyles.codeHint}>No upload code yet.</Text>
-                    <TouchableOpacity
+                    <FeedbackTouchable
                       style={dynamicStyles.codeActionBtn}
                       onPress={handleRegenerateCode}
                       disabled={regeneratingCode}
+                      loading={regeneratingCode}
+                      spinnerColor="#007AFF"
+                      replaceWithSpinner={false}
                     >
                       <Ionicons name="refresh" size={14} color="#007AFF" />
-                      <Text style={dynamicStyles.codeActionText}>Generate code</Text>
-                    </TouchableOpacity>
+                      <Text style={dynamicStyles.codeActionText}>
+                        {regeneratingCode ? 'Generating...' : 'Generate code'}
+                      </Text>
+                    </FeedbackTouchable>
                   </View>
                 )}
               </View>
@@ -981,16 +1026,26 @@ export default function UploadLinkDetailsScreen() {
                 </>
               )}
               
-              <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleToggleActive}>
+              <FeedbackTouchable
+                style={dynamicStyles.actionButton}
+                onPress={handleToggleActive}
+                loading={togglingActive}
+                spinnerColor={uploadLink.is_active ? '#FF9500' : '#34C759'}
+                replaceWithSpinner={false}
+              >
                 <Ionicons 
                   name={uploadLink.is_active ? "pause" : "play"} 
                   size={20} 
                   color={uploadLink.is_active ? "#FF9500" : "#34C759"} 
                 />
                 <Text style={[dynamicStyles.actionText, { color: uploadLink.is_active ? "#FF9500" : "#34C759" }]}>
-                  {uploadLink.is_active ? 'Deactivate' : 'Activate'}
+                  {togglingActive
+                    ? 'Updating...'
+                    : uploadLink.is_active
+                      ? 'Deactivate'
+                      : 'Activate'}
                 </Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
 
             {/* Files Header */}
@@ -1009,28 +1064,34 @@ export default function UploadLinkDetailsScreen() {
           </View>
         }
       />
+    </SafeAreaView>
 
-      {/* Email Share Modal */}
+      {/* Email Share Modal — unmount when closed so native sheet cannot steal touches */}
+      {shareModalVisible ? (
       <Modal
-        visible={shareModalVisible}
+        visible
         animationType="slide"
         presentationStyle="fullScreen"
-        onRequestClose={() => setShareModalVisible(false)}
+        onRequestClose={closeShareModal}
       >
         <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
           <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
-            <TouchableOpacity onPress={() => setShareModalVisible(false)}>
+            <TouchableOpacity onPress={closeShareModal} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <Text style={dynamicStyles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Share via Email</Text>
-            <TouchableOpacity 
+            <FeedbackTouchable
               onPress={handleSendEmails}
               disabled={shareLoading}
+              loading={shareLoading}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
               <Text style={[dynamicStyles.modalSendText, shareLoading && dynamicStyles.disabledText]}>
                 {shareLoading ? 'Sending...' : 'Send'}
               </Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
 
           <View style={dynamicStyles.modalContent}>
@@ -1044,6 +1105,9 @@ export default function UploadLinkDetailsScreen() {
                 placeholderTextColor={colors.textLight}
                 multiline
                 numberOfLines={3}
+                blurOnSubmit
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
 
@@ -1057,28 +1121,38 @@ export default function UploadLinkDetailsScreen() {
                 placeholderTextColor={colors.textLight}
                 multiline
                 numberOfLines={4}
+                blurOnSubmit
               />
             </View>
           </View>
         </SafeAreaView>
       </Modal>
+      ) : null}
 
       {/* Rename File Request Modal */}
+      {renameModalVisible ? (
       <Modal
-        visible={renameModalVisible}
+        visible
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => setRenameModalVisible(false)}
+        onRequestClose={closeRenameModal}
       >
         <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
           <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
-            <TouchableOpacity onPress={() => setRenameModalVisible(false)}>
+            <TouchableOpacity onPress={closeRenameModal} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <Text style={dynamicStyles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Rename</Text>
-            <TouchableOpacity onPress={handleRenameSave}>
-              <Text style={dynamicStyles.modalSendText}>Save</Text>
-            </TouchableOpacity>
+            <FeedbackTouchable
+              onPress={handleRenameSave}
+              disabled={renaming}
+              loading={renaming}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Text style={dynamicStyles.modalSendText}>{renaming ? 'Saving...' : 'Save'}</Text>
+            </FeedbackTouchable>
           </View>
           <View style={dynamicStyles.modalContent}>
             <View style={dynamicStyles.inputGroup}>
@@ -1091,17 +1165,25 @@ export default function UploadLinkDetailsScreen() {
                 placeholderTextColor={colors.textLight}
                 maxLength={100}
                 autoFocus
+                returnKeyType="done"
+                blurOnSubmit
+                onSubmitEditing={() => {
+                  void handleRenameSave();
+                }}
               />
             </View>
           </View>
         </SafeAreaView>
       </Modal>
+      ) : null}
       
       {/* Document Viewer Modal - Same viewer as files, handles decryption via backend */}
       {showDocumentViewer && selectedFile && (
         <DocumentViewer
           fileId={String(selectedFile.file_id || selectedFile.id)}
-          fileName={selectedFile.filename || selectedFile.original_filename || 'Untitled'}
+          fileName={sanitizeDisplayFilename(
+            selectedFile.filename || selectedFile.original_filename || 'Untitled',
+          )}
           fileType={selectedFile.file_type || getFileTypeFromFilename(selectedFile.filename || '')}
           fileCategory={selectedFile.file_kind || ''}
           onClose={() => {
@@ -1110,6 +1192,6 @@ export default function UploadLinkDetailsScreen() {
           }}
         />
       )}
-    </SafeAreaView>
+    </>
   );
 }

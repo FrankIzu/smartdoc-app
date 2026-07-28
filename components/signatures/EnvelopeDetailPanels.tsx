@@ -1,6 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { FeedbackTouchable } from '../FeedbackTouchable';
+import { resendCooldownKey, useResendCooldown } from '../../hooks/useResendCooldown';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { Envelope, EnvelopeRecipient } from '../../types/signature';
 import {
@@ -15,8 +17,9 @@ import {
 interface Props {
   envelope: Envelope;
   canResend: boolean;
-  onResend: (recipientId: number) => void;
+  onResend: (recipientId: number) => void | Promise<void>;
   onDelete?: () => void;
+  deleting?: boolean;
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -43,16 +46,22 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
 function RecipientRow({
   recipient,
+  envelopeKey,
   canResend,
   onResend,
 }: {
   recipient: EnvelopeRecipient;
+  envelopeKey: string;
   canResend: boolean;
-  onResend: () => void;
+  onResend: () => void | Promise<void>;
 }) {
   const colors = useThemeColors();
   const badge = recipientStatusBadge(recipient.status);
   const signedAt = recipient.signed_at ? formatEnvelopeDateTime(recipient.signed_at) : null;
+  const cooldownKey = resendCooldownKey('envelope', envelopeKey, recipient.id);
+  const { remainingSec, isCoolingDown } = useResendCooldown(cooldownKey, {
+    serverSentAt: recipient.notified_at,
+  });
 
   return (
     <View style={styles.recipientRow}>
@@ -91,19 +100,31 @@ function RecipientRow({
         ) : null}
       </View>
       {canResend ? (
-        <TouchableOpacity style={[styles.resendBtn, { borderColor: colors.border }]} onPress={onResend}>
-          <Text style={[styles.resendText, { color: colors.text }]}>Resend</Text>
-        </TouchableOpacity>
+        <FeedbackTouchable
+          style={[
+            styles.resendBtn,
+            { borderColor: colors.border },
+            isCoolingDown && { opacity: 0.55 },
+          ]}
+          onPress={onResend}
+          disabled={isCoolingDown}
+          spinnerColor={colors.text}
+        >
+          <Text style={[styles.resendText, { color: colors.text }]}>
+            {isCoolingDown ? `${remainingSec}s` : 'Resend'}
+          </Text>
+        </FeedbackTouchable>
       ) : null}
     </View>
   );
 }
 
-export default function EnvelopeDetailPanels({ envelope, canResend, onResend, onDelete }: Props) {
+export default function EnvelopeDetailPanels({ envelope, canResend, onResend, onDelete, deleting }: Props) {
   const colors = useThemeColors();
   const { groups, ccs } = groupSignersByOrder(envelope.recipients ?? []);
   const events = sortedAuditEvents(envelope);
   const isDraft = envelope.status === 'draft';
+  const envelopeKey = envelope.public_id?.trim() || String(envelope.id);
 
   return (
     <>
@@ -126,6 +147,7 @@ export default function EnvelopeDetailPanels({ envelope, canResend, onResend, on
                 <RecipientRow
                   key={r.id}
                   recipient={r}
+                  envelopeKey={envelopeKey}
                   canResend={
                     canResend && r.status !== 'signed' && r.status !== 'declined'
                   }
@@ -139,7 +161,13 @@ export default function EnvelopeDetailPanels({ envelope, canResend, onResend, on
           <View style={styles.ccSection}>
             <Text style={[styles.ccTitle, { color: colors.textSecondary }]}>CC observers</Text>
             {ccs.map((r) => (
-              <RecipientRow key={r.id} recipient={r} canResend={false} onResend={() => {}} />
+              <RecipientRow
+                key={r.id}
+                recipient={r}
+                envelopeKey={envelopeKey}
+                canResend={false}
+                onResend={() => {}}
+              />
             ))}
           </View>
         ) : null}
@@ -165,10 +193,17 @@ export default function EnvelopeDetailPanels({ envelope, canResend, onResend, on
           <DetailRow label="Reminders" value={envelopeRemindersLabel(envelope)} />
         </View>
         {isDraft && onDelete ? (
-          <TouchableOpacity style={styles.deleteBtn} onPress={onDelete}>
+          <FeedbackTouchable
+            style={styles.deleteBtn}
+            onPress={onDelete}
+            loading={deleting}
+            disabled={deleting}
+            spinnerColor="#dc2626"
+            replaceWithSpinner={false}
+          >
             <Ionicons name="trash-outline" size={16} color="#dc2626" />
-            <Text style={styles.deleteBtnText}>Delete draft</Text>
-          </TouchableOpacity>
+            <Text style={styles.deleteBtnText}>{deleting ? 'Deleting…' : 'Delete draft'}</Text>
+          </FeedbackTouchable>
         ) : null}
       </Panel>
 

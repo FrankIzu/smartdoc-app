@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import FileNameText from '../../../components/FileNameText';
 import { SIGNATURE_LIST_TITLE_MAX } from '../../../utils/displayFilename';
 import { useEnvelopeDraft } from '../../../hooks/useEnvelopeDraft';
@@ -19,6 +20,7 @@ import { useAuth } from '../../context/auth';
 import { getEnvelope, sendEnvelope } from '../../../services/envelopeApi';
 import type { Envelope } from '../../../types/signature';
 import { clearDraftStep } from '../../../services/signatureSessionCache';
+import { validateSignerFieldCoverage } from '../../../utils/signatureAssignmentCoverage';
 
 export default function ReviewSendScreen() {
   const { envelopeId, acknowledgeOnly } = useLocalSearchParams<{
@@ -39,10 +41,31 @@ export default function ReviewSendScreen() {
 
   const handleSend = async () => {
     if (!envelopeId) return;
+
+    const isAcknowledgeOnly = acknowledgeOnly === '1';
+    if (!isAcknowledgeOnly && envelope) {
+      const signers = (envelope.recipients ?? []).filter((r) => r.role === 'signer');
+      const assignments = envelope.field_assignments ?? [];
+      if (assignments.length) {
+        const check = validateSignerFieldCoverage(signers, assignments);
+        if (!check.ok) {
+          Alert.alert('Assign fields', check.message, [
+            {
+              text: 'Go back',
+              onPress: () =>
+                router.replace(`/signatures/create/assign-fields?envelopeId=${envelopeId}` as any),
+            },
+            { text: 'OK', style: 'cancel' },
+          ]);
+          return;
+        }
+      }
+    }
+
     setSending(true);
     try {
       await sendEnvelope(envelopeId, {
-        acknowledgeOnly: acknowledgeOnly === '1',
+        acknowledgeOnly: isAcknowledgeOnly,
       });
       await clearWizardSources();
       await clearDraftStep(user?.id, envelopeId);
@@ -94,13 +117,16 @@ export default function ReviewSendScreen() {
         <Text style={[styles.section, { color: colors.text }]}>
           Field assignments: {envelope?.field_assignments?.length ?? 0}
         </Text>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[styles.sendBtn, { backgroundColor: colors.primary, opacity: sending ? 0.6 : 1 }]}
           disabled={sending}
-          onPress={() => void handleSend()}
+          loading={sending}
+          onPress={handleSend}
+          spinnerColor="#fff"
+          replaceWithSpinner={false}
         >
           <Text style={styles.sendText}>{sending ? 'Sending…' : 'Send for signature'}</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </ScrollView>
     </SafeAreaView>
   );

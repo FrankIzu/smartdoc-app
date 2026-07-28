@@ -11,6 +11,8 @@ interface Props {
   value: Date;
   onClose: () => void;
   onSave: (dateStr: string) => void;
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 }
 
 function getValidDate(d: Date | undefined): Date {
@@ -24,6 +26,7 @@ export default function FillDatePickerModal({
   value,
   onClose,
   onSave,
+  expandNonce = 0,
 }: Props) {
   const colors = useThemeColors();
   const [pickerValue, setPickerValue] = useState(value);
@@ -86,6 +89,7 @@ export default function FillDatePickerModal({
     <MinimizableBottomSheet
       visible={visible}
       onClose={onClose}
+      expandNonce={expandNonce}
       heightRatio={0.38}
       showHandle={false}
       renderHeader={({ minimized, onMinimize, onExpand, onClose }) => (

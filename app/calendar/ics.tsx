@@ -4,6 +4,7 @@ import * as Linking from 'expo-linking';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { calendarIcsUrl } from '../../services/calendarApi';
 
@@ -60,9 +61,15 @@ export default function CalendarIcsScreen() {
       <View style={styles.body}>
         {opening ? <ActivityIndicator /> : null}
         <Text style={styles.text}>Open this calendar invite with your device calendar.</Text>
-        <TouchableOpacity style={styles.btn} onPress={openIcs}>
+        <FeedbackTouchable
+          style={styles.btn}
+          onPress={openIcs}
+          disabled={opening}
+          loading={opening}
+          spinnerColor="#fff"
+        >
           <Text style={styles.btnText}>Open invite</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </View>
     </SafeAreaView>
   );

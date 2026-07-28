@@ -199,7 +199,7 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
 
   const handleOpenSettings = () => {
     closeMenu();
-    router.push('/(tabs)/settings');
+    router.navigate('/(tabs)/settings');
   };
 
   const handleSignOut = () => {

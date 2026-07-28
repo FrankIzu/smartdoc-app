@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { RuntimeDocument } from '../../types/signature';
-import { hasFieldSignature, isFieldEditable, isSignFieldType } from '../../utils/signatureRuntime';
+import { hasFieldSignature, isDateFieldType, isFieldEditable, isSignFieldType, dateFieldDisplayText } from '../../utils/signatureRuntime';
 
 interface Props {
   document: RuntimeDocument;
@@ -52,6 +52,10 @@ export default function FormFieldRenderer({
                     ? 'Tap to sign'
                     : '—'}
               </Text>
+            ) : isDateFieldType(f.type) ? (
+              <Text style={[styles.dateValue, { color: colors.text }]}>
+                {dateFieldDisplayText(val) || '—'}
+              </Text>
             ) : (
               <TextInput
                 style={[styles.input, { color: colors.text, borderColor: colors.border }]}
@@ -60,6 +64,9 @@ export default function FormFieldRenderer({
                 onChangeText={(t) => onTextChange(f.key, t)}
                 placeholder={f.label}
                 placeholderTextColor={colors.textSecondary}
+                autoComplete="name"
+                textContentType="name"
+                importantForAutofill="yes"
               />
             )}
           </View>
@@ -76,4 +83,5 @@ const styles = StyleSheet.create({
   fieldRow: { marginBottom: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   label: { fontSize: 14, fontWeight: '500', marginBottom: 8 },
   input: { borderWidth: 1, borderRadius: 8, padding: 10, fontSize: 16 },
+  dateValue: { fontSize: 16, paddingVertical: 8 },
 });

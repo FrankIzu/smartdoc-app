@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { usePathname } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     BackHandler,
@@ -6,12 +7,11 @@ import {
     Pressable,
     StyleSheet,
     Text,
-    TouchableOpacity,
     View,
     useWindowDimensions,
     type ViewStyle,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, TouchableOpacity } from 'react-native-gesture-handler';
 import Animated, {
     runOnJS,
     useAnimatedStyle,
@@ -20,9 +20,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../hooks/useThemeColors';
+import {
+    persistentBottomNavInset,
+    shouldShowPersistentBottomNav,
+} from '../utils/persistentBottomNavInset';
 
 const MINIMIZED_PEEK = 68;
 const SPRING = { damping: 24, stiffness: 320 };
+/** Extra tap padding around header icon buttons (close / minimize / expand). */
+const HEADER_ACTION_HIT_SLOP = { top: 14, bottom: 14, left: 14, right: 14 };
 
 export interface MinimizableBottomSheetHeaderProps {
   minimized: boolean;
@@ -80,14 +86,21 @@ export default function MinimizableBottomSheet({
 }: MinimizableBottomSheetProps) {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
   const { height: windowHeight } = useWindowDimensions();
   const [minimized, setMinimized] = useState(false);
 
   // Match pre-Modal layout: sheet anchored to physical screen bottom (over tab bar).
   const sheetHeight = sheetHeightProp ?? Math.round(windowHeight * heightRatio);
-  const paddingBottom = paddingBottomProp ?? insets.bottom;
-  // Subtract paddingBottom so the minimized peek (header strip) sits above the system nav bar,
-  // not partially hidden beneath it on edge-to-edge Android.
+  // On main tabs the persistent tab bar overlays the screen (zIndex 100). Sheets rendered
+  // inside tab screens must clear that bar or the minimized peek's expand/close controls
+  // sit under it and never receive taps.
+  const defaultBottomPad = shouldShowPersistentBottomNav(pathname)
+    ? persistentBottomNavInset(insets.bottom)
+    : insets.bottom;
+  const paddingBottom = paddingBottomProp ?? defaultBottomPad;
+  // Subtract paddingBottom so the minimized peek (header strip) sits above the tab / home
+  // indicator, not hidden beneath it on edge-to-edge Android.
   const minimizedOffset = Math.max(0, sheetHeight - minimizedPeek - paddingBottom);
 
   const sheetTranslateY = useSharedValue(0);
@@ -205,7 +218,14 @@ export default function MinimizableBottomSheet({
 
   const defaultHeader = (
     <View style={styles.header}>
-      <View style={styles.headerLeft}>
+      {/* Title-only expand tap when minimized — keep actions outside so close isn't nested. */}
+      <Pressable
+        style={styles.headerLeft}
+        onPress={minimized ? expandSheet : undefined}
+        disabled={!minimized}
+        accessibilityRole={minimized ? 'button' : undefined}
+        accessibilityLabel={minimized ? 'Expand' : undefined}
+      >
         {title ? (
           <View style={styles.headerTitles}>
             <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
@@ -218,21 +238,36 @@ export default function MinimizableBottomSheet({
             ) : null}
           </View>
         ) : null}
-      </View>
-      <View style={styles.headerActions}>
+      </Pressable>
+      <View style={styles.headerActions} pointerEvents="box-none">
         {typeof headerRight === 'function' ? headerRight(headerCtx) : headerRight}
         {minimizable ? (
           minimized ? (
-            <TouchableOpacity onPress={expandSheet} hitSlop={12} accessibilityLabel="Expand">
+            <TouchableOpacity
+              onPress={expandSheet}
+              hitSlop={HEADER_ACTION_HIT_SLOP}
+              style={styles.headerActionBtn}
+              accessibilityLabel="Expand"
+            >
               <Ionicons name="chevron-up" size={26} color={colors.textSecondary} />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity onPress={minimizeSheet} hitSlop={12} accessibilityLabel="Minimize">
+            <TouchableOpacity
+              onPress={minimizeSheet}
+              hitSlop={HEADER_ACTION_HIT_SLOP}
+              style={styles.headerActionBtn}
+              accessibilityLabel="Minimize"
+            >
               <Ionicons name="chevron-down" size={26} color={colors.textSecondary} />
             </TouchableOpacity>
           )
         ) : null}
-        <TouchableOpacity onPress={handleClose} hitSlop={12} accessibilityLabel="Close">
+        <TouchableOpacity
+          onPress={handleClose}
+          hitSlop={HEADER_ACTION_HIT_SLOP}
+          style={styles.headerActionBtn}
+          accessibilityLabel="Close"
+        >
           <Ionicons name="close" size={26} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
@@ -240,6 +275,20 @@ export default function MinimizableBottomSheet({
   );
 
   if (!visible) return null;
+
+  // Pan lives on the handle/drag strip only — wrapping the header made close/minimize
+  // fight the pan gesture and feel intermittently unresponsive (e.g. Create chooser).
+  const dragChrome = minimizable ? (
+    <GestureDetector gesture={panGesture}>
+      <View style={showHandle ? styles.handleRow : styles.dragStrip} accessibilityLabel="Drag sheet">
+        {showHandle ? <View style={[styles.handle, { backgroundColor: colors.border }]} /> : null}
+      </View>
+    </GestureDetector>
+  ) : showHandle ? (
+    <View style={styles.handleRow}>
+      <View style={[styles.handle, { backgroundColor: colors.border }]} />
+    </View>
+  ) : null;
 
   return (
     // pointerEvents="box-none" lets touches pass through the transparent area
@@ -265,22 +314,10 @@ export default function MinimizableBottomSheet({
           sheetAnimatedStyle,
         ]}
       >
-        <GestureDetector gesture={panGesture}>
-          <View pointerEvents={minimized ? 'auto' : undefined}>
-            {showHandle ? (
-              <View style={styles.handleRow}>
-                <View style={[styles.handle, { backgroundColor: colors.border }]} />
-              </View>
-            ) : null}
-            <Pressable
-              onPress={minimized ? expandSheet : undefined}
-              accessibilityRole={minimized ? 'button' : undefined}
-              accessibilityLabel={minimized ? 'Expand' : undefined}
-            >
-              {showHeader ? (renderHeader ? renderHeader(headerCtx) : defaultHeader) : null}
-            </Pressable>
-          </View>
-        </GestureDetector>
+        <View pointerEvents={minimized ? 'auto' : undefined}>
+          {dragChrome}
+          {showHeader ? (renderHeader ? renderHeader(headerCtx) : defaultHeader) : null}
+        </View>
         <View style={styles.body} pointerEvents={minimized ? 'none' : 'auto'}>
           {children}
         </View>
@@ -307,6 +344,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   handleRow: { alignItems: 'center', paddingTop: 8, paddingBottom: 2 },
+  /** Invisible pan target when the visual handle is hidden (still needs a drag affordance). */
+  dragStrip: { height: 18, width: '100%' },
   handle: { width: 40, height: 4, borderRadius: 2 },
   header: {
     flexDirection: 'row',
@@ -320,7 +359,8 @@ const styles = StyleSheet.create({
   headerTitles: { flex: 1, minWidth: 0 },
   title: { fontSize: 17, fontWeight: '600' },
   subtitle: { fontSize: 12, marginTop: 2 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerActionBtn: { padding: 6 },
   body: { flex: 1, overflow: 'hidden' },
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 20 },
 });

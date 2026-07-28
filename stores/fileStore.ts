@@ -6,7 +6,15 @@ import { Alert, Platform } from 'react-native';
 import { create } from 'zustand';
 import { apiService } from '../services/api';
 import { FileState, FileUpload, UploadProgress } from '../types';
-import { convertHeicToPng, isHeicFile } from '../utils/imageConversion';
+import { convertHeicToPng, compressImageForUpload, isHeicFile } from '../utils/imageConversion';
+import {
+  getUserPreferences,
+  validateFileAgainstUploadSettings,
+} from '../utils/userPreferences';
+import {
+  assertUploadAllowedForCurrentNetwork,
+  WIFI_ONLY_UPLOAD_MESSAGE,
+} from '../utils/wifiOnlyUpload';
 
 // Check if running in Expo Go (which doesn't support custom native modules/plugins)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
@@ -16,6 +24,10 @@ export interface PendingUpload {
   name: string;
   type: string;
   size?: number;
+  /** Local clock when the placeholder was added (for handoff matching). */
+  createdAt?: number;
+  /** True after XHR+poll succeeds; documents list may clear the placeholder once the server row appears. */
+  settled?: boolean;
 }
 
 interface FileStore extends FileState {
@@ -33,8 +45,10 @@ interface FileStore extends FileState {
   fetchFiles: (page?: number, search?: string, category?: string) => Promise<void>;
   uploadFiles: (files: FileUpload[]) => Promise<boolean>;
   uploadFromCamera: () => Promise<boolean>;
-  uploadFromGallery: () => Promise<boolean>;
-  uploadFromDocuments: () => Promise<boolean>;
+  /** `true` success, `false` failure, `null` cancelled or limit already shown. */
+  uploadFromGallery: () => Promise<boolean | null>;
+  /** `true` success, `false` failure, `null` cancelled or limit already shown. */
+  uploadFromDocuments: () => Promise<boolean | null>;
   deleteFile: (id: number) => Promise<boolean>;
   categorizeFile: (id: number, category: string) => Promise<boolean>;
   autoCategorizeFile: (id: number) => Promise<boolean>;
@@ -105,77 +119,143 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   uploadFiles: async (files: FileUpload[]) => {
     if (files.length === 0) return false;
-    
+
+    try {
+      await assertUploadAllowedForCurrentNetwork();
+    } catch (error: any) {
+      Alert.alert('Wi‑Fi Required', error?.message || WIFI_ONLY_UPLOAD_MESSAGE);
+      return false;
+    }
+
+    const prefs = await getUserPreferences();
+    try {
+      for (const file of files) {
+        validateFileAgainstUploadSettings(file, prefs);
+      }
+    } catch (error: any) {
+      Alert.alert('Upload Blocked', error?.message || 'File does not meet upload settings.');
+      return false;
+    }
+
     let allSuccessful = true;
-    
-    // Import the progress store
+    let successCount = 0;
+    const totalFiles = files.length;
+
     const { useProgressStore } = require('../services/progressService');
     const progressStore = useProgressStore.getState();
-    
-    for (const file of files) {
+
+    // One shared bar for the whole batch (not one entry per file).
+    const batchTitle =
+      totalFiles === 1 ? `Uploading ${files[0].name}` : `Uploading ${totalFiles} files`;
+    const progressId = progressStore.addProgress({
+      title: batchTitle,
+      progress: 0,
+      status: 'in-progress',
+      message: totalFiles === 1 ? 'Preparing upload...' : `Preparing 1 of ${totalFiles}...`,
+    });
+
+    const updateBatchProgress = (
+      fileIndex: number,
+      fileProgress: number,
+      message?: string,
+    ) => {
+      const overall = ((fileIndex + Math.min(100, Math.max(0, fileProgress)) / 100) / totalFiles) * 100;
+      progressStore.updateProgress(progressId, {
+        progress: Math.min(99, Math.max(0, overall)),
+        status: 'in-progress',
+        message:
+          message ||
+          (totalFiles === 1
+            ? `Uploading... ${Math.round(fileProgress)}%`
+            : `File ${fileIndex + 1} of ${totalFiles}… ${Math.round(fileProgress)}%`),
+      });
+    };
+
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+      const file = files[fileIndex];
       const fileId = `upload_${Date.now()}_${Math.random()}`;
       const pendingUploadId = file.optimisticId ?? `pending_${fileId}`;
 
-      // Optimistic row (gallery may have registered it already with optimisticId)
       if (!file.optimisticId) {
         get().addPendingUpload({ id: pendingUploadId, name: file.name, type: file.type, size: file.size });
       }
 
-      // Initialize global progress bar immediately at 0%
-      const progressId = progressStore.addProgress({
-        title: `Uploading ${file.name}`,
-        progress: 0,
-        status: 'in-progress',
-        message: 'Preparing upload...',
-      });
-
-      console.log('📊 Created progress item with ID:', progressId);
-
-      // Also keep the old progress system for backward compatibility
       get().updateUploadProgress(fileId, {
         fileId,
         progress: 0,
         status: 'uploading',
       });
-      
+
+      updateBatchProgress(
+        fileIndex,
+        0,
+        totalFiles === 1
+          ? 'Preparing upload...'
+          : `Preparing ${fileIndex + 1} of ${totalFiles}: ${file.name}`,
+      );
+
+      let uploadSucceeded = false;
       try {
-        // Convert HEIC to PNG before upload if needed
-        // This happens here as a fallback in case conversion wasn't done earlier
         let fileToUpload = file;
 
         if (isHeicFile(file)) {
           console.log(`🔄 Converting HEIC to PNG before upload: ${file.name}`);
-          progressStore.updateProgress(progressId, {
-            progress: 5,
-            status: 'in-progress',
-            message: 'Converting HEIC to PNG...',
-          });
+          updateBatchProgress(fileIndex, 5, `Converting HEIC to PNG… ${file.name}`);
 
           fileToUpload = await convertHeicToPng(
             file,
             (progress, message) => {
-              // Scale conversion progress to 5-15% of total upload
-              const scaledProgress = 5 + (progress * 0.1);
-              progressStore.updateProgress(progressId, {
-                progress: scaledProgress,
-                status: 'in-progress',
-                message,
-              });
+              updateBatchProgress(fileIndex, 5 + progress * 0.1, message);
             }
           );
 
-          progressStore.updateProgress(progressId, {
-            progress: 15,
-            status: 'in-progress',
-            message: 'Starting upload...',
-          });
+          // Keep list placeholder name in sync with the file that will land on the server
+          // (HEIC → PNG rename), so handoff to the real row does not miss by filename.
+          if (fileToUpload.name !== file.name) {
+            set((state) => ({
+              pendingUploads: state.pendingUploads.map((u) =>
+                u.id === pendingUploadId
+                  ? {
+                      ...u,
+                      name: fileToUpload.name,
+                      type: fileToUpload.type,
+                      size: fileToUpload.size,
+                    }
+                  : u
+              ),
+            }));
+          }
+
+          updateBatchProgress(fileIndex, 15, `Starting upload… ${fileToUpload.name}`);
         }
 
-        // Prepare FormData for upload
-        // In React Native/Expo, FormData needs specific format
+        if (prefs.file_management.compress_images) {
+          const beforeCompress = fileToUpload;
+          fileToUpload = await compressImageForUpload(
+            fileToUpload,
+            true,
+            (progress, message) => {
+              updateBatchProgress(fileIndex, 15 + progress * 0.05, message);
+            },
+          );
+          if (fileToUpload.name !== beforeCompress.name) {
+            set((state) => ({
+              pendingUploads: state.pendingUploads.map((u) =>
+                u.id === pendingUploadId
+                  ? {
+                      ...u,
+                      name: fileToUpload.name,
+                      type: fileToUpload.type,
+                      size: fileToUpload.size,
+                    }
+                  : u
+              ),
+            }));
+          }
+        }
+
         const formData = new FormData();
-        
-        // Log file details for debugging
+
         console.log('📤 Preparing upload:', {
           uri: fileToUpload.uri,
           type: fileToUpload.type,
@@ -183,16 +263,14 @@ export const useFileStore = create<FileStore>((set, get) => ({
           size: fileToUpload.size,
           isExpoGo,
         });
-        
-        // Check if URI is valid (should start with file://, content://, or http://)
-        if (!fileToUpload.uri || (!fileToUpload.uri.startsWith('file://') && 
-            !fileToUpload.uri.startsWith('content://') && 
+
+        if (!fileToUpload.uri || (!fileToUpload.uri.startsWith('file://') &&
+            !fileToUpload.uri.startsWith('content://') &&
             !fileToUpload.uri.startsWith('http://') &&
             !fileToUpload.uri.startsWith('https://'))) {
           throw new Error(`Invalid file URI: ${fileToUpload.uri}`);
         }
-        
-        // Format for React Native FormData
+
         formData.append('file', {
           uri: fileToUpload.uri,
           type: fileToUpload.type || 'image/jpeg',
@@ -206,80 +284,51 @@ export const useFileStore = create<FileStore>((set, get) => ({
         if (uploadWorkspaceId != null) {
           formData.append('workspace_id', String(uploadWorkspaceId));
         }
-        
+
         console.log('📤 FormData created, starting upload...');
-        
+
         const response = await apiService.uploadFileWithProgressPolling(
           formData,
           (progress, message, phase) => {
             console.log(`📊 Upload progress: ${progress}% for ${file.name} - ${message} (${phase})`);
-            
-            // Update global progress bar with detailed progress
-            progressStore.updateProgress(progressId, {
-              progress: progress,
-              status: 'in-progress',
-              message: message || `Uploading... ${progress}%`,
-            });
-            
-            console.log(`📊 Updated global progress bar for ${progressId}`);
-            
-            // Also update the old progress system
+            updateBatchProgress(
+              fileIndex,
+              progress,
+              totalFiles === 1
+                ? (message || `Uploading... ${Math.round(progress)}%`)
+                : `File ${fileIndex + 1} of ${totalFiles}: ${file.name}`,
+            );
             get().updateUploadProgress(fileId, { progress });
           }
         );
-        
+
         console.log('📁 Upload response in file store:', response);
-        console.log('📁 Response success:', response.success);
-        console.log('📁 Response data:', response.data);
-        console.log('📁 Response message:', response.message);
-        
+
         if (response.success) {
-          // For mobile uploads, the response.data might be undefined initially
-          // The progress polling will handle the completion status
-          console.log('📁 Upload successful - task_id:', (response as any).task_id);
-          
-          // The progress polling already updated the progress to completed
-          // Just ensure the progress shows as completed
-          progressStore.updateProgress(progressId, {
-            progress: 100,
-            status: 'completed',
-          });
-          
-          // Update old progress system
+          uploadSucceeded = true;
+          successCount += 1;
           get().updateUploadProgress(fileId, {
             progress: 100,
             status: 'completed',
           });
-          
-          // For mobile uploads, immediately reload files to show them with 'pending' status
-          // This matches the web behavior where files appear quickly with pending status
-          console.log('📁 Upload complete, immediately reloading files to show pending status...');
-          
-          // Mark upload time for Files screen to bypass debounce
-          set({ lastUploadTime: Date.now() });
-          
-          // Reload immediately (no delay) to show files with pending status
-          get().fetchFiles(1); // Refresh files list immediately
-          
-          // Remove global progress after a delay
-          setTimeout(() => {
-            progressStore.removeProgress(progressId);
-          }, 3000);
-          
-          // Remove old upload progress after a delay
+
+          // Mark settled so the documents screen can hand off to the server row
+          // without clearing mid-upload (e.g. when a same-named file already exists).
+          set((state) => ({
+            lastUploadTime: Date.now(),
+            pendingUploads: state.pendingUploads.map((u) =>
+              u.id === pendingUploadId ? { ...u, settled: true } : u
+            ),
+          }));
+          get().fetchFiles(1);
+
           setTimeout(() => {
             get().removeUploadProgress(fileId);
           }, 2000);
         } else {
           console.log('📁 Upload failed - success:', response.success, 'data:', response.data);
           allSuccessful = false;
-          
-          // Update global progress to error
-          progressStore.updateProgress(progressId, {
-            status: 'error',
-          });
-          
-          // Update old progress system
+
           get().updateUploadProgress(fileId, {
             status: 'error',
             error: response.message || 'Upload failed',
@@ -296,47 +345,74 @@ export const useFileStore = create<FileStore>((set, get) => ({
           uri: file.uri,
         });
         allSuccessful = false;
-        
-        // Update global progress to error with detailed message
+
         const errorMessage = error.response?.data?.message || error.message || 'Upload failed';
-        progressStore.updateProgress(progressId, {
-          status: 'error',
-          message: errorMessage,
-        });
-        
-        // Update old progress system
         get().updateUploadProgress(fileId, {
           status: 'error',
           error: errorMessage,
         });
-        
-        // Set global error state
+
         const fullErrorMessage = `Failed to upload ${file.name}: ${errorMessage}`;
         set({ error: fullErrorMessage });
-        
-        // Show alert to user with error details
-        Alert.alert(
-          'Upload Failed',
-          fullErrorMessage,
-          [{ text: 'OK' }]
-        );
+
+        // Only alert immediately for single-file uploads; batch gets a summary at the end.
+        if (totalFiles === 1) {
+          Alert.alert('Upload Failed', fullErrorMessage, [{ text: 'OK' }]);
+        }
       } finally {
-        // Always remove the optimistic placeholder once the upload resolves or fails
-        get().removePendingUpload(pendingUploadId);
+        if (!uploadSucceeded) {
+          // Failed uploads: drop the optimistic row immediately.
+          get().removePendingUpload(pendingUploadId);
+        } else {
+          // Keep the placeholder until the documents list shows the server row.
+          // Clearing here caused the list spinner to vanish, then reappear after reload.
+          setTimeout(() => {
+            get().removePendingUpload(pendingUploadId);
+          }, 60_000);
+        }
       }
     }
-    
+
     console.log('📁 Upload batch completed. All successful:', allSuccessful);
-    
-    // Show summary alert if any uploads failed
-    if (!allSuccessful) {
+
+    if (allSuccessful) {
+      progressStore.updateProgress(progressId, {
+        progress: 100,
+        status: 'completed',
+        message:
+          totalFiles === 1
+            ? 'Upload complete'
+            : `Uploaded ${successCount} of ${totalFiles} files`,
+      });
+    } else if (successCount > 0) {
+      progressStore.updateProgress(progressId, {
+        progress: 100,
+        status: 'completed',
+        message: `Uploaded ${successCount} of ${totalFiles} files`,
+      });
       Alert.alert(
         'Upload Incomplete',
         'Some files failed to upload. Please check the error messages and try again.',
         [{ text: 'OK' }]
       );
+    } else {
+      progressStore.updateProgress(progressId, {
+        status: 'error',
+        message: totalFiles === 1 ? 'Upload failed' : 'All uploads failed',
+      });
+      if (totalFiles > 1) {
+        Alert.alert(
+          'Upload Incomplete',
+          'Some files failed to upload. Please check the error messages and try again.',
+          [{ text: 'OK' }]
+        );
+      }
     }
-    
+
+    setTimeout(() => {
+      progressStore.removeProgress(progressId);
+    }, allSuccessful || successCount > 0 ? 3000 : 5000);
+
     return allSuccessful;
   },
 
@@ -444,7 +520,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
             'Sorry, our maximum upload is 3',
             [{ text: 'OK' }]
           );
-          return false;
+          // null = soft stop; callers must not show a second failure alert
+          return null;
         }
         
         const files: FileUpload[] = [];
@@ -475,7 +552,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       }
       
       console.log('🖼️ No images selected or picker was canceled');
-      return false;
+      return null;
     } catch (error: any) {
       console.error('🖼️ Gallery upload error:', error);
       set({ error: error.message || 'Failed to select media', isImagePickerOpen: false });
@@ -511,7 +588,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
             [{ text: 'OK' }]
           );
           get().setDocumentPickerOpen(false);
-          return false;
+          // null = soft stop; callers must not show a second failure alert
+          return null;
         }
         
         const files: FileUpload[] = result.assets.map((asset) => ({
@@ -527,7 +605,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       }
       
       get().setDocumentPickerOpen(false);
-      return false;
+      return null;
     } catch (error: any) {
       set({ error: error.message || 'Failed to select documents' });
       get().setDocumentPickerOpen(false);
@@ -651,7 +729,12 @@ export const useFileStore = create<FileStore>((set, get) => ({
   },
 
   addPendingUpload: (upload: PendingUpload) => {
-    set((state) => ({ pendingUploads: [...state.pendingUploads, upload] }));
+    set((state) => ({
+      pendingUploads: [
+        ...state.pendingUploads,
+        { createdAt: Date.now(), ...upload },
+      ],
+    }));
   },
 
   removePendingUpload: (id: string) => {

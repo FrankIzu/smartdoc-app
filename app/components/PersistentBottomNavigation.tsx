@@ -4,6 +4,7 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { shouldShowPersistentBottomNav } from '../../utils/persistentBottomNavInset';
+import { isPrimaryShellRouteActive, navigatePrimaryShell } from '../../utils/tabNavigation';
 
 interface TabItem {
   name: string;
@@ -55,18 +56,9 @@ export default function PersistentBottomNavigation() {
     return null;
   }
 
-  const isActive = (route: string) => {
-    if (route === '/(tabs)') {
-      return pathname === '/(tabs)' || pathname === '/(tabs)/' || pathname === '/(tabs)/index';
-    }
-    if (route === '/calendar') {
-      return pathname === '/calendar' || pathname === '/calendar/';
-    }
-    return pathname.startsWith(route);
-  };
-
   const handleTabPress = (route: string) => {
-    router.push(route as any);
+    // navigate (not push) so tab switches don't stack duplicate history entries
+    navigatePrimaryShell(router, route, pathname);
   };
 
   return (
@@ -81,7 +73,7 @@ export default function PersistentBottomNavigation() {
       ]}
     >
       {tabs.map((tab) => {
-        const active = isActive(tab.route);
+        const active = isPrimaryShellRouteActive(pathname, tab.route);
         return (
           <TouchableOpacity
             key={tab.name}

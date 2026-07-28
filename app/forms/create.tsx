@@ -13,6 +13,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { Form } from '../../types/form';
@@ -225,13 +226,14 @@ export default function CreateFormScreen() {
         templateName: form.title,
         templateDescription: form.description,
         fields: JSON.stringify(form.json_fields),
-        formId: form.id.toString()
+        formId: form.id.toString(),
+        isPublished: form.is_published ? 'true' : 'false',
       }
     });
   };
 
-  const getTemplateIcon = (category: string) => {
-    switch (category.toLowerCase()) {
+  const getTemplateIcon = (category?: string | null) => {
+    switch ((category || '').toLowerCase()) {
       case 'contact':
         return 'mail';
       case 'feedback':
@@ -249,7 +251,7 @@ export default function CreateFormScreen() {
     }
   };
 
-  const getTemplateColor = (category: string, templateName?: string) => {
+  const getTemplateColor = (category?: string | null, templateName?: string) => {
     // Handle specific templates first
     if (templateName) {
       switch (templateName.toLowerCase()) {
@@ -263,7 +265,7 @@ export default function CreateFormScreen() {
     }
     
     // Then handle by category
-    switch (category.toLowerCase()) {
+    switch ((category || '').toLowerCase()) {
       case 'contact':
         return '#007AFF';        // Blue
       case 'feedback':
@@ -357,16 +359,18 @@ export default function CreateFormScreen() {
             <Text style={[styles.fieldsCount, { color: colors.textSecondary }]}>
               {item.json_fields?.length || 0} fields • {item.response_count || 0} responses
             </Text>
-            <TouchableOpacity
+            <FeedbackTouchable
               style={styles.deleteButton}
               onPress={(e) => {
                 e.stopPropagation(); // Prevent triggering the parent TouchableOpacity
                 deleteForm(item);
               }}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              spinnerColor="#FF3B30"
+              replaceWithSpinner={false}
             >
               <Ionicons name="trash-outline" size={18} color="#FF3B30" />
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
         </View>
       </View>

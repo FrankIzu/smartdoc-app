@@ -2,13 +2,13 @@ import { usePathname } from 'expo-router';
 import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  Easing,
+  // Easing, // unused while header toggle is disabled
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type ScrollViewProps,
 } from 'react-native';
 
-const HEADER_SLIDE_DURATION = 250;
+// const HEADER_SLIDE_DURATION = 250; // unused while header toggle is disabled
 const HEADER_DEFAULT_HEIGHT = 72;
 /** Pixel slack for “at top / bottom / left / right” when restoring the header after scroll stops. */
 const HEADER_RESTORE_SCROLL_EDGE_EPS = 12;
@@ -63,17 +63,20 @@ interface HeaderVisibilityContextValue {
 
 const HeaderVisibilityContext = createContext<HeaderVisibilityContextValue | null>(null);
 
-function isToggleDisabled(pathname: string): boolean {
-  const normalized = (pathname || '').replace(/\/$/, '') || '/';
-  return normalized === '/(tabs)';
-}
+// Unused while header toggle is disabled — restore with toggleEnabled logic below.
+// function isToggleDisabled(pathname: string): boolean {
+//   const normalized = (pathname || '').replace(/\/$/, '') || '/';
+//   return normalized === '/(tabs)';
+// }
 
 export function HeaderVisibilityProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [headerVisible, setHeaderVisible] = useState(true);
   const headerAnimValue = useRef(new Animated.Value(0)).current;
 
-  const toggleEnabled = useMemo(() => !isToggleDisabled(pathname ?? ''), [pathname]);
+  // Header hide/show (double-tap toggle) disabled — keep header permanently visible.
+  // Previously: const toggleEnabled = useMemo(() => !isToggleDisabled(pathname ?? ''), [pathname]);
+  const toggleEnabled = false;
   const visibleRef = useRef(true);
   React.useEffect(() => {
     visibleRef.current = headerVisible;
@@ -86,31 +89,32 @@ export function HeaderVisibilityProvider({ children }: { children: React.ReactNo
     headerAnimValue.setValue(0);
   }, [pathname, headerAnimValue]);
 
+  // Double-tap hide/show disabled — no-ops so the header stays permanently visible.
   const toggleHeader = useCallback(() => {
-    if (!toggleEnabled) return;
-    visibleRef.current = !visibleRef.current;
-    const nextVisible = visibleRef.current;
-    setHeaderVisible(nextVisible);
-    Animated.timing(headerAnimValue, {
-      toValue: nextVisible ? 0 : 1,
-      duration: HEADER_SLIDE_DURATION,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [toggleEnabled, headerAnimValue]);
+    // if (!toggleEnabled) return;
+    // visibleRef.current = !visibleRef.current;
+    // const nextVisible = visibleRef.current;
+    // setHeaderVisible(nextVisible);
+    // Animated.timing(headerAnimValue, {
+    //   toValue: nextVisible ? 0 : 1,
+    //   duration: HEADER_SLIDE_DURATION,
+    //   easing: Easing.out(Easing.cubic),
+    //   useNativeDriver: false,
+    // }).start();
+  }, []);
 
   const showHeader = useCallback(() => {
-    if (!toggleEnabled) return;
-    if (visibleRef.current) return;
-    visibleRef.current = true;
-    setHeaderVisible(true);
-    Animated.timing(headerAnimValue, {
-      toValue: 0,
-      duration: HEADER_SLIDE_DURATION,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [toggleEnabled, headerAnimValue]);
+    // if (!toggleEnabled) return;
+    // if (visibleRef.current) return;
+    // visibleRef.current = true;
+    // setHeaderVisible(true);
+    // Animated.timing(headerAnimValue, {
+    //   toValue: 0,
+    //   duration: HEADER_SLIDE_DURATION,
+    //   easing: Easing.out(Easing.cubic),
+    //   useNativeDriver: false,
+    // }).start();
+  }, []);
 
   const value = useMemo<HeaderVisibilityContextValue>(
     () => ({

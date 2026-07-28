@@ -35,7 +35,14 @@ import type {
   PendingSubmission,
   SessionState,
 } from '../types/signature';
-import { isFieldEditable, normalizeSignerPayload, shapeSignerValuesForApi } from '../utils/signatureRuntime';
+import {
+  buildSignerAutoFillDate,
+  dateFieldDisplayText,
+  isDateFieldType,
+  isFieldEditable,
+  normalizeSignerPayload,
+  shapeSignerValuesForApi,
+} from '../utils/signatureRuntime';
 import { errorLogger } from '../services/errorLogger';
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
@@ -185,6 +192,8 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
           serverValues[a.field_key] = a.signed_value_json;
         } else if (a.draft_value_json != null) {
           serverValues[a.field_key] = a.draft_value_json;
+        } else if (a.prefill_value != null) {
+          serverValues[a.field_key] = a.prefill_value;
         }
       }
 
@@ -192,6 +201,18 @@ export function useSignerEngine(opts: UseSignerEngineOptions) {
       if (cached?.fieldValues) {
         merged = { ...merged, ...mergeFieldValuesIfAllowed(cached.fieldValues, normalized) };
       }
+
+      // Date fields are server-auto-filled at submit; seed them now so they
+      // show on the first open and get painted into composited pages.
+      for (const doc of normalized.documents) {
+        for (const f of doc.fields) {
+          if (!isDateFieldType(f.type)) continue;
+          if (!isFieldEditable(normalized.editableFieldKeys, f.key)) continue;
+          if (dateFieldDisplayText(merged[f.key])) continue;
+          merged[f.key] = buildSignerAutoFillDate();
+        }
+      }
+
       setFieldValues(merged);
       fieldValuesRef.current = merged;
 

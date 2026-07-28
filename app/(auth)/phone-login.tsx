@@ -1,7 +1,6 @@
 import { Link, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
     Platform,
@@ -13,11 +12,14 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { apiService } from '../../services/api';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 import { useAuth } from '../context/auth';
 
 type PhoneLoginStep = 'phone' | 'verify' | 'password';
+
+const RESEND_COOLDOWN_SEC = 60;
 
 export default function PhoneLoginScreen() {
     const router = useRouter();
@@ -30,8 +32,18 @@ export default function PhoneLoginScreen() {
     const [error, setError] = useState('');
     const [maskedPhone, setMaskedPhone] = useState('');
     const [testOtp, setTestOtp] = useState(''); // For development testing
+    const [resendCooldown, setResendCooldown] = useState(0);
+    const resendCooldownActive = resendCooldown > 0;
 
     const { signIn } = useAuth();
+
+    useEffect(() => {
+        if (!resendCooldownActive) return undefined;
+        const interval = setInterval(() => {
+            setResendCooldown((prev) => Math.max(0, prev - 1));
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [resendCooldownActive]);
 
     const handlePhoneSubmit = async () => {
         if (!phoneNumber) {
@@ -65,6 +77,7 @@ export default function PhoneLoginScreen() {
                     );
                 }
                 setStep('verify');
+                setResendCooldown(RESEND_COOLDOWN_SEC);
             } else {
                 setError(otpResponse.message || 'Failed to send verification code');
             }
@@ -130,6 +143,7 @@ export default function PhoneLoginScreen() {
     };
 
     const handleResendOtp = async () => {
+        if (resendCooldown > 0 || loading) return;
         try {
             setLoading(true);
             setError('');
@@ -146,6 +160,7 @@ export default function PhoneLoginScreen() {
                     );
                 }
                 Alert.alert('Success', 'New verification code sent!');
+                setResendCooldown(RESEND_COOLDOWN_SEC);
             } else {
                 setError(otpResponse.message || 'Failed to resend code');
             }
@@ -169,10 +184,12 @@ export default function PhoneLoginScreen() {
                     value={countryCode}
                     onChangeText={setCountryCode}
                     placeholder="+1"
+                    placeholderTextColor="#999"
                 />
                 <TextInput
                     style={styles.phoneInput}
                     placeholder="Phone number"
+                    placeholderTextColor="#999"
                     value={phoneNumber}
                     onChangeText={setPhoneNumber}
                     keyboardType="phone-pad"
@@ -180,17 +197,15 @@ export default function PhoneLoginScreen() {
                 />
             </View>
 
-            <Pressable
+            <FeedbackTouchable
                 style={[styles.button, loading && styles.buttonDisabled]}
                 onPress={handlePhoneSubmit}
                 disabled={loading}
+                loading={loading}
+                spinnerColor="#fff"
             >
-                {loading ? (
-                    <ActivityIndicator color="#fff" />
-                ) : (
-                    <Text style={styles.buttonText}>Send Code</Text>
-                )}
-            </Pressable>
+                <Text style={styles.buttonText}>Send Code</Text>
+            </FeedbackTouchable>
         </View>
     );
 
@@ -210,6 +225,7 @@ export default function PhoneLoginScreen() {
             <TextInput
                 style={styles.otpInput}
                 placeholder="000000"
+                placeholderTextColor="#999"
                 value={otpCode}
                 onChangeText={setOtpCode}
                 keyboardType="number-pad"
@@ -217,25 +233,28 @@ export default function PhoneLoginScreen() {
                 autoFocus
             />
 
-            <Pressable
+            <FeedbackTouchable
                 style={[styles.button, loading && styles.buttonDisabled]}
                 onPress={handleOtpSubmit}
                 disabled={loading}
+                loading={loading}
+                spinnerColor="#fff"
             >
-                {loading ? (
-                    <ActivityIndicator color="#fff" />
-                ) : (
-                    <Text style={styles.buttonText}>Verify</Text>
-                )}
-            </Pressable>
+                <Text style={styles.buttonText}>Verify</Text>
+            </FeedbackTouchable>
 
-            <Pressable
+            <FeedbackTouchable
                 style={styles.linkButton}
                 onPress={handleResendOtp}
-                disabled={loading}
+                disabled={loading || resendCooldown > 0}
+                loading={loading && resendCooldown === 0}
+                spinnerColor="#007AFF"
+                replaceWithSpinner={false}
             >
-                <Text style={styles.linkText}>Resend code</Text>
-            </Pressable>
+                <Text style={[styles.linkText, resendCooldown > 0 && styles.linkTextDisabled]}>
+                    {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
+                </Text>
+            </FeedbackTouchable>
 
             <Pressable
                 style={styles.linkButton}
@@ -256,6 +275,7 @@ export default function PhoneLoginScreen() {
             <TextInput
                 style={styles.input}
                 placeholder="Password"
+                placeholderTextColor="#999"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
@@ -265,17 +285,15 @@ export default function PhoneLoginScreen() {
                 autoFocus
             />
 
-            <Pressable
+            <FeedbackTouchable
                 style={[styles.button, loading && styles.buttonDisabled]}
                 onPress={handlePasswordSubmit}
                 disabled={loading}
+                loading={loading}
+                spinnerColor="#fff"
             >
-                {loading ? (
-                    <ActivityIndicator color="#fff" />
-                ) : (
-                    <Text style={styles.buttonText}>Sign In</Text>
-                )}
-            </Pressable>
+                <Text style={styles.buttonText}>Sign In</Text>
+            </FeedbackTouchable>
 
             <Pressable
                 style={styles.linkButton}
@@ -390,6 +408,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         width: 80,
         textAlign: 'center',
+        color: '#333',
     },
     phoneInput: {
         backgroundColor: '#f5f5f5',
@@ -397,6 +416,7 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         fontSize: 16,
         flex: 1,
+        color: '#333',
     },
     input: {
         backgroundColor: '#f5f5f5',
@@ -404,6 +424,7 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         fontSize: 16,
         marginBottom: 24,
+        color: '#333',
     },
     otpInput: {
         backgroundColor: '#f5f5f5',
@@ -414,6 +435,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         letterSpacing: 8,
         marginBottom: 24,
+        color: '#333',
     },
     button: {
         backgroundColor: '#007AFF',
@@ -438,6 +460,9 @@ const styles = StyleSheet.create({
         color: '#007AFF',
         fontSize: 14,
         fontWeight: '500',
+    },
+    linkTextDisabled: {
+        color: '#999',
     },
     errorContainer: {
         backgroundColor: '#FFF5F5',

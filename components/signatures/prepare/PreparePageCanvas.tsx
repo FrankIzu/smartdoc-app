@@ -100,6 +100,17 @@ export default function PreparePageCanvas({
     fitScale,
   } = editor;
 
+  const setGestureLockedWithScroll = useCallback(
+    (locked: boolean) => {
+      // Imperatively toggle scroll before React re-renders so the ScrollView
+      // does not compete with the field pan for the first few frames.
+      const enableScroll = !locked && !isPinchingRef.current;
+      usedScrollRef.current?.setNativeProps?.({ scrollEnabled: enableScroll });
+      setGestureLocked(locked);
+    },
+    [setGestureLocked, usedScrollRef],
+  );
+
   useEffect(() => {
     if (!isPinchingRef.current) {
       zoomShared.value = zoomLevel;
@@ -343,31 +354,50 @@ export default function PreparePageCanvas({
       if (!isPinchingRef.current) return;
       isPinchingRef.current = false;
       setPinchScrollLocked(false);
+      const enableScroll = !gestureLock.current;
+      usedScrollRef.current?.setNativeProps?.({ scrollEnabled: enableScroll });
       const clamped = clampZoom(finalZoom ?? liveZoomRef.current);
       liveZoomRef.current = clamped;
       commitPinchZoom(clamped, scrollOffsetRef.current);
     },
-    [commitPinchZoom],
+    [commitPinchZoom, usedScrollRef],
   );
 
-  const pinchGesture = Gesture.Pinch()
-    .onBegin(() => {
-      'worklet';
-      pinchBaseZoom.value = zoomShared.value;
-      runOnJS(beginPinch)();
-    })
-    .onUpdate((e) => {
-      'worklet';
-      runOnJS(applyPinchUpdate)(pinchBaseZoom.value * e.scale);
-    })
-    .onEnd((e) => {
-      'worklet';
-      runOnJS(endPinch)(pinchBaseZoom.value * e.scale);
-    })
-    .onFinalize(() => {
-      'worklet';
-      runOnJS(endPinch)();
-    });
+  const pinchHandlersRef = useRef({ beginPinch, applyPinchUpdate, endPinch });
+  pinchHandlersRef.current = { beginPinch, applyPinchUpdate, endPinch };
+
+  const runBeginPinch = useCallback(() => {
+    pinchHandlersRef.current.beginPinch();
+  }, []);
+  const runApplyPinchUpdate = useCallback((nextZoom: number) => {
+    pinchHandlersRef.current.applyPinchUpdate(nextZoom);
+  }, []);
+  const runEndPinch = useCallback((finalZoom?: number) => {
+    pinchHandlersRef.current.endPinch(finalZoom);
+  }, []);
+
+  const pinchGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .onBegin(() => {
+          'worklet';
+          pinchBaseZoom.value = zoomShared.value;
+          runOnJS(runBeginPinch)();
+        })
+        .onUpdate((e) => {
+          'worklet';
+          runOnJS(runApplyPinchUpdate)(pinchBaseZoom.value * e.scale);
+        })
+        .onEnd((e) => {
+          'worklet';
+          runOnJS(runEndPinch)(pinchBaseZoom.value * e.scale);
+        })
+        .onFinalize(() => {
+          'worklet';
+          runOnJS(runEndPinch)();
+        }),
+    [pinchBaseZoom, runApplyPinchUpdate, runBeginPinch, runEndPinch, zoomShared],
+  );
 
   return (
     <ScrollView
@@ -442,7 +472,7 @@ export default function PreparePageCanvas({
                   zoomLevel={zoomLevel}
                   overlayRenderVersion={overlayRenderVersion}
                   gestureLock={gestureLock}
-                  setGestureLocked={setGestureLocked}
+                  setGestureLocked={setGestureLockedWithScroll}
                   groupDragX={groupDragX}
                   groupDragY={groupDragY}
                   isGroupDragging={isGroupDragging}

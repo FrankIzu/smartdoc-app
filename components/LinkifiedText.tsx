@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { Linking, StyleSheet, Text, type TextProps, type TextStyle } from 'react-native';
 import { splitTextByUrls } from '../utils/linkifyPlainText';
 import { validateAndSanitizeUrl } from '../utils/linkSecurity';
+import { openMeetingUrl } from '../utils/openMeetingUrl';
+import { isGrabDocsReachJoinUrl } from '../utils/grabdocsJoinUrl';
 
 interface LinkifiedTextProps extends TextProps {
   children: string;
@@ -21,6 +23,14 @@ export default function LinkifiedText({
   const openLink = (raw: string) => {
     const result = validateAndSanitizeUrl(raw);
     if (result.valid && result.url) {
+      // Meeting links (GrabDocs Reach + Zoom/Teams/Meet): prefer in-app / native apps
+      if (
+        isGrabDocsReachJoinUrl(result.url) ||
+        /zoom\.us|teams\.(microsoft|live)\.com|meet\.google\.com|\.webex\.com/i.test(result.url)
+      ) {
+        void openMeetingUrl(result.url);
+        return;
+      }
       Linking.openURL(result.url).catch(() => {});
     }
   };

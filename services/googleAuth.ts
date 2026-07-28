@@ -465,7 +465,9 @@ class GoogleAuthService {
         // Update last login data
         await deviceSecurityService.setLastLoginData({
           timestamp: new Date().toISOString(),
+          authMethod: 'google',
         });
+        await deviceSecurityService.disableBiometricLoginPreference();
 
         console.log('Google login successful:', result.message);
       } else {

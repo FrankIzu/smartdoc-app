@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { AI_FM_COMMAND_HINT, AI_FM_DISCLAIMER, AI_FM_RUN_BUTTON_COLOR } from '../../constants/aiFileManagerHelp';
 import type { UseAiFileManagerReturn } from '../../hooks/useAiFileManager';
+import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import GateActionSheet from './GateActionSheet';
 import HighRiskConfirmModal from './HighRiskConfirmModal';
@@ -26,7 +27,8 @@ export default function CommandTab({ fm, onOpenHistoryTab }: Props) {
   const colors = useThemeColors();
   const [input, setInput] = useState('');
   const [showHighRisk, setShowHighRisk] = useState(false);
-  const [showGate, setShowGate] = useState(false);
+  const gateSheet = useMinimizableSheet();
+  const { open: openGateSheet, close: closeGateSheet } = gateSheet;
   const listRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -57,11 +59,11 @@ export default function CommandTab({ fm, onOpenHistoryTab }: Props) {
 
   React.useEffect(() => {
     if (fm.phase === 'gate' && fm.activeGate) {
-      setShowGate(true);
+      openGateSheet();
     } else {
-      setShowGate(false);
+      closeGateSheet();
     }
-  }, [fm.phase, fm.activeGate]);
+  }, [fm.phase, fm.activeGate, openGateSheet, closeGateSheet]);
 
   return (
     <View style={styles.flex}>
@@ -164,28 +166,29 @@ export default function CommandTab({ fm, onOpenHistoryTab }: Props) {
       </View>
 
       <GateActionSheet
-        visible={showGate}
+        visible={gateSheet.visible}
+        expandNonce={gateSheet.expandNonce}
         gateType={fm.activeGate}
         planResponse={fm.lastPlanResponse}
-        onClose={() => setShowGate(false)}
+        onClose={gateSheet.close}
         onConfirmScope={() => {
-          setShowGate(false);
+          gateSheet.close();
           fm.confirmScope();
         }}
         onConfirmFolderScope={(currentOnly) => {
-          setShowGate(false);
+          gateSheet.close();
           fm.confirmFolderScope(currentOnly);
         }}
         onConfirmRenameBatch={() => {
-          setShowGate(false);
+          gateSheet.close();
           fm.confirmRenameBatch();
         }}
         onPickRenameTarget={(id) => {
-          setShowGate(false);
+          gateSheet.close();
           fm.pickRenameTarget(id);
         }}
         onRunNowAnyway={() => {
-          setShowGate(false);
+          gateSheet.close();
           fm.runNowAnyway();
         }}
       />

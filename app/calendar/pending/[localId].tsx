@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import LinkifiedText from '../../../components/LinkifiedText';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import {
@@ -37,6 +38,8 @@ export default function CalendarPendingEventScreen() {
   const { localId } = useLocalSearchParams<{ localId?: string }>();
   const [loading, setLoading] = useState(true);
   const [row, setRow] = useState<PendingCalendarCreate | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [discardBusy, setDiscardBusy] = useState(false);
 
   const styles = useMemo(
     () =>
@@ -133,8 +136,13 @@ export default function CalendarPendingEventScreen() {
         text: 'Discard',
         style: 'destructive',
         onPress: async () => {
-          await removePendingCalendarCreate(localId);
-          router.replace('/calendar' as any);
+          setDiscardBusy(true);
+          try {
+            await removePendingCalendarCreate(localId);
+            router.replace('/calendar' as any);
+          } finally {
+            setDiscardBusy(false);
+          }
         },
       },
     ]);
@@ -146,20 +154,25 @@ export default function CalendarPendingEventScreen() {
       Alert.alert('Offline', 'Connect to the internet to retry sync.');
       return;
     }
-    await resetPendingCalendarToQueued(localId);
-    await reload();
-    const fresh = await getPendingCalendarCreate(localId);
-    if (!fresh) {
-      router.replace('/calendar' as any);
-      return;
-    }
-    const r = await flushPendingCalendarCreates(fresh.userId);
-    await reload();
-    if (r.synced > 0) {
-      Alert.alert('Synced', 'This event was saved on the server.');
-      router.replace('/calendar' as any);
-    } else if (r.permanent > 0) {
-      Alert.alert('Still failing', fresh.lastError || 'Check event details or discard and create again.');
+    setSyncBusy(true);
+    try {
+      await resetPendingCalendarToQueued(localId);
+      await reload();
+      const fresh = await getPendingCalendarCreate(localId);
+      if (!fresh) {
+        router.replace('/calendar' as any);
+        return;
+      }
+      const r = await flushPendingCalendarCreates(fresh.userId);
+      await reload();
+      if (r.synced > 0) {
+        Alert.alert('Synced', 'This event was saved on the server.');
+        router.replace('/calendar' as any);
+      } else if (r.permanent > 0) {
+        Alert.alert('Still failing', fresh.lastError || 'Check event details or discard and create again.');
+      }
+    } finally {
+      setSyncBusy(false);
     }
   };
 
@@ -245,18 +258,35 @@ export default function CalendarPendingEventScreen() {
         ) : null}
 
         {needsAttention ? (
-          <TouchableOpacity style={styles.btn} onPress={retrySync}>
+          <FeedbackTouchable
+            style={styles.btn}
+            onPress={retrySync}
+            disabled={syncBusy || discardBusy}
+            loading={syncBusy}
+            spinnerColor="#fff"
+          >
             <Text style={styles.btnText}>Retry sync</Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
         ) : null}
 
-        <TouchableOpacity style={styles.btnSecondary} onPress={reload}>
+        <FeedbackTouchable
+          style={styles.btnSecondary}
+          onPress={reload}
+          disabled={syncBusy || discardBusy}
+          spinnerColor={colors.text}
+        >
           <Text style={styles.btnTextDark}>Refresh status</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
 
-        <TouchableOpacity style={styles.btnDanger} onPress={discard}>
+        <FeedbackTouchable
+          style={styles.btnDanger}
+          onPress={discard}
+          disabled={syncBusy || discardBusy}
+          loading={discardBusy}
+          spinnerColor="#fff"
+        >
           <Text style={styles.btnText}>Discard queued event</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </ScrollView>
     </SafeAreaView>
   );

@@ -11,12 +11,14 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { UploadOptionsModal } from '../../components/UploadOptionsModal';
 import DocumentSourcePicker, {
   pickDocumentsLikeFilesScreen,
   pickGalleryImagesLikeFilesScreen,
 } from '../../../components/signatures/DocumentSourcePicker';
 import { useEnvelopeDraft } from '../../../hooks/useEnvelopeDraft';
+import { useMinimizableSheet } from '../../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { useAuth } from '../../context/auth';
 import { createEnvelope, getEnvelope, replaceDocuments, updateEnvelopeDraft } from '../../../services/envelopeApi';
@@ -40,7 +42,7 @@ export default function CreateEnvelopeScreen() {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
-  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const uploadSheet = useMinimizableSheet();
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
@@ -72,29 +74,36 @@ export default function CreateEnvelopeScreen() {
       const added: WizardSourceDraft[] = [];
 
       for (const asset of assets) {
-        const { templateId, displayName } = await uploadPdfForSignature({
-          uri: asset.uri,
-          name: asset.name ?? 'Document',
-          mimeType: asset.mimeType ?? null,
-        });
-        added.push({
+        // Return as soon as the file + template exist so the Documents list updates
+        // immediately — do not block on page-image rasterization.
+        const { templateId, displayName } = await uploadPdfForSignature(
+          {
+            uri: asset.uri,
+            name: asset.name ?? 'Document',
+            mimeType: asset.mimeType ?? null,
+          },
+          { waitForPages: false },
+        );
+        const draft: WizardSourceDraft = {
           localId: newLocalId(),
           source_type: 'fillable',
           fillable_template_id: templateId,
           display_name: displayName,
           needsPrepare: true,
+        };
+        added.push(draft);
+        setSources((prev) => {
+          const nextSources = [...prev, draft];
+          void saveWizardSources(nextSources);
+          return nextSources;
         });
       }
 
       if (!added.length) return;
 
-      setSources((prev) => {
-        const nextSources = [...prev, ...added];
-        void saveWizardSources(nextSources);
-        return nextSources;
-      });
       const firstTemplateId = added[0].fillable_template_id;
       if (firstTemplateId) {
+        // Prepare editor waits for page images if they are still rasterizing.
         router.push(`/signatures/create/prepare/${firstTemplateId}` as any);
       }
     },
@@ -102,13 +111,13 @@ export default function CreateEnvelopeScreen() {
   );
 
   const dismissUploadModal = useCallback(() => {
-    setShowUploadOptions(false);
-  }, []);
+    uploadSheet.close();
+  }, [uploadSheet]);
 
   const handleUploadFromFilesViaModal = useCallback(async () => {
     if (uploading) return;
 
-    setShowUploadOptions(false);
+    uploadSheet.close();
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     try {
@@ -122,17 +131,17 @@ export default function CreateEnvelopeScreen() {
     } finally {
       setUploading(false);
     }
-  }, [addSignatureUploads, uploading]);
+  }, [addSignatureUploads, uploading, uploadSheet]);
 
   const handleUploadFromCameraViaModal = useCallback(() => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     router.push('/scanner');
-  }, [router]);
+  }, [router, uploadSheet]);
 
   const handleUploadFromGalleryViaModal = useCallback(async () => {
     if (uploading) return;
 
-    setShowUploadOptions(false);
+    uploadSheet.close();
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     try {
@@ -145,14 +154,19 @@ export default function CreateEnvelopeScreen() {
     } finally {
       setUploading(false);
     }
-  }, [addSignatureUploads, uploading]);
+  }, [addSignatureUploads, uploading, uploadSheet]);
 
   const handleUploadByLinkViaModal = useCallback(() => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     router.push('/upload-by-link-code');
-  }, [router]);
+  }, [router, uploadSheet]);
 
   const handleNext = async () => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      Alert.alert('Title required', 'Enter a title for this envelope.');
+      return;
+    }
     if (!sources.length) {
       Alert.alert('Add documents', 'Add at least one document.');
       return;
@@ -172,14 +186,14 @@ export default function CreateEnvelopeScreen() {
       if (!envelopeId) {
         const res = await createEnvelope({
           sources: apiSources,
-          ...(title.trim() ? { title: title.trim() } : {}),
+          title: trimmedTitle,
           message: message || undefined,
         });
         envelopeId = res.envelope.public_id || String(res.envelope.id);
       } else {
         const existing = await getEnvelope(envelopeId);
         await updateEnvelopeDraft(envelopeId, {
-          ...(title.trim() ? { title: title.trim() } : {}),
+          title: trimmedTitle,
           message: message || undefined,
         });
         await replaceDocuments(
@@ -225,19 +239,23 @@ export default function CreateEnvelopeScreen() {
         <DocumentSourcePicker
           sources={sources}
           onSourcesChange={persistSources}
-          onOpenUpload={() => setShowUploadOptions(true)}
+          onOpenUpload={() => uploadSheet.open()}
           onPrepare={(templateId) => router.push(`/signatures/create/prepare/${templateId}` as any)}
         />
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[styles.nextBtn, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
           disabled={saving}
-          onPress={() => void handleNext()}
+          loading={saving}
+          onPress={handleNext}
+          spinnerColor="#fff"
+          replaceWithSpinner={false}
         >
           <Text style={styles.nextText}>{saving ? 'Saving…' : 'Next: Recipients'}</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </ScrollView>
       <UploadOptionsModal
-        visible={showUploadOptions}
+        visible={uploadSheet.visible}
+        expandNonce={uploadSheet.expandNonce}
         isUploading={uploading}
         onDismiss={dismissUploadModal}
         onFiles={handleUploadFromFilesViaModal}

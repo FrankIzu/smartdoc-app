@@ -82,6 +82,15 @@ class ErrorLoggerService {
     }
 
     try {
+      const { isCrashReportingEnabled } = await import('../utils/userPreferences');
+      if (!(await isCrashReportingEnabled())) {
+        return;
+      }
+    } catch {
+      /* if prefs unavailable, continue logging */
+    }
+
+    try {
       // Convert error to ErrorLogData format
       const errorMessage = typeof error === 'string' ? error : error.message;
       const errorTraceback = typeof error === 'string' 

@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 
@@ -54,6 +55,58 @@ const FIELD_TYPES = [
   { id: 'number', name: 'Number', icon: 'keypad' },
 ];
 
+const SUPPORTED_FIELD_TYPES = new Set(FIELD_TYPES.map((t) => t.id));
+
+/** Normalize route/API field payloads into a flat FormField[] the builder can render safely. */
+function normalizeFormFields(raw: unknown): FormField[] {
+  let list: unknown[] = [];
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (raw && typeof raw === 'object') {
+    const nested = (raw as { fields?: unknown }).fields;
+    if (Array.isArray(nested)) list = nested;
+  }
+
+  return list
+    .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object' && !Array.isArray(f))
+    .map((f, index) => {
+      const id = String(f.id ?? f.name ?? f.key ?? `field_${index + 1}`);
+      const typeRaw = String(f.type ?? 'text').toLowerCase();
+      const type = (SUPPORTED_FIELD_TYPES.has(typeRaw) ? typeRaw : 'text') as FormField['type'];
+      const rawOpts = f.options ?? f.choices ?? f.enum;
+      const options = Array.isArray(rawOpts)
+        ? rawOpts.map((o) =>
+            typeof o === 'string'
+              ? o
+              : String(
+                  (o as { label?: string; value?: string })?.label ??
+                    (o as { value?: string })?.value ??
+                    o,
+                ),
+          )
+        : type === 'select' || type === 'radio' || type === 'checkbox'
+          ? ['Option 1']
+          : undefined;
+      return {
+        id,
+        type,
+        label: String(f.label ?? f.title ?? `Field ${index + 1}`),
+        name: String(f.name ?? id),
+        placeholder: f.placeholder != null ? String(f.placeholder) : undefined,
+        required: !!f.required,
+        options,
+        validation: f.validation,
+      } as FormField;
+    });
+}
+
 export default function FormBuilderScreen() {
   const router = useRouter();
   const colors = useThemeColors();
@@ -75,14 +128,25 @@ export default function FormBuilderScreen() {
   const [loadingResponses, setLoadingResponses] = useState(false);
   const [formId, setFormId] = useState<number | null>((params.formId as string) ? parseInt(params.formId as string) : null);
   const [formShareUrl, setFormShareUrl] = useState<string | null>(null);
-  const [isPublished, setIsPublished] = useState(false);
+  const publishedParam = params.isPublished;
+  const [isPublished, setIsPublished] = useState(
+    () => publishedParam === 'true' || publishedParam === true
+  );
+  // Avoid flashing Publish→Unpublish: wait until we know status for existing forms.
+  const [publishStatusReady, setPublishStatusReady] = useState(() => {
+    if (!(params.formId as string)) return true; // new/unsaved form → unpublished
+    return publishedParam === 'true' || publishedParam === 'false' || publishedParam === true || publishedParam === false;
+  });
   const [publishing, setPublishing] = useState(false);
   const [shareMenuUrl, setShareMenuUrl] = useState<string | null>(null);
 
   // Load form when formId is present (e.g. editing existing form) to get is_published
   useEffect(() => {
     const id = formId ?? (params.formId ? parseInt(params.formId as string) : null);
-    if (!id || !Number.isFinite(id)) return;
+    if (!id || !Number.isFinite(id)) {
+      setPublishStatusReady(true);
+      return;
+    }
     let cancelled = false;
     apiService.getFormById(id).then((res: any) => {
       if (cancelled) return;
@@ -91,24 +155,21 @@ export default function FormBuilderScreen() {
         setIsPublished(form.is_published);
       }
       if (form?.share_url) setFormShareUrl(form.share_url);
-    }).catch(() => {});
+      setPublishStatusReady(true);
+    }).catch(() => {
+      if (!cancelled) setPublishStatusReady(true);
+    });
     return () => { cancelled = true; };
   }, [formId, params.formId]);
 
   useEffect(() => {
-    if (params.fields) {
-      try {
-        const fields = JSON.parse(params.fields as string);
-        // Ensure all fields have proper labels
-        const fieldsWithLabels = fields.map((field: any) => ({
-          ...field,
-          label: field.label || field.title || `Field ${field.id}`,
-          name: field.name || field.id || `field_${Date.now()}`
-        }));
-        setFormData(prev => ({ ...prev, fields: fieldsWithLabels }));
-      } catch (error) {
-        console.error('Failed to parse fields:', error);
-      }
+    if (params.fields == null || params.fields === '') return;
+    try {
+      const raw = Array.isArray(params.fields) ? params.fields[0] : params.fields;
+      const normalized = normalizeFormFields(raw);
+      setFormData((prev) => ({ ...prev, fields: normalized }));
+    } catch (error) {
+      console.error('Failed to parse fields:', error);
     }
   }, [params.fields]);
 
@@ -188,7 +249,26 @@ export default function FormBuilderScreen() {
     setFormData(prev => ({ ...prev, fields: newFields }));
   };
 
-  const saveForm = async () => {
+  const buildFormPayload = () => ({
+    name: formData.name,
+    title: formData.name,
+    description: formData.description,
+    type: 'Custom',
+    json_fields: formData.fields,
+    theme: 'default',
+    is_public: false,
+    settings: {},
+  });
+
+  const resolveExistingFormId = (): number | null => {
+    const fromState = formId != null && Number.isFinite(formId) ? formId : null;
+    if (fromState) return fromState;
+    if (!params.formId) return null;
+    const parsed = parseInt(params.formId as string, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const saveForm = async (options?: { shareAfterSave?: boolean }) => {
     if (!formData.name.trim()) {
       Alert.alert('Error', 'Please enter a form name');
       return;
@@ -199,54 +279,57 @@ export default function FormBuilderScreen() {
       return;
     }
 
+    const existingId = resolveExistingFormId();
+
     try {
       setSaving(true);
 
-      const response = await apiService.createForm({
-        name: formData.name,
-        title: formData.name,
-        description: formData.description,
-        type: 'Custom',
-        json_fields: formData.fields,
-        theme: 'default',
-        is_public: false,
-        settings: {}
-      });
+      const payload = buildFormPayload();
+      const response = existingId
+        ? await apiService.updateForm(existingId, payload)
+        : await apiService.createForm(payload);
 
       // Handle different response structures
       const isSuccess = response?.success === true || response?.success === 'true';
-      const createdForm = response?.form || response?.data || response;
+      const savedForm = response?.form || response?.data || response;
 
       if (isSuccess) {
-        const savedFormId = createdForm?.id || createdForm?.form?.id;
-        const shareUrl = createdForm?.share_url || createdForm?.form?.share_url;
+        const savedFormId = savedForm?.id || savedForm?.form?.id || existingId;
+        const shareUrl = savedForm?.share_url || savedForm?.form?.share_url;
 
-        // Store the form ID and share URL so sharing works immediately
         if (savedFormId) {
-          const id = typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId);
+          const id = typeof savedFormId === 'number' ? savedFormId : parseInt(String(savedFormId), 10);
           setFormId(id);
-          // Publish new form so share link works
-          try {
-            await apiService.setFormPublished(id, true);
-            setIsPublished(true);
-          } catch {
-            // Non-blocking; user can publish from builder
+          // Only auto-publish on first create so share links work; don't re-publish on update.
+          if (!existingId) {
+            try {
+              await apiService.setFormPublished(id, true);
+              setIsPublished(true);
+            } catch {
+              // Non-blocking; user can publish from builder
+            }
           }
         }
         if (shareUrl) {
           setFormShareUrl(shareUrl);
         }
-        
+
+        if (options?.shareAfterSave && savedFormId) {
+          const id = typeof savedFormId === 'number' ? savedFormId : parseInt(String(savedFormId), 10);
+          handleShareForm(id);
+          return;
+        }
+
         Alert.alert(
           'Success',
-          'Form saved successfully!',
+          existingId ? 'Form updated successfully!' : 'Form saved successfully!',
           [
             { text: 'OK', onPress: () => router.replace('/forms/create?tab=recent') }
           ]
         );
       } else {
         const errorMessage = response?.message || response?.error || 'Failed to save form';
-        console.error('❌ Form creation failed:', errorMessage);
+        console.error('❌ Form save failed:', errorMessage);
         Alert.alert('Error', errorMessage);
       }
     } catch (error: any) {
@@ -265,7 +348,7 @@ export default function FormBuilderScreen() {
 
   const shareForm = async () => {
     // Check if form has been saved (has an ID)
-    const currentFormId = formId || (params.formId ? parseInt(params.formId as string) : null);
+    const currentFormId = resolveExistingFormId();
     
     if (!currentFormId) {
       // Form hasn't been saved yet, prompt to save first
@@ -274,63 +357,7 @@ export default function FormBuilderScreen() {
         'Please save the form first before sharing.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Save & Share', onPress: async () => {
-            // Save the form first, then share
-            // We'll handle sharing in the saveForm success callback
-            const originalSaveForm = saveForm;
-            // Create a wrapper that shares after saving
-            const saveAndShare = async () => {
-              try {
-                setSaving(true);
-                
-                const response = await apiService.createForm({
-                  name: formData.name,
-                  title: formData.name,
-                  description: formData.description,
-                  type: 'Custom',
-                  json_fields: formData.fields,
-                  theme: 'default',
-                  is_public: false,
-                  settings: {}
-                });
-
-                const isSuccess = response?.success === true || response?.success === 'true';
-                const createdForm = response?.form || response?.data || response;
-
-                if (isSuccess) {
-                  const savedFormId = createdForm?.id || createdForm?.form?.id;
-                  const shareUrl = createdForm?.share_url || createdForm?.form?.share_url;
-                  
-                  if (savedFormId) {
-                    const id = typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId);
-                    setFormId(id);
-                    try {
-                      await apiService.setFormPublished(id, true);
-                      setIsPublished(true);
-                    } catch {
-                      // Non-blocking
-                    }
-                  }
-                  if (shareUrl) {
-                    setFormShareUrl(shareUrl);
-                  }
-                  
-                  // Now share the form
-                  if (savedFormId) {
-                    handleShareForm(typeof savedFormId === 'number' ? savedFormId : parseInt(savedFormId));
-                  }
-                } else {
-                  Alert.alert('Error', response?.message || 'Failed to save form');
-                }
-              } catch (error: any) {
-                Alert.alert('Error', error?.message || 'Failed to save form');
-              } finally {
-                setSaving(false);
-              }
-            };
-            
-            await saveAndShare();
-          }}
+          { text: 'Save & Share', onPress: () => { void saveForm({ shareAfterSave: true }); } }
         ]
       );
       return;
@@ -424,16 +451,17 @@ export default function FormBuilderScreen() {
         label: 'Copy link',
         icon: 'copy-outline',
         iconColor: colors.primary,
-        onPress: () => {
-          void (async () => {
-            try {
-              await Clipboard.setStringAsync(fullShareUrl);
+        onPress: async () => {
+          try {
+            await Clipboard.setStringAsync(fullShareUrl);
+            // Defer alert until after ActionMenuModal closes (it awaits this handler).
+            setTimeout(() => {
               Alert.alert('Success', 'Share link copied to clipboard!');
-            } catch (error) {
-              console.error('Failed to copy link:', error);
-              Alert.alert('Error', 'Failed to copy link');
-            }
-          })();
+            }, 100);
+          } catch (error) {
+            console.error('Failed to copy link:', error);
+            Alert.alert('Error', 'Failed to copy link');
+          }
         },
       },
       {
@@ -441,18 +469,21 @@ export default function FormBuilderScreen() {
         label: 'Share',
         icon: 'share-outline',
         iconColor: colors.primary,
-        onPress: () => {
-          void (async () => {
-            try {
-              await Share.share({
-                message: `Check out this form: ${fullShareUrl}`,
-                url: fullShareUrl,
-                title: formData.name,
-              });
-            } catch (error) {
+        onPress: async () => {
+          // Snapshot values, then return so ActionMenuModal can close first.
+          // Opening Share while the RN Modal is still mounted often fails.
+          const url = fullShareUrl;
+          const title = formData.name;
+          setTimeout(() => {
+            Share.share({
+              message: `Check out this form: ${url}`,
+              url,
+              title,
+            }).catch((error) => {
               console.error('Failed to share:', error);
-            }
-          })();
+              Alert.alert('Error', 'Failed to open share sheet');
+            });
+          }, 250);
         },
       },
     ];
@@ -835,18 +866,18 @@ export default function FormBuilderScreen() {
       ) : item.type === 'radio' ? (
         <View style={styles.previewOptionsContainer}>
           {item.options?.map((option, index) => (
-            <View key={`radio-${item.id}-${index}-${option}`} style={styles.previewOption}>
+            <View key={`radio-${item.id}-${index}-${String(option)}`} style={styles.previewOption}>
               <Ionicons name="radio-button-off" size={20} color="#666" />
-              <Text style={styles.previewOptionText}>{option}</Text>
+              <Text style={styles.previewOptionText}>{String(option)}</Text>
             </View>
           ))}
         </View>
       ) : item.type === 'checkbox' ? (
         <View style={styles.previewOptionsContainer}>
           {item.options?.map((option, index) => (
-            <View key={`checkbox-${item.id}-${index}-${option}`} style={styles.previewOption}>
+            <View key={`checkbox-${item.id}-${index}-${String(option)}`} style={styles.previewOption}>
               <Ionicons name="square-outline" size={20} color="#666" />
-              <Text style={styles.previewOptionText}>{option}</Text>
+              <Text style={styles.previewOptionText}>{String(option)}</Text>
             </View>
           ))}
         </View>
@@ -908,14 +939,14 @@ export default function FormBuilderScreen() {
             <Text style={styles.emptyStateSubtext}>Tap &quot;Add Field&quot; to get started</Text>
           </View>
         ) : (
-          <FlatList
-            data={formData.fields}
-            renderItem={renderFieldItem}
-            keyExtractor={(item) => item.id}
-            scrollEnabled={false}
-            accessibilityRole="list"
-            accessibilityLabel="Form fields"
-          />
+          // map() instead of FlatList — nested VirtualizedList inside ScrollView blanks/crashes on RN.
+          <View accessibilityRole="list" accessibilityLabel="Form fields">
+            {formData.fields.map((item, index) => (
+              <View key={item.id || `field-${index}`}>
+                {renderFieldItem({ item, index })}
+              </View>
+            ))}
+          </View>
         )}
       </View>
     </ScrollView>
@@ -928,13 +959,12 @@ export default function FormBuilderScreen() {
         {formData.description ? (
           <Text style={styles.previewDescription}>{formData.description}</Text>
         ) : null}
-        
-        <FlatList
-          data={formData.fields}
-          renderItem={renderPreviewField}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-        />
+
+        {formData.fields.map((item, index) => (
+          <View key={item.id || `preview-${index}`}>
+            {renderPreviewField({ item })}
+          </View>
+        ))}
       </View>
     </ScrollView>
   );
@@ -993,36 +1023,41 @@ export default function FormBuilderScreen() {
         
         {/* Action Buttons */}
         <View style={styles.responsesActions}>
-          <TouchableOpacity 
+          <FeedbackTouchable 
             style={styles.responsesActionButton} 
             onPress={loadResponses}
             disabled={loadingResponses}
+            loading={loadingResponses}
+            spinnerColor="#007AFF"
+            replaceWithSpinner={false}
           >
             <Ionicons name="refresh" size={20} color="#007AFF" />
             <Text style={[styles.responsesActionButtonText, styles.responsesActionButtonTextAfterIcon]}>
               {loadingResponses ? 'Loading...' : 'Refresh'}
             </Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
           
-          <TouchableOpacity 
+          <FeedbackTouchable 
             style={[styles.responsesActionButton, responses.length === 0 && styles.disabledButton]} 
             onPress={downloadCSV}
             disabled={responses.length === 0}
+            spinnerColor="#007AFF"
           >
             <Text style={[styles.responsesActionButtonText, responses.length === 0 && styles.disabledButtonText]}>
               Download
             </Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
           
-          <TouchableOpacity 
+          <FeedbackTouchable 
             style={[styles.responsesActionButton, responses.length === 0 && styles.disabledButton]} 
             onPress={shareResponses}
             disabled={responses.length === 0}
+            spinnerColor="#007AFF"
           >
             <Text style={[styles.responsesActionButtonText, responses.length === 0 && styles.disabledButtonText]}>
               Share
             </Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
         </View>
       </View>
       
@@ -1102,62 +1137,55 @@ export default function FormBuilderScreen() {
           {formId ? (
             // Form is saved - show Save, Publish (if not published), and Share
             <View style={styles.footerButtonsRow}>
-              <TouchableOpacity 
+              <FeedbackTouchable 
                 style={[styles.footerButton, styles.saveButton, saving && styles.saveButtonDisabled]}
                 onPress={saveForm}
                 disabled={saving}
+                loading={saving}
+                spinnerColor="#fff"
               >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.saveButtonText}>Save</Text>
-                )}
-              </TouchableOpacity>
-              {!isPublished ? (
-                <TouchableOpacity 
+                <Text style={styles.saveButtonText}>Save</Text>
+              </FeedbackTouchable>
+              {publishStatusReady && (!isPublished ? (
+                <FeedbackTouchable 
                   style={[styles.footerButton, styles.publishButton, publishing && styles.saveButtonDisabled]}
                   onPress={publishForm}
                   disabled={publishing}
+                  loading={publishing}
+                  spinnerColor="#fff"
                 >
-                  {publishing ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.saveButtonText}>Publish</Text>
-                  )}
-                </TouchableOpacity>
+                  <Text style={styles.saveButtonText}>Publish</Text>
+                </FeedbackTouchable>
               ) : (
-                <TouchableOpacity 
+                <FeedbackTouchable 
                   style={[styles.footerButton, styles.unpublishButton, publishing && styles.saveButtonDisabled]}
                   onPress={unpublishForm}
                   disabled={publishing}
+                  loading={publishing}
+                  spinnerColor="#fff"
                 >
-                  {publishing ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.saveButtonText}>Unpublish</Text>
-                  )}
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity 
+                  <Text style={styles.saveButtonText}>Unpublish</Text>
+                </FeedbackTouchable>
+              ))}
+              <FeedbackTouchable 
                 style={[styles.footerButton, styles.shareButton]}
                 onPress={shareForm}
+                spinnerColor="#007AFF"
               >
                 <Text style={styles.shareButtonText}>Share</Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
           ) : (
             // Form not saved yet - show only Save button
-            <TouchableOpacity 
+            <FeedbackTouchable 
               style={[styles.saveButton, saving && styles.saveButtonDisabled]}
               onPress={saveForm}
               disabled={saving}
+              loading={saving}
+              spinnerColor="#fff"
             >
-              {saving ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.saveButtonText}>Save Form</Text>
-              )}
-            </TouchableOpacity>
+              <Text style={styles.saveButtonText}>Save Form</Text>
+            </FeedbackTouchable>
           )}
         </View>
       )}
@@ -1227,6 +1255,7 @@ interface FieldEditorModalProps {
 }
 
 function FieldEditorModal({ field, visible, onSave, onCancel }: FieldEditorModalProps) {
+  const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const [editingField, setEditingField] = useState<FormField>(field);
 
@@ -1315,7 +1344,7 @@ function FieldEditorModal({ field, visible, onSave, onCancel }: FieldEditorModal
                   <View key={`option-${editingField.id}-${index}`} style={styles.optionRow}>
                     <TextInput
                       style={styles.optionInput}
-                      value={option}
+                      value={String(option ?? '')}
                       onChangeText={(text) => {
                         const newOptions = [...(editingField.options || [])];
                         newOptions[index] = text;

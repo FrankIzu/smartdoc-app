@@ -51,6 +51,52 @@ export function isSignFieldType(type: string | undefined | null): boolean {
   return t === 'signature' || t === 'initials';
 }
 
+export function isDateFieldType(type: string | undefined | null): boolean {
+  const t = normalizeFormFieldType(type);
+  return t === 'date' || t === 'datetime';
+}
+
+/** Read display text from a date field value (string or `{ display, iso }` from Phase 6). */
+export function dateFieldDisplayText(val: unknown): string {
+  if (typeof val === 'string' && val.trim()) return val.trim();
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return '';
+  const o = val as Record<string, unknown>;
+  if (typeof o.display === 'string' && o.display.trim()) return o.display.trim();
+  if (typeof o.iso === 'string' && o.iso.trim()) {
+    const d = new Date(o.iso);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+    }
+  }
+  return '';
+}
+
+/**
+ * Client-side date autofill matching backend Phase 6 shape so the value
+ * shows on the canvas and survives compositing before submit.
+ */
+export function buildSignerAutoFillDate(now: Date = new Date()): {
+  iso: string;
+  display: string;
+  timezone: string;
+} {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const display = now.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  return {
+    iso: now.toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    display,
+    timezone,
+  };
+}
+
 export function isFieldEditable(editableKeys: ReadonlySet<string>, fieldKey: string): boolean {
   if (editableKeys.has(fieldKey)) return true;
   const colon = fieldKey.lastIndexOf(':');

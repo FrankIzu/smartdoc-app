@@ -15,6 +15,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 
@@ -22,19 +23,24 @@ export default function ScheduleMeetingScreen() {
   const colors = useThemeColors();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [startDateTime, setStartDateTime] = useState(new Date());
-  const [endDateTime, setEndDateTime] = useState(new Date(Date.now() + 60 * 60 * 1000)); // 1 hour later
-  const [meetingData, setMeetingData] = useState({
-    title: '',
-    description: '',
-    startTime: startDateTime.toISOString(),
-    endTime: endDateTime.toISOString(),
-    timezone: 'UTC',
-    passcode: '',
-    enableRecording: false,
-    enableTranscription: false,
-    isPrivate: false,
-    participants: [] as string[]
+  // Default to 15 minutes ahead so "schedule now" isn't rejected as past by the API.
+  const [startDateTime, setStartDateTime] = useState(() => new Date(Date.now() + 15 * 60 * 1000));
+  const [endDateTime, setEndDateTime] = useState(() => new Date(Date.now() + 75 * 60 * 1000));
+  const [meetingData, setMeetingData] = useState(() => {
+    const start = new Date(Date.now() + 15 * 60 * 1000);
+    const end = new Date(Date.now() + 75 * 60 * 1000);
+    return {
+      title: '',
+      description: '',
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      passcode: '',
+      enableRecording: false,
+      enableTranscription: false,
+      isPrivate: false,
+      participants: [] as string[],
+    };
   });
   const [newParticipant, setNewParticipant] = useState('');
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
@@ -125,16 +131,17 @@ export default function ScheduleMeetingScreen() {
       return;
     }
 
-    // Prepare meeting data with formatted dates and email notifications
+    // Prepare meeting data — field names must match backend schedule_meeting()
+    const durationMinutes = Math.max(
+      1,
+      Math.round((endDateTime.getTime() - startDateTime.getTime()) / (1000 * 60))
+    );
     const meetingPayload = {
       // Room information
       roomName: meetingData.title,
       room_name: meetingData.title,
       name: meetingData.title,
       title: meetingData.title,
-      
-      // Let backend generate the room URL - don't send room_url for scheduled meetings
-      // room_url: `https://meet.grabdocs.com/${meetingData.title.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
       
       description: meetingData.description,
       
@@ -147,18 +154,22 @@ export default function ScheduleMeetingScreen() {
       scheduled_at: startDateTime.toISOString(),
       
       timezone: meetingData.timezone,
-      meeting_duration_minutes: Math.round((endDateTime.getTime() - startDateTime.getTime()) / (1000 * 60)),
+      duration_minutes: durationMinutes,
+      meeting_duration_minutes: durationMinutes,
       
-      // Meeting settings
+      // Meeting settings (snake_case is what the backend reads)
       isPrivate: meetingData.isPrivate,
       passcode: meetingData.isPrivate ? meetingData.passcode : undefined,
       passcode_required: meetingData.isPrivate,
       enableRecording: meetingData.enableRecording,
+      enable_recording: meetingData.enableRecording,
       enableTranscription: meetingData.enableTranscription,
+      enable_transcription: meetingData.enableTranscription,
       
-      // Participants and email
+      // Participants — backend schedule_meeting() expects `invitees`
       participants: meetingData.participants,
       invited_participants: meetingData.participants,
+      invitees: meetingData.participants,
       participant_count: meetingData.participants.length,
       
       // Email integration with Resend
@@ -173,7 +184,8 @@ export default function ScheduleMeetingScreen() {
       meeting_type: 'general',
       meeting_status: 'scheduled',
       status: 'scheduled',
-      max_participants: 10
+      max_participants: 10,
+      from_reach_page: true,
     };
 
     console.log('📱 Sending meeting payload:', JSON.stringify(meetingPayload, null, 2));
@@ -242,6 +254,7 @@ export default function ScheduleMeetingScreen() {
               text: 'End & Create New', 
               style: 'destructive',
               onPress: async () => {
+                setLoading(true);
                 try {
                   // End the existing meeting first
                   await apiClient.endMeeting(activeMeeting.id.toString());
@@ -292,15 +305,26 @@ export default function ScheduleMeetingScreen() {
                 } catch (endError) {
                   console.error('Failed to end existing meeting:', endError);
                   Alert.alert('Error', 'Failed to end existing meeting. Please try again.');
+                } finally {
+                  setLoading(false);
                 }
               }
             }
           ]
         );
       } else if (error.response?.status === 500) {
-        Alert.alert('Server Error', 'There was a server error while scheduling the meeting. Please try again or contact support.');
+        const serverMsg =
+          error.response?.data?.message ||
+          error.response?.data?.error ||
+          'There was a server error while scheduling the meeting. Please try again or contact support.';
+        Alert.alert('Server Error', serverMsg);
       } else {
-        Alert.alert('Error', error.response?.data?.message || 'Failed to schedule meeting');
+        Alert.alert(
+          'Error',
+          error.response?.data?.message ||
+            error.response?.data?.error ||
+            'Failed to schedule meeting'
+        );
       }
     } finally {
       setLoading(false);
@@ -619,15 +643,15 @@ export default function ScheduleMeetingScreen() {
             <Ionicons name="arrow-back" size={24} color="#007AFF" />
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle}>Schedule Meeting</Text>
-          <TouchableOpacity 
+          <FeedbackTouchable
             style={[dynamicStyles.scheduleButton, loading && dynamicStyles.scheduleButtonDisabled]}
             onPress={createMeeting}
             disabled={loading}
+            loading={loading}
+            spinnerColor="#fff"
           >
-            <Text style={dynamicStyles.scheduleButtonText}>
-              {loading ? 'Scheduling...' : 'Schedule'}
-            </Text>
-          </TouchableOpacity>
+            <Text style={dynamicStyles.scheduleButtonText}>Schedule</Text>
+          </FeedbackTouchable>
         </View>
 
         <ScrollView style={dynamicStyles.content} showsVerticalScrollIndicator={false}>
@@ -824,8 +848,9 @@ export default function ScheduleMeetingScreen() {
       {showStartDatePicker ? (
         <Modal
           visible={true}
-          animationType="slide"
+          animationType="fade"
           transparent={true}
+          statusBarTranslucent
           onRequestClose={() => setShowStartDatePicker(false)}
         >
           <TouchableOpacity
@@ -868,8 +893,9 @@ export default function ScheduleMeetingScreen() {
       {showEndDatePicker ? (
         <Modal
           visible={true}
-          animationType="slide"
+          animationType="fade"
           transparent={true}
+          statusBarTranslucent
           onRequestClose={() => setShowEndDatePicker(false)}
         >
           <TouchableOpacity

@@ -253,6 +253,7 @@ export async function resolveDefaultHomeWebPath(loginUser?: unknown): Promise<We
 export type PostLoginRouter = {
   replace: (href: Href) => void;
   push: (href: Href) => void;
+  navigate: (href: Href) => void;
   dismissAll?: () => void;
   canDismiss?: () => boolean;
   dismissTo?: (href: Href) => void;
@@ -326,6 +327,6 @@ export function navigateTabsThenDefaultHome(router: PostLoginRouter, webPath: st
   const href = expoHrefForWebDefaultHome(normalized);
   landOnMainTabs(router);
   afterRootNavigationSettles(() => {
-    router.push(href);
+    router.navigate(href);
   });
 }

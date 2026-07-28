@@ -16,6 +16,7 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useAppLock } from '../../contexts/AppLockContext';
 import { MAX_SCALE, MIN_SCALE, useDisplayScale } from '../../contexts/DisplayScaleContext';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
@@ -25,6 +26,8 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import { userProfileScreenKey } from '../../services/userScopedCache';
 import deviceSecurityService from '../../services/deviceSecurity';
+import { useUserPreferences } from '../../contexts/UserPreferencesContext';
+import type { UserPreferences } from '../../utils/userPreferences';
 import {
   DEFAULT_HOME_SCREEN_OPTIONS,
   extractDefaultHomeFromAuthPayload,
@@ -57,52 +60,9 @@ interface UserProfile {
   last_name: string;
   is_admin: boolean;
   created_at: string;
-}
-
-interface UserPreferences {
-  theme: 'light' | 'dark' | 'system';
-  notifications: {
-    push_enabled: boolean;
-    email_enabled: boolean;
-    file_upload: boolean;
-    file_processing: boolean;
-    form_responses: boolean;
-    upload_link_activity: boolean;
-    workspace_updates: boolean;
-  };
-  file_management: {
-  auto_categorization: boolean;
-    auto_receipt_processing: boolean;
-  file_preview: boolean;
-    auto_backup: boolean;
-    compress_images: boolean;
-  };
-  upload_settings: {
-    wifi_only_upload: boolean;
-    max_file_size_mb: number;
-    allowed_file_types: string[];
-  };
-  privacy: {
-  analytics_tracking: boolean;
-    crash_reporting: boolean;
-    usage_statistics: boolean;
-  };
-  display: {
-    show_file_sizes: boolean;
-    show_upload_dates: boolean;
-    grid_view_default: boolean;
-    items_per_page: number;
-  };
-}
-
-interface ProfileResponse {
-  success: boolean;
-  profile: UserProfile;
-}
-
-interface PreferencesResponse {
-  success: boolean;
-  preferences: UserPreferences;
+  google_linked?: boolean;
+  apple_linked?: boolean;
+  supports_password_biometric?: boolean;
 }
 
 interface DeviceFingerprint {
@@ -123,6 +83,11 @@ export default function SettingsScreen() {
   const colors = useThemeColors();
   const { scale, setScale } = useDisplayScale();
   const {
+    preferences,
+    setPreferences,
+    togglePreference: toggleStoredPreference,
+  } = useUserPreferences();
+  const {
     appLockEnabled,
     setAppLockEnabled,
     checkHasPinSet, // still used in loadSettings; returns false (PIN hidden)
@@ -131,19 +96,22 @@ export default function SettingsScreen() {
   } = useAppLock();
   const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [deviceTrustEnabled, setDeviceTrustEnabled] = useState(true);
   const [remember2FA, setRemember2FA] = useState(true);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  /** False for SSO accounts — biometric quick-login needs username/password enrollment. */
+  const [passwordBiometricSupported, setPasswordBiometricSupported] = useState(true);
   const [deviceInfo, setDeviceInfo] = useState<DeviceFingerprint | null>(null);
   const [defaultHomeWebPath, setDefaultHomeWebPath] = useState<WebDefaultHomePath | null>(
     normalizeWebDefaultHomePath(MOBILE_MAIN_HOME_WEB_ALIAS),
   );
   const [defaultHomePickerOpen, setDefaultHomePickerOpen] = useState(false);
   const [defaultHomeSaving, setDefaultHomeSaving] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [clearingDeviceTrust, setClearingDeviceTrust] = useState(false);
   // const [showSetPinModal, setShowSetPinModal] = useState(false);
   // const [pinValue, setPinValue] = useState('');
   // const [pinConfirm, setPinConfirm] = useState('');
@@ -218,45 +186,11 @@ export default function SettingsScreen() {
       const cached = screenCache.get<UserProfile>(settingsCacheKey, SETTINGS_CACHE_MS);
       if (cached) {
         setProfile(cached);
+        if (typeof cached.supports_password_biometric === 'boolean') {
+          setPasswordBiometricSupported(cached.supports_password_biometric);
+        }
       }
     }
-
-    const defaultPreferences: UserPreferences = {
-      theme: theme,
-      notifications: {
-        push_enabled: true,
-        email_enabled: true,
-        file_upload: true,
-        file_processing: true,
-        form_responses: true,
-        upload_link_activity: true,
-        workspace_updates: true,
-      },
-      file_management: {
-        auto_categorization: true,
-        auto_receipt_processing: true,
-        file_preview: true,
-        auto_backup: false,
-        compress_images: true,
-      },
-      upload_settings: {
-        wifi_only_upload: false,
-        max_file_size_mb: 50,
-        allowed_file_types: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif'],
-      },
-      privacy: {
-        analytics_tracking: true,
-        crash_reporting: true,
-        usage_statistics: true,
-      },
-      display: {
-        show_file_sizes: true,
-        show_upload_dates: true,
-        grid_view_default: false,
-        items_per_page: 20,
-      },
-    };
-    setPreferences(defaultPreferences);
 
     try {
       setLoading(false);
@@ -269,6 +203,10 @@ export default function SettingsScreen() {
 
       if (profileResponse.success && profileResponse.data) {
         const userData = profileResponse.data;
+        const supportsPasswordBiometric =
+          userData.supports_password_biometric !== false &&
+          !userData.google_linked &&
+          !userData.apple_linked;
         const profileData: UserProfile = {
           id: userData.id || 0,
           username: userData.username || '',
@@ -277,8 +215,12 @@ export default function SettingsScreen() {
           last_name: userData.last_name || userData.name?.split(' ').slice(1).join(' ') || '',
           is_admin: userData.is_admin || false,
           created_at: userData.created_at || new Date().toISOString(),
+          google_linked: !!userData.google_linked,
+          apple_linked: !!userData.apple_linked,
+          supports_password_biometric: supportsPasswordBiometric,
         };
         setProfile(profileData);
+        setPasswordBiometricSupported(supportsPasswordBiometric);
         if (settingsCacheKey) screenCache.set(settingsCacheKey, profileData);
       }
 
@@ -324,7 +266,24 @@ export default function SettingsScreen() {
       ]);
       setBiometricAvailable(biometricConfig.enabled);
       setDeviceInfo(info);
-      setBiometricEnabled(userPrefs.biometricEnabled);
+
+      // SSO accounts cannot enroll biometric quick-login (requires username/password).
+      const ssoBlocksBiometric =
+        profileResponse.success &&
+        profileResponse.data &&
+        (profileResponse.data.supports_password_biometric === false ||
+          profileResponse.data.google_linked ||
+          profileResponse.data.apple_linked);
+      if (ssoBlocksBiometric) {
+        setPasswordBiometricSupported(false);
+        setBiometricEnabled(false);
+        if (userPrefs.biometricEnabled) {
+          await deviceSecurityService.disableBiometricLoginPreference();
+        }
+      } else {
+        setPasswordBiometricSupported(true);
+        setBiometricEnabled(userPrefs.biometricEnabled);
+      }
       setDeviceTrustEnabled(userPrefs.rememberDevice);
       setRemember2FA(userPrefs.rememberDevice);
 
@@ -340,14 +299,7 @@ export default function SettingsScreen() {
   const updatePreferences = async (updatedPreferences: UserPreferences) => {
     try {
       setUpdating(true);
-      
-      // For now, just update the local state since we don't have a preferences endpoint
-      // In the future, this would call api.updateUserProfile() or a specific preferences endpoint
-      setPreferences(updatedPreferences);
-      
-      // You could save to local storage here for persistence
-      console.log('Updated preferences:', updatedPreferences);
-      
+      await setPreferences(updatedPreferences);
     } catch (error) {
       console.error('Failed to update preferences:', error);
       Alert.alert('Error', 'Failed to update preferences');
@@ -357,22 +309,17 @@ export default function SettingsScreen() {
   };
 
   const togglePreference = (key: string, value: boolean) => {
-    if (!preferences) return;
-
-    let updatedPreferences = { ...preferences };
-
-    if (key.includes('.')) {
-      const [parent, child] = key.split('.');
-      updatedPreferences = {
-        ...preferences,
-        [parent]: {
-          ...(preferences[parent as keyof UserPreferences] as any),
-          [child]: value,
-        },
-      };
-    }
-
-    updatePreferences(updatedPreferences);
+    void (async () => {
+      try {
+        setUpdating(true);
+        await toggleStoredPreference(key, value);
+      } catch (error) {
+        console.error('Failed to update preferences:', error);
+        Alert.alert('Error', 'Failed to update preferences');
+      } finally {
+        setUpdating(false);
+      }
+    })();
   };
 
   const formatJoinDate = (dateString: string) => {
@@ -473,7 +420,7 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleSignOut = async () => {
+  const handleSignOut = () => {
     Alert.alert(
       'Sign Out',
       'Are you sure you want to sign out?',
@@ -486,12 +433,14 @@ export default function SettingsScreen() {
           text: 'Sign Out',
           style: 'destructive',
           onPress: async () => {
+            setSigningOut(true);
             try {
               await signOut();
               router.replace('/(auth)');
             } catch (error) {
               console.error('Sign out error:', error);
               Alert.alert('Error', 'Failed to sign out');
+              setSigningOut(false);
             }
           },
         },
@@ -547,11 +496,12 @@ export default function SettingsScreen() {
       'display.grid_view_default',
       'privacy.analytics_tracking',
       'privacy.crash_reporting',
-      // Security features are now fully implemented
+      'privacy.usage_statistics',
       'security.biometric',
       'security.remember_device',
       'security.remember_2fa',
       'security.app_lock',
+      'upload_settings.wifi_only_upload',
     ];
 
     const partialFeatures = [
@@ -560,7 +510,6 @@ export default function SettingsScreen() {
       'notifications.form_responses',
       'notifications.upload_link_activity',
       'notifications.workspace_updates',
-      'upload_settings.wifi_only_upload',
     ];
 
     if (implementedFeatures.includes(feature)) {
@@ -1139,15 +1088,27 @@ export default function SettingsScreen() {
           <EnhancedSettingItem
             icon="finger-print"
             title="Biometric Authentication"
-            subtitle={biometricAvailable 
-              ? "Use Face ID or Touch ID for quick login" 
-              : "Biometric authentication not available on this device"}
-            value={biometricEnabled}
+            subtitle={
+              !passwordBiometricSupported
+                ? "Unavailable for Google/Apple sign-in accounts. Sign in with username and password to use biometric login."
+                : biometricAvailable
+                  ? "Use Face ID, Touch ID/fingerprint, or your device PIN/passcode for quick login"
+                  : "Set up Face ID, fingerprint, or a device PIN/passcode in your phone Settings first"
+            }
+            value={passwordBiometricSupported && biometricEnabled}
             onToggle={async (value) => {
+              if (!passwordBiometricSupported) {
+                Alert.alert(
+                  'Biometric Unavailable',
+                  'Accounts signed in with Google or Apple cannot use biometric quick login because it requires a username and password. Use Google/Apple sign-in, or App Lock for on-device unlock.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
               if (!biometricAvailable) {
                 Alert.alert(
-                  'Biometric Not Available',
-                  'Biometric authentication is not set up on this device. Please set up Face ID or Touch ID in your device settings.',
+                  'Device Lock Not Available',
+                  'Set up Face ID, Touch ID/fingerprint, or a device PIN/passcode in your phone Settings, then try again.',
                   [{ text: 'OK' }]
                 );
                 return;
@@ -1177,7 +1138,7 @@ export default function SettingsScreen() {
                 });
               }
             }}
-            disabled={!biometricAvailable}
+            disabled={!biometricAvailable || !passwordBiometricSupported}
             feature="security.biometric"
           />
 
@@ -1214,6 +1175,31 @@ export default function SettingsScreen() {
                 Alert.alert(
                   'Device Trust Disabled',
                   'This device will no longer be remembered. You may need to go through 2FA verification on your next login.',
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+
+              try {
+                const fingerprint = await deviceSecurityService.getDeviceFingerprint();
+                const trustRes = await api.trustCurrentDevice({
+                  fingerprint: fingerprint as unknown as Record<string, unknown>,
+                  deviceName: fingerprint.deviceName,
+                  platform: fingerprint.platform,
+                  installationId: fingerprint.installationId,
+                  deviceId: fingerprint.deviceId,
+                });
+                if (trustRes?.success) {
+                  await deviceSecurityService.setDeviceTrust(
+                    'trusted',
+                    userPrefs.trustedDevicesDuration || 30
+                  );
+                }
+              } catch (trustErr) {
+                console.warn('Failed to register trusted device on backend:', trustErr);
+                Alert.alert(
+                  'Device Trust',
+                  'Saved on this phone, but could not sync with the server. Try again while online.',
                   [{ text: 'OK' }]
                 );
               }
@@ -1259,7 +1245,7 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           )} */}
 
-          <TouchableOpacity 
+          <FeedbackTouchable 
             style={dynamicStyles.actionButton} 
             onPress={async () => {
               try {
@@ -1275,17 +1261,35 @@ export default function SettingsScreen() {
                 Alert.alert('Error', 'Failed to calculate risk score');
               }
             }}
+            replaceWithSpinner={false}
+            spinnerColor="#007AFF"
           >
             <View style={dynamicStyles.settingIcon}>
               <Ionicons name="analytics" size={20} color="#007AFF" />
             </View>
             <Text style={dynamicStyles.actionButtonText}>Check Security Risk Score</Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
 
-          <TouchableOpacity 
+          <FeedbackTouchable 
             style={dynamicStyles.actionButton} 
             onPress={async () => {
               try {
+                // Ensure this device is registered when Device Trust is enabled so it appears in the list
+                if (deviceTrustEnabled) {
+                  try {
+                    const fingerprint = await deviceSecurityService.getDeviceFingerprint();
+                    await api.trustCurrentDevice({
+                      fingerprint: fingerprint as unknown as Record<string, unknown>,
+                      deviceName: fingerprint.deviceName,
+                      platform: fingerprint.platform,
+                      installationId: fingerprint.installationId,
+                      deviceId: fingerprint.deviceId,
+                    });
+                  } catch (ensureErr) {
+                    console.warn('Could not ensure current device is trusted before listing:', ensureErr);
+                  }
+                }
+
                 const response = await api.getRegisteredDevices();
                 // Handle both response structures: direct data or wrapped in success response
                 const devices = (response as any).devices || (response as any).data?.devices || (Array.isArray(response) ? response : []);
@@ -1300,12 +1304,13 @@ export default function SettingsScreen() {
                 }
                 
                 const deviceList = devices.map((device: any) => {
-                  const deviceId = device.deviceId || device.id || 'Unknown';
-                  const deviceName = device.deviceName || device.name || 'Unknown Device';
-                  const lastUsed = device.lastUsed || device.last_used || device.updated_at;
+                  const deviceId = String(device.deviceId || device.id || 'Unknown');
+                  const deviceName = device.deviceName || device.name || device.device_name || 'Unknown Device';
+                  const lastUsed = device.lastUsed || device.last_used || device.last_used_at || device.updated_at;
                   const isActive = device.isActive !== undefined ? device.isActive : (device.is_active !== undefined ? device.is_active : true);
+                  const isCurrent = !!(device.isCurrent || device.is_current);
                   
-                  return `• ${deviceName}\n  ID: ${deviceId.length > 12 ? deviceId.substring(0, 12) + '...' : deviceId}\n  Last used: ${lastUsed ? new Date(lastUsed).toLocaleDateString() : 'Never'}\n  ${isActive ? '✅ Active' : '❌ Inactive'}`;
+                  return `• ${deviceName}${isCurrent ? ' (This device)' : ''}\n  ID: ${deviceId.length > 12 ? deviceId.substring(0, 12) + '...' : deviceId}\n  Last used: ${lastUsed ? new Date(lastUsed).toLocaleDateString() : 'Never'}\n  ${isActive ? '✅ Active' : '❌ Inactive'}`;
                 }).join('\n\n');
                 
                 Alert.alert(
@@ -1330,14 +1335,16 @@ export default function SettingsScreen() {
                 }
               }
             }}
+            replaceWithSpinner={false}
+            spinnerColor="#007AFF"
           >
             <View style={dynamicStyles.settingIcon}>
               <Ionicons name="phone-portrait" size={20} color="#007AFF" />
             </View>
             <Text style={dynamicStyles.actionButtonText}>View Registered Devices</Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
 
-          <TouchableOpacity 
+          <FeedbackTouchable 
             style={dynamicStyles.dangerButton} 
             onPress={() => {
               Alert.alert(
@@ -1349,6 +1356,7 @@ export default function SettingsScreen() {
                     text: 'Clear All',
                     style: 'destructive',
                     onPress: async () => {
+                      setClearingDeviceTrust(true);
                       try {
                         await deviceSecurityService.revokeDeviceTrust();
                         await deviceSecurityService.clearAllDeviceData();
@@ -1370,18 +1378,23 @@ export default function SettingsScreen() {
                       } catch (error) {
                         console.error('Failed to clear device trust:', error);
                         Alert.alert('Error', error instanceof Error ? error.message : 'Failed to clear all device trust');
+                      } finally {
+                        setClearingDeviceTrust(false);
                       }
                     },
                   },
                 ]
               );
             }}
+            loading={clearingDeviceTrust}
+            replaceWithSpinner={false}
+            spinnerColor="#FF3B30"
           >
             <View style={dynamicStyles.settingIcon}>
               <Ionicons name="trash" size={20} color="#FF3B30" />
             </View>
             <Text style={dynamicStyles.dangerButtonText}>Clear All Device Trust</Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
 
           {deviceInfo && (
             <View style={dynamicStyles.deviceInfoSection}>
@@ -1595,7 +1608,39 @@ export default function SettingsScreen() {
               icon="list-outline"
               title="Items Per Page"
               value={`${preferences.display.items_per_page} items`}
-              onPress={() => Alert.alert('Items Per Page', 'This setting controls how many documents are shown per page in lists. Higher numbers may affect performance on older devices.')}
+              onPress={() => {
+                Alert.alert(
+                  'Items Per Page',
+                  'How many documents to load per page in file lists.',
+                  [
+                    {
+                      text: '10',
+                      onPress: () =>
+                        void updatePreferences({
+                          ...preferences,
+                          display: { ...preferences.display, items_per_page: 10 },
+                        }),
+                    },
+                    {
+                      text: '20',
+                      onPress: () =>
+                        void updatePreferences({
+                          ...preferences,
+                          display: { ...preferences.display, items_per_page: 20 },
+                        }),
+                    },
+                    {
+                      text: '50',
+                      onPress: () =>
+                        void updatePreferences({
+                          ...preferences,
+                          display: { ...preferences.display, items_per_page: 50 },
+                        }),
+                    },
+                    { text: 'Cancel', style: 'cancel' },
+                  ],
+                );
+              }}
               adminOnly={true}
             />
           </CollapsibleSection>
@@ -1659,7 +1704,7 @@ export default function SettingsScreen() {
             icon="help-circle-outline"
             title="Help & Support"
             value="Get help with the app"
-            onPress={() => router.push('/(tabs)/help')}
+            onPress={() => router.navigate('/(tabs)/help')}
           />
           <InfoItem
             icon="accessibility-outline"
@@ -1804,9 +1849,12 @@ export default function SettingsScreen() {
             <Ionicons name="chevron-forward" size={20} color="#FF3B30" />
           </TouchableOpacity>
           
-          <TouchableOpacity 
+          <FeedbackTouchable 
             style={dynamicStyles.dangerItem}
             onPress={handleSignOut}
+            loading={signingOut}
+            replaceWithSpinner={false}
+            spinnerColor="#FF3B30"
           >
             <View style={dynamicStyles.settingIcon}>
               <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
@@ -1816,7 +1864,7 @@ export default function SettingsScreen() {
               <Text style={dynamicStyles.settingSubtitle}>Sign out of your account</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#FF3B30" />
-          </TouchableOpacity>
+          </FeedbackTouchable>
         </CollapsibleSection>
       </ScrollView>
 
@@ -1841,11 +1889,14 @@ export default function SettingsScreen() {
               Choose where the app opens after you sign in (same as web).
             </Text>
             <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
-              <TouchableOpacity
+              <FeedbackTouchable
                 key="__no_default__"
                 style={dynamicStyles.defaultHomeOptionRow}
-                onPress={() => !defaultHomeSaving && void applyDefaultHomeSelection('no-default')}
+                onPress={() => applyDefaultHomeSelection('no-default')}
                 disabled={defaultHomeSaving}
+                loading={defaultHomeSaving}
+                replaceWithSpinner={false}
+                spinnerColor="#007AFF"
               >
                 <Text style={dynamicStyles.defaultHomeOptionLabel}>{NO_DEFAULT_SCREEN_LABEL}</Text>
                 {defaultHomeWebPath === null ? (
@@ -1853,13 +1904,16 @@ export default function SettingsScreen() {
                 ) : (
                   <Ionicons name="ellipse-outline" size={22} color={colors.border} />
                 )}
-              </TouchableOpacity>
+              </FeedbackTouchable>
               {DEFAULT_HOME_SCREEN_OPTIONS.map((opt) => (
-                <TouchableOpacity
+                <FeedbackTouchable
                   key={opt.webPath}
                   style={dynamicStyles.defaultHomeOptionRow}
-                  onPress={() => !defaultHomeSaving && void applyDefaultHomeSelection(opt.webPath)}
+                  onPress={() => applyDefaultHomeSelection(opt.webPath)}
                   disabled={defaultHomeSaving}
+                  loading={defaultHomeSaving}
+                  replaceWithSpinner={false}
+                  spinnerColor="#007AFF"
                 >
                   <Text style={dynamicStyles.defaultHomeOptionLabel}>{opt.label}</Text>
                   {defaultHomeWebPath !== null && defaultHomeWebPath === opt.webPath ? (
@@ -1867,7 +1921,7 @@ export default function SettingsScreen() {
                   ) : (
                     <Ionicons name="ellipse-outline" size={22} color={colors.border} />
                   )}
-                </TouchableOpacity>
+                </FeedbackTouchable>
               ))}
             </ScrollView>
             <TouchableOpacity

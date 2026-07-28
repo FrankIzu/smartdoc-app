@@ -13,6 +13,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useLimitError } from '../../contexts/LimitErrorContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
@@ -62,18 +63,21 @@ export default function CreateMeetingScreen() {
       passcode: meetingData.isPrivate ? meetingData.passcode : undefined,
       passcode_required: meetingData.isPrivate,
       enableRecording: meetingData.enableRecording,
+      enable_recording: meetingData.enableRecording,
       enableTranscription: meetingData.enableTranscription,
       enable_transcription: meetingData.enableTranscription,
       
       // Participants
       participants: meetingData.participants,
       invited_participants: meetingData.participants,
+      invitees: meetingData.participants,
       participant_count: meetingData.participants.length,
       
       // Meeting metadata
       meeting_type: 'general',
       meeting_status: 'active',
-      status: 'active'
+      status: 'active',
+      from_reach_page: true,
     };
 
     console.log('📱 Sending create meeting payload:', meetingPayload);
@@ -145,6 +149,7 @@ export default function CreateMeetingScreen() {
               text: 'End & Create New', 
               style: 'destructive',
               onPress: async () => {
+                setLoading(true);
                 try {
                   // End the existing meeting first
                   await apiClient.endMeeting(activeMeeting.id.toString());
@@ -198,6 +203,8 @@ export default function CreateMeetingScreen() {
                 } catch (endError) {
                   console.error('Failed to end existing meeting:', endError);
                   Alert.alert('Error', 'Failed to end existing meeting. Please try again.');
+                } finally {
+                  setLoading(false);
                 }
               }
             }
@@ -502,15 +509,15 @@ export default function CreateMeetingScreen() {
             <Text style={dynamicStyles.cancelButtonText}>Cancel</Text>
           </TouchableOpacity>
           
-          <TouchableOpacity 
+          <FeedbackTouchable
             style={[dynamicStyles.createButton, loading && dynamicStyles.createButtonDisabled]}
             onPress={createMeeting}
             disabled={loading}
+            loading={loading}
+            spinnerColor="#fff"
           >
-            <Text style={dynamicStyles.createButtonText}>
-              {loading ? 'Creating...' : 'Create Meeting'}
-            </Text>
-          </TouchableOpacity>
+            <Text style={dynamicStyles.createButtonText}>Create Meeting</Text>
+          </FeedbackTouchable>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

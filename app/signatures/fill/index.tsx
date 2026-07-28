@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   ScrollView,
   StyleSheet,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { pickDocumentForFill } from '../../../components/signatures/DocumentSourcePicker';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { uploadPdfForSignature } from '../../../services/uploadWithGlobalProgress';
@@ -54,20 +54,16 @@ export default function FillEntryScreen() {
           </Text>
         </View>
 
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[styles.primaryBtn, { backgroundColor: colors.primary, opacity: busy ? 0.6 : 1 }]}
           disabled={busy}
-          onPress={() => void handleUpload()}
+          loading={busy}
+          onPress={handleUpload}
+          spinnerColor="#fff"
         >
-          {busy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="cloud-upload-outline" size={22} color="#fff" />
-              <Text style={styles.primaryBtnText}>Upload document</Text>
-            </>
-          )}
-        </TouchableOpacity>
+          <Ionicons name="cloud-upload-outline" size={22} color="#fff" />
+          <Text style={styles.primaryBtnText}>Upload document</Text>
+        </FeedbackTouchable>
 
         <TouchableOpacity
           style={[styles.secondaryBtn, { borderColor: colors.border ?? '#E5E7EB', opacity: busy ? 0.6 : 1 }]}

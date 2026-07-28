@@ -20,16 +20,21 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import {
   pickDocumentsLikeFilesScreen,
   pickGalleryImagesLikeFilesScreen,
 } from '../../components/signatures/DocumentSourcePicker';
+import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
+import { resendCooldownKey, useResendCooldown } from '../../hooks/useResendCooldown';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { intakeDetailScreenKey, intakesListScreenKey } from '../../services/userScopedCache';
 import { useFileStore } from '../../stores/fileStore';
 import { screenCache } from '../../utils/screenCache';
+import { sanitizeDisplayFilename } from '../../utils/displayFilename';
 import { checklistFileStillClassifying, getFullPublicUploadUrl, getUploadToBaseUrl } from '../../utils/uploadLinkHelpers';
 import {
   INTAKE_ACTIVE_POLL_STATUSES,
@@ -75,6 +80,11 @@ function formatDate(dateString: string | undefined | null): string {
   return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function intakeFileLabel(name: string | null | undefined, fileId?: number | null): string {
+  if (name?.trim()) return sanitizeDisplayFilename(name);
+  return fileId != null ? `File #${fileId}` : 'Document';
+}
+
 function getFileTypeFromFilename(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
   const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif'];
@@ -103,6 +113,9 @@ export default function IntakeDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<'send' | 'remind' | 'archive' | 'restore' | null>(null);
+  const [itemBusyId, setItemBusyId] = useState<number | null>(null);
+  const [assignBusyItemId, setAssignBusyItemId] = useState<number | null>(null);
 
   const [viewerFileId, setViewerFileId] = useState<number | null>(null);
   const [viewerFileName, setViewerFileName] = useState<string>('');
@@ -133,11 +146,27 @@ export default function IntakeDetailScreen() {
   const [uploadingItemId, setUploadingItemId] = useState<number | null>(null);
   const [classifyingFileIds, setClassifyingFileIds] = useState<Record<number, true>>({});
   const [regeneratingCode, setRegeneratingCode] = useState(false);
-  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const uploadSheet = useMinimizableSheet();
   const [uploadTargetItemId, setUploadTargetItemId] = useState<number | null>(null);
 
   const intakeId = Number(id);
   const detailCacheKey = intakeDetailScreenKey(user?.id, intakeId);
+
+  const clientPingCooldownKey = intakeId ? resendCooldownKey('intake', intakeId) : null;
+  const clientPingServerAt = useMemo(() => {
+    if (!intake) return null;
+    const candidates = [intake.sent_at, intake.last_reminder_sent_at]
+      .filter((v): v is string => !!v)
+      .map((v) => Date.parse(v))
+      .filter((t) => !Number.isNaN(t));
+    if (candidates.length === 0) return null;
+    return new Date(Math.max(...candidates)).toISOString();
+  }, [intake?.sent_at, intake?.last_reminder_sent_at]);
+  const {
+    remainingSec: clientPingCooldownSec,
+    isCoolingDown: clientPingCoolingDown,
+    markSent: markClientPingSent,
+  } = useResendCooldown(clientPingCooldownKey, { serverSentAt: clientPingServerAt });
 
   const invalidateIntakeCaches = useCallback(() => {
     if (!user?.id) return;
@@ -269,11 +298,17 @@ export default function IntakeDetailScreen() {
   };
 
   const handleSend = async () => {
-    if (!intake) return;
+    if (!intake || busy) return;
+    if (intake.sent_at && clientPingCoolingDown) {
+      Alert.alert('Please wait', `You can resend in ${clientPingCooldownSec}s`);
+      return;
+    }
     setBusy(true);
+    setBusyAction('send');
     try {
       const response = await apiService.sendIntake(intake.id);
       if (response.success) {
+        markClientPingSent();
         Alert.alert('Sent', response.resent ? 'Upload link resent to client' : 'Intake sent to client');
         reloadAfterMutation();
       } else {
@@ -283,6 +318,7 @@ export default function IntakeDetailScreen() {
       Alert.alert('Error', error.message || 'Failed to send Intake');
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -344,7 +380,14 @@ export default function IntakeDetailScreen() {
         setShowSaveTemplateModal(false);
         setTemplateNameForSave('');
         setTemplateIndustryForSave('');
-        Alert.alert('Saved', 'Template saved');
+        if (response.already_exists || response.unchanged) {
+          Alert.alert(
+            'Already saved',
+            response.message || 'No changes were made — this template is already saved.',
+          );
+        } else {
+          Alert.alert('Saved', 'Template saved');
+        }
       } else {
         Alert.alert('Error', response.message || 'Failed to save template');
       }
@@ -383,17 +426,17 @@ export default function IntakeDetailScreen() {
   const openUploadOptions = (item: IntakeItem) => {
     if (!intake || item.status !== 'pending' || intake.status === 'archived') return;
     setUploadTargetItemId(item.id);
-    setShowUploadOptions(true);
+    uploadSheet.open();
   };
 
   const dismissUploadModal = () => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     setUploadTargetItemId(null);
   };
 
   const handleUploadFromFiles = async () => {
     if (!uploadTargetItemId || uploadingItemId != null) return;
-    setShowUploadOptions(false);
+    uploadSheet.close();
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
       await useFileStore.getState().forceResetDocumentPicker();
@@ -413,7 +456,7 @@ export default function IntakeDetailScreen() {
 
   const handleUploadFromGallery = async () => {
     if (!uploadTargetItemId || uploadingItemId != null) return;
-    setShowUploadOptions(false);
+    uploadSheet.close();
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
       const assets = await pickGalleryImagesLikeFilesScreen();
@@ -432,7 +475,7 @@ export default function IntakeDetailScreen() {
 
   const handleUploadFromCamera = async () => {
     if (!uploadTargetItemId || uploadingItemId != null) return;
-    setShowUploadOptions(false);
+    uploadSheet.close();
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
       const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
@@ -464,17 +507,23 @@ export default function IntakeDetailScreen() {
   };
 
   const handleUploadByLink = () => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     setUploadTargetItemId(null);
     router.push('/upload-by-link-code');
   };
 
   const handleRemindNow = async () => {
-    if (!intake) return;
+    if (!intake || busy) return;
+    if (clientPingCoolingDown) {
+      Alert.alert('Please wait', `You can send another reminder in ${clientPingCooldownSec}s`);
+      return;
+    }
     setBusy(true);
+    setBusyAction('remind');
     try {
       const response = await apiService.remindIntake(intake.id);
       if (response.success) {
+        markClientPingSent();
         Alert.alert('Sent', 'Reminder sent');
         reloadAfterMutation();
       } else {
@@ -484,6 +533,7 @@ export default function IntakeDetailScreen() {
       Alert.alert('Error', error.message || 'Failed to send reminder');
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -499,6 +549,7 @@ export default function IntakeDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             setBusy(true);
+            setBusyAction('archive');
             try {
               await apiService.archiveIntake(intake.id);
               invalidateIntakeCaches();
@@ -506,6 +557,7 @@ export default function IntakeDetailScreen() {
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to archive Intake');
               setBusy(false);
+              setBusyAction(null);
             }
           },
         },
@@ -524,6 +576,7 @@ export default function IntakeDetailScreen() {
           text: 'Restore',
           onPress: async () => {
             setBusy(true);
+            setBusyAction('restore');
             try {
               const response = await apiService.unarchiveIntake(intake.id);
               if (response.success) {
@@ -542,6 +595,7 @@ export default function IntakeDetailScreen() {
               Alert.alert('Error', error.message || 'Failed to restore Intake');
             } finally {
               setBusy(false);
+              setBusyAction(null);
             }
           },
         },
@@ -550,7 +604,8 @@ export default function IntakeDetailScreen() {
   };
 
   const handleConfirmItem = async (itemId: number) => {
-    if (!intake) return;
+    if (!intake || itemBusyId != null) return;
+    setItemBusyId(itemId);
     try {
       const response = await apiService.confirmIntakeItem(intake.id, itemId);
       if (response.success) {
@@ -560,11 +615,19 @@ export default function IntakeDetailScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to verify item');
+    } finally {
+      setItemBusyId(null);
     }
   };
 
   const handleRejectMatch = (itemId: number) => {
-    if (!intake) return;
+    if (!intake || itemBusyId != null) return;
+    const current = intake.items?.find((i) => i.id === itemId);
+    if (!current || (current.status !== 'matched' && current.status !== 'confirmed')) {
+      reloadAfterMutation();
+      return;
+    }
+
     Alert.alert(
       'Reject match',
       'Reject this match? The item will go back to Missing and the file will move to Unmatched.',
@@ -574,24 +637,62 @@ export default function IntakeDetailScreen() {
           text: 'Reject',
           style: 'destructive',
           onPress: async () => {
+            setItemBusyId(itemId);
             try {
+              // Re-fetch so we don't reject against a stale checklist (polling / prior action).
+              const latest = await apiService.getIntake(intake.id);
+              const latestItem = latest.success
+                ? latest.intake?.items?.find((i: { id: number }) => i.id === itemId)
+                : null;
+              if (
+                !latestItem ||
+                (latestItem.status !== 'matched' && latestItem.status !== 'confirmed')
+              ) {
+                if (latest.success && latest.intake) {
+                  setIntake(latest.intake);
+                  if (detailCacheKey) screenCache.set(detailCacheKey, latest.intake);
+                } else {
+                  reloadAfterMutation();
+                }
+                Alert.alert(
+                  'Already updated',
+                  'This item no longer has a match to reject. The checklist was refreshed.',
+                );
+                return;
+              }
+
               const response = await apiService.rejectIntakeItem(intake.id, itemId);
               if (response.success) {
                 reloadAfterMutation();
               } else {
-                Alert.alert('Error', response.message || 'Failed to reject match');
+                const msg = response.message || 'Failed to reject match';
+                if (/received or verified|no longer|already/i.test(msg)) {
+                  reloadAfterMutation();
+                  Alert.alert('Already updated', 'This match is no longer active. The checklist was refreshed.');
+                } else {
+                  Alert.alert('Error', msg);
+                }
               }
             } catch (error: any) {
-              Alert.alert('Error', error.message || 'Failed to reject match');
+              const msg = error.message || 'Failed to reject match';
+              if (/received or verified|no longer|already/i.test(msg)) {
+                reloadAfterMutation();
+                Alert.alert('Already updated', 'This match is no longer active. The checklist was refreshed.');
+              } else {
+                Alert.alert('Error', msg);
+              }
+            } finally {
+              setItemBusyId(null);
             }
           },
         },
-      ]
+      ],
     );
   };
 
   const handleNotApplicable = async (itemId: number) => {
-    if (!intake) return;
+    if (!intake || itemBusyId != null) return;
+    setItemBusyId(itemId);
     try {
       const response = await apiService.markIntakeItemNotApplicable(intake.id, itemId);
       if (response.success) {
@@ -601,13 +702,16 @@ export default function IntakeDetailScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update item');
+    } finally {
+      setItemBusyId(null);
     }
   };
 
   const openAssignPicker = (file: IntakeFileRow) => setAssigningFile(file);
 
   const handleAssignFile = async (itemId: number) => {
-    if (!intake || !assigningFile) return;
+    if (!intake || !assigningFile || assignBusyItemId != null) return;
+    setAssignBusyItemId(itemId);
     try {
       const response = await apiService.assignIntakeFile(intake.id, itemId, assigningFile.file_id, assigningFile.match_confidence ?? undefined);
       setAssigningFile(null);
@@ -619,13 +723,15 @@ export default function IntakeDetailScreen() {
     } catch (error: any) {
       setAssigningFile(null);
       Alert.alert('Error', error.message || 'Failed to assign file');
+    } finally {
+      setAssignBusyItemId(null);
     }
   };
 
   const openFileViewer = (fileId: number | null | undefined, fileName?: string | null) => {
     if (!fileId) return;
     setViewerFileId(fileId);
-    setViewerFileName(fileName || 'Untitled');
+    setViewerFileName(intakeFileLabel(fileName, fileId));
   };
 
   const openEdit = async () => {
@@ -835,6 +941,20 @@ export default function IntakeDetailScreen() {
     historyMetaText: { fontSize: 11, color: colors.textSecondary },
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     modalCard: { backgroundColor: colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '80%' },
+    /** Absolute overlays inside the edit pageSheet (nested RN Modals do not stack reliably). */
+    editSheetOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'flex-end',
+      zIndex: 20,
+    },
+    editSheetCard: {
+      backgroundColor: colors.card,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      maxHeight: '80%',
+      paddingBottom: Math.max(insets.bottom, 12),
+    },
     modalHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -900,7 +1020,7 @@ export default function IntakeDetailScreen() {
     customLabel: { fontSize: 11, color: colors.textSecondary, marginBottom: 4 },
     switchInlineRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
     switchInlineLabel: { fontSize: 14, color: colors.text },
-  }), [colors]);
+  }), [colors, insets.bottom]);
 
   const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
     draft: { bg: '#E5E7EB', text: '#374151' },
@@ -987,47 +1107,80 @@ export default function IntakeDetailScreen() {
 
         <View style={dynamicStyles.actionsRow}>
           {intake.status !== 'archived' && (
-            <TouchableOpacity style={[dynamicStyles.actionButton, dynamicStyles.actionButtonPrimary]} onPress={handleSend} disabled={busy}>
+            <FeedbackTouchable
+              style={[
+                dynamicStyles.actionButton,
+                dynamicStyles.actionButtonPrimary,
+                !!intake.sent_at && clientPingCoolingDown && { opacity: 0.55 },
+              ]}
+              onPress={handleSend}
+              disabled={busy || (!!intake.sent_at && clientPingCoolingDown)}
+              loading={busyAction === 'send'}
+              spinnerColor="#fff"
+            >
               <Ionicons name="paper-plane" size={15} color="#fff" />
               <Text style={[dynamicStyles.actionButtonText, dynamicStyles.actionButtonTextPrimary]}>
-                {intake.sent_at ? 'Resend to Client' : 'Send to Client'}
+                {intake.sent_at
+                  ? clientPingCoolingDown
+                    ? `Resend in ${clientPingCooldownSec}s`
+                    : 'Resend to Client'
+                  : 'Send to Client'}
               </Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           )}
           {intake.status === 'waiting_for_client' && (
-            <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleRemindNow} disabled={busy}>
+            <FeedbackTouchable
+              style={[dynamicStyles.actionButton, clientPingCoolingDown && { opacity: 0.55 }]}
+              onPress={handleRemindNow}
+              disabled={busy || clientPingCoolingDown}
+              loading={busyAction === 'remind'}
+              spinnerColor={colors.text}
+            >
               <Ionicons name="refresh" size={15} color={colors.text} />
-              <Text style={dynamicStyles.actionButtonText}>Send Reminder Now</Text>
-            </TouchableOpacity>
+              <Text style={dynamicStyles.actionButtonText}>
+                {clientPingCoolingDown
+                  ? `Remind in ${clientPingCooldownSec}s`
+                  : 'Send Reminder Now'}
+              </Text>
+            </FeedbackTouchable>
           )}
           {intake.status !== 'archived' && (intake.items?.length ?? 0) > 0 && (
-            <TouchableOpacity
+            <FeedbackTouchable
               style={dynamicStyles.actionButton}
               onPress={() => {
                 setTemplateNameForSave(intake.title);
                 setShowSaveTemplateModal(true);
               }}
               disabled={busy}
+              replaceWithSpinner={false}
             >
               <Ionicons name="bookmark-outline" size={15} color={colors.text} />
               <Text style={dynamicStyles.actionButtonText}>Template</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           )}
           {intake.status !== 'archived' && (
-            <TouchableOpacity style={dynamicStyles.actionButton} onPress={handleArchive} disabled={busy}>
+            <FeedbackTouchable
+              style={dynamicStyles.actionButton}
+              onPress={handleArchive}
+              disabled={busy}
+              loading={busyAction === 'archive'}
+              spinnerColor={colors.text}
+            >
               <Ionicons name="archive-outline" size={15} color={colors.text} />
               <Text style={dynamicStyles.actionButtonText}>Archive</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           )}
           {intake.status === 'archived' && (
-            <TouchableOpacity
+            <FeedbackTouchable
               style={[dynamicStyles.actionButton, dynamicStyles.actionButtonRestore]}
               onPress={handleUnarchive}
               disabled={busy}
+              loading={busyAction === 'restore'}
+              spinnerColor="#1D4ED8"
             >
               <Ionicons name="arrow-undo-outline" size={15} color="#1D4ED8" />
               <Text style={[dynamicStyles.actionButtonText, dynamicStyles.actionButtonTextRestore]}>Restore</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           )}
         </View>
 
@@ -1051,27 +1204,32 @@ export default function IntakeDetailScreen() {
               <View style={dynamicStyles.linkBox}>
                 <Text style={dynamicStyles.linkBoxText} numberOfLines={1}>{clientShareUrl}</Text>
               </View>
-              <TouchableOpacity style={dynamicStyles.iconButton} onPress={handleShareLink}>
+              <FeedbackTouchable style={dynamicStyles.iconButton} onPress={handleShareLink} spinnerColor="#fff">
                 <Ionicons name="share-outline" size={18} color="#fff" />
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
             {intake.upload_link.upload_code && (
               <View style={{ marginTop: 8 }}>
                 <View style={dynamicStyles.codeActionRow}>
-                  <TouchableOpacity onPress={() => copyUploadCode(intake.upload_link!.upload_code!)}>
+                  <FeedbackTouchable
+                    onPress={() => copyUploadCode(intake.upload_link!.upload_code!)}
+                    replaceWithSpinner={false}
+                  >
                     <Text style={dynamicStyles.codeValue}>{intake.upload_link.upload_code}</Text>
-                  </TouchableOpacity>
+                  </FeedbackTouchable>
                   {intake.upload_link.id ? (
-                    <TouchableOpacity
+                    <FeedbackTouchable
                       style={[dynamicStyles.smallActionBtn, dynamicStyles.naBtn]}
                       onPress={handleRegenerateCode}
                       disabled={regeneratingCode}
+                      loading={regeneratingCode}
+                      spinnerColor={colors.text}
                     >
                       <Ionicons name="refresh" size={14} color={colors.text} />
                       <Text style={[dynamicStyles.smallActionBtnText, { color: colors.text, marginLeft: 4 }]}>
-                        {regeneratingCode ? 'Regenerating...' : 'Regenerate'}
+                        Regenerate
                       </Text>
-                    </TouchableOpacity>
+                    </FeedbackTouchable>
                   ) : null}
                 </View>
                 <Text style={dynamicStyles.codeText}>{getUploadToBaseUrl()}</Text>
@@ -1087,6 +1245,7 @@ export default function IntakeDetailScreen() {
             const itemColor = ITEM_STATUS_COLORS[item.status] || ITEM_STATUS_COLORS.pending;
             const isClassifying = item.matched_file_id != null && classifyingFileIds[item.matched_file_id];
             const isUploading = uploadingItemId === item.id;
+            const isItemBusy = itemBusyId === item.id;
             return (
               <View key={item.id} style={dynamicStyles.itemRow}>
                 <View style={dynamicStyles.itemTopRow}>
@@ -1100,48 +1259,66 @@ export default function IntakeDetailScreen() {
                 </View>
                 {item.matched_file_name && (
                   item.matched_file_id ? (
-                    <TouchableOpacity onPress={() => openFileViewer(item.matched_file_id, item.matched_file_name)}>
+                    <TouchableOpacity onPress={() => openFileViewer(item.matched_file_id, item.matched_file_name)} activeOpacity={0.7}>
                       <Text style={dynamicStyles.itemFileName}>
-                        {item.matched_file_name}
+                        {intakeFileLabel(item.matched_file_name, item.matched_file_id)}
                         {item.match_confidence != null && ` · ${Math.round(item.match_confidence * 100)}%`}
                       </Text>
                     </TouchableOpacity>
                   ) : (
-                    <Text style={dynamicStyles.itemPlainFileName}>{item.matched_file_name}</Text>
+                    <Text style={dynamicStyles.itemPlainFileName}>
+                      {intakeFileLabel(item.matched_file_name)}
+                    </Text>
                   )
                 )}
                 {item.description && <Text style={dynamicStyles.itemDescription}>{item.description}</Text>}
                 <View style={dynamicStyles.itemButtonsRow}>
                   {item.status === 'pending' && intake.status !== 'archived' && (
-                    <TouchableOpacity
+                    <FeedbackTouchable
                       style={[dynamicStyles.smallActionBtn, dynamicStyles.naBtn]}
                       onPress={() => openUploadOptions(item)}
-                      disabled={isUploading || busy}
+                      disabled={isUploading || busy || itemBusyId != null}
+                      loading={isUploading}
+                      spinnerColor="#007AFF"
                     >
-                      {isUploading ? (
-                        <ActivityIndicator size="small" color="#007AFF" />
-                      ) : (
-                        <Ionicons name="cloud-upload-outline" size={14} color="#007AFF" />
-                      )}
+                      <Ionicons name="cloud-upload-outline" size={14} color="#007AFF" />
                       <Text style={[dynamicStyles.smallActionBtnText, { color: '#007AFF', marginLeft: 4 }]}>Upload</Text>
-                    </TouchableOpacity>
+                    </FeedbackTouchable>
                   )}
                   {item.status === 'matched' && (
-                    <TouchableOpacity style={[dynamicStyles.smallActionBtn, dynamicStyles.verifyBtn]} onPress={() => handleConfirmItem(item.id)}>
+                    <FeedbackTouchable
+                      style={[dynamicStyles.smallActionBtn, dynamicStyles.verifyBtn]}
+                      onPress={() => handleConfirmItem(item.id)}
+                      disabled={itemBusyId != null || busy}
+                      loading={isItemBusy}
+                      spinnerColor="#fff"
+                    >
                       <Ionicons name="checkmark" size={14} color="#fff" />
                       <Text style={[dynamicStyles.smallActionBtnText, { color: '#fff' }]}>Verify</Text>
-                    </TouchableOpacity>
+                    </FeedbackTouchable>
                   )}
                   {(item.status === 'matched' || item.status === 'confirmed') && (
-                    <TouchableOpacity style={[dynamicStyles.smallActionBtn, dynamicStyles.rejectBtn]} onPress={() => handleRejectMatch(item.id)}>
+                    <FeedbackTouchable
+                      style={[dynamicStyles.smallActionBtn, dynamicStyles.rejectBtn]}
+                      onPress={() => handleRejectMatch(item.id)}
+                      disabled={itemBusyId != null || busy}
+                      loading={isItemBusy}
+                      spinnerColor="#B91C1C"
+                    >
                       <Ionicons name="close" size={14} color="#B91C1C" />
                       <Text style={[dynamicStyles.smallActionBtnText, { color: '#B91C1C' }]}>Reject</Text>
-                    </TouchableOpacity>
+                    </FeedbackTouchable>
                   )}
                   {item.status === 'pending' && intake.status !== 'archived' && (
-                    <TouchableOpacity style={[dynamicStyles.smallActionBtn, dynamicStyles.naBtn]} onPress={() => handleNotApplicable(item.id)}>
+                    <FeedbackTouchable
+                      style={[dynamicStyles.smallActionBtn, dynamicStyles.naBtn]}
+                      onPress={() => handleNotApplicable(item.id)}
+                      disabled={itemBusyId != null || busy}
+                      loading={isItemBusy}
+                      spinnerColor={colors.text}
+                    >
                       <Text style={[dynamicStyles.smallActionBtnText, { color: colors.text, marginLeft: 0 }]}>Mark N/A</Text>
-                    </TouchableOpacity>
+                    </FeedbackTouchable>
                   )}
                 </View>
               </View>
@@ -1157,16 +1334,20 @@ export default function IntakeDetailScreen() {
             {needsAttention.map((f) => (
               <View key={f.id} style={dynamicStyles.fileRow}>
                 <TouchableOpacity onPress={() => openFileViewer(f.file_id, f.filename)}>
-                  <Text style={dynamicStyles.fileRowName}>{f.filename || `File #${f.file_id}`}</Text>
+                  <Text style={dynamicStyles.fileRowName}>{intakeFileLabel(f.filename, f.file_id)}</Text>
                 </TouchableOpacity>
                 <Text style={dynamicStyles.fileRowMeta}>
                   Received via {INTAKE_SOURCE_LABELS[f.source] || f.source}
                   {f.matched_item_label && ` · Suggested: ${f.matched_item_label}`}
                   {f.match_confidence != null && ` (${Math.round(f.match_confidence * 100)}%)`}
                 </Text>
-                <TouchableOpacity style={dynamicStyles.assignBtn} onPress={() => openAssignPicker(f)}>
+                <FeedbackTouchable
+                  style={dynamicStyles.assignBtn}
+                  onPress={() => openAssignPicker(f)}
+                  replaceWithSpinner={false}
+                >
                   <Text style={dynamicStyles.assignBtnText}>Satisfy checklist item…</Text>
-                </TouchableOpacity>
+                </FeedbackTouchable>
               </View>
             ))}
           </View>
@@ -1179,13 +1360,17 @@ export default function IntakeDetailScreen() {
             <Text style={dynamicStyles.cardSubtitle}>Files that arrived but didn&apos;t match anything on the checklist.</Text>
             {unmatched.map((f) => (
               <View key={f.id} style={dynamicStyles.fileRow}>
-                <TouchableOpacity onPress={() => openFileViewer(f.file_id, f.filename)}>
-                  <Text style={dynamicStyles.fileRowName}>{f.filename || `File #${f.file_id}`}</Text>
+                <TouchableOpacity onPress={() => openFileViewer(f.file_id, f.filename)} activeOpacity={0.7}>
+                  <Text style={dynamicStyles.fileRowName}>{intakeFileLabel(f.filename, f.file_id)}</Text>
                 </TouchableOpacity>
                 <Text style={dynamicStyles.fileRowMeta}>Received via {INTAKE_SOURCE_LABELS[f.source] || f.source}</Text>
-                <TouchableOpacity style={dynamicStyles.assignBtn} onPress={() => openAssignPicker(f)}>
+                <FeedbackTouchable
+                  style={dynamicStyles.assignBtn}
+                  onPress={() => openAssignPicker(f)}
+                  replaceWithSpinner={false}
+                >
                   <Text style={dynamicStyles.assignBtnText}>Satisfy checklist item…</Text>
-                </TouchableOpacity>
+                </FeedbackTouchable>
               </View>
             ))}
           </View>
@@ -1199,7 +1384,9 @@ export default function IntakeDetailScreen() {
               <View key={f.id} style={dynamicStyles.historyRow}>
                 <View style={dynamicStyles.historyFileCol}>
                   <TouchableOpacity onPress={() => openFileViewer(f.file_id, f.filename)}>
-                    <Text style={dynamicStyles.fileRowName} numberOfLines={1}>{f.filename || `File #${f.file_id}`}</Text>
+                    <Text style={dynamicStyles.fileRowName} numberOfLines={1}>
+                      {intakeFileLabel(f.filename, f.file_id)}
+                    </Text>
                   </TouchableOpacity>
                   <Text style={dynamicStyles.historyMetaText}>
                     {INTAKE_SOURCE_LABELS[f.source] || f.source} &middot; {f.match_status.replace(/_/g, ' ')}
@@ -1215,27 +1402,25 @@ export default function IntakeDetailScreen() {
       </ScrollView>
 
       {/* Assign file to checklist item picker */}
-      <Modal visible={!!assigningFile} animationType="slide" transparent onRequestClose={() => setAssigningFile(null)}>
-        <View style={dynamicStyles.modalOverlay}>
-          <View style={dynamicStyles.modalCard}>
-            <View style={dynamicStyles.modalHeader}>
-              <Text style={dynamicStyles.modalTitle} numberOfLines={1}>
-                Assign &quot;{assigningFile?.filename || `File #${assigningFile?.file_id}`}&quot;
-              </Text>
-              <TouchableOpacity onPress={() => setAssigningFile(null)}>
-                <Ionicons name="close" size={22} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView>
-              {items.map((item) => (
-                <TouchableOpacity key={item.id} style={dynamicStyles.modalOption} onPress={() => handleAssignFile(item.id)}>
-                  <Text style={dynamicStyles.modalOptionText}>{item.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <AdaptiveListPickerModal
+        visible={!!assigningFile}
+        onClose={() => setAssigningFile(null)}
+        title={`Assign "${intakeFileLabel(assigningFile?.filename, assigningFile?.file_id)}"`}
+        itemCount={items.length}
+      >
+        {items.map((item) => (
+          <FeedbackTouchable
+            key={item.id}
+            style={dynamicStyles.modalOption}
+            onPress={() => handleAssignFile(item.id)}
+            disabled={assignBusyItemId != null}
+            loading={assignBusyItemId === item.id}
+            spinnerColor="#007AFF"
+          >
+            <Text style={dynamicStyles.modalOptionText}>{item.label}</Text>
+          </FeedbackTouchable>
+        ))}
+      </AdaptiveListPickerModal>
 
       {/* File viewer */}
       {viewerFileId != null && (
@@ -1251,16 +1436,33 @@ export default function IntakeDetailScreen() {
       )}
 
       {/* Edit modal */}
-      <Modal visible={editing} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setEditing(false)}>
+      <Modal
+        visible={editing}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          setShowFolderPicker(false);
+          setShowDatePicker(false);
+          setEditing(false);
+        }}
+      >
         <SafeAreaView style={dynamicStyles.editContainer} edges={['left', 'right', 'bottom']}>
           <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
-            <TouchableOpacity onPress={() => setEditing(false)}>
+            <TouchableOpacity
+              onPress={() => {
+                setShowFolderPicker(false);
+                setShowDatePicker(false);
+                setEditing(false);
+              }}
+            >
               <Text style={dynamicStyles.linkText}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Edit Intake</Text>
-            <TouchableOpacity onPress={handleSaveEdit} disabled={savingEdit}>
-              <Text style={dynamicStyles.linkText}>{savingEdit ? 'Saving...' : 'Save'}</Text>
-            </TouchableOpacity>
+            <FeedbackTouchable onPress={handleSaveEdit} disabled={savingEdit} loading={savingEdit} spinnerColor="#007AFF" replaceWithSpinner={false}>
+              <Text style={[dynamicStyles.linkText, savingEdit && { opacity: 0.5 }]}>
+                {savingEdit ? 'Saving...' : 'Save'}
+              </Text>
+            </FeedbackTouchable>
           </View>
           <ScrollView contentContainerStyle={dynamicStyles.editContent}>
             <View style={dynamicStyles.inputGroup}>
@@ -1407,38 +1609,71 @@ export default function IntakeDetailScreen() {
               <Text style={dynamicStyles.switchInlineLabel}>Auto-verify AI matches &ge; 95% confidence</Text>
             </View>
           </ScrollView>
-        </SafeAreaView>
-      </Modal>
 
-      {/* Destination folder picker (edit) */}
-      <Modal visible={showFolderPicker} animationType="slide" transparent onRequestClose={() => setShowFolderPicker(false)}>
-        <View style={dynamicStyles.modalOverlay}>
-          <View style={dynamicStyles.modalCard}>
-            <View style={dynamicStyles.modalHeader}>
-              <Text style={dynamicStyles.modalTitle}>Destination folder</Text>
-              <TouchableOpacity onPress={() => setShowFolderPicker(false)}>
-                <Ionicons name="close" size={22} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView>
+          {/* In-sheet overlays — nested RN Modals do not stack reliably over pageSheet. */}
+          {showFolderPicker ? (
+            <View style={dynamicStyles.editSheetOverlay}>
               <TouchableOpacity
-                style={dynamicStyles.modalOption}
-                onPress={() => { setEditFolderId(null); setShowFolderPicker(false); }}
-              >
-                <Text style={dynamicStyles.modalOptionText}>Leave files where they land</Text>
-              </TouchableOpacity>
-              {folders.map((f) => (
-                <TouchableOpacity
-                  key={f.id}
-                  style={dynamicStyles.modalOption}
-                  onPress={() => { setEditFolderId(f.id); setShowFolderPicker(false); }}
-                >
-                  <Text style={dynamicStyles.modalOptionText}>{f.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => setShowFolderPicker(false)}
+              />
+              <View style={dynamicStyles.editSheetCard}>
+                <View style={dynamicStyles.modalHeader}>
+                  <Text style={dynamicStyles.modalTitle}>Destination folder</Text>
+                  <TouchableOpacity onPress={() => setShowFolderPicker(false)} hitSlop={8}>
+                    <Ionicons name="close" size={22} color={colors.text} />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 360 }}>
+                  <TouchableOpacity
+                    style={dynamicStyles.modalOption}
+                    onPress={() => { setEditFolderId(null); setShowFolderPicker(false); }}
+                  >
+                    <Text style={dynamicStyles.modalOptionText}>Leave files where they land</Text>
+                  </TouchableOpacity>
+                  {folders.map((f) => (
+                    <TouchableOpacity
+                      key={f.id}
+                      style={dynamicStyles.modalOption}
+                      onPress={() => { setEditFolderId(f.id); setShowFolderPicker(false); }}
+                    >
+                      <Text style={dynamicStyles.modalOptionText}>{f.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+          ) : null}
+
+          {showDatePicker ? (
+            <View style={dynamicStyles.editSheetOverlay}>
+              <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => setShowDatePicker(false)}
+              />
+              <View style={dynamicStyles.editSheetCard}>
+                <View style={dynamicStyles.modalHeader}>
+                  <TouchableOpacity onPress={() => { setEditDueAt(''); setShowDatePicker(false); }}>
+                    <Text style={dynamicStyles.linkText}>Clear</Text>
+                  </TouchableOpacity>
+                  <Text style={dynamicStyles.modalTitle}>Due date</Text>
+                  <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                    <Text style={dynamicStyles.linkText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+                <DateTimePicker
+                  value={editDueAt ? new Date(editDueAt) : new Date()}
+                  mode="date"
+                  display="spinner"
+                  onChange={(_, d) => { if (d) setEditDueAt(toLocalDateString(d)); }}
+                  textColor={colors.text}
+                />
+              </View>
+            </View>
+          ) : null}
+        </SafeAreaView>
       </Modal>
 
       {/* Save Template modal */}
@@ -1449,9 +1684,11 @@ export default function IntakeDetailScreen() {
               <Text style={dynamicStyles.linkText}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Template</Text>
-            <TouchableOpacity onPress={handleSaveAsTemplate} disabled={savingTemplate}>
-              <Text style={dynamicStyles.linkText}>{savingTemplate ? 'Saving...' : 'Save'}</Text>
-            </TouchableOpacity>
+            <FeedbackTouchable onPress={handleSaveAsTemplate} disabled={savingTemplate} loading={savingTemplate} spinnerColor="#007AFF" replaceWithSpinner={false}>
+              <Text style={[dynamicStyles.linkText, savingTemplate && { opacity: 0.5 }]}>
+                {savingTemplate ? 'Saving...' : 'Save'}
+              </Text>
+            </FeedbackTouchable>
           </View>
           <View style={{ padding: 16 }}>
             <View style={dynamicStyles.inputGroup}>
@@ -1480,7 +1717,8 @@ export default function IntakeDetailScreen() {
       </Modal>
 
       <UploadOptionsModal
-        visible={showUploadOptions}
+        visible={uploadSheet.visible}
+        expandNonce={uploadSheet.expandNonce}
         isUploading={uploadingItemId != null}
         onDismiss={dismissUploadModal}
         onFiles={handleUploadFromFiles}
@@ -1488,30 +1726,6 @@ export default function IntakeDetailScreen() {
         onGallery={handleUploadFromGallery}
         onLink={handleUploadByLink}
       />
-
-      {/* iOS date picker (edit) */}
-      <Modal visible={showDatePicker} animationType="slide" transparent onRequestClose={() => setShowDatePicker(false)}>
-        <View style={dynamicStyles.modalOverlay}>
-          <View style={dynamicStyles.modalCard}>
-            <View style={dynamicStyles.modalHeader}>
-              <TouchableOpacity onPress={() => { setEditDueAt(''); setShowDatePicker(false); }}>
-                <Text style={dynamicStyles.linkText}>Clear</Text>
-              </TouchableOpacity>
-              <Text style={dynamicStyles.modalTitle}>Due date</Text>
-              <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-                <Text style={dynamicStyles.linkText}>Done</Text>
-              </TouchableOpacity>
-            </View>
-            <DateTimePicker
-              value={editDueAt ? new Date(editDueAt) : new Date()}
-              mode="date"
-              display="spinner"
-              onChange={(_, d) => { if (d) setEditDueAt(toLocalDateString(d)); }}
-              textColor={colors.text}
-            />
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }

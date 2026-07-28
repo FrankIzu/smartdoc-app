@@ -19,10 +19,12 @@ import {
 import Toast from 'react-native-toast-message';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import QuickFormViewer from '../../components/QuickFormViewer';
+import { resendCooldownKey, useResendCooldown } from '../../hooks/useResendCooldown';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { getReachParticipantDisplayName } from '../../utils/reachDisplayName';
@@ -147,6 +149,19 @@ export default function WorkspaceDetailsScreen() {
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [selectedMember, setSelectedMember] = useState<WorkspaceMember | null>(null);
   const [creatingMeeting, setCreatingMeeting] = useState(false);
+  const [exiting, setExiting] = useState(false);
+  const [invitationBusy, setInvitationBusy] = useState(false);
+  const inviteResendKey =
+    id && selectedInvitation?.id
+      ? resendCooldownKey('workspace-invite', id, selectedInvitation.id)
+      : null;
+  const {
+    remainingSec: inviteResendCooldownSec,
+    isCoolingDown: inviteResendCoolingDown,
+    markSent: markInviteResendSent,
+  } = useResendCooldown(inviteResendKey, {
+    serverSentAt: selectedInvitation?.created_at || null,
+  });
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
   const [workspaceFilesSheetVisible, setWorkspaceFilesSheetVisible] = useState(false);
   const [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false);
@@ -166,6 +181,14 @@ export default function WorkspaceDetailsScreen() {
     id: string;
     name: string;
   } | null>(null);
+
+  const handleBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/workspaces' as any);
+    }
+  }, [router]);
 
   const workspaceSheetListItems = useMemo((): WorkspaceSheetListItem[] => {
     const items: WorkspaceSheetListItem[] = [];
@@ -456,6 +479,7 @@ export default function WorkspaceDetailsScreen() {
           text: 'Exit',
           style: 'destructive',
           onPress: async () => {
+            setExiting(true);
             try {
               // Find current user's member ID
               const currentUserMember = members.find(m => m.user_id === Number(user.id));
@@ -474,6 +498,8 @@ export default function WorkspaceDetailsScreen() {
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to exit workspace');
+            } finally {
+              setExiting(false);
             }
           },
         },
@@ -483,12 +509,17 @@ export default function WorkspaceDetailsScreen() {
 
   const handleResendInvitation = async () => {
     if (!selectedInvitation) return;
-    
+    if (inviteResendCoolingDown) {
+      Alert.alert('Please wait', `You can resend in ${inviteResendCooldownSec}s`);
+      return;
+    }
+
     setShowInvitationKebab(false);
-    
+    setInvitationBusy(true);
     try {
       const response = await apiService.resendWorkspaceInvitation(Number(id), selectedInvitation.id);
       if (response.success) {
+        markInviteResendSent();
         Alert.alert('Success', 'Invitation resent successfully');
         invalidateWorkspaceScreenCaches(user?.id, String(id), Number(id));
         loadWorkspaceDetails(true);
@@ -497,6 +528,8 @@ export default function WorkspaceDetailsScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to resend invitation');
+    } finally {
+      setInvitationBusy(false);
     }
   };
 
@@ -514,6 +547,7 @@ export default function WorkspaceDetailsScreen() {
           text: 'Yes, Cancel',
           style: 'destructive',
           onPress: async () => {
+            setInvitationBusy(true);
             try {
               const response = await apiService.cancelWorkspaceInvitation(Number(id), selectedInvitation.id);
               if (response.success) {
@@ -525,6 +559,8 @@ export default function WorkspaceDetailsScreen() {
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to cancel invitation');
+            } finally {
+              setInvitationBusy(false);
             }
           }
         }
@@ -763,7 +799,8 @@ export default function WorkspaceDetailsScreen() {
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border, zIndex: 1 },
+    headerBackButton: { zIndex: 2, padding: 4, marginLeft: -4 },
     headerTitle: { fontSize: 18, fontWeight: '600', color: colors.text, flex: 1, textAlign: 'center' },
     loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     scrollView: { flex: 1 },
@@ -939,10 +976,16 @@ export default function WorkspaceDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity
+            style={dynamicStyles.headerBackButton}
+            onPress={handleBack}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle}>Workspace</Text>
+          <Text style={dynamicStyles.headerTitle} pointerEvents="none">Workspace</Text>
           <View style={{ width: 24 }} />
         </View>
         <View style={dynamicStyles.loadingContainer}>
@@ -956,10 +999,16 @@ export default function WorkspaceDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity
+            style={dynamicStyles.headerBackButton}
+            onPress={handleBack}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle}>Workspace Not Found</Text>
+          <Text style={dynamicStyles.headerTitle} pointerEvents="none">Workspace Not Found</Text>
           <View style={{ width: 24 }} />
         </View>
       </SafeAreaView>
@@ -971,14 +1020,20 @@ export default function WorkspaceDetailsScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity
+          style={dynamicStyles.headerBackButton}
+          onPress={handleBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle} numberOfLines={1} ellipsizeMode="tail">{workspace.name}</Text>
+        <Text style={dynamicStyles.headerTitle} numberOfLines={1} ellipsizeMode="tail" pointerEvents="none">{workspace.name}</Text>
         {workspace.user_role !== 'owner' && workspace.user_role !== 'admin' && (
-          <TouchableOpacity onPress={handleExitWorkspace}>
+          <FeedbackTouchable onPress={handleExitWorkspace} loading={exiting} spinnerColor="#FF3B30">
             <Ionicons name="exit-outline" size={24} color="#FF3B30" />
-          </TouchableOpacity>
+          </FeedbackTouchable>
         )}
         {workspace.user_role === 'owner' || workspace.user_role === 'admin' ? (
           <View style={{ width: 24 }} />
@@ -1014,8 +1069,11 @@ export default function WorkspaceDetailsScreen() {
         <View style={dynamicStyles.actionsSection}>
           <Text style={dynamicStyles.sectionTitle}>Quick Actions</Text>
           <View style={dynamicStyles.actionsGrid}>
-            <TouchableOpacity 
+            <FeedbackTouchable 
               style={[dynamicStyles.actionButton, creatingMeeting && { opacity: 0.6 }]} 
+              loading={creatingMeeting}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
               onPress={async () => {
                 if (creatingMeeting || !workspace) return;
                 
@@ -1124,7 +1182,7 @@ export default function WorkspaceDetailsScreen() {
               <Text style={dynamicStyles.actionText}>
                 {creatingMeeting ? 'Creating...' : 'Start Call'}
               </Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
 
             <TouchableOpacity 
               style={dynamicStyles.actionButton} 
@@ -1329,11 +1387,10 @@ export default function WorkspaceDetailsScreen() {
                       gap: 12
                     }}
                     onPress={() => {
+                      // Open in-place — do not push workspaceId onto the Documents tab
+                      // (that would replace the personal Files list and look like data was deleted).
                       if (activity.file) {
-                        router.push({
-                          pathname: '/documents',
-                          params: { workspaceId: id, fileId: activity.file.id }
-                        });
+                        openFileFromWorkspaceSheet(activity.file);
                       }
                     }}
                   >
@@ -1399,21 +1456,35 @@ export default function WorkspaceDetailsScreen() {
           }}
         >
           <View style={dynamicStyles.kebabMenuContainer}>
-            <TouchableOpacity
-              style={dynamicStyles.kebabMenuItem}
+            <FeedbackTouchable
+              style={[
+                dynamicStyles.kebabMenuItem,
+                inviteResendCoolingDown && { opacity: 0.55 },
+              ]}
               onPress={handleResendInvitation}
+              disabled={invitationBusy || inviteResendCoolingDown}
+              loading={invitationBusy}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
             >
               <Ionicons name="send-outline" size={20} color="#007AFF" />
-              <Text style={dynamicStyles.kebabMenuText}>Resend Invite</Text>
-            </TouchableOpacity>
+              <Text style={dynamicStyles.kebabMenuText}>
+                {inviteResendCoolingDown
+                  ? `Resend in ${inviteResendCooldownSec}s`
+                  : 'Resend Invite'}
+              </Text>
+            </FeedbackTouchable>
             
-            <TouchableOpacity
+            <FeedbackTouchable
               style={dynamicStyles.kebabMenuItem}
               onPress={handleCancelInvitation}
+              loading={invitationBusy}
+              spinnerColor="#FF3B30"
+              replaceWithSpinner={false}
             >
               <Ionicons name="close-circle-outline" size={20} color="#FF3B30" />
               <Text style={[dynamicStyles.kebabMenuText, { color: '#FF3B30' }]}>Cancel Invite</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -1646,9 +1717,12 @@ export default function WorkspaceDetailsScreen() {
               <Text style={dynamicStyles.modalCancel}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Invite Member</Text>
-            <TouchableOpacity
+            <FeedbackTouchable
               onPress={handleInviteMember}
               disabled={inviteLoading || !inviteEmail.trim()}
+              loading={inviteLoading}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
             >
               <Text style={[
                 dynamicStyles.modalSave,
@@ -1656,7 +1730,7 @@ export default function WorkspaceDetailsScreen() {
               ]}>
                 {inviteLoading ? 'Sending...' : 'Send'}
               </Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
 
           <View style={dynamicStyles.modalContent}>

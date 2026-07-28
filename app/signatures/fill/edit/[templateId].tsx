@@ -19,6 +19,7 @@ import {
 import { GestureHandlerRootView, ScrollView } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { FeedbackTouchable } from '../../../../components/FeedbackTouchable';
 import SignatureCaptureModal from '../../../../components/signatures/SignatureCaptureModal';
 import FillCaptureHost, {
   type FillCaptureHostHandle,
@@ -49,11 +50,13 @@ export default function FillDocumentEditorScreen() {
     fieldId: string;
     label: string;
     variant: 'signature' | 'initials';
+    expandNonce: number;
   } | null>(null);
   const [datePickerModal, setDatePickerModal] = useState<{
     fieldId: string;
     label: string;
     value: Date;
+    expandNonce: number;
   } | null>(null);
   const prevFieldCountRef = useRef(0);
   const editorInitializedRef = useRef(false);
@@ -73,11 +76,12 @@ export default function FillDocumentEditorScreen() {
   const handleSignatureRequest = useCallback(
     (fieldId: string, label: string) => {
       const field = editor.fields.find((f) => f.id === fieldId);
-      setSignatureModal({
+      setSignatureModal((prev) => ({
         fieldId,
         label,
         variant: field?.type === 'initials' ? 'initials' : 'signature',
-      });
+        expandNonce: (prev?.expandNonce ?? 0) + 1,
+      }));
     },
     [editor.fields],
   );
@@ -98,11 +102,12 @@ export default function FillDocumentEditorScreen() {
         return;
       }
       const field = editor.fields.find((f) => f.id === fieldId);
-      setDatePickerModal({
+      setDatePickerModal((prev) => ({
         fieldId,
         label: field?.label || 'Date',
         value: initial,
-      });
+        expandNonce: (prev?.expandNonce ?? 0) + 1,
+      }));
     },
     [editor.fields, handleFieldValueChange],
   );
@@ -130,11 +135,12 @@ export default function FillDocumentEditorScreen() {
     if (fieldCount > prevFieldCountRef.current && primaryFieldId) {
       const field = editor.fields.find((f) => f.id === primaryFieldId);
       if (field && (field.type === 'signature' || field.type === 'initials')) {
-        setSignatureModal({
+        setSignatureModal((prev) => ({
           fieldId: field.id,
           label: field.label || field.type,
           variant: field.type === 'initials' ? 'initials' : 'signature',
-        });
+          expandNonce: (prev?.expandNonce ?? 0) + 1,
+        }));
       }
       if (field?.type === 'date') {
         handleFieldValueChange(field.id, formatFillDate(new Date()));
@@ -238,12 +244,13 @@ export default function FillDocumentEditorScreen() {
         <Text style={[styles.errorText, { color: colors.error ?? '#EF4444' }]}>
           {editor.loadError}
         </Text>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[styles.retryBtn, { backgroundColor: colors.primary }]}
-          onPress={() => templateId && void editor.load(templateId)}
+          onPress={() => (templateId ? editor.load(templateId) : undefined)}
+          spinnerColor="#fff"
         >
           <Text style={styles.retryText}>Retry</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
         <TouchableOpacity onPress={() => router.back()} style={styles.backLink}>
           <Text style={{ color: colors.textSecondary }}>Go back</Text>
         </TouchableOpacity>
@@ -283,6 +290,7 @@ export default function FillDocumentEditorScreen() {
           <FillDatePickerModal
             key={datePickerModal.fieldId}
             visible
+            expandNonce={datePickerModal.expandNonce}
             fieldLabel={datePickerModal.label}
             value={datePickerModal.value}
             onClose={() => setDatePickerModal(null)}
@@ -296,6 +304,7 @@ export default function FillDocumentEditorScreen() {
           <SignatureCaptureModal
             key={signatureModal.fieldId}
             visible
+            expandNonce={signatureModal.expandNonce}
             variant={signatureModal.variant}
             fieldLabel={signatureModal.label}
             onClose={() => setSignatureModal(null)}

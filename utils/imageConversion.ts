@@ -70,18 +70,66 @@ export const convertHeicToPng = async (
 
     console.log(`✅ Converted HEIC to PNG: ${file.name} → ${newName}`);
     console.log(`   Original size: ${file.size || 'unknown'} bytes`);
-    console.log(`   Converted size: ${fileInfo.size || 'unknown'} bytes`);
+    const convertedSize =
+      fileInfo.exists && 'size' in fileInfo ? (fileInfo.size as number | undefined) : undefined;
+    console.log(`   Converted size: ${convertedSize || 'unknown'} bytes`);
 
     return {
       uri: result.uri,
       name: newName,
       type: 'image/png',
-      size: fileInfo.size || file.size,
+      size: convertedSize || file.size,
     };
   } catch (error: any) {
     console.error('❌ HEIC conversion failed:', error);
     // If conversion fails, return original file and let server handle it
     console.warn('⚠️ Continuing with original HEIC file - server will convert it');
+    return file;
+  }
+};
+
+const isCompressibleImage = (file: FileUpload): boolean => {
+  if (isHeicFile(file)) return false;
+  const mime = (file.type || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  return /\.(jpe?g|png|webp|gif)$/i.test(file.name);
+};
+
+/**
+ * Optionally compress images before upload when Compress Images is enabled.
+ */
+export const compressImageForUpload = async (
+  file: FileUpload,
+  enabled: boolean,
+  onProgress?: (progress: number, message: string) => void,
+): Promise<FileUpload> => {
+  if (!enabled || !isCompressibleImage(file)) {
+    return file;
+  }
+
+  try {
+    onProgress?.(0, 'Compressing image...');
+    const result = await ImageManipulator.manipulateAsync(
+      file.uri,
+      [{ resize: { width: 1920 } }],
+      {
+        compress: 0.72,
+        format: ImageManipulator.SaveFormat.JPEG,
+      },
+    );
+    onProgress?.(80, 'Compressing image...');
+    const fileInfo = await FileSystem.getInfoAsync(result.uri);
+    const baseName = file.name.replace(/\.[^.]+$/, '');
+    const newName = `${baseName}.jpg`;
+    onProgress?.(100, 'Compression complete');
+    return {
+      uri: result.uri,
+      name: newName,
+      type: 'image/jpeg',
+      size: fileInfo.exists && 'size' in fileInfo ? (fileInfo.size as number) : file.size,
+    };
+  } catch (error) {
+    console.warn('⚠️ Image compression failed, uploading original:', error);
     return file;
   }
 };

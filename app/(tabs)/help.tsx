@@ -13,6 +13,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
@@ -310,20 +311,21 @@ export default function HelpScreen() {
           </View>
 
           {/* Submit Button */}
-          <TouchableOpacity
+          <FeedbackTouchable
             style={[
               dynamicStyles.submitButton,
               loading && dynamicStyles.submitButtonDisabled
             ]}
             onPress={handleSubmit}
             disabled={loading}
+            loading={loading}
+            spinnerColor="#fff"
+            replaceWithSpinner={false}
           >
-            {loading ? (
-              <Text style={dynamicStyles.submitButtonText}>Submitting...</Text>
-            ) : (
-              <Text style={dynamicStyles.submitButtonText}>Submit Feedback</Text>
-            )}
-          </TouchableOpacity>
+            <Text style={dynamicStyles.submitButtonText}>
+              {loading ? 'Submitting...' : 'Submit Feedback'}
+            </Text>
+          </FeedbackTouchable>
 
           {/* Additional Help Info */}
           <View style={[dynamicStyles.section, { marginTop: 4 }]}>

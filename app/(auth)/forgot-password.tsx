@@ -1,7 +1,6 @@
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
     Platform,
@@ -11,9 +10,11 @@ import {
     TextInput,
     View,
 } from 'react-native';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { apiService } from '../../services/api';
 
 export default function ForgotPasswordScreen() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -27,17 +28,21 @@ export default function ForgotPasswordScreen() {
     try {
       setLoading(true);
       setError('');
-      
-      // Call the forgot password API using our API service
+
       const response = await apiService.forgotPassword(email);
-      
+
       if (response.success) {
+        setEmail('');
         Alert.alert(
           'Reset Link Sent',
           'If an account exists with this email, you will receive password reset instructions.',
-          [{ text: 'OK' }]
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace('/sign-in'),
+            },
+          ],
         );
-        setEmail('');
       } else {
         setError(response.message || 'Failed to send reset link');
       }
@@ -67,6 +72,7 @@ export default function ForgotPasswordScreen() {
             <TextInput
               style={styles.input}
               placeholder="Enter your email"
+              placeholderTextColor="#999"
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
@@ -78,17 +84,15 @@ export default function ForgotPasswordScreen() {
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <Pressable
+          <FeedbackTouchable
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleForgotPassword}
             disabled={loading}
+            loading={loading}
+            spinnerColor="#fff"
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Send Reset Link</Text>
-            )}
-          </Pressable>
+            <Text style={styles.buttonText}>Send Reset Link</Text>
+          </FeedbackTouchable>
 
           <Link href="/sign-in" asChild>
             <Pressable style={styles.linkButton}>
@@ -141,6 +145,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 8,
     fontSize: 16,
+    color: '#333',
   },
   button: {
     backgroundColor: '#007AFF',

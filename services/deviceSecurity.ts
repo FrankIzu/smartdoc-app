@@ -27,6 +27,10 @@ interface BiometricConfig {
   enabled: boolean;
   types: LocalAuthentication.AuthenticationType[];
   fallbackEnabled: boolean;
+  /** True when fingerprint/Face ID/iris data is enrolled. */
+  biometricsEnrolled: boolean;
+  /** True when device PIN/pattern/passcode is enrolled (SecurityLevel.SECRET+). */
+  passcodeEnrolled: boolean;
 }
 
 interface RiskContext {
@@ -45,6 +49,15 @@ interface User2FAPreferences {
   smsBackupRequired: boolean;
   highRiskSMSRequired: boolean;
   riskThreshold: 'low' | 'medium' | 'high';
+}
+
+/** How the user last authenticated. Password is the only path that can enroll biometric quick-login. */
+export type AuthMethod = 'password' | 'google' | 'apple' | 'phone' | 'biometric';
+
+interface LastLoginData {
+  timestamp: string;
+  location?: string;
+  authMethod?: AuthMethod;
 }
 
 // Storage keys
@@ -202,41 +215,50 @@ class DeviceSecurityService {
   // ==================== BIOMETRIC AUTHENTICATION ====================
 
   async initializeBiometrics(): Promise<BiometricConfig> {
-    if (this.biometricConfig) {
-      return this.biometricConfig;
-    }
-
-    // Biometrics not available on web
+    // Biometrics / device credentials are not available on web
     if (Platform.OS === 'web') {
       const config: BiometricConfig = {
         enabled: false,
         types: [],
         fallbackEnabled: false,
+        biometricsEnrolled: false,
+        passcodeEnrolled: false,
       };
       this.biometricConfig = config;
       return config;
     }
 
     try {
-      // Check hardware support
+      // Always re-check enrollment — users can add a PIN/biometrics after first launch.
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const supportedTypes = await LocalAuthentication.supportedAuthenticationTypesAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      const biometricsEnrolled = await LocalAuthentication.isEnrolledAsync();
+      const enrolledLevel = await LocalAuthentication.getEnrolledLevelAsync();
+      // SECRET = device PIN/pattern/passcode; BIOMETRIC_* = fingerprint/face.
+      const passcodeEnrolled = enrolledLevel >= LocalAuthentication.SecurityLevel.SECRET;
+      const deviceCredentialAvailable = passcodeEnrolled || biometricsEnrolled;
 
-      console.log('🔐 Biometric hardware check:', {
+      console.log('🔐 Device credential check:', {
         hasHardware,
-        supportedTypes: supportedTypes.map(type => 
+        supportedTypes: supportedTypes.map(type =>
           type === LocalAuthentication.AuthenticationType.FINGERPRINT ? 'Fingerprint' :
           type === LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION ? 'Face ID' :
           type === LocalAuthentication.AuthenticationType.IRIS ? 'Iris' : 'Unknown'
         ),
-        isEnrolled
+        biometricsEnrolled,
+        enrolledLevel,
+        passcodeEnrolled,
+        deviceCredentialAvailable,
       });
 
+      // Accept biometrics OR device PIN/passcode. PIN-only devices have no biometric
+      // hardware enrollment, so hasHardware/isEnrolled alone would incorrectly block them.
       const config: BiometricConfig = {
-        enabled: hasHardware && isEnrolled && supportedTypes.length > 0,
+        enabled: deviceCredentialAvailable,
         types: supportedTypes,
-        fallbackEnabled: true, // Enable device passcode fallback when biometric fails
+        fallbackEnabled: true,
+        biometricsEnrolled,
+        passcodeEnrolled,
       };
 
       this.biometricConfig = config;
@@ -249,7 +271,9 @@ class DeviceSecurityService {
       return {
         enabled: false,
         types: [],
-        fallbackEnabled: true, // Enable device passcode fallback
+        fallbackEnabled: true,
+        biometricsEnrolled: false,
+        passcodeEnrolled: false,
       };
     }
   }
@@ -265,23 +289,18 @@ class DeviceSecurityService {
     try {
       const config = await this.initializeBiometrics();
       console.log('🔐 Biometric config:', config);
-      
+
       if (!config.enabled) {
-        console.log('❌ Biometric authentication not enabled');
+        console.log('❌ No device credentials enrolled (biometrics or PIN/passcode)');
         return { success: false, error: 'not_enrolled' };
       }
 
-      console.log('🔐 Starting biometric authentication with config:', {
+      // disableDeviceFallback: false → iOS LAPolicyDeviceOwnerAuthentication /
+      // Android device credential — accepts fingerprint/Face ID OR device PIN/passcode.
+      const result = await LocalAuthentication.authenticateAsync({
         promptMessage: reason,
         fallbackLabel: 'Use Passcode',
         disableDeviceFallback: false,
-        cancelLabel: 'Cancel',
-      });
-
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: reason,
-        fallbackLabel: 'Use Passcode', // OS shows device PIN/passcode when user taps this or biometric fails
-        disableDeviceFallback: false, // Enable phone PIN/passcode fallback
         cancelLabel: 'Cancel',
       });
 
@@ -442,7 +461,7 @@ class DeviceSecurityService {
     return methods;
   }
 
-  private async getLastLoginData(): Promise<{ timestamp: string; location?: string } | null> {
+  private async getLastLoginData(): Promise<LastLoginData | null> {
     try {
       const stored = await secureStorage.getItem(STORAGE_KEYS.LAST_LOGIN);
       return stored ? JSON.parse(stored) : null;
@@ -451,12 +470,59 @@ class DeviceSecurityService {
     }
   }
 
-  async setLastLoginData(data: { timestamp: string; location?: string }): Promise<void> {
+  async setLastLoginData(data: LastLoginData): Promise<void> {
     try {
-      await secureStorage.setItem(STORAGE_KEYS.LAST_LOGIN, JSON.stringify(data));
+      // Preserve prior authMethod when callers only refresh timestamp.
+      const existing = await this.getLastLoginData();
+      const merged: LastLoginData = {
+        ...existing,
+        ...data,
+        authMethod: data.authMethod ?? existing?.authMethod,
+      };
+      await secureStorage.setItem(STORAGE_KEYS.LAST_LOGIN, JSON.stringify(merged));
     } catch (error) {
       console.warn('Failed to save last login data:', error);
     }
+  }
+
+  async setLastAuthMethod(authMethod: AuthMethod): Promise<void> {
+    await this.setLastLoginData({
+      timestamp: new Date().toISOString(),
+      authMethod,
+    });
+  }
+
+  async getLastAuthMethod(): Promise<AuthMethod | null> {
+    const data = await this.getLastLoginData();
+    return data?.authMethod ?? null;
+  }
+
+  /**
+   * Biometric quick-login is enrolled via username/password.
+   * SSO (Google/Apple) accounts cannot complete that enrollment path.
+   */
+  isPasswordBiometricCompatible(authMethod: AuthMethod | null | undefined): boolean {
+    return authMethod === 'password' || authMethod === 'biometric';
+  }
+
+  async isBiometricLoginEligibleForLastUser(): Promise<boolean> {
+    const method = await this.getLastAuthMethod();
+    if (!this.isPasswordBiometricCompatible(method)) {
+      return false;
+    }
+    try {
+      const prefs = await this.getUserPreferences();
+      return !!prefs.biometricEnabled;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Disable stored biometric quick-login preference (e.g. after detecting SSO account). */
+  async disableBiometricLoginPreference(): Promise<void> {
+    const prefs = await this.getUserPreferences();
+    if (!prefs.biometricEnabled) return;
+    await this.setUserPreferences({ ...prefs, biometricEnabled: false });
   }
 
   private async getFailedAttemptsCount(): Promise<number> {

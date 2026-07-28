@@ -38,7 +38,7 @@ export default function ChatGDBottomSheetHost() {
       if (value == null || value === '') continue;
       navParams[key] = Array.isArray(value) ? value[0] : String(value);
     }
-    router.push({ pathname: '/(tabs)/chats', params: navParams });
+    router.navigate({ pathname: '/(tabs)/chats', params: navParams });
   }, [closeChatGD, params, router]);
 
   useEffect(() => {

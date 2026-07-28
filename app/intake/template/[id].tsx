@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiService } from '../../../services/api';
 import type { IntakeTemplate, IntakeTemplateItem } from '../../../types/intake';
@@ -102,6 +103,13 @@ export default function EditIntakeTemplateScreen() {
         })),
       });
       if (response.success) {
+        if (response.unchanged || response.already_exists) {
+          Alert.alert(
+            'Already saved',
+            response.message || 'No changes were made — this template is already saved.',
+          );
+          return;
+        }
         Alert.alert('Saved', 'Template updated');
         router.back();
       } else {
@@ -183,11 +191,11 @@ export default function EditIntakeTemplateScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={dynamicStyles.title}>Edit template</Text>
-        <TouchableOpacity onPress={handleSave} disabled={saving}>
+        <FeedbackTouchable onPress={handleSave} disabled={saving} loading={saving} spinnerColor="#007AFF" replaceWithSpinner={false}>
           <Text style={[dynamicStyles.linkText, saving && { opacity: 0.5 }]}>
             {saving ? 'Saving...' : 'Save'}
           </Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </View>
 
       <ScrollView contentContainerStyle={dynamicStyles.content} showsVerticalScrollIndicator={false}>

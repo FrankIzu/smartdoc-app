@@ -68,6 +68,7 @@ import {
     ListTabFilter,
     sortCalendarEventsByStartAsc,
     sortCalendarEventsByStartDesc,
+    toLocalDateString,
 } from '../../utils/calendarTime';
 import { openMapsForLocationLabel } from '../../utils/openMapsQuery';
 import { useAuth } from '../context/auth';
@@ -142,6 +143,7 @@ export default function CalendarHomeScreen() {
   const onEndReachedCalledDuringMomentumRef = useRef(false);
 
   const [calendarConnectionsList, setCalendarConnectionsList] = useState<CalendarConnection[]>([]);
+  const [busyConnectionId, setBusyConnectionId] = useState<number | null>(null);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [oauthOpen, setOauthOpen] = useState(false);
   const [oauthProvider, setOauthProvider] = useState<CalendarProvider>('google');
@@ -672,12 +674,15 @@ export default function CalendarHomeScreen() {
               Alert.alert('Offline', 'Disconnecting requires a connection.');
               return;
             }
+            setBusyConnectionId(Number(connection.id));
             try {
               await calendarDeleteConnection(Number(connection.id));
               await refreshConnections();
               await load();
             } catch (e: any) {
               Alert.alert('Error', e?.response?.data?.error || e?.message || '');
+            } finally {
+              setBusyConnectionId(null);
             }
           },
         },
@@ -1088,12 +1093,14 @@ export default function CalendarHomeScreen() {
 
   const openCreate = useCallback(() => {
     dismissCalendarOverlays();
+    const params: Record<string, string> = {
+      date: toLocalDateString(monthSelectedDay),
+    };
     if (viewUserId != null && isAdmin) {
-      router.push({ pathname: '/calendar/create', params: { viewUserId: String(viewUserId) } } as any);
-    } else {
-      router.push('/calendar/create' as any);
+      params.viewUserId = String(viewUserId);
     }
-  }, [router, viewUserId, isAdmin, dismissCalendarOverlays]);
+    router.push({ pathname: '/calendar/create', params } as any);
+  }, [router, viewUserId, isAdmin, dismissCalendarOverlays, monthSelectedDay]);
 
   const navigateToEventDetail = useCallback(
     (ev: EventRow) => {
@@ -1361,6 +1368,7 @@ export default function CalendarHomeScreen() {
           onSetDefault={handleSetDefaultCalendar}
           onDisconnect={handleDisconnectCalendar}
           onAddAnother={() => setConnectModalOpen(true)}
+          busyConnectionId={busyConnectionId}
         />
       ) : null}
 

@@ -474,12 +474,15 @@ export default function UserChatScreen() {
     const favoriteChats = chats.filter(chat => favoriteChatIds.has(chat.id));
     const otherChats = chats.filter(chat => !favoriteChatIds.has(chat.id));
     
-    // Sort each group by updated_at (most recent first)
-    const sortByDate = (a: Chat, b: Chat) => {
-      const dateA = new Date(a.updated_at).getTime();
-      const dateB = new Date(b.updated_at).getTime();
-      return dateB - dateA;
+    // Sort each group by updated_at (most recent first). Naive UTC ISO → treat as UTC.
+    const activityTs = (raw?: string) => {
+      if (!raw) return 0;
+      const s = String(raw).trim();
+      const hasTz = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+      const t = Date.parse(hasTz ? s : `${s}Z`);
+      return Number.isFinite(t) ? t : 0;
     };
+    const sortByDate = (a: Chat, b: Chat) => activityTs(b.updated_at) - activityTs(a.updated_at);
     
     return [...favoriteChats.sort(sortByDate), ...otherChats.sort(sortByDate)];
   }, [chats, favoriteChatIds]);
@@ -686,9 +689,11 @@ export default function UserChatScreen() {
       const response = await api.searchUsersForChat(query);
       if (response.success) {
         const results: any[] = [];
-        // Add users
+        const myId = currentUserIdRef.current;
+        // Add users (exclude self — cannot start a chat with yourself)
         if ((response as any).users) {
           (response as any).users.forEach((user: any) => {
+            if (myId != null && String(user.id) === String(myId)) return;
             results.push({ type: 'user', data: user });
           });
         }
@@ -791,6 +796,12 @@ export default function UserChatScreen() {
   };
 
   const handleSelectRecipient = (recipient: { type: 'user' | 'workspace'; data: any }) => {
+    if (recipient.type === 'user') {
+      const myId = currentUserIdRef.current;
+      if (myId != null && String(recipient.data?.id) === String(myId)) {
+        return;
+      }
+    }
     setSelectedRecipient(recipient);
     setShowMentionResults(false);
     // Remove @ mention from message
@@ -804,6 +815,13 @@ export default function UserChatScreen() {
     if (!selectedRecipient) {
       Alert.alert('Error', 'Please select a user or workspace by typing @ and selecting from the list');
       return;
+    }
+    if (selectedRecipient.type === 'user') {
+      const myId = currentUserIdRef.current;
+      if (myId != null && String(selectedRecipient.data?.id) === String(myId)) {
+        Alert.alert('Error', 'You cannot start a chat with yourself');
+        return;
+      }
     }
 
     try {

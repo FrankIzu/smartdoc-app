@@ -2,7 +2,7 @@ import React, { forwardRef } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import type { WizardField } from '../../../types/signature';
 import { fieldToPixelRect } from '../../../utils/fillable';
-import { fieldImageUri, fieldValueForWizardField, isSignFieldType } from '../../../utils/signatureRuntime';
+import { dateFieldDisplayText, fieldImageUri, fieldValueForWizardField, isSignFieldType } from '../../../utils/signatureRuntime';
 
 interface Props {
   pageImageUrl: string;
@@ -79,7 +79,12 @@ const FillCompositePage = forwardRef<View, Props>(function FillCompositePage(
         }
 
         if (field.type === 'text' || field.type === 'date') {
-          const text = typeof val === 'string' ? val.trim() : '';
+          const text =
+            field.type === 'date'
+              ? dateFieldDisplayText(val)
+              : typeof val === 'string'
+                ? val.trim()
+                : '';
           if (!text) return null;
           return (
             <View

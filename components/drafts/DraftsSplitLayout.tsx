@@ -39,9 +39,15 @@ export default function DraftsSplitLayout() {
     [persistSidebarWidth, screenWidth],
   );
 
+  const stackScreenOptions = {
+    headerShown: false,
+    // Avoid default white card behind the status bar (light icons become invisible in dark mode).
+    contentStyle: { backgroundColor: colors.background },
+  } as const;
+
   if (!isSplit) {
     return (
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack screenOptions={stackScreenOptions}>
         <Stack.Screen name="index" options={{ title: 'Notes', headerShown: false }} />
         <Stack.Screen name="recent" options={{ title: 'Deleted & shared', headerShown: false }} />
         <Stack.Screen name="edit/[id]" options={{ presentation: 'card', headerShown: false }} />
@@ -63,7 +69,7 @@ export default function DraftsSplitLayout() {
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
         )}
         <View style={styles.detail}>
-          <Stack screenOptions={{ headerShown: false }}>
+          <Stack screenOptions={stackScreenOptions}>
             <Stack.Screen name="index" options={{ title: 'Notes', headerShown: false }} />
             <Stack.Screen name="recent" options={{ title: 'Deleted & shared', headerShown: false }} />
             <Stack.Screen name="edit/[id]" options={{ presentation: 'card', headerShown: false }} />

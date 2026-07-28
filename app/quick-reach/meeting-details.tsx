@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import TextAssetViewer from '../../components/TextAssetViewer';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
@@ -101,6 +102,7 @@ export default function MeetingDetailsScreen() {
   const [assets, setAssets] = useState<MeetingAsset[]>([]);
   const [sessionGroups, setSessionGroups] = useState<SessionGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAsset, setSelectedAsset] = useState<MeetingAsset | null>(null);
   const [showAssetModal, setShowAssetModal] = useState(false);
@@ -2005,6 +2007,7 @@ export default function MeetingDetailsScreen() {
           text: 'Delete All',
           style: 'destructive',
           onPress: async () => {
+            setDeletingAll(true);
             try {
               setLoading(true);
               
@@ -2073,6 +2076,7 @@ export default function MeetingDetailsScreen() {
               Alert.alert('Error', errorMessage);
             } finally {
               setLoading(false);
+              setDeletingAll(false);
             }
           }
         }
@@ -2748,16 +2752,24 @@ export default function MeetingDetailsScreen() {
         </View>
         <View style={dynamicStyles.headerActions}>
           {assets.length > 0 && (
-            <TouchableOpacity 
-              style={dynamicStyles.deleteAllButton} 
+            <FeedbackTouchable
+              style={dynamicStyles.deleteAllButton}
               onPress={deleteAllAssets}
+              disabled={deletingAll}
+              loading={deletingAll}
+              spinnerColor="#FF3B30"
             >
               <Ionicons name="trash-outline" size={24} color="#FF3B30" />
-            </TouchableOpacity>
+            </FeedbackTouchable>
           )}
-          <TouchableOpacity style={dynamicStyles.refreshButton} onPress={loadMeetingAssets}>
+          <FeedbackTouchable
+            style={dynamicStyles.refreshButton}
+            onPress={loadMeetingAssets}
+            disabled={deletingAll || loading}
+            spinnerColor={themeColors.tint || '#007AFF'}
+          >
             <Ionicons name="refresh" size={24} color={themeColors.tint || '#007AFF'} />
-          </TouchableOpacity>
+          </FeedbackTouchable>
         </View>
       </View>
 

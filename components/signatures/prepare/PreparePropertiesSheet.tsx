@@ -8,7 +8,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import {
     StyleSheet,
     Switch,
@@ -18,16 +18,21 @@ import {
     View,
 } from 'react-native';
 import Animated, {
+    Easing,
     useAnimatedStyle,
     useSharedValue,
-    withSpring,
+    withTiming,
 } from 'react-native-reanimated';
 import type { PrepareEditorActions, PrepareEditorState } from '../../../hooks/usePrepareEditor';
 import { useThemeColors } from '../../../hooks/useThemeColors';
-import type { FieldType } from '../../../types/signature';
+import type { FieldType, WizardField } from '../../../types/signature';
 import { FIELD_COLORS } from '../../../utils/fillable';
 
 const SHEET_HEIGHT = 220;
+const SHEET_ANIM = {
+  duration: 220,
+  easing: Easing.out(Easing.cubic),
+};
 
 interface Props {
   editor: PrepareEditorState & PrepareEditorActions;
@@ -42,23 +47,28 @@ export default function PreparePropertiesSheet({ editor }: Props) {
     totalPages,
     updateField,
     softDeleteSelected,
-    copySelected,
+    duplicateSelected,
     paste,
-    fieldClipboard,
+    clipboardCount,
   } = editor;
 
   const primaryField = primarySelectedFieldId
     ? fields.find((f) => f.id === primarySelectedFieldId)
     : null;
 
-  // Animate sheet in/out
+  // Keep last selected field so content stays stable while the sheet closes.
+  const lastFieldRef = useRef<WizardField | null>(null);
+  if (primaryField) {
+    lastFieldRef.current = primaryField;
+  }
+  const displayField = primaryField ?? lastFieldRef.current;
+  const isOpen = !!primaryField;
+
+  // Animate only on open/close — not when the selected field object identity changes.
   const translateY = useSharedValue(SHEET_HEIGHT);
   useEffect(() => {
-    translateY.value = withSpring(primaryField ? 0 : SHEET_HEIGHT, {
-      damping: 22,
-      stiffness: 280,
-    });
-  }, [primaryField, translateY]);
+    translateY.value = withTiming(isOpen ? 0 : SHEET_HEIGHT, SHEET_ANIM);
+  }, [isOpen, translateY]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
@@ -88,11 +98,11 @@ export default function PreparePropertiesSheet({ editor }: Props) {
     [primarySelectedFieldId, updateField],
   );
 
-  if (!primaryField) return null;
+  if (!displayField) return null;
 
-  const fieldColor = FIELD_COLORS[(primaryField.type as FieldType)] ?? colors.primary;
-  const hasClipboard = fieldClipboard.current.length > 0;
-  const fieldPage = primaryField.page ?? 0;
+  const fieldColor = FIELD_COLORS[(displayField.type as FieldType)] ?? colors.primary;
+  const hasClipboard = clipboardCount > 0;
+  const fieldPage = displayField.page ?? 0;
 
   return (
     <Animated.View
@@ -101,7 +111,7 @@ export default function PreparePropertiesSheet({ editor }: Props) {
         { backgroundColor: colors.background, borderTopColor: colors.border ?? '#E5E7EB' },
         animatedStyle,
       ]}
-      pointerEvents={primaryField ? 'auto' : 'none'}
+      pointerEvents={isOpen ? 'auto' : 'none'}
     >
       {/* Handle bar */}
       <View style={styles.handleRow}>
@@ -114,12 +124,12 @@ export default function PreparePropertiesSheet({ editor }: Props) {
         <View style={[styles.typeBadge, { backgroundColor: `${fieldColor}18`, borderColor: fieldColor }]}>
           <View style={[styles.typeDot, { backgroundColor: fieldColor }]} />
           <Text style={[styles.typeLabel, { color: fieldColor }]}>
-            {primaryField.type.charAt(0).toUpperCase() + primaryField.type.slice(1)}
+            {displayField.type.charAt(0).toUpperCase() + displayField.type.slice(1)}
           </Text>
         </View>
 
         {/* Selection count */}
-        {selectedFieldIds.length > 1 && (
+        {isOpen && selectedFieldIds.length > 1 && (
           <Text style={[styles.selectionCount, { color: colors.textSecondary }]}>
             {selectedFieldIds.length} selected
           </Text>
@@ -127,10 +137,12 @@ export default function PreparePropertiesSheet({ editor }: Props) {
 
         <View style={styles.spacer} />
 
-        {/* Copy / Paste / Delete */}
+        {/* Duplicate / Paste / Delete */}
         <TouchableOpacity
           style={styles.actionBtn}
-          onPress={copySelected}
+          onPress={duplicateSelected}
+          disabled={!isOpen}
+          accessibilityLabel="Duplicate field"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="copy-outline" size={18} color={colors.text} />
@@ -139,6 +151,8 @@ export default function PreparePropertiesSheet({ editor }: Props) {
           <TouchableOpacity
             style={styles.actionBtn}
             onPress={paste}
+            disabled={!isOpen}
+            accessibilityLabel="Paste field"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="clipboard-outline" size={18} color={colors.text} />
@@ -147,6 +161,7 @@ export default function PreparePropertiesSheet({ editor }: Props) {
         <TouchableOpacity
           style={styles.actionBtn}
           onPress={softDeleteSelected}
+          disabled={!isOpen}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="trash-outline" size={18} color="#EF4444" />
@@ -158,8 +173,9 @@ export default function PreparePropertiesSheet({ editor }: Props) {
         <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>Label</Text>
         <TextInput
           style={[styles.textInput, { color: colors.text, borderColor: colors.border ?? '#E5E7EB', backgroundColor: colors.background }]}
-          value={primaryField.label}
+          value={displayField.label}
           onChangeText={handleLabelChange}
+          editable={isOpen}
           placeholder="Field label"
           placeholderTextColor={colors.textSecondary}
           returnKeyType="done"
@@ -171,12 +187,13 @@ export default function PreparePropertiesSheet({ editor }: Props) {
       <View style={styles.toggleRow}>
         <Text style={[styles.toggleLabel, { color: colors.text }]}>Required</Text>
         <Switch
-          value={primaryField.required}
+          value={displayField.required}
           onValueChange={handleRequiredToggle}
+          disabled={!isOpen}
           accessibilityLabel="Required field"
           style={styles.requiredSwitch}
           trackColor={{ false: colors.switchTrackOff, true: colors.switchTrackOn }}
-          thumbColor={colors.switchThumbAndroid(primaryField.required)}
+          thumbColor={colors.switchThumbAndroid(displayField.required)}
           ios_backgroundColor={colors.switchTrackOff}
         />
       </View>

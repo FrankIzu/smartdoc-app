@@ -14,6 +14,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { apiClient } from '../../services/api';
@@ -59,6 +60,9 @@ export default function ManageBookmarksScreen() {
   const [bookmarkToRename, setBookmarkToRename] = useState<Bookmark | null>(null);
   const [renameInputValue, setRenameInputValue] = useState('');
   const [renaming, setRenaming] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [togglingLockId, setTogglingLockId] = useState<number | null>(null);
   const [newBookmarkName, setNewBookmarkName] = useState('');
   const [newBookmarkDescription, setNewBookmarkDescription] = useState('');
   const [selectedColor, setSelectedColor] = useState('#007AFF');
@@ -159,6 +163,7 @@ export default function ManageBookmarksScreen() {
       return;
     }
 
+    setCreating(true);
     try {
       const response = await apiClient.createBookmark({
         name: newBookmarkName.trim(),
@@ -179,6 +184,8 @@ export default function ManageBookmarksScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to create bookmark');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -192,6 +199,7 @@ export default function ManageBookmarksScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            setDeletingId(bookmark.id);
             try {
               const response = await apiClient.deleteBookmark(bookmark.id);
               if (response.success) {
@@ -203,6 +211,8 @@ export default function ManageBookmarksScreen() {
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to delete bookmark');
+            } finally {
+              setDeletingId(null);
             }
           }
         }
@@ -263,6 +273,7 @@ export default function ManageBookmarksScreen() {
     const newLocked = !item.is_locked;
 
     const doToggle = async () => {
+      setTogglingLockId(item.id);
       try {
         const response = await apiClient.updateBookmark(item.id, { is_locked: newLocked });
         if (response.success) {
@@ -276,6 +287,8 @@ export default function ManageBookmarksScreen() {
         }
       } catch (error: any) {
         Alert.alert('Error', error.message || 'Failed to update bookmark lock');
+      } finally {
+        setTogglingLockId(null);
       }
     };
 
@@ -556,13 +569,15 @@ export default function ManageBookmarksScreen() {
           >
             <Ionicons name="chatbubble-outline" size={20} color="#4F46E5" />
           </TouchableOpacity>
-          <TouchableOpacity
+          <FeedbackTouchable
             style={dynamicStyles.chatgdButton}
             onPress={(e) => handleToggleLock(item, e)}
             accessibilityLabel={item.is_locked ? 'Unlock bookmark' : 'Lock bookmark'}
+            loading={togglingLockId === item.id}
+            spinnerColor="#F59E0B"
           >
             <Ionicons name={item.is_locked ? 'lock-open-outline' : 'lock-closed-outline'} size={20} color="#F59E0B" />
-          </TouchableOpacity>
+          </FeedbackTouchable>
           {!item.is_locked && (
             <TouchableOpacity
               style={dynamicStyles.chatgdButton}
@@ -576,15 +591,17 @@ export default function ManageBookmarksScreen() {
             </TouchableOpacity>
           )}
           {!item.is_locked && (
-            <TouchableOpacity
+            <FeedbackTouchable
               style={dynamicStyles.deleteButton}
               onPress={(e) => {
                 e.stopPropagation();
                 handleDeleteBookmark(item);
               }}
+              loading={deletingId === item.id}
+              spinnerColor="#FF3B30"
             >
               <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-            </TouchableOpacity>
+            </FeedbackTouchable>
           )}
         </View>
       </View>
@@ -723,12 +740,16 @@ export default function ManageBookmarksScreen() {
               >
                 <Text style={dynamicStyles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={dynamicStyles.createButton}
                 onPress={handleCreateBookmark}
+                disabled={creating}
+                loading={creating}
+                spinnerColor="#fff"
+                replaceWithSpinner={false}
               >
-                <Text style={dynamicStyles.createButtonText}>Create</Text>
-              </TouchableOpacity>
+                <Text style={dynamicStyles.createButtonText}>{creating ? 'Creating...' : 'Create'}</Text>
+              </FeedbackTouchable>
             </View>
           </View>
         </View>
@@ -773,15 +794,18 @@ export default function ManageBookmarksScreen() {
               >
                 <Text style={dynamicStyles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={dynamicStyles.createButton}
                 onPress={handleRenameBookmark}
                 disabled={renaming || !renameInputValue.trim()}
+                loading={renaming}
+                spinnerColor="#fff"
+                replaceWithSpinner={false}
               >
                 <Text style={dynamicStyles.createButtonText}>
                   {renaming ? 'Saving...' : 'Save'}
                 </Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
           </View>
         </TouchableOpacity>

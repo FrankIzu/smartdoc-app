@@ -29,6 +29,7 @@ import {
   anchoredPopoverCardStyle,
   anchoredPopoverOverlayStyle,
 } from '../../utils/dialogSurfaceStyles';
+import { sanitizeDisplayFilename } from '../../utils/displayFilename';
 import { createUntitledDraft, type DraftListItem } from '../../utils/createUntitledDraft';
 import {
   flattenVisibleDrafts,
@@ -45,7 +46,7 @@ const CHATGD_PLACEHOLDER_FROM_DRAFTS = 'Ask about your notes';
 
 function stripExtension(name?: string): string {
   if (!name) return 'Untitled Note';
-  return name.replace(/\.[^./\\]+$/, '');
+  return sanitizeDisplayFilename(name).replace(/\.[^./\\]+$/, '');
 }
 
 function getSectionLabel(key: string): string {

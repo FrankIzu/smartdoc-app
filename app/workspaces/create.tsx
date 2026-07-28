@@ -13,6 +13,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 
@@ -23,6 +24,14 @@ export default function CreateWorkspaceScreen() {
   const [description, setDescription] = useState('');
   const [slug, setSlug] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/workspaces' as any);
+    }
+  };
 
   const generateSlug = (text: string) => {
     return text
@@ -187,13 +196,21 @@ export default function CreateWorkspaceScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity
+          onPress={handleBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={dynamicStyles.headerTitle}>Create Workspace</Text>
-        <TouchableOpacity
+        <Text style={dynamicStyles.headerTitle} pointerEvents="none">Create Workspace</Text>
+        <FeedbackTouchable
           onPress={handleCreate}
           disabled={loading || !name.trim() || !slug.trim()}
+          loading={loading}
+          spinnerColor="#007AFF"
+          replaceWithSpinner={false}
           style={[
             dynamicStyles.saveButton,
             (loading || !name.trim() || !slug.trim()) && dynamicStyles.saveButtonDisabled
@@ -205,7 +222,7 @@ export default function CreateWorkspaceScreen() {
           ]}>
             {loading ? 'Creating...' : 'Create'}
           </Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </View>
 
       <KeyboardAvoidingView

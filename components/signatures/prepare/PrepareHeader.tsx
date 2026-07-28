@@ -3,18 +3,20 @@
  *
  * Contains: back (with dirty guard), title, page nav,
  * undo/redo, save/finish buttons (color indicates unsaved state).
- * Page nav and toolbar buttons are disabled during gestureLock.
+ *
+ * Uses RNGH TouchableOpacity so taps stay reliable after field gestures
+ * (RN Touchables inside GestureHandlerRootView can intermittently ignore presses).
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import {
-    ActivityIndicator,
     StyleSheet,
     Text,
-    TouchableOpacity,
     View,
 } from 'react-native';
+import { TouchableOpacity } from 'react-native-gesture-handler';
+import { FeedbackTouchable } from '../../FeedbackTouchable';
 import type { PrepareEditorActions, PrepareEditorState } from '../../../hooks/usePrepareEditor';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 
@@ -40,10 +42,7 @@ export default function PrepareHeader({
     isDirty, isSaving, currentPage, totalPages,
     canUndo, canRedo,
     goToPage, undo, redo,
-    isGestureLocked,
   } = editor;
-
-  const locked = isGestureLocked;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, borderBottomColor: colors.border ?? '#E5E7EB' }]}>
@@ -60,7 +59,7 @@ export default function PrepareHeader({
         <TouchableOpacity
           style={[styles.iconBtn, !canUndo && styles.disabled]}
           onPress={undo}
-          disabled={!canUndo || locked}
+          disabled={!canUndo || isSaving || isFinishing}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="arrow-undo-outline" size={20} color={canUndo ? colors.text : colors.textSecondary} />
@@ -69,7 +68,7 @@ export default function PrepareHeader({
         <TouchableOpacity
           style={[styles.iconBtn, !canRedo && styles.disabled]}
           onPress={redo}
-          disabled={!canRedo || locked}
+          disabled={!canRedo || isSaving || isFinishing}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="arrow-redo-outline" size={20} color={canRedo ? colors.text : colors.textSecondary} />
@@ -80,13 +79,13 @@ export default function PrepareHeader({
       <View style={styles.center}>
         <TouchableOpacity
           onPress={() => goToPage(currentPage - 1)}
-          disabled={currentPage === 0 || locked}
+          disabled={currentPage === 0 || isSaving || isFinishing}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name="chevron-back-outline"
             size={18}
-            color={currentPage === 0 || locked ? colors.textSecondary : colors.text}
+            color={currentPage === 0 ? colors.textSecondary : colors.text}
           />
         </TouchableOpacity>
         <Text style={[styles.pageLabel, { color: colors.text }]}>
@@ -94,13 +93,13 @@ export default function PrepareHeader({
         </Text>
         <TouchableOpacity
           onPress={() => goToPage(currentPage + 1)}
-          disabled={currentPage >= totalPages - 1 || locked}
+          disabled={currentPage >= totalPages - 1 || isSaving || isFinishing}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name="chevron-forward-outline"
             size={18}
-            color={currentPage >= totalPages - 1 || locked ? colors.textSecondary : colors.text}
+            color={currentPage >= totalPages - 1 ? colors.textSecondary : colors.text}
           />
         </TouchableOpacity>
       </View>
@@ -108,21 +107,19 @@ export default function PrepareHeader({
       {/* Right: finish + save */}
       <View style={styles.side}>
         {showFinish ? (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={[styles.finishBtn, { backgroundColor: colors.success ?? '#16A34A' }]}
             onPress={onFinish}
-            disabled={isFinishing || isSaving || locked}
+            loading={!!isFinishing}
+            disabled={isFinishing || isSaving}
+            spinnerColor="#fff"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            {isFinishing ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.saveText}>Finish</Text>
-            )}
-          </TouchableOpacity>
+            <Text style={styles.saveText}>Finish</Text>
+          </FeedbackTouchable>
         ) : null}
 
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[
             styles.saveBtn,
             {
@@ -131,15 +128,13 @@ export default function PrepareHeader({
             },
           ]}
           onPress={onSave}
-          disabled={isSaving || isFinishing || locked}
+          loading={isSaving}
+          disabled={!isDirty || isSaving || isFinishing}
+          spinnerColor="#fff"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          {isSaving ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.saveText}>Save</Text>
-          )}
-        </TouchableOpacity>
+          <Text style={styles.saveText}>Save</Text>
+        </FeedbackTouchable>
       </View>
     </View>
   );

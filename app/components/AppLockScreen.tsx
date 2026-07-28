@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppLock } from '../../contexts/AppLockContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
+import deviceSecurityService from '../../services/deviceSecurity';
 // const { signOut } = useAuth(); // used only for Forgot PIN - commented out
 
 export default function AppLockScreen() {
@@ -36,12 +37,23 @@ export default function AppLockScreen() {
   useEffect(() => {
     (async () => {
       if (!biometricAvailable) return;
-      const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-      if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
-        setUnlockButtonLabel('Unlock with Face ID or passcode');
-      } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-        setUnlockButtonLabel('Unlock with Touch ID or passcode');
-      } else {
+      try {
+        const config = await deviceSecurityService.initializeBiometrics();
+        if (!config.biometricsEnrolled && config.passcodeEnrolled) {
+          setUnlockButtonLabel('Unlock with device PIN/passcode');
+          return;
+        }
+        const types = config.types.length
+          ? config.types
+          : await LocalAuthentication.supportedAuthenticationTypesAsync();
+        if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+          setUnlockButtonLabel('Unlock with Face ID or passcode');
+        } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
+          setUnlockButtonLabel('Unlock with Touch ID or passcode');
+        } else {
+          setUnlockButtonLabel('Unlock with device PIN/passcode');
+        }
+      } catch {
         setUnlockButtonLabel('Unlock');
       }
     })();
@@ -172,7 +184,7 @@ export default function AppLockScreen() {
             )}
             {!biometricAvailable && (
               <Text style={[styles.subtitle, dynamicStyles.subtitle]}>
-                Enable Face ID or Touch ID in your device Settings to unlock.
+                Enable Face ID, Touch ID/fingerprint, or a device PIN/passcode in your phone Settings to unlock.
               </Text>
             )}
           </View>

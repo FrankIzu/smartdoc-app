@@ -2,26 +2,25 @@
  * PrepareFieldOverlay — single draggable/resizable field in the prepare editor.
  *
  * Architecture:
- * - Uses RNGH PanGestureHandler for drag and resize
- * - Visual movement during drag uses Reanimated shared values (no React churn)
- * - React state committed only on gesture end
+ * - Uses RNGH Pan for drag and resize (memoized; stable across React re-renders)
+ * - Drag moves animated left/top (not transform) so hit-testing stays on the visual field
+ * - React state committed only on gesture end; peers follow via shared group deltas
  * - gestureLock set true on pan grant, false on end
  * - Render token compared at gesture start; stale events discarded
  * - Affordances (handles, delete ×) scale with zoom, clamped 14–28px
- * - hitSlop 8px on all interactive affordances
+ * - hitSlop 8px on delete/resize only — field body itself has no expanded hit area
  *
  * NOTE: All hooks must be called unconditionally (Rules of Hooks).
  * Null-guard is done in the return, not before hooks.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   runOnJS,
-  withSpring,
   type SharedValue,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -117,15 +116,37 @@ export default function PrepareFieldOverlay({
   onDateFieldPress,
 }: Props) {
   // ── All hooks must be called unconditionally ──────────────────────────────
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
+  // Position via left/top (not transform) so RNGH hit-tests the visible field only.
+  const initialRect =
+    field.x != null &&
+    field.y != null &&
+    field.w != null &&
+    field.h != null &&
+    renderedW > 0 &&
+    renderedH > 0
+      ? fieldToPixelRect(
+          { x: field.x, y: field.y, w: field.w, h: field.h },
+          renderedW,
+          renderedH,
+        )
+      : { left: 0, top: 0, width: 0, height: 0 };
+  const layoutLeft = useSharedValue(initialRect.left);
+  const layoutTop = useSharedValue(initialRect.top);
+  const baseW = useSharedValue(initialRect.width);
+  const baseH = useSharedValue(initialRect.height);
+  const dragStartLeft = useSharedValue(0);
+  const dragStartTop = useSharedValue(0);
   const scaleW = useSharedValue(0);
   const scaleH = useSharedValue(0);
   const isLocked = useSharedValue(false);
+  const isDraggingThis = useSharedValue(false);
   const capturedVersion = useRef('');
   const beforeRects = useRef<Record<string, { x: number; y: number; w: number; h: number }>>({});
   const dragIdsRef = useRef<string[]>([field.id]);
+  const ownsLockRef = useRef(false);
+  const gestureSessionRef = useRef(0);
   const [isEditingText, setIsEditingText] = useState(false);
+  const [offsetCommitNonce, setOffsetCommitNonce] = useState(0);
 
   const resolveDragIds = useCallback((): string[] => {
     if (isSelected && selectedFieldIds.length > 1) {
@@ -134,12 +155,75 @@ export default function PrepareFieldOverlay({
     return [field.id];
   }, [isSelected, selectedFieldIds, pageFields, field.id]);
 
+  const syncLayoutFromField = useCallback(() => {
+    if (
+      field.x == null ||
+      field.y == null ||
+      field.w == null ||
+      field.h == null ||
+      renderedW <= 0 ||
+      renderedH <= 0
+    ) {
+      return;
+    }
+    const rect = fieldToPixelRect(
+      { x: field.x, y: field.y, w: field.w, h: field.h },
+      renderedW,
+      renderedH,
+    );
+    if (!isDraggingThis.value) {
+      layoutLeft.value = rect.left;
+      layoutTop.value = rect.top;
+    }
+    baseW.value = rect.width;
+    baseH.value = rect.height;
+  }, [
+    baseH,
+    baseW,
+    field.h,
+    field.w,
+    field.x,
+    field.y,
+    isDraggingThis,
+    layoutLeft,
+    layoutTop,
+    renderedH,
+    renderedW,
+  ]);
+
+  const clearVisualOffsets = useCallback(() => {
+    scaleW.value = 0;
+    scaleH.value = 0;
+    groupDragX.value = 0;
+    groupDragY.value = 0;
+    isGroupDragging.value = false;
+    isDraggingThis.value = false;
+    syncLayoutFromField();
+  }, [
+    groupDragX,
+    groupDragY,
+    isDraggingThis,
+    isGroupDragging,
+    scaleH,
+    scaleW,
+    syncLayoutFromField,
+  ]);
+
+  const unlockGesture = useCallback(() => {
+    ownsLockRef.current = false;
+    setGestureLocked(false);
+    isLocked.value = false;
+  }, [setGestureLocked, isLocked]);
+
   const acquireLock = useCallback(() => {
     if (gestureLock.current) {
       isLocked.value = false;
+      isGroupDragging.value = false;
+      isDraggingThis.value = false;
       return false;
     }
     setGestureLocked(true);
+    ownsLockRef.current = true;
     isLocked.value = true;
     isGroupDragging.value = true;
     const dragIds = resolveDragIds();
@@ -147,33 +231,80 @@ export default function PrepareFieldOverlay({
     capturedVersion.current = overlayRenderVersion;
     beforeRects.current = snapshotRects(pageFields, dragIds);
     return true;
-  }, [gestureLock, isLocked, isGroupDragging, overlayRenderVersion, pageFields, resolveDragIds, setGestureLocked]);
-
-  const releaseLock = useCallback(() => {
-    setGestureLocked(false);
-    isLocked.value = false;
-    isGroupDragging.value = false;
-    groupDragX.value = 0;
-    groupDragY.value = 0;
-  }, [setGestureLocked, isLocked, isGroupDragging, groupDragX, groupDragY]);
+  }, [
+    gestureLock,
+    isDraggingThis,
+    isLocked,
+    isGroupDragging,
+    overlayRenderVersion,
+    pageFields,
+    resolveDragIds,
+    setGestureLocked,
+  ]);
 
   const handleDragEnd = useCallback(
     (dxPx: number, dyPx: number) => {
-      if (capturedVersion.current !== overlayRenderVersion) { releaseLock(); return; }
-      releaseLock();
+      if (capturedVersion.current !== overlayRenderVersion) {
+        clearVisualOffsets();
+        unlockGesture();
+        return;
+      }
+      // Keep layout at the dragged position until React commits new x/y, then sync.
       onDragEnd(dragIdsRef.current, dxPx, dyPx, beforeRects.current);
+      setOffsetCommitNonce((n) => n + 1);
+      unlockGesture();
     },
-    [overlayRenderVersion, onDragEnd, releaseLock],
+    [overlayRenderVersion, onDragEnd, clearVisualOffsets, unlockGesture],
   );
 
   const handleResizeEnd = useCallback(
     (dwPx: number, dhPx: number) => {
-      if (capturedVersion.current !== overlayRenderVersion) { releaseLock(); return; }
-      releaseLock();
+      if (capturedVersion.current !== overlayRenderVersion) {
+        clearVisualOffsets();
+        unlockGesture();
+        return;
+      }
       onResizeEnd(field.id, dwPx, dhPx, beforeRects.current);
+      setOffsetCommitNonce((n) => n + 1);
+      unlockGesture();
     },
-    [field.id, overlayRenderVersion, onResizeEnd, releaseLock],
+    [field.id, overlayRenderVersion, onResizeEnd, clearVisualOffsets, unlockGesture],
   );
+
+  const cancelGesture = useCallback(() => {
+    clearVisualOffsets();
+    unlockGesture();
+  }, [clearVisualOffsets, unlockGesture]);
+
+  // Keep shared layout in sync with committed geometry whenever idle.
+  useLayoutEffect(() => {
+    syncLayoutFromField();
+  }, [syncLayoutFromField]);
+
+  // After commit, drop group/resize deltas in the same frame new geometry lands.
+  useLayoutEffect(() => {
+    if (offsetCommitNonce === 0) return;
+    isDraggingThis.value = false;
+    scaleW.value = 0;
+    scaleH.value = 0;
+    groupDragX.value = 0;
+    groupDragY.value = 0;
+    isGroupDragging.value = false;
+    syncLayoutFromField();
+  }, [
+    offsetCommitNonce,
+    field.x,
+    field.y,
+    field.w,
+    field.h,
+    groupDragX,
+    groupDragY,
+    isDraggingThis,
+    isGroupDragging,
+    scaleH,
+    scaleW,
+    syncLayoutFromField,
+  ]);
 
   const handleTap = useCallback(() => {
     if (fillMode) {
@@ -210,80 +341,174 @@ export default function PrepareFieldOverlay({
 
   const dragDisabled = fillMode && field.type === 'text' && isEditingText;
 
-  const dragGesture = Gesture.Pan()
-    .enabled(!dragDisabled)
-    .minDistance(6)
-    .onStart(() => {
-      'worklet';
-      isLocked.value = true;
-      translateX.value = 0;
-      translateY.value = 0;
-      groupDragX.value = 0;
-      groupDragY.value = 0;
-      runOnJS(acquireLock)();
-    })
-    .onUpdate((e) => {
-      'worklet';
-      if (!isLocked.value) return;
-      translateX.value = e.translationX;
-      translateY.value = e.translationY;
-      groupDragX.value = e.translationX;
-      groupDragY.value = e.translationY;
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (!isLocked.value) return;
-      const dx = e.translationX;
-      const dy = e.translationY;
-      translateX.value = withSpring(0, { damping: 20, stiffness: 300 });
-      translateY.value = withSpring(0, { damping: 20, stiffness: 300 });
-      runOnJS(handleDragEnd)(dx, dy);
-    })
-    .onFinalize(() => {
-      'worklet';
-      translateX.value = 0;
-      translateY.value = 0;
-      runOnJS(releaseLock)();
-    });
+  // Stable JS bridges so memoized gestures are not recreated on every React render
+  // (recreating mid-drag restarts the gesture and flickers).
+  const gestureHandlersRef = useRef({
+    acquireLock,
+    handleDragEnd,
+    handleResizeEnd,
+    cancelGesture,
+    unlockGesture,
+  });
+  gestureHandlersRef.current = {
+    acquireLock,
+    handleDragEnd,
+    handleResizeEnd,
+    cancelGesture,
+    unlockGesture,
+  };
 
-  const resizeGesture = Gesture.Pan()
-    .onStart(() => {
-      'worklet';
-      isLocked.value = true;
-      scaleW.value = 0;
-      scaleH.value = 0;
-      runOnJS(acquireLock)();
-    })
-    .onUpdate((e) => {
-      'worklet';
-      if (!isLocked.value) return;
-      scaleW.value = e.translationX;
-      scaleH.value = e.translationY;
-    })
-    .onEnd((e) => {
-      'worklet';
-      if (!isLocked.value) return;
-      const dw = e.translationX;
-      const dh = e.translationY;
-      scaleW.value = 0;
-      scaleH.value = 0;
-      runOnJS(handleResizeEnd)(dw, dh);
-    })
-    .onFinalize(() => {
-      'worklet';
-      scaleW.value = 0;
-      scaleH.value = 0;
-      runOnJS(releaseLock)();
+  const runAcquireLock = useCallback(() => {
+    const session = ++gestureSessionRef.current;
+    const acquired = gestureHandlersRef.current.acquireLock();
+    if (!acquired) return;
+    // If end/finalize already ran in this JS turn, drop a late lock immediately.
+    queueMicrotask(() => {
+      if (gestureSessionRef.current !== session && ownsLockRef.current) {
+        gestureHandlersRef.current.unlockGesture();
+      }
     });
+  }, []);
+  const runDragEnd = useCallback((dx: number, dy: number) => {
+    gestureSessionRef.current += 1;
+    gestureHandlersRef.current.handleDragEnd(dx, dy);
+  }, []);
+  const runResizeEnd = useCallback((dw: number, dh: number) => {
+    gestureSessionRef.current += 1;
+    gestureHandlersRef.current.handleResizeEnd(dw, dh);
+  }, []);
+  const runCancelGesture = useCallback(() => {
+    gestureSessionRef.current += 1;
+    gestureHandlersRef.current.cancelGesture();
+  }, []);
+  const runEnsureUnlocked = useCallback(() => {
+    gestureSessionRef.current += 1;
+    // Only clear if this overlay still owns the global lock.
+    if (ownsLockRef.current) {
+      gestureHandlersRef.current.unlockGesture();
+    }
+  }, []);
+
+  const dragGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(!dragDisabled)
+        .maxPointers(1)
+        .minDistance(6)
+        .onStart(() => {
+          'worklet';
+          isLocked.value = true;
+          isDraggingThis.value = true;
+          dragStartLeft.value = layoutLeft.value;
+          dragStartTop.value = layoutTop.value;
+          groupDragX.value = 0;
+          groupDragY.value = 0;
+          // Set on UI thread immediately so multi-select peers track without waiting on JS.
+          isGroupDragging.value = true;
+          runOnJS(runAcquireLock)();
+        })
+        .onUpdate((e) => {
+          'worklet';
+          if (!isLocked.value) return;
+          layoutLeft.value = dragStartLeft.value + e.translationX;
+          layoutTop.value = dragStartTop.value + e.translationY;
+          groupDragX.value = e.translationX;
+          groupDragY.value = e.translationY;
+        })
+        .onEnd((e) => {
+          'worklet';
+          if (!isLocked.value) return;
+          const dx = e.translationX;
+          const dy = e.translationY;
+          // Hold layout at final position; React commits new x/y, then useLayoutEffect syncs.
+          layoutLeft.value = dragStartLeft.value + dx;
+          layoutTop.value = dragStartTop.value + dy;
+          groupDragX.value = dx;
+          groupDragY.value = dy;
+          runOnJS(runDragEnd)(dx, dy);
+        })
+        .onFinalize((_e, success) => {
+          'worklet';
+          // Always clear chrome lock — catches cancelled pans and acquire/unlock races
+          // that previously left page nav / tools disabled after selecting a field.
+          if (!success) {
+            runOnJS(runCancelGesture)();
+          } else {
+            runOnJS(runEnsureUnlocked)();
+          }
+        }),
+    [
+      dragDisabled,
+      dragStartLeft,
+      dragStartTop,
+      groupDragX,
+      groupDragY,
+      isDraggingThis,
+      isGroupDragging,
+      isLocked,
+      layoutLeft,
+      layoutTop,
+      runAcquireLock,
+      runCancelGesture,
+      runDragEnd,
+      runEnsureUnlocked,
+    ],
+  );
+
+  const resizeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .maxPointers(1)
+        .onStart(() => {
+          'worklet';
+          isLocked.value = true;
+          scaleW.value = 0;
+          scaleH.value = 0;
+          runOnJS(runAcquireLock)();
+        })
+        .onUpdate((e) => {
+          'worklet';
+          if (!isLocked.value) return;
+          scaleW.value = e.translationX;
+          scaleH.value = e.translationY;
+        })
+        .onEnd((e) => {
+          'worklet';
+          if (!isLocked.value) return;
+          const dw = e.translationX;
+          const dh = e.translationY;
+          // Hold size delta until committed w/h lands in layout.
+          scaleW.value = dw;
+          scaleH.value = dh;
+          runOnJS(runResizeEnd)(dw, dh);
+        })
+        .onFinalize((_e, success) => {
+          'worklet';
+          if (!success) {
+            runOnJS(runCancelGesture)();
+          } else {
+            runOnJS(runEnsureUnlocked)();
+          }
+        }),
+    [
+      isLocked,
+      runAcquireLock,
+      runCancelGesture,
+      runEnsureUnlocked,
+      runResizeEnd,
+      scaleH,
+      scaleW,
+    ],
+  );
 
   const animatedFieldStyle = useAnimatedStyle(() => {
-    const useGroup = isGroupDragging.value && isSelected;
-    const tx = useGroup ? groupDragX.value : translateX.value;
-    const ty = useGroup ? groupDragY.value : translateY.value;
+    // Peer fields in a multi-select follow the active drag via shared group deltas.
+    const peerDrag = isGroupDragging.value && isSelected && !isDraggingThis.value;
     return {
-      transform: [{ translateX: tx }, { translateY: ty }],
-      width: (field.w != null && renderedW > 0 ? field.w * renderedW : 0) + scaleW.value,
-      height: (field.h != null && renderedH > 0 ? field.h * renderedH : 0) + scaleH.value,
+      left: layoutLeft.value + (peerDrag ? groupDragX.value : 0),
+      top: layoutTop.value + (peerDrag ? groupDragY.value : 0),
+      width: baseW.value + scaleW.value,
+      height: baseH.value + scaleH.value,
     };
   });
 
@@ -291,12 +516,6 @@ export default function PrepareFieldOverlay({
   if (field.x == null || field.y == null || field.w == null || field.h == null) {
     return null;
   }
-
-  const pixelRect = fieldToPixelRect(
-    { x: field.x, y: field.y, w: field.w, h: field.h },
-    renderedW,
-    renderedH,
-  );
 
   const color = FIELD_COLORS[(field.type as FieldType)] ?? '#2563EB';
   const iconName = FIELD_ICONS[(field.type as FieldType)] ?? 'document-outline';
@@ -375,12 +594,13 @@ export default function PrepareFieldOverlay({
     <Animated.View
       style={[
         styles.fieldRoot,
-        { left: pixelRect.left, top: pixelRect.top, zIndex },
+        { zIndex },
         animatedFieldStyle,
       ]}
     >
       <GestureDetector gesture={dragGesture}>
-        <Animated.View
+        <View
+          collapsable={false}
           style={[
             styles.fieldBody,
             {
@@ -404,7 +624,6 @@ export default function PrepareFieldOverlay({
                 onLongPress={handleLongPress}
                 delayLongPress={400}
                 activeOpacity={0.8}
-                hitSlop={{ top: HIT_SLOP, bottom: HIT_SLOP, left: HIT_SLOP, right: HIT_SLOP }}
               >
                 {fillContent}
               </TouchableOpacity>
@@ -416,7 +635,6 @@ export default function PrepareFieldOverlay({
               onLongPress={handleLongPress}
               delayLongPress={400}
               activeOpacity={0.8}
-              hitSlop={{ top: HIT_SLOP, bottom: HIT_SLOP, left: HIT_SLOP, right: HIT_SLOP }}
             >
               <Ionicons
                 name={iconName as keyof typeof Ionicons.glyphMap}
@@ -432,7 +650,7 @@ export default function PrepareFieldOverlay({
               </Text>
             </TouchableOpacity>
           )}
-        </Animated.View>
+        </View>
       </GestureDetector>
 
       {/* Delete × — primary only */}

@@ -13,11 +13,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
+import FileNameText from '../../../components/FileNameText';
 import { useFillDocumentPickList } from '../../../hooks/useFillDocumentPickList';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import type { FillPickFile } from '../../../services/fillDocumentListCache';
 import { ensureFillableTemplateReady } from '../../../services/fillableApi';
-import FileNameText from '../../../components/FileNameText';
 import { formatDateToLocal } from '../../../utils/timeFormatting';
 import { hubFillEditorRoute } from '../../../utils/signatureRouteResolver';
 
@@ -226,10 +227,13 @@ export default function FillDocumentPickScreen() {
             const sizeLabel = formatFileSize(item.fileSize);
             const subtitle = formatFileSubtitle(item);
             return (
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={[styles.row, busy && { opacity: 0.6 }]}
                 disabled={openingId != null}
-                onPress={() => void openFile(item)}
+                loading={busy}
+                spinnerColor={colors.primary}
+                replaceWithSpinner={false}
+                onPress={() => openFile(item)}
               >
                 <View style={styles.rowBody}>
                   <FileNameText name={item.name} style={styles.rowTitle} />
@@ -243,7 +247,7 @@ export default function FillDocumentPickScreen() {
                 ) : (
                   <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
                 )}
-              </TouchableOpacity>
+              </FeedbackTouchable>
             );
           }}
         />

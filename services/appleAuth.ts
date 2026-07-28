@@ -248,7 +248,9 @@ class AppleAuthService {
         // Update last login data
         await deviceSecurityService.setLastLoginData({
           timestamp: new Date().toISOString(),
+          authMethod: 'apple',
         });
+        await deviceSecurityService.disableBiometricLoginPreference();
 
         console.log('Apple login successful:', result.message);
       } else {

@@ -211,6 +211,7 @@ export default function UnifiedSignerShell({
       </View>
       <SignatureCaptureModal
         visible={!!ui.signatureModalFieldKey}
+        expandNonce={ui.signatureModalExpandNonce}
         fieldLabel={ui.signatureModalFieldKey ?? undefined}
         onClose={() => ui.setSignatureModalFieldKey(null)}
         onSave={(image) => {

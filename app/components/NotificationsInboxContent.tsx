@@ -215,7 +215,7 @@ export function NotificationsInboxContent({
             return next;
           });
           if (variant === 'modal') onDismiss?.();
-          router.push('/(tabs)/documents');
+          router.navigate('/(tabs)/documents');
         }, 800);
       } catch (err: any) {
         alert(err?.message || 'Failed to accept invite');

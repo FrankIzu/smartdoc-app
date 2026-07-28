@@ -21,8 +21,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
+import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient, type WebAnalysisDownloadReportBody } from '../../services/api';
 import { useFileStore } from '../../stores/fileStore';
@@ -373,7 +376,7 @@ export default function AnalyticsDashboard() {
   const lastAutoLoadAtRef = useRef(0);
 
   const { uploadFromGallery, uploadFromDocuments } = useFileStore();
-  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const uploadSheet = useMinimizableSheet();
   const [isUploading, setIsUploading] = useState(false);
   const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
@@ -1346,21 +1349,21 @@ export default function AnalyticsDashboard() {
   );
 
   const dismissUploadModal = useCallback(() => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     if (isUploading && !isOpeningPicker) {
       setUploadStateWithTimeout(false);
     }
-  }, [isUploading, isOpeningPicker, setUploadStateWithTimeout]);
+  }, [isUploading, isOpeningPicker, setUploadStateWithTimeout, uploadSheet]);
 
   const handleFinancialsUploadFromFiles = useCallback(async () => {
     if (isUploading) return;
     setUploadStateWithTimeout(true);
     setIsOpeningPicker(true);
-    setShowUploadOptions(false);
+    uploadSheet.close();
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
       const success = await uploadFromDocuments();
-      if (success) {
+      if (success === true) {
         Alert.alert('Success', 'Files uploaded successfully!');
         await loadAnalytics();
       }
@@ -1370,39 +1373,40 @@ export default function AnalyticsDashboard() {
       setUploadStateWithTimeout(false);
       setIsOpeningPicker(false);
     }
-  }, [isUploading, uploadFromDocuments, loadAnalytics, setUploadStateWithTimeout]);
+  }, [isUploading, uploadFromDocuments, loadAnalytics, setUploadStateWithTimeout, uploadSheet]);
 
   const handleFinancialsUploadFromCamera = useCallback(() => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     router.push('/scanner');
-  }, [router]);
+  }, [router, uploadSheet]);
 
   const handleFinancialsUploadByLink = useCallback(() => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     router.push('/upload-by-link-code');
-  }, [router]);
+  }, [router, uploadSheet]);
 
   const handleFinancialsUploadFromGallery = useCallback(async () => {
     if (isUploading) return;
     setUploadStateWithTimeout(true);
     setIsOpeningPicker(true);
-    setShowUploadOptions(false);
+    uploadSheet.close();
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
       const success = await uploadFromGallery();
-      if (success) {
+      if (success === true) {
         Alert.alert('Success', 'Photos uploaded successfully!');
         await loadAnalytics();
-      } else {
+      } else if (success === false) {
         Alert.alert('Upload Failed', 'Failed to upload photos. Please try again.');
       }
+      // null = cancelled or upload-limit alert already shown
     } catch (error: any) {
       Alert.alert('Error', error?.message || 'Failed to upload photos. Please try again.');
     } finally {
       setUploadStateWithTimeout(false);
       setIsOpeningPicker(false);
     }
-  }, [isUploading, uploadFromGallery, loadAnalytics, setUploadStateWithTimeout]);
+  }, [isUploading, uploadFromGallery, loadAnalytics, setUploadStateWithTimeout, uploadSheet]);
 
   const handleFinancialsScroll = useCallback((event: any) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent || {};
@@ -2122,15 +2126,15 @@ export default function AnalyticsDashboard() {
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerButton}
-            onPress={() => setShowUploadOptions(true)}
+            onPress={() => uploadSheet.open()}
             accessibilityLabel="Upload document"
             accessibilityRole="button"
           >
             <Ionicons name="cloud-upload-outline" size={28} color={colors.primary || '#007AFF'} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleShareReport} style={styles.shareButton}>
+          <FeedbackTouchable onPress={handleShareReport} style={styles.shareButton} spinnerColor="#10B981">
             <Ionicons name="share-outline" size={28} color="#10B981" />
-          </TouchableOpacity>
+          </FeedbackTouchable>
           <TouchableOpacity style={styles.headerButton} onPress={onRefresh}>
             <Ionicons name="refresh" size={28} color={colors.primary || '#007AFF'} />
           </TouchableOpacity>
@@ -2857,54 +2861,55 @@ export default function AnalyticsDashboard() {
         />
       )}
       
-      <MinimizableBottomSheet
+      <AdaptiveListPickerModal
         visible={showReceiptCategoryFilterModal}
         onClose={() => setShowReceiptCategoryFilterModal(false)}
         title="Filter by Category"
-        heightRatio={0.7}
+        itemCount={receiptCategoryFilterOptions.length}
       >
-        <ScrollView style={styles.categoryList}>
-          {receiptCategoryFilterOptions.map((category) => (
-            <TouchableOpacity
-              key={category}
-              style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
-              onPress={() => {
-                setSelectedCategory(category);
-                setShowReceiptCategoryFilterModal(false);
-              }}
-            >
-              <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
-              {selectedCategory === category && <Ionicons name="checkmark" size={20} color={colors.primary} />}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </MinimizableBottomSheet>
+        {receiptCategoryFilterOptions.map((category) => (
+          <TouchableOpacity
+            key={category}
+            style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
+            onPress={() => {
+              setSelectedCategory(category);
+              setShowReceiptCategoryFilterModal(false);
+            }}
+          >
+            <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
+            {selectedCategory === category && <Ionicons name="checkmark" size={20} color={colors.primary} />}
+          </TouchableOpacity>
+        ))}
+      </AdaptiveListPickerModal>
 
-      <MinimizableBottomSheet
+      <AdaptiveListPickerModal
         visible={showCategoryModal}
         onClose={() => setShowCategoryModal(false)}
         title="Select Category"
-        heightRatio={0.7}
+        itemCount={receiptCategories.length}
+        footer={
+          categorizingReceipt ? (
+            <View style={[styles.modalLoading, themeStyles.modalLoading]}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          ) : null
+        }
       >
-        <ScrollView style={styles.categoryList}>
-          {receiptCategories.map((category) => (
-            <TouchableOpacity
-              key={category}
-              style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
-              onPress={() => handleSelectCategory(category)}
-              disabled={categorizingReceipt}
-            >
-              <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
-              <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        {categorizingReceipt && (
-          <View style={[styles.modalLoading, themeStyles.modalLoading]}>
-            <ActivityIndicator size="large" color={colors.primary} />
-          </View>
-        )}
-      </MinimizableBottomSheet>
+        {receiptCategories.map((category) => (
+          <FeedbackTouchable
+            key={category}
+            style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
+            onPress={() => handleSelectCategory(category)}
+            disabled={categorizingReceipt}
+            loading={categorizingReceipt}
+            spinnerColor={colors.primary}
+            replaceWithSpinner={false}
+          >
+            <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{category}</Text>
+            <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
+          </FeedbackTouchable>
+        ))}
+      </AdaptiveListPickerModal>
 
       <MinimizableBottomSheet
         visible={showEditModal}
@@ -3002,17 +3007,15 @@ export default function AnalyticsDashboard() {
           >
             <Text style={[styles.editFormButtonTextCancel, themeStyles.editFormButtonTextCancel]}>Cancel</Text>
           </TouchableOpacity>
-          <TouchableOpacity
+          <FeedbackTouchable
             style={[styles.editFormButton, styles.editFormButtonSave]}
             onPress={handleConfirmSave}
             disabled={savingEdit}
+            loading={savingEdit}
+            spinnerColor="#fff"
           >
-            {savingEdit ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.editFormButtonText}>Save</Text>
-            )}
-          </TouchableOpacity>
+            <Text style={styles.editFormButtonText}>Save</Text>
+          </FeedbackTouchable>
         </View>
       </MinimizableBottomSheet>
 
@@ -3055,31 +3058,34 @@ export default function AnalyticsDashboard() {
         />
       )}
       
-      <MinimizableBottomSheet
+      <AdaptiveListPickerModal
         visible={showPaymentStatusModal}
         onClose={() => setShowPaymentStatusModal(false)}
         title="Update Payment Status"
-        heightRatio={0.7}
+        itemCount={paymentStatuses.length}
+        footer={
+          updatingPaymentStatus ? (
+            <View style={[styles.modalLoading, themeStyles.modalLoading]}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          ) : null
+        }
       >
-        <ScrollView style={styles.categoryList}>
-          {paymentStatuses.map((status) => (
-            <TouchableOpacity
-              key={status}
-              style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
-              onPress={() => handleSelectPaymentStatus(status)}
-              disabled={updatingPaymentStatus}
-            >
-              <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{status}</Text>
-              <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        {updatingPaymentStatus && (
-          <View style={[styles.modalLoading, themeStyles.modalLoading]}>
-            <ActivityIndicator size="large" color={colors.primary} />
-          </View>
-        )}
-      </MinimizableBottomSheet>
+        {paymentStatuses.map((status) => (
+          <FeedbackTouchable
+            key={status}
+            style={[styles.categoryModalItem, themeStyles.categoryModalItem]}
+            onPress={() => handleSelectPaymentStatus(status)}
+            disabled={updatingPaymentStatus}
+            loading={updatingPaymentStatus}
+            spinnerColor={colors.primary}
+            replaceWithSpinner={false}
+          >
+            <Text style={[styles.categoryItemText, themeStyles.categoryItemText]}>{status}</Text>
+            <Ionicons name="chevron-forward" size={20} color={colors.textLight} />
+          </FeedbackTouchable>
+        ))}
+      </AdaptiveListPickerModal>
       
       <MinimizableBottomSheet
         visible={showAdvancedFilterModal}
@@ -3386,7 +3392,8 @@ export default function AnalyticsDashboard() {
         />
       )}
       <UploadOptionsModal
-        visible={showUploadOptions}
+        visible={uploadSheet.visible}
+        expandNonce={uploadSheet.expandNonce}
         isUploading={isUploading}
         onDismiss={dismissUploadModal}
         onFiles={handleFinancialsUploadFromFiles}

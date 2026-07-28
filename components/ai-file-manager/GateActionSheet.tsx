@@ -15,6 +15,8 @@ interface Props {
   onConfirmRenameBatch: () => void;
   onPickRenameTarget: (fileId: number) => void;
   onRunNowAnyway: () => void;
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 }
 
 export default function GateActionSheet({
@@ -27,6 +29,7 @@ export default function GateActionSheet({
   onConfirmRenameBatch,
   onPickRenameTarget,
   onRunNowAnyway,
+  expandNonce = 0,
 }: Props) {
   const colors = useThemeColors();
   if (!visible || !gateType) return null;
@@ -123,7 +126,13 @@ export default function GateActionSheet({
   }
 
   return (
-    <MinimizableBottomSheet visible={visible} onClose={onClose} title={title} heightRatio={0.5}>
+    <MinimizableBottomSheet
+      visible={visible}
+      onClose={onClose}
+      expandNonce={expandNonce}
+      title={title}
+      heightRatio={0.5}
+    >
       <ScrollView contentContainerStyle={styles.content}>
         {body}
         <TouchableOpacity onPress={onClose} style={styles.cancel}>

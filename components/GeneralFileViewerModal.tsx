@@ -19,6 +19,8 @@ export interface GeneralFileViewerModalProps {
   onClose: () => void;
   /** Signed or direct view URL from chat links; no Bearer header when set. */
   pdfUri?: string | null;
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 }
 
 function resolveDisplayTitle(title: string | undefined, filename?: string | null): string {
@@ -35,6 +37,7 @@ export default function GeneralFileViewerModal({
   title,
   onClose,
   pdfUri = null,
+  expandNonce = 0,
 }: GeneralFileViewerModalProps) {
   const { height: windowHeight } = useWindowDimensions();
   const sheetHeight = Math.round(windowHeight * 0.88);
@@ -74,6 +77,7 @@ export default function GeneralFileViewerModal({
     <MinimizableBottomSheet
       visible={visible}
       onClose={onClose}
+      expandNonce={expandNonce}
       sheetHeight={sheetHeight}
       title={displayTitle}
     >

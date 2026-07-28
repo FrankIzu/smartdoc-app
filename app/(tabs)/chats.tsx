@@ -30,7 +30,12 @@ import {
     UIManager,
     View
 } from 'react-native';
-import { GestureHandlerRootView, RectButton, Swipeable } from 'react-native-gesture-handler';
+import {
+    GestureHandlerRootView,
+    RectButton,
+    Swipeable,
+    TouchableOpacity as GHTouchableOpacity,
+} from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import { io, Socket } from 'socket.io-client';
@@ -43,6 +48,7 @@ import SermonViewerModal from '../../components/SermonViewerModal';
 import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useLimitError } from '../../contexts/LimitErrorContext';
+import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
@@ -71,6 +77,100 @@ import { ChatMessageFooter } from '../components/ChatMessageFooter';
 import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
+
+/** Header height must fit icon buttons (padding + 30px icon); 64 clipped hit targets. */
+const CHAT_CONVERSATION_HEADER_HEIGHT = 72;
+const HEADER_ACTION_HIT_SLOP = { top: 12, bottom: 12, left: 10, right: 10 };
+
+/**
+ * Isolated from typewriter `setMessages` re-renders so Chat History stays tappable
+ * while a response is streaming.
+ */
+const ChatConversationHeader = React.memo(function ChatConversationHeader({
+  title,
+  subtitle,
+  shareDisabled,
+  onBack,
+  onOpenHistory,
+  onShare,
+  onNewChat,
+  headerStyle,
+  backButtonStyle,
+  headerInfoStyle,
+  titleStyle,
+  subtitleStyle,
+  actionButtonStyle,
+}: {
+  title: string;
+  subtitle: string;
+  shareDisabled: boolean;
+  onBack: () => void;
+  onOpenHistory: () => void;
+  onShare: () => void;
+  onNewChat: () => void;
+  headerStyle: object;
+  backButtonStyle: object;
+  headerInfoStyle: object;
+  titleStyle: object;
+  subtitleStyle: object;
+  actionButtonStyle: object;
+}) {
+  return (
+    <AnimatedHeaderContainer height={CHAT_CONVERSATION_HEADER_HEIGHT}>
+      <View style={headerStyle} collapsable={false}>
+        <GHTouchableOpacity
+          style={backButtonStyle}
+          onPress={onBack}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+          hitSlop={HEADER_ACTION_HIT_SLOP}
+        >
+          <Ionicons name="arrow-back" size={28} color="#007AFF" />
+        </GHTouchableOpacity>
+
+        <View style={headerInfoStyle} pointerEvents="none">
+          <Text style={[titleStyle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">
+            {title}
+          </Text>
+          <Text style={subtitleStyle}>{subtitle}</Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 8, zIndex: 2 }} collapsable={false}>
+          <GHTouchableOpacity
+            style={actionButtonStyle}
+            onPress={onOpenHistory}
+            accessibilityLabel="Chat history"
+            accessibilityRole="button"
+            hitSlop={HEADER_ACTION_HIT_SLOP}
+          >
+            <Ionicons name="time-outline" size={30} color="#007AFF" />
+          </GHTouchableOpacity>
+          <GHTouchableOpacity
+            style={actionButtonStyle}
+            onPress={onShare}
+            disabled={shareDisabled}
+            hitSlop={HEADER_ACTION_HIT_SLOP}
+          >
+            <Ionicons
+              name="share-outline"
+              size={30}
+              color={shareDisabled ? '#999' : '#007AFF'}
+            />
+          </GHTouchableOpacity>
+          <GHTouchableOpacity
+            style={actionButtonStyle}
+            onPress={onNewChat}
+            accessibilityLabel="New chat"
+            accessibilityRole="button"
+            hitSlop={HEADER_ACTION_HIT_SLOP}
+          >
+            <Ionicons name="add" size={30} color="#007AFF" />
+          </GHTouchableOpacity>
+        </View>
+      </View>
+    </AnimatedHeaderContainer>
+  );
+});
 
 /** One-row default composer height. */
 const CHATGD_MESSAGE_INPUT_MIN_HEIGHT = 40;
@@ -248,6 +348,20 @@ const DEFAULT_CHAT_ASSISTANT: Chat = {
 // Composite key to prevent AI chat and user chat ID collision in storage
 const getChatStorageKey = (chat: { type: string; id: number }) =>
   (chat.type === 'user_direct' || chat.type === 'workspace' ? 'user_' : 'ai_') + chat.id;
+
+/**
+ * Parse chat activity timestamps for sorting.
+ * Backend often returns naive UTC ISO (no Z); JS would treat those as local and scramble order.
+ */
+function parseChatActivityTimestamp(raw: string | null | undefined): number {
+  if (raw == null) return 0;
+  const s = String(raw).trim();
+  if (!s) return 0;
+  const hasTz = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+  const normalized = hasTz ? s : `${s}Z`;
+  const t = Date.parse(normalized);
+  return Number.isFinite(t) ? t : 0;
+}
 
 // Helper: Save document/bookmark/user/workspace chat contexts to AsyncStorage
 const savePersistedChatContexts = async (
@@ -470,13 +584,15 @@ export default function ChatsScreen() {
     title?: string;
     pdfUri?: string | null;
     defaultTab?: 'text' | 'pdf';
-  }>({ visible: false, fileId: 0, paragraph: 1, defaultTab: 'text' });
+    expandNonce: number;
+  }>({ visible: false, fileId: 0, paragraph: 1, defaultTab: 'text', expandNonce: 0 });
   const [generalFileModal, setGeneralFileModal] = useState<{
     visible: boolean;
     fileId: number;
     title?: string;
     pdfUri?: string | null;
-  }>({ visible: false, fileId: 0 });
+    expandNonce: number;
+  }>({ visible: false, fileId: 0, expandNonce: 0 });
 
   const openDocumentViewer = useCallback(
     async (
@@ -489,7 +605,7 @@ export default function ChatsScreen() {
     ) => {
       const sermon = await isSermonFile(fileId);
       if (sermon) {
-        setSermonModal({
+        setSermonModal((s) => ({
           visible: true,
           fileId,
           paragraph,
@@ -497,14 +613,16 @@ export default function ChatsScreen() {
           title,
           pdfUri: pdfUri ?? undefined,
           defaultTab,
-        });
+          expandNonce: s.expandNonce + 1,
+        }));
       } else {
-        setGeneralFileModal({
+        setGeneralFileModal((s) => ({
           visible: true,
           fileId,
           title,
           pdfUri: pdfUri ?? null,
-        });
+          expandNonce: s.expandNonce + 1,
+        }));
       }
     },
     [],
@@ -514,9 +632,15 @@ export default function ChatsScreen() {
     chartFileId: number;
     title?: string;
   }>({ visible: false, chartFileId: 0 });
-  const [webPopup, setWebPopup] = useState<{ visible: boolean; url: string; title?: string }>({
+  const [webPopup, setWebPopup] = useState<{
+    visible: boolean;
+    url: string;
+    title?: string;
+    expandNonce: number;
+  }>({
     visible: false,
     url: '',
+    expandNonce: 0,
   });
   const lastStreamedMessageIndexRef = useRef<number | null>(null); // Track which message index was last streamed
   const lastStreamCompleteTimeRef = useRef<number>(0); // Track when streaming last completed
@@ -658,7 +782,7 @@ export default function ChatsScreen() {
   const [selectedSearchType, setSelectedSearchType] = useState<'exact' | 'refined' | 'expanded'>('refined');
 
   // Chat history bottom sheet (shown from chat messages view)
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const historySheet = useMinimizableSheet();
 
   // Mention system state
   const [showMentionModal, setShowMentionModal] = useState(false);
@@ -690,6 +814,8 @@ export default function ChatsScreen() {
   // Animation and abort controller refs
   const bounceAnim = useRef(new Animated.Value(1)).current;
   const abortControllerRef = useRef<AbortController | null>(null);
+  /** Set true in stopProcessing so late poll chunks cannot restart typewriter after cancel. */
+  const chatRequestCancelledRef = useRef(false);
   
   const messagesRef = useRef<FlatList>(null);
   const scrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -1206,7 +1332,10 @@ export default function ChatsScreen() {
 
   // Stop message processing
   const stopProcessing = () => {
-    // Abort the HTTP request
+    // Mark cancelled first so any in-flight chunk callbacks are ignored
+    chatRequestCancelledRef.current = true;
+
+    // Abort the HTTP request / polling job (signal listener cancels server job)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -1366,11 +1495,36 @@ export default function ChatsScreen() {
                 };
                 
                 // Update chat list when adding new message
-                setChats(prevChats => prevChats.map(chat => 
-                  chat.id === data.chat_id 
-                    ? { ...chat, last_message: data.message.content.substring(0, 50), updated_at: data.message.created_at }
-                    : chat
-                ));
+                setChats(prevChats => {
+                  const next = prevChats.map(chat =>
+                    chat.id === data.chat_id
+                      ? {
+                          ...chat,
+                          last_message: data.message.content.substring(0, 50),
+                          updated_at: data.message.created_at || new Date().toISOString(),
+                        }
+                      : chat,
+                  );
+                  next.forEach((c) => {
+                    if (c.id === data.chat_id) delete (c as any).last_message_at;
+                  });
+                  // Sort by activity so the chat rises when a message arrives while on the list
+                  return [...next].sort((a, b) => {
+                    if (a.id === -1) return -1;
+                    if (b.id === -1) return 1;
+                    const ta = Math.max(
+                      parseChatActivityTimestamp((a as any).last_message_at),
+                      parseChatActivityTimestamp(a.updated_at),
+                      parseChatActivityTimestamp(a.created_at),
+                    );
+                    const tb = Math.max(
+                      parseChatActivityTimestamp((b as any).last_message_at),
+                      parseChatActivityTimestamp(b.updated_at),
+                      parseChatActivityTimestamp(b.created_at),
+                    );
+                    return tb - ta;
+                  });
+                });
                 
                 return [...prev, newMsg];
               });
@@ -1729,19 +1883,23 @@ export default function ChatsScreen() {
   }, [searchQuery, chats, documents, workspaces, users, bookmarks]);
   
   // Filtered lists for new chat modal (separate from main search)
+  // Never show the current user — chatting with yourself is not allowed.
   const modalFilteredUsers = useMemo(() => {
+    const myId = currentUserIdRef.current;
+    const withoutSelf =
+      myId != null ? users.filter((user) => String(user.id) !== String(myId)) : users;
+
     if (!modalUserSearch.trim()) {
-      return users;
+      return withoutSelf;
     }
-    
+
     const query = modalUserSearch.toLowerCase();
-    const filtered = users.filter(user => 
-      user.username.toLowerCase().includes(query) ||
-      user.email.toLowerCase().includes(query)
+    return withoutSelf.filter(
+      (user) =>
+        user.username.toLowerCase().includes(query) ||
+        user.email.toLowerCase().includes(query)
     );
-    
-    return filtered;
-  }, [modalUserSearch, users]);
+  }, [modalUserSearch, users, authUser?.id, userProfile]);
   
   const modalFilteredWorkspaces = useMemo(() => {
     if (!modalWorkspaceSearch.trim()) return workspaces;
@@ -1863,10 +2021,12 @@ export default function ChatsScreen() {
 
       const documentResults = [...serverDocResults, ...localDocResults];
 
-      // Filter users
+      // Filter users (exclude self — cannot start a direct chat with yourself)
+      const myId = currentUserIdRef.current;
       const userResults = users.filter(user => 
-        user.username.toLowerCase().includes(query) ||
-        user.email.toLowerCase().includes(query)
+        (myId == null || String(user.id) !== String(myId)) &&
+        (user.username.toLowerCase().includes(query) ||
+        user.email.toLowerCase().includes(query))
       ).map(user => ({
         type: 'user',
         id: user.id,
@@ -1912,7 +2072,11 @@ export default function ChatsScreen() {
         data: doc
       }));
 
-      const recentUsers = (users || []).slice(0, 2).map(user => ({
+      const myIdForMentions = currentUserIdRef.current;
+      const recentUsers = (users || [])
+        .filter((user) => myIdForMentions == null || String(user.id) !== String(myIdForMentions))
+        .slice(0, 2)
+        .map(user => ({
         type: 'user',
         id: user.id,
         name: user.username,
@@ -1960,13 +2124,16 @@ export default function ChatsScreen() {
     }
   }, [mentionQuery, users, bookmarks, workspaces, documents, mentionFileSearchResults, showMentionModal]);
 
-  // Helper: get "last activity" timestamp for ordering. Prefer last_message_at, updated_at, then created_at.
+  // Helper: get "last activity" timestamp for ordering.
+  // Use the newest of last_message_at / updated_at / created_at so a just-bumped
+  // updated_at is never ignored because of a stale last_message_at field.
   const getLastMessageTimestamp = (chat: Chat): number => {
     try {
-      const raw = (chat as any).last_message_at || chat.updated_at || chat.created_at || new Date().toISOString();
-      const date = new Date(raw);
-      if (isNaN(date.getTime())) return 0;
-      return date.getTime();
+      return Math.max(
+        parseChatActivityTimestamp((chat as any).last_message_at),
+        parseChatActivityTimestamp(chat.updated_at),
+        parseChatActivityTimestamp(chat.created_at),
+      );
     } catch (error) {
       if (__DEV__) console.log('❌ Error getting last message timestamp:', error, 'for chat:', chat.id);
       return 0;
@@ -2103,6 +2270,34 @@ export default function ChatsScreen() {
     result.push(...sortedNonFavorites);
     
     return result;
+  };
+
+  /** Update a chat's preview/activity and re-sort so it moves to the correct position. */
+  const bumpChatActivity = (
+    prev: Chat[],
+    chatId: number,
+    patch: Partial<Pick<Chat, 'last_message' | 'updated_at' | 'last_message_sender_id' | 'title'>> & {
+      type?: Chat['type'];
+      bookmark_context?: Chat['bookmark_context'];
+      document_context?: Chat['document_context'];
+      workspace?: Chat['workspace'];
+    },
+  ): Chat[] => {
+    const nowIso = new Date().toISOString();
+    const next = prev.map((chat) => {
+      if (chat.id !== chatId) return chat;
+      const updated: Chat = {
+        ...chat,
+        ...patch,
+        updated_at: patch.updated_at || nowIso,
+      };
+      // Drop stale last_message_at so sorting uses the fresh updated_at
+      delete (updated as any).last_message_at;
+      return updated;
+    });
+    const k = authUserId ? chatListScreenKey(authUserId) : null;
+    if (k) screenCache.invalidate(k);
+    return sortChatsByLastMessage(next);
   };
 
   const loadChats = async (limit: number = CHATS_PAGE_SIZE, offset: number = 0) => {
@@ -2572,8 +2767,20 @@ export default function ChatsScreen() {
               document_context: localChat.document_context || chat.document_context,
               bookmark_context: localChat.bookmark_context || chat.bookmark_context,
               participants: localChat.participants || chat.participants,
-              workspace: localChat.workspace || chat.workspace
+              workspace: localChat.workspace || chat.workspace,
+              // Keep fresher local activity so a just-active chat stays near the top
+              ...(getLastMessageTimestamp(localChat) > getLastMessageTimestamp(chat)
+                ? {
+                    updated_at: localChat.updated_at,
+                    last_message: localChat.last_message || chat.last_message,
+                    last_message_sender_id:
+                      localChat.last_message_sender_id ?? chat.last_message_sender_id,
+                  }
+                : {}),
             });
+            if (getLastMessageTimestamp(localChat) > getLastMessageTimestamp(chat)) {
+              delete (uniqueChatsMap.get(key) as any).last_message_at;
+            }
           } else {
             // CRITICAL: Always check persisted contexts and current state for EVERY chat
             // This ensures we don't lose context even if it's not in existingChatsMap yet
@@ -2740,8 +2947,26 @@ export default function ChatsScreen() {
       });
       
       // Sort all chats by last message timestamp (most recent first), but keep ChatGD Assistant at top
-      // Use helper function to ensure dates are converted to user's local timezone
-      const allChatsArray = Array.from(uniqueChatsMap.values());
+      // Prefer fresher in-memory activity (e.g. just sent a message) over stale API/cache timestamps
+      const localByKey = new Map<string, Chat>();
+      chats.forEach((c) => localByKey.set(getChatKey(c), c));
+
+      const allChatsArray = Array.from(uniqueChatsMap.values()).map((chat) => {
+        const local = localByKey.get(getChatKey(chat));
+        if (!local) return chat;
+        if (getLastMessageTimestamp(local) > getLastMessageTimestamp(chat)) {
+          const merged: Chat = {
+            ...chat,
+            updated_at: local.updated_at,
+            last_message: local.last_message || chat.last_message,
+            last_message_sender_id:
+              local.last_message_sender_id ?? chat.last_message_sender_id,
+          };
+          delete (merged as any).last_message_at;
+          return merged;
+        }
+        return chat;
+      });
       
       // CRITICAL: Ensure temporary chats (id -2) with context are included in the list
       // These are newly created bookmark/document chats that should appear even before backend saves them
@@ -3255,9 +3480,14 @@ export default function ChatsScreen() {
         }
       }
       
-      // Set the final users list
+      // Set the final users list (never include the current user — cannot DM yourself)
       if (usersList.length > 0) {
-        setUsers(usersList);
+        const myId = currentUserIdRef.current;
+        const withoutSelf =
+          myId != null
+            ? usersList.filter((u: any) => u?.id != null && String(u.id) !== String(myId))
+            : usersList;
+        setUsers(withoutSelf);
       } else {
         console.warn('⚠️ No users found - you may not be part of any workspaces yet');
         setUsers([]);
@@ -4170,6 +4400,7 @@ export default function ChatsScreen() {
     try {
       setSendingMessage(true);
       startBounceAnimation();
+      chatRequestCancelledRef.current = false;
       abortControllerRef.current = new AbortController();
       if (streamingIntervalRef.current) {
         clearInterval(streamingIntervalRef.current);
@@ -4284,6 +4515,7 @@ export default function ChatsScreen() {
     try {
       setSendingMessage(true);
       startBounceAnimation();
+      chatRequestCancelledRef.current = false;
       abortControllerRef.current = new AbortController();
       if (streamingIntervalRef.current) {
         clearInterval(streamingIntervalRef.current);
@@ -4403,6 +4635,10 @@ export default function ChatsScreen() {
   // selectedChatRef so it is always current without a stale closure.
   // ---------------------------------------------------------------------------
   const smartChatOnChunk = (type: string, data: any) => {
+      // User hit stop — ignore late chunks so generation cannot resume after cancel
+      if (chatRequestCancelledRef.current || abortControllerRef.current?.signal.aborted) {
+        return;
+      }
       const assistantMessageIndex = pollingAssistantIndexRef.current;
       switch (type) {
         case 'chat_history_id': {
@@ -4720,23 +4956,27 @@ export default function ChatsScreen() {
                   });
                   setChats(prevChats => {
                     const chatsWithoutOld = prevChats.filter(chat => chat.id !== currentChatId);
-                    const chatAssistant = chatsWithoutOld.find(chat => chat.id === -1);
-                    const otherChats = chatsWithoutOld.filter(chat => chat.id !== -1);
-                    let updatedChats: Chat[];
-                    if (chatAssistant) {
-                      updatedChats = [chatAssistant, updatedChat, ...otherChats];
-                    } else {
-                      updatedChats = [updatedChat, ...otherChats];
-                    }
+                    const updatedWithActivity: Chat = {
+                      ...updatedChat,
+                      updated_at: new Date().toISOString(),
+                      last_message:
+                        updatedChat.last_message ||
+                        (contentBufferRef.current || '').substring(0, 50) ||
+                        prevChats.find((c) => c.id === currentChatId)?.last_message ||
+                        '',
+                    };
+                    delete (updatedWithActivity as any).last_message_at;
+                    const merged = [...chatsWithoutOld.filter((c) => c.id !== returnedChatId), updatedWithActivity];
+                    const sorted = sortChatsByLastMessage(merged);
                     console.log('🔄 [ID UPDATE] Updated chats list with new ID:', {
                       removedId: currentChatId, addedId: returnedChatId,
-                      totalChats: updatedChats.length,
+                      totalChats: sorted.length,
                       hasBookmarkContext: !!updatedChat.bookmark_context,
                       bookmarkName: updatedChat.bookmark_context?.name,
                       hasDocumentContext: !!updatedChat.document_context,
                       type: updatedChat.type
                     });
-                    savePersistedChatContexts(authUserId,updatedChats).then(async () => {
+                    savePersistedChatContexts(authUserId,sorted).then(async () => {
                       if (currentChatId === -2) {
                         try {
                           const ctxKey = authUserId ? chatContextsStorageKey(authUserId) : null;
@@ -4755,7 +4995,7 @@ export default function ChatsScreen() {
                         }
                       }
                     });
-                    return updatedChats;
+                    return sorted;
                   });
                   return updatedChat;
                 }
@@ -4888,6 +5128,7 @@ export default function ChatsScreen() {
       startBounceAnimation();
       
       // Create abort controller for this request
+      chatRequestCancelledRef.current = false;
       abortControllerRef.current = new AbortController();
       
       // Add user message immediately for better UX
@@ -5180,20 +5421,14 @@ export default function ChatsScreen() {
             if (existingChat) {
               // Update existing chat - CRITICAL: Preserve bookmark_context, document_context, workspace, and type
               // This ensures bookmark chats stay purple and document chats stay green after sending messages
-              return prev.map(chat => 
-                chat.id === chatIdToUpdate 
-                  ? { 
-                      ...chat, 
-                      last_message: (contentBufferRef.current || '').substring(0, 50) + '...', 
-                      updated_at: new Date().toISOString(),
-                      // Preserve context and type - don't lose bookmark/document context
-                      bookmark_context: chat.bookmark_context,
-                      document_context: chat.document_context,
-                      workspace: chat.workspace,
-                      type: chat.type
-                    }
-                  : chat
-              );
+              return bumpChatActivity(prev, chatIdToUpdate, {
+                last_message: (contentBufferRef.current || '').substring(0, 50) + '...',
+                updated_at: new Date().toISOString(),
+                bookmark_context: existingChat.bookmark_context,
+                document_context: existingChat.document_context,
+                workspace: existingChat.workspace,
+                type: existingChat.type,
+              });
             } else {
               // Chat doesn't exist in list yet (might be a new chat)
               // CRITICAL: Don't reload chat list - it clears messages!
@@ -5336,11 +5571,11 @@ export default function ChatsScreen() {
 
           // Update chat list (set last_message_sender_id so unread badge stays hidden for sender)
           const userId = currentUserIdRef.current ?? userProfileRef.current?.data?.id ?? userProfileRef.current?.id;
-          setChats(prev => prev.map(chat =>
-            chat.id === selectedChat.id
-              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString(), last_message_sender_id: userId ?? undefined }
-              : chat
-          ));
+          setChats(prev => bumpChatActivity(prev, selectedChat.id, {
+            last_message: newMsg.content.substring(0, 50),
+            updated_at: newMsg.created_at || new Date().toISOString(),
+            last_message_sender_id: userId ?? undefined,
+          }));
           console.log('📤 [CHATS-WEB] User direct message successfully added to UI and chat list updated');
         } else {
           console.warn('⚠️ [CHATS-WEB] User direct message API call succeeded but no message in response');
@@ -5474,11 +5709,11 @@ export default function ChatsScreen() {
           AccessibilityInfo.announceForAccessibility('Message sent');
           
           // Update chat list (set last_message_sender_id so unread badge stays hidden for sender)
-          setChats(prev => prev.map(chat => 
-            chat.id === selectedChat.id 
-              ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString(), last_message_sender_id: userId ?? undefined }
-              : chat
-          ));
+          setChats(prev => bumpChatActivity(prev, selectedChat.id, {
+            last_message: newMsg.content.substring(0, 50),
+            updated_at: newMsg.created_at || new Date().toISOString(),
+            last_message_sender_id: userId ?? undefined,
+          }));
           console.log('📤 [CHATS-WEB] Workspace message successfully added to UI and chat list updated');
         } else {
           console.warn('⚠️ [CHATS-WEB] Workspace message API call succeeded but no message in response');
@@ -6602,6 +6837,13 @@ export default function ChatsScreen() {
             Alert.alert('Error', 'Please select a user to message');
             return;
           }
+          {
+            const myId = currentUserIdRef.current;
+            if (myId != null && String(selectedUser.id) === String(myId)) {
+              Alert.alert('Error', 'You cannot start a chat with yourself');
+              return;
+            }
+          }
           
           // Create user direct chat using web endpoint (same as web chat.tsx)
           try {
@@ -7289,7 +7531,7 @@ export default function ChatsScreen() {
         <Pressable
           style={({ pressed }) => [dynamicStyles.menuActionButton, pressed && { opacity: 0.7 }]}
           onPress={() => {
-            setShowHistoryModal(false);
+            historySheet.close();
             historySwipeableRefs.current.get(chatId)?.close();
             requestAnimationFrame(() => {
               setMenuChatId(chatId);
@@ -7436,7 +7678,12 @@ export default function ChatsScreen() {
                             } catch {
                               /* keep default */
                             }
-                            setWebPopup({ visible: true, url: trimmed, title: linkTitle });
+                            setWebPopup((w) => ({
+                              visible: true,
+                              url: trimmed,
+                              title: linkTitle,
+                              expandNonce: w.expandNonce + 1,
+                            }));
                             return;
                           }
                           Linking.openURL(url);
@@ -7566,14 +7813,44 @@ export default function ChatsScreen() {
     }
   };
 
-  const closeHistoryModal = () => {
-    setShowHistoryModal(false);
+  const closeHistoryModal = useCallback(() => {
+    historySheet.close();
     setMenuChatId(null);
-  };
+  }, [historySheet.close]);
+
+  const handleConversationHeaderBack = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+    }
+    isStreamingRef.current = false;
+    isStreamCompleteRef.current = false;
+    router.back();
+  }, [router]);
+
+  const handleOpenChatHistory = useCallback(() => {
+    // Always allow history while a response is in flight — do not gate on sendingMessage.
+    historySheet.open();
+  }, [historySheet.open]);
+
+  const handleHeaderNewChat = useCallback(() => {
+    setShowNewChatModal(true);
+  }, []);
+
+  const handleShareConversationRef = useRef(handleShareConversation);
+  handleShareConversationRef.current = handleShareConversation;
+  const handleHeaderShare = useCallback(() => {
+    void handleShareConversationRef.current();
+  }, []);
 
   const renderHistoryModal = () => (
     <MinimizableBottomSheet
-      visible={showHistoryModal}
+      visible={historySheet.visible}
+      expandNonce={historySheet.expandNonce}
       onClose={closeHistoryModal}
       title="Chat History"
       heightRatio={0.8}
@@ -7692,9 +7969,9 @@ export default function ChatsScreen() {
                 );
                 if (!canSwipe) {
                   return (
-                    <TouchableOpacity activeOpacity={0.7} onPress={() => { closeHistoryModal(); selectChat(item); }}>
+                    <GHTouchableOpacity activeOpacity={0.7} onPress={() => { closeHistoryModal(); selectChat(item); }}>
                       {rowContent}
-                    </TouchableOpacity>
+                    </GHTouchableOpacity>
                   );
                 }
                 return (
@@ -7720,7 +7997,7 @@ export default function ChatsScreen() {
                     overshootFriction={8}
                     containerStyle={{ backgroundColor: 'transparent' }}
                   >
-                    <TouchableOpacity
+                    <GHTouchableOpacity
                       activeOpacity={0.7}
                       onPress={() => {
                         if (swipingChatId.current !== item.id) {
@@ -7730,7 +8007,7 @@ export default function ChatsScreen() {
                       }}
                     >
                       {rowContent}
-                    </TouchableOpacity>
+                    </GHTouchableOpacity>
                   </Swipeable>
                 );
               }}
@@ -7862,88 +8139,45 @@ export default function ChatsScreen() {
     return (
     <SafeAreaView style={dynamicStyles.container} edges={isSheet ? [] : ['top', 'bottom']}>
       <TapToToggleHeaderView style={dynamicStyles.container}>
-      {/* Chat Header — hidden in sheet mode; sheet provides its own header */}
+      {/* Chat Header — hidden in sheet mode; sheet provides its own header.
+          Memoized so typewriter setMessages re-renders do not drop Chat History taps. */}
       {!isSheet && (
-        <AnimatedHeaderContainer height={64}>
-          <View style={dynamicStyles.chatHeader}>
-          <TouchableOpacity
-            style={dynamicStyles.backButton}
-            onPress={() => {
-              if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-                abortControllerRef.current = null;
-              }
-              if (streamingIntervalRef.current) {
-                clearInterval(streamingIntervalRef.current);
-                streamingIntervalRef.current = null;
-              }
-              isStreamingRef.current = false;
-              isStreamCompleteRef.current = false;
-              router.back();
-            }}
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-          >
-            <Ionicons name="arrow-back" size={28} color="#007AFF" />
-          </TouchableOpacity>
-          
-          <View style={dynamicStyles.chatHeaderInfo}>
-            <Text style={[dynamicStyles.chatTitle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">
-              {(() => {
-                const hc = headerChat;
-                if (hc?.document_context?.name) {
-                  return `Document: ${truncateFilename(hc.document_context.name)}`;
-                }
-                if (hc?.bookmark_context?.name) {
-                  return `Bookmark: ${hc.bookmark_context.name}`;
-                }
-                if (hc?.workspace?.name) {
-                  return hc.workspace.name;
-                }
-                if (hc?.type === 'ai_assistant' && hc?.id === -1) {
-                  return 'ChatGD';
-                }
-                return hc?.title || 'Chat';
-              })()}
-            </Text>
-            <Text style={dynamicStyles.chatSubtitle}>
-              {headerChat?.type === 'ai_assistant' ? 'Start New' : 
-               headerChat?.type === 'document_focused' ? 'Document Chat' :
-               headerChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
-               headerChat?.type === 'workspace' ? 'Workspace Chat' :
-               headerChat?.type === 'user_direct' ? 'Direct Message' : 'Chat'}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity
-              style={dynamicStyles.searchTypeButton}
-              onPress={() => setShowHistoryModal(true)}
-              accessibilityLabel="Chat history"
-              accessibilityRole="button"
-            >
-              <Ionicons name="time-outline" size={30} color="#007AFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={dynamicStyles.searchTypeButton}
-              onPress={handleShareConversation}
-              disabled={!selectedChat || messages.length === 0}
-            >
-              <Ionicons
-                name="share-outline"
-                size={30}
-                color={!selectedChat || messages.length === 0 ? '#999' : '#007AFF'}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={dynamicStyles.searchTypeButton} 
-              onPress={() => setShowNewChatModal(true)}
-            >
-              <Ionicons name="add" size={30} color="#007AFF" />
-            </TouchableOpacity>
-          </View>
-        </View>
-        </AnimatedHeaderContainer>
+        <ChatConversationHeader
+          title={(() => {
+            const hc = headerChat;
+            if (hc?.document_context?.name) {
+              return `Document: ${truncateFilename(hc.document_context.name)}`;
+            }
+            if (hc?.bookmark_context?.name) {
+              return `Bookmark: ${hc.bookmark_context.name}`;
+            }
+            if (hc?.workspace?.name) {
+              return hc.workspace.name;
+            }
+            if (hc?.type === 'ai_assistant' && hc?.id === -1) {
+              return 'ChatGD';
+            }
+            return hc?.title || 'Chat';
+          })()}
+          subtitle={
+            headerChat?.type === 'ai_assistant' ? 'Start New' :
+            headerChat?.type === 'document_focused' ? 'Document Chat' :
+            headerChat?.type === 'bookmark_focused' ? 'Bookmark Chat' :
+            headerChat?.type === 'workspace' ? 'Workspace Chat' :
+            headerChat?.type === 'user_direct' ? 'Direct Message' : 'Chat'
+          }
+          shareDisabled={!selectedChat || messages.length === 0}
+          onBack={handleConversationHeaderBack}
+          onOpenHistory={handleOpenChatHistory}
+          onShare={handleHeaderShare}
+          onNewChat={handleHeaderNewChat}
+          headerStyle={dynamicStyles.chatHeader}
+          backButtonStyle={dynamicStyles.backButton}
+          headerInfoStyle={dynamicStyles.chatHeaderInfo}
+          titleStyle={dynamicStyles.chatTitle}
+          subtitleStyle={dynamicStyles.chatSubtitle}
+          actionButtonStyle={dynamicStyles.searchTypeButton}
+        />
       )}
 
       <View
@@ -8651,7 +8885,9 @@ export default function ChatsScreen() {
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       backgroundColor: colors.card,
-      minHeight: 64,
+      minHeight: CHAT_CONVERSATION_HEADER_HEIGHT,
+      zIndex: 20,
+      elevation: 4,
     },
     backButton: {
       padding: 8,
@@ -9185,6 +9421,7 @@ export default function ChatsScreen() {
       {renderChatMenuModal()}
       <SermonViewerModal
         visible={sermonModal.visible}
+        expandNonce={sermonModal.expandNonce}
         fileId={sermonModal.fileId}
         paragraph={sermonModal.paragraph}
         paragraphEnd={sermonModal.paragraphEnd}
@@ -9195,6 +9432,7 @@ export default function ChatsScreen() {
       />
       <GeneralFileViewerModal
         visible={generalFileModal.visible}
+        expandNonce={generalFileModal.expandNonce}
         fileId={generalFileModal.fileId}
         title={generalFileModal.title}
         pdfUri={generalFileModal.pdfUri}
@@ -9208,6 +9446,7 @@ export default function ChatsScreen() {
       />
       <InAppWebViewModal
         visible={webPopup.visible}
+        expandNonce={webPopup.expandNonce}
         url={webPopup.url}
         title={webPopup.title}
         onClose={() => setWebPopup((w) => ({ ...w, visible: false }))}

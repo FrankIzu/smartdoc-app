@@ -74,21 +74,18 @@ const FILLABLE_READY_POLL_MS = 1500;
 const FILLABLE_READY_MAX_ATTEMPTS = 24;
 
 /**
- * Resolve template for a file and wait until page images exist (PDF/rasterization ready).
- * Non-PDF sources are converted server-side when the template is loaded.
+ * Poll until page images exist for an existing fillable template (PDF/rasterization ready).
  */
-export async function ensureFillableTemplateReady(
-  fileId: number,
-  displayName: string,
-): Promise<{ templateId: number }> {
-  const templateId = await resolveFillableTemplateForFile(fileId, displayName);
+export async function waitForFillablePageImages(
+  templateId: number | string,
+): Promise<FillableTemplate> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < FILLABLE_READY_MAX_ATTEMPTS; attempt++) {
     try {
       const tpl = await getFillableTemplate(templateId);
       const images = tpl.page_images ?? [];
       if (images.length > 0) {
-        return { templateId };
+        return tpl;
       }
     } catch (e: unknown) {
       lastError = fillableApiError(e, 'Could not prepare document preview');
@@ -106,6 +103,27 @@ export async function ensureFillableTemplateReady(
     }
   }
   throw lastError ?? new Error('Document preview is still being prepared. Try again in a moment.');
+}
+
+/**
+ * Resolve template for a file and optionally wait until page images exist.
+ * Non-PDF sources are converted server-side when the template is loaded.
+ *
+ * Pass `waitForPages: false` to return as soon as the template exists so UI lists
+ * can update immediately after upload; callers that open the editor should wait
+ * (or poll in the editor) for page images separately.
+ */
+export async function ensureFillableTemplateReady(
+  fileId: number,
+  displayName: string,
+  options?: { waitForPages?: boolean },
+): Promise<{ templateId: number }> {
+  const templateId = await resolveFillableTemplateForFile(fileId, displayName);
+  if (options?.waitForPages === false) {
+    return { templateId };
+  }
+  await waitForFillablePageImages(templateId);
+  return { templateId };
 }
 
 export async function listFillableTemplates(search?: string) {

@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../../../components/FeedbackTouchable';
 import PrepareHeader from '../../../../components/signatures/prepare/PrepareHeader';
 import PreparePageCanvas from '../../../../components/signatures/prepare/PreparePageCanvas';
 import PreparePropertiesSheet from '../../../../components/signatures/prepare/PreparePropertiesSheet';
@@ -108,12 +109,13 @@ export default function PreparePdfScreen() {
         <Text style={[styles.errorText, { color: colors.error ?? '#EF4444' }]}>
           {editor.loadError}
         </Text>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[styles.retryBtn, { backgroundColor: colors.primary }]}
-          onPress={() => templateId && void editor.load(templateId)}
+          onPress={() => (templateId ? editor.load(templateId) : undefined)}
+          spinnerColor="#fff"
         >
           <Text style={styles.retryText}>Retry</Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
         <TouchableOpacity onPress={() => router.back()} style={styles.backLink}>
           <Text style={{ color: colors.textSecondary }}>Go back</Text>
         </TouchableOpacity>

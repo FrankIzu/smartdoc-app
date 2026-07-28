@@ -40,6 +40,8 @@ export interface InAppWebViewModalProps {
   url: string;
   title?: string;
   onClose: () => void;
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 }
 
 export default function InAppWebViewModal({
@@ -47,6 +49,7 @@ export default function InAppWebViewModal({
   url,
   title = 'Link',
   onClose,
+  expandNonce = 0,
 }: InAppWebViewModalProps) {
   const { height } = useWindowDimensions();
   const sheetHeight = Math.round(height * 0.9);
@@ -94,6 +97,7 @@ export default function InAppWebViewModal({
     <MinimizableBottomSheet
       visible={visible}
       onClose={onClose}
+      expandNonce={expandNonce}
       sheetHeight={sheetHeight}
       renderHeader={({ minimized, onMinimize, onExpand, onClose: closeSheet }) => (
         <View style={styles.header}>

@@ -21,8 +21,10 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { SignatureIcon } from '../../components/SignatureIcon';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
+import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { expoHrefForWebDefaultHome } from '../../utils/defaultHomePath';
+import { navigatePrimaryShell } from '../../utils/tabNavigation';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
 import { useFileStore } from '../../stores/fileStore';
@@ -101,14 +103,13 @@ function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<{ success: boolean; message: string } | null>(null);
-  const [showUploadOptions, setShowUploadOptions] = useState(false);
+  const uploadSheet = useMinimizableSheet();
+  const notificationsSheet = useMinimizableSheet();
   const [showQuickActionsMenu, setShowQuickActionsMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
   const [reachInMeeting, setReachInMeeting] = useState(false);
-  const [notificationsModalOpen, setNotificationsModalOpen] = useState(false);
-  const closeNotificationsModal = useCallback(() => setNotificationsModalOpen(false), []);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
   const DASHBOARD_CACHE_MS = 60000; // 60 s TTL for dashboard data
@@ -493,7 +494,7 @@ function DashboardScreen() {
     // console.log('📁 Files upload button clicked');
     setUploadStateWithTimeout(true);
     setIsOpeningPicker(true);
-    setShowUploadOptions(false);
+    uploadSheet.close();
     
     // Wait for modal to fully close before opening picker
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -502,13 +503,11 @@ function DashboardScreen() {
       // Use the reactive hook method which handles state properly
       const success = await uploadFromDocuments();
       
-      if (success) {
+      if (success === true) {
         Alert.alert('Success', 'Files uploaded successfully!');
         loadDashboardData();
-      } else {
-        // Handle case where upload returns false (user cancelled or failed)
-        // console.log('📁 Upload was cancelled or failed');
       }
+      // false/null = failure, cancel, or limit alert already shown
     } catch (error) {
       // console.error('📁 Document upload error:', error);
       Alert.alert('Error', 'Failed to upload files. Please try again.');
@@ -521,12 +520,12 @@ function DashboardScreen() {
   };
 
   const handleUploadFromCamera = () => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     router.push('/scanner');
   };
 
   const handleUploadByLink = () => {
-    setShowUploadOptions(false);
+    uploadSheet.close();
     router.push('/upload-by-link-code');
   };
 
@@ -537,7 +536,7 @@ function DashboardScreen() {
         label: 'Upload file',
         icon: 'cloud-upload-outline',
         iconColor: colors.primary,
-        onPress: () => setShowUploadOptions(true),
+        onPress: () => uploadSheet.open(),
       },
       {
         id: 'scan',
@@ -547,7 +546,7 @@ function DashboardScreen() {
         onPress: () => router.push('/scanner'),
       },
     ],
-    [colors.primary, router],
+    [colors.primary, router, uploadSheet],
   );
 
   const handleUploadFromGallery = async () => {
@@ -559,7 +558,7 @@ function DashboardScreen() {
     // console.log('🖼️ Gallery upload button clicked');
     setUploadStateWithTimeout(true);
     setIsOpeningPicker(true);
-    setShowUploadOptions(false);
+    uploadSheet.close();
     
     // Wait for modal to fully close before opening picker
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -569,14 +568,13 @@ function DashboardScreen() {
       const success = await uploadFromGallery();
       // console.log('🖼️ Gallery upload result:', success);
       
-      if (success) {
+      if (success === true) {
         Alert.alert('Success', 'Photos uploaded successfully!');
         loadDashboardData();
-      } else {
-        // Handle case where upload returns false (user cancelled or failed)
-        // console.log('🖼️ Gallery upload was cancelled or failed');
+      } else if (success === false) {
         Alert.alert('Upload Failed', 'Failed to upload photos. Please try again.');
       }
+      // null = cancelled or upload-limit alert already shown
     } catch (error: any) {
       // console.error('🖼️ Gallery upload error:', error);
       Alert.alert('Error', error.message || 'Failed to upload photos. Please try again.');
@@ -591,11 +589,11 @@ function DashboardScreen() {
   const handleQuickAction = (action: string) => {
     switch (action) {
       case 'scan':
-        router.push('/(tabs)/documents');
+        navigatePrimaryShell(router, '/(tabs)/documents');
         break;
       case 'upload':
         // Show upload options modal
-        setShowUploadOptions(true);
+        uploadSheet.open();
         break;
       case 'chat':
         // Navigate to user chat screen (user-to-user and workspace chats ONLY)
@@ -609,7 +607,7 @@ function DashboardScreen() {
         break;
       case 'notifications':
       case 'analytics':
-        router.push('/(tabs)/settings');
+        navigatePrimaryShell(router, '/(tabs)/settings');
         break;
       case 'upload-links':
         router.push('/upload-links');
@@ -624,13 +622,13 @@ function DashboardScreen() {
         router.push('/quick-reach/meeting-call');
         break;
       case 'calendar':
-        router.push('/calendar' as any);
+        navigatePrimaryShell(router, '/calendar');
         break;
       case 'bookmarks':
         router.push('/bookmarks/manage');
         break;
       case 'fillable-file':
-        router.push('/(tabs)/documents');
+        navigatePrimaryShell(router, '/(tabs)/documents');
         break;
       default:
         break;
@@ -639,7 +637,7 @@ function DashboardScreen() {
 
   const handleNotificationBellPress = useCallback(() => {
     // Defer opening so the same pointer event cannot hit the modal backdrop (web + some native).
-    setTimeout(() => setNotificationsModalOpen(true), 0);
+    setTimeout(() => notificationsSheet.open(), 0);
   }, []);
 
   const handleTestProgress = () => {
@@ -953,7 +951,7 @@ function DashboardScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={dynamicStyles.headerButton}
-                  onPress={() => router.push('/(tabs)/help')}
+                  onPress={() => navigatePrimaryShell(router, '/(tabs)/help')}
                 >
                   <Ionicons name="help-circle-outline" size={30} color="#007AFF" />
                 </TouchableOpacity>
@@ -973,7 +971,7 @@ function DashboardScreen() {
               icon="folder"
               color="#007AFF"
               subtitle="View all files"
-              onPress={() => router.push('/(tabs)/documents')}
+              onPress={() => navigatePrimaryShell(router, '/(tabs)/documents')}
             />
             <StatCard
               key="stat-draft"
@@ -1116,10 +1114,11 @@ function DashboardScreen() {
       />
 
       <UploadOptionsModal
-        visible={showUploadOptions}
+        visible={uploadSheet.visible}
+        expandNonce={uploadSheet.expandNonce}
         isUploading={isUploading}
         onDismiss={() => {
-          setShowUploadOptions(false);
+          uploadSheet.close();
           if (isUploading && !isOpeningPicker) {
             setUploadStateWithTimeout(false);
           }
@@ -1131,11 +1130,13 @@ function DashboardScreen() {
       />
 
       <MinimizableBottomSheet
-        visible={notificationsModalOpen}
-        onClose={closeNotificationsModal}
+        visible={notificationsSheet.visible}
+        expandNonce={notificationsSheet.expandNonce}
+        onClose={notificationsSheet.close}
         showHeader={false}
+        // Inbox is dismiss-only — minimize left a sticky bottom peek after "close".
+        minimizable={false}
         heightRatio={0.8}
-        paddingBottom={insets.bottom}
       >
         <View
           style={{
@@ -1148,7 +1149,7 @@ function DashboardScreen() {
         >
           <NotificationsInboxContent
             variant="modal"
-            onDismiss={closeNotificationsModal}
+            onDismiss={notificationsSheet.close}
             onListMutated={onNotificationsListMutated}
           />
         </View>

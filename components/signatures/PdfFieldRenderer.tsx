@@ -25,7 +25,7 @@ import { captureRef } from 'react-native-view-shot';
 import AlignmentDebugOverlay from './prepare/AlignmentDebugOverlay';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { RuntimeDocument } from '../../types/signature';
-import { fieldImageUri, isFieldEditable } from '../../utils/signatureRuntime';
+import { fieldImageUri, isFieldEditable, dateFieldDisplayText } from '../../utils/signatureRuntime';
 import {
   buildAlignmentOverlays,
   computeFitScale,
@@ -266,7 +266,43 @@ export default function PdfFieldRenderer({
                     placeholderTextColor={colors.textSecondary}
                     multiline={pixelRect.height > 40}
                     underlineColorAndroid="transparent"
+                    autoComplete="name"
+                    textContentType="name"
+                    importantForAutofill="yes"
                   />
+                );
+              }
+
+              if (f.type === 'date' || f.type === 'datetime') {
+                const dateText = dateFieldDisplayText(val);
+                return (
+                  <View
+                    key={f.key}
+                    style={[
+                      styles.fieldBox,
+                      {
+                        left: pixelRect.left,
+                        top: pixelRect.top,
+                        width: pixelRect.width,
+                        height: pixelRect.height,
+                        borderColor: `${colors.primary}88`,
+                        backgroundColor: FIELD_OVERLAY_BACKGROUND,
+                      },
+                    ]}
+                    accessibilityLabel={dateText ? `Date ${dateText}` : f.label}
+                  >
+                    <Text
+                      style={{
+                        fontSize: Math.max(Math.min(pixelRect.height * 0.4, 13), 9),
+                        color: colors.text,
+                        textAlign: 'center',
+                        paddingHorizontal: 2,
+                      }}
+                      numberOfLines={2}
+                    >
+                      {dateText || f.label}
+                    </Text>
+                  </View>
                 );
               }
 

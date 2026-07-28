@@ -6,6 +6,7 @@ import {
   Alert,
   Clipboard,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,6 +17,7 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { uploadLinksListScreenKey } from '../../services/userScopedCache';
@@ -57,6 +59,7 @@ export default function UploadLinksScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [menuVisible, setMenuVisible] = useState(false);
   const [selectedLink, setSelectedLink] = useState<UploadLink | null>(null);
+  const [menuBusy, setMenuBusy] = useState(false);
 
   const hasMoreRef = useRef(true);
   const loadingMoreRef = useRef(false);
@@ -139,14 +142,19 @@ export default function UploadLinksScreen() {
   
   useFocusEffect(
     useCallback(() => {
-      if (user) {
-        const now = Date.now();
-        if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
-          lastLoadTimeRef.current = now;
-          loadUploadLinks();
-        }
+      if (!user) return;
+      const now = Date.now();
+      // After create/update/delete the list cache is invalidated — always refetch then,
+      // even inside the debounce window, so new items appear immediately on return.
+      const hasFreshCache = !!(
+        listCacheKey &&
+        screenCache.get<PaginatedUploadLinksCache>(listCacheKey, UPLOAD_LINKS_LIST_CACHE_MS)
+      );
+      if (!hasFreshCache || now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
+        lastLoadTimeRef.current = now;
+        loadUploadLinks(!hasFreshCache);
       }
-    }, [user, loadUploadLinks])
+    }, [user, loadUploadLinks, listCacheKey])
   );
 
   const handleRefresh = () => {
@@ -166,14 +174,12 @@ export default function UploadLinksScreen() {
     router.push(`/upload-links/${link.id}`);
   };
 
-  const getFullUrl = (url: string): string => {
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    const path = url.startsWith('/') ? url : `/${url}`;
-    return `${FRONTEND_URL}${path}`;
-  };
-
   const doShare = async (link: UploadLink) => {
-    const fullUrl = getFullUrl(link.url);
+    const fullUrl = buildUploadLinkUrl(link.token || link.url);
+    if (!fullUrl) {
+      Alert.alert('Error', 'This file request has no shareable link yet');
+      return;
+    }
     const message = `Upload files using this link: ${fullUrl}\n\nLink: ${link.name}\n${link.description ? `Description: ${link.description}` : ''}`;
     if (Platform.OS === 'ios' || Platform.OS === 'android') {
       await Share.share({
@@ -181,18 +187,24 @@ export default function UploadLinksScreen() {
         url: fullUrl,
         title: `Upload Link: ${link.name}`,
       });
+      return;
     }
+    // Web / desktop: no native share sheet — copy instead so the action still works
+    Clipboard.setString(fullUrl);
+    Alert.alert('Link copied', 'The upload link was copied to your clipboard.');
   };
 
   const handleShareLink = async (link: UploadLink) => {
     try {
       await doShare(link);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Share error:', error);
+      Alert.alert('Error', error?.message || 'Failed to share upload link');
     }
   };
 
   const handleToggleActive = async (link: UploadLink) => {
+    setMenuBusy(true);
     try {
       const response = await apiService.updateUploadLink(link.id, {
         is_active: !link.is_active
@@ -209,6 +221,8 @@ export default function UploadLinksScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update link');
+    } finally {
+      setMenuBusy(false);
     }
   };
 
@@ -222,6 +236,7 @@ export default function UploadLinksScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            setMenuBusy(true);
             try {
               const response = await apiService.deleteUploadLink(link.id);
               if (response.success) {
@@ -231,6 +246,8 @@ export default function UploadLinksScreen() {
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to delete link');
+            } finally {
+              setMenuBusy(false);
             }
           },
         },
@@ -257,7 +274,7 @@ export default function UploadLinksScreen() {
     closeMenu();
     if (link) {
       requestAnimationFrame(() => {
-        doShare(link).catch((e) => console.error('Share error:', e));
+        handleShareLink(link);
       });
     }
   };
@@ -272,8 +289,9 @@ export default function UploadLinksScreen() {
     closeMenu();
   };
 
-  const onMenuToggleActive = () => {
-    if (selectedLink) handleToggleActive(selectedLink);
+  const onMenuToggleActive = async () => {
+    if (!selectedLink) return;
+    await handleToggleActive(selectedLink);
     closeMenu();
   };
 
@@ -309,6 +327,8 @@ export default function UploadLinksScreen() {
       backgroundColor: colors.card,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
+      zIndex: 2,
+      elevation: 2,
     },
     title: {
       fontSize: 18,
@@ -597,7 +617,7 @@ export default function UploadLinksScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={dynamicStyles.title}>File Request</Text>
@@ -614,11 +634,11 @@ export default function UploadLinksScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={dynamicStyles.title}>File Request</Text>
-        <TouchableOpacity onPress={handleCreateLink}>
+        <TouchableOpacity onPress={handleCreateLink} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Ionicons name="add" size={24} color="#007AFF" />
         </TouchableOpacity>
       </View>
@@ -668,7 +688,12 @@ export default function UploadLinksScreen() {
         />
       )}
 
-      {menuVisible && (
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeMenu}
+      >
         <Pressable style={dynamicStyles.menuOverlay} onPress={closeMenu}>
           <Pressable style={dynamicStyles.menuContainer} onPress={(e) => e.stopPropagation()}>
             <TouchableOpacity style={dynamicStyles.menuItem} onPress={onMenuOpen}>
@@ -684,26 +709,38 @@ export default function UploadLinksScreen() {
                 <Text style={dynamicStyles.menuItemText}>Share</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={dynamicStyles.menuItem} onPress={onMenuToggleActive}>
+            <FeedbackTouchable
+              style={dynamicStyles.menuItem}
+              onPress={onMenuToggleActive}
+              loading={menuBusy}
+              spinnerColor={colors.text}
+              replaceWithSpinner={false}
+            >
               <Ionicons
                 name={selectedLink?.is_active ? 'pause' : 'play'}
                 size={20}
                 color={colors.text}
               />
               <Text style={dynamicStyles.menuItemText}>
-                {selectedLink?.is_active ? 'Deactivate' : 'Activate'}
+                {menuBusy
+                  ? 'Updating...'
+                  : selectedLink?.is_active
+                    ? 'Deactivate'
+                    : 'Activate'}
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </FeedbackTouchable>
+            <FeedbackTouchable
               style={[dynamicStyles.menuItem, dynamicStyles.menuItemDanger]}
               onPress={onMenuDelete}
+              spinnerColor="#FF3B30"
+              replaceWithSpinner={false}
             >
               <Ionicons name="trash" size={20} color="#FF3B30" />
               <Text style={[dynamicStyles.menuItemText, dynamicStyles.menuItemTextDanger]}>Delete</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </Pressable>
         </Pressable>
-      )}
+      </Modal>
     </SafeAreaView>
   );
 }

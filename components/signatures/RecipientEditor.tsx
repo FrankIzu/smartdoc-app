@@ -51,6 +51,9 @@ export default function RecipientEditor({ recipients, onChange }: Props) {
             onChangeText={(email) => update(i, { email })}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoComplete="email"
+            textContentType="emailAddress"
+            importantForAutofill="yes"
           />
           <TextInput
             style={[styles.input, { color: colors.text, borderColor: colors.border }]}
@@ -58,6 +61,9 @@ export default function RecipientEditor({ recipients, onChange }: Props) {
             placeholderTextColor={colors.textSecondary}
             value={r.name ?? ''}
             onChangeText={(name) => update(i, { name })}
+            autoComplete="name"
+            textContentType="name"
+            importantForAutofill="yes"
           />
           {r.role === 'signer' ? (
             <>

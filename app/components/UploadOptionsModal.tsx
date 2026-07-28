@@ -12,6 +12,8 @@ export type UploadOptionsModalProps = {
   onCamera: () => void;
   onGallery: () => void;
   onLink: () => void;
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 };
 
 /**
@@ -25,6 +27,7 @@ export function UploadOptionsModal({
   onCamera,
   onGallery,
   onLink,
+  expandNonce = 0,
 }: UploadOptionsModalProps) {
   const colors = useThemeColors();
 
@@ -73,6 +76,7 @@ export function UploadOptionsModal({
     <MinimizableBottomSheet
       visible={visible}
       onClose={onDismiss}
+      expandNonce={expandNonce}
       title="Upload"
       heightRatio={0.48}
       minimizedSubtitle="Swipe up to upload"

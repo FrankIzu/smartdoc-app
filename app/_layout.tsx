@@ -30,6 +30,7 @@ import NetworkIndicator from '../components/NetworkIndicator';
 import { AppLockProvider, useAppLock } from '../contexts/AppLockContext';
 import { DisplayScaleProvider } from '../contexts/DisplayScaleContext';
 import { Enhanced2FAAuthProvider } from '../contexts/Enhanced2FAAuthContext';
+import { UserPreferencesProvider } from '../contexts/UserPreferencesContext';
 import ChatGDBottomSheetHost from '../components/chatgd/ChatGDBottomSheet';
 import ActionMenuModal, { type ActionMenuItem } from '../components/ActionMenuModal';
 import { ChatGDSheetProvider } from '../contexts/ChatGDSheetContext';
@@ -265,7 +266,7 @@ function RootLayoutNav() {
       label: 'Open Settings',
       icon: 'settings-outline',
       iconColor: '#007AFF',
-      onPress: () => router.push('/(tabs)/settings'),
+      onPress: () => router.navigate('/(tabs)/settings'),
     },
     {
       id: 'later',
@@ -299,7 +300,11 @@ function RootLayoutNav() {
       </Pressable>
       {/* Persistent Network Indicator - hidden on meeting screen for full-screen UX */}
       {!isMeetingScreen && (
-        <SafeAreaView style={styles.networkIndicatorContainer} edges={['top']}>
+        <SafeAreaView
+          style={styles.networkIndicatorContainer}
+          edges={['top']}
+          pointerEvents="box-none"
+        >
           <NetworkIndicator compact persistent />
         </SafeAreaView>
       )}
@@ -560,6 +565,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider>
           <DisplayScaleProvider>
+            <UserPreferencesProvider>
             <AuthProvider>
               <Enhanced2FAAuthProvider>
                 <AppLockProvider>
@@ -567,6 +573,7 @@ export default function RootLayout() {
                 </AppLockProvider>
               </Enhanced2FAAuthProvider>
             </AuthProvider>
+            </UserPreferencesProvider>
           </DisplayScaleProvider>
         </ThemeProvider>
       </SafeAreaProvider>

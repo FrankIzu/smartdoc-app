@@ -5,7 +5,18 @@ import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { apiClient } from '../services/api';
 import { secureStorage } from './storage';
 
-const SHARE_CLEANUP_MS = 10 * 60_000;
+const SHARE_CLEANUP_MS = 30 * 60_000;
+const SHARE_CACHE_PREFIX = 'grabdocs_share_';
+
+/** In-flight downloads keyed by file id — menu prefetch + Share tap share one promise. */
+const inflightByFileId = new Map<string, Promise<PreparedShareFile>>();
+let sharingAvailableCache: boolean | null = null;
+
+type PreparedShareFile = {
+  localUri: string;
+  mimeType: string;
+  displayName: string;
+};
 
 function mimeTypeFromExtension(extension: string): string {
   const mimeTypes: Record<string, string> = {
@@ -89,9 +100,23 @@ function looksLikeErrorPayload(bytes: Uint8Array | null): boolean {
   return first === 0x3c || first === 0x7b; // HTML or JSON error body
 }
 
+function cacheDirOrThrow(): string {
+  const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+  if (!cacheDir) {
+    throw new Error('Unable to access file system directories');
+  }
+  return cacheDir;
+}
+
+function stableShareUri(fileId: string | number, filename: string): string {
+  return `${cacheDirOrThrow()}${SHARE_CACHE_PREFIX}${fileId}_${filename}`;
+}
+
 async function presentShareSheet(localUri: string, shareMime: string, displayName: string): Promise<void> {
-  const sharingAvailable = await Sharing.isAvailableAsync();
-  if (sharingAvailable) {
+  if (sharingAvailableCache == null) {
+    sharingAvailableCache = await Sharing.isAvailableAsync();
+  }
+  if (sharingAvailableCache) {
     try {
       await Sharing.shareAsync(localUri, {
         mimeType: shareMime,
@@ -137,13 +162,38 @@ function scheduleShareFileCleanup(uri: string) {
   }, SHARE_CLEANUP_MS);
 }
 
-/** Download a file and open the native share sheet with a valid local attachment. */
-export async function shareDocumentFile(
+async function readValidCachedShare(
+  localUri: string,
+  extension: string,
+  displayName: string,
+): Promise<PreparedShareFile | null> {
+  try {
+    const info = await FileSystem.getInfoAsync(localUri);
+    if (!info.exists || !('size' in info) || !info.size || info.size < 1) return null;
+    const magicBytes = await readLocalFileHeadBytes(localUri, 16);
+    if (looksLikeErrorPayload(magicBytes)) {
+      await FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+      return null;
+    }
+    return {
+      localUri,
+      mimeType: inferMimeFromMagic(magicBytes) ?? mimeTypeFromExtension(extension),
+      displayName,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function downloadAndPrepareShareFile(
   fileId: number | string,
   displayName: string,
   opts?: { fallbackExtension?: string },
-): Promise<void> {
-  const fileInfo = await apiClient.downloadFile(Number(fileId));
+): Promise<PreparedShareFile> {
+  const [fileInfo, token] = await Promise.all([
+    apiClient.downloadFile(Number(fileId)),
+    secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN).catch(() => null as string | null),
+  ]);
   if (!fileInfo.url) {
     throw new Error('Failed to get file download URL');
   }
@@ -152,20 +202,10 @@ export async function shareDocumentFile(
     fileInfo.filename || displayName,
     opts?.fallbackExtension ?? 'pdf',
   );
+  const fileUri = stableShareUri(fileId, filename);
 
-  const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-  if (!cacheDir) {
-    throw new Error('Unable to access file system directories');
-  }
-
-  const fileUri = `${cacheDir}share_${Date.now()}_${fileId}_${filename}`;
-
-  let token: string | null = null;
-  try {
-    token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-  } catch {
-    token = null;
-  }
+  const cached = await readValidCachedShare(fileUri, extension, displayName);
+  if (cached) return cached;
 
   const downloadResult = await FileSystem.downloadAsync(fileInfo.url, fileUri, {
     headers: downloadHeadersForUrl(fileInfo.url, token),
@@ -176,19 +216,54 @@ export async function shareDocumentFile(
     throw new Error(`Download failed (HTTP ${downloadResult.status}). Try again.`);
   }
 
-  const localInfo = await FileSystem.getInfoAsync(downloadResult.uri);
-  if (!localInfo.exists || !('size' in localInfo) || !localInfo.size || localInfo.size < 1) {
-    await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true }).catch(() => {});
-    throw new Error('Downloaded file is empty. Try again.');
-  }
-
-  const magicBytes = await readLocalFileHeadBytes(downloadResult.uri, 16);
-  if (looksLikeErrorPayload(magicBytes)) {
+  const prepared = await readValidCachedShare(downloadResult.uri, extension, displayName);
+  if (!prepared) {
     await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true }).catch(() => {});
     throw new Error('Could not download this file for sharing. Try again.');
   }
 
-  const shareMime = inferMimeFromMagic(magicBytes) ?? mimeTypeFromExtension(extension);
-  await presentShareSheet(downloadResult.uri, shareMime, displayName);
-  scheduleShareFileCleanup(downloadResult.uri);
+  scheduleShareFileCleanup(prepared.localUri);
+  return prepared;
+}
+
+function prepareShareFile(
+  fileId: number | string,
+  displayName: string,
+  opts?: { fallbackExtension?: string },
+): Promise<PreparedShareFile> {
+  const key = String(fileId);
+  const existing = inflightByFileId.get(key);
+  if (existing) return existing;
+
+  const promise = downloadAndPrepareShareFile(fileId, displayName, opts).finally(() => {
+    if (inflightByFileId.get(key) === promise) {
+      inflightByFileId.delete(key);
+    }
+  });
+  inflightByFileId.set(key, promise);
+  return promise;
+}
+
+/**
+ * Start preparing a local copy as soon as the file menu opens so Share can open immediately.
+ * Safe to call repeatedly; shares one in-flight download per file id.
+ */
+export function prefetchShareDocumentFile(
+  fileId: number | string,
+  displayName: string,
+  opts?: { fallbackExtension?: string },
+): void {
+  void prepareShareFile(fileId, displayName, opts).catch(() => {
+    /* prefetch is best-effort */
+  });
+}
+
+/** Download (or reuse cache) and open the native share sheet with a valid local attachment. */
+export async function shareDocumentFile(
+  fileId: number | string,
+  displayName: string,
+  opts?: { fallbackExtension?: string },
+): Promise<void> {
+  const prepared = await prepareShareFile(fileId, displayName, opts);
+  await presentShareSheet(prepared.localUri, prepared.mimeType, prepared.displayName);
 }

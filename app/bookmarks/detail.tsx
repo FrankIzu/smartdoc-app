@@ -8,7 +8,6 @@ import {
     Modal,
     Platform,
     RefreshControl,
-    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -16,9 +15,10 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
-import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -26,7 +26,7 @@ import { apiClient } from '../../services/api';
 import { bookmarkDetailScreenKey, bookmarksListScreenKey } from '../../services/userScopedCache';
 import { formatDateToLocal } from '../../utils/timeFormatting';
 import { screenCache } from '../../utils/screenCache';
-import { shareDocumentFile } from '../../utils/shareDocumentFile';
+import { shareDocumentFile, prefetchShareDocumentFile } from '../../utils/shareDocumentFile';
 import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
 import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
@@ -95,6 +95,10 @@ export default function BookmarkDetailScreen() {
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInputValue, setRenameInputValue] = useState('');
   const [renaming, setRenaming] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingBookmark, setDeletingBookmark] = useState(false);
+  const [togglingLock, setTogglingLock] = useState(false);
+  const [addingFiles, setAddingFiles] = useState(false);
 
   const receiptCategories = [
     'Uncategorized', 'Advertising', 'Supplies', 'Professional Services', 'Personal',
@@ -214,6 +218,7 @@ export default function BookmarkDetailScreen() {
       return;
     }
 
+    setSavingEdit(true);
     try {
       const response = await apiClient.updateBookmark(bookmark.id, {
         name: editName.trim(),
@@ -237,6 +242,8 @@ export default function BookmarkDetailScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update bookmark');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -252,6 +259,7 @@ export default function BookmarkDetailScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            setDeletingBookmark(true);
             try {
               const response = await apiClient.deleteBookmark(bookmark.id);
               if (response.success) {
@@ -263,6 +271,8 @@ export default function BookmarkDetailScreen() {
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to delete bookmark');
+            } finally {
+              setDeletingBookmark(false);
             }
           }
         }
@@ -275,6 +285,7 @@ export default function BookmarkDetailScreen() {
     const newLocked = !bookmark.is_locked;
 
     const doToggle = async () => {
+      setTogglingLock(true);
       try {
         const response = await apiClient.updateBookmark(bookmark.id, { is_locked: newLocked });
         if (response.success) {
@@ -287,6 +298,8 @@ export default function BookmarkDetailScreen() {
         }
       } catch (error: any) {
         Alert.alert('Error', error.message || 'Failed to update bookmark lock');
+      } finally {
+        setTogglingLock(false);
       }
     };
 
@@ -321,20 +334,21 @@ export default function BookmarkDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const response = await apiClient.removeFileFromBookmark(bookmark.id, parseInt(fileId));
+              const response = await apiClient.removeFileFromBookmark(bookmark.id, parseInt(fileId, 10));
               if (response.success) {
                 if (detailCacheKey) screenCache.invalidate(detailCacheKey);
-                setFiles(prev => prev.filter(f => f.id !== fileId));
-                setBookmark(prev => prev ? { ...prev, file_count: prev.file_count - 1 } : null);
-                Alert.alert('Success', 'File removed from bookmark');
+                setFiles((prev) => prev.filter((f) => f.id !== fileId));
+                setBookmark((prev) =>
+                  prev ? { ...prev, file_count: Math.max(0, prev.file_count - 1) } : null
+                );
               } else {
                 Alert.alert('Error', response.message || 'Failed to remove file');
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to remove file');
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -343,6 +357,7 @@ export default function BookmarkDetailScreen() {
     event?.stopPropagation?.();
     setSelectedDocumentForMenu(document);
     setShowKebabMenu(true);
+    prefetchShareDocumentFile(document.id, document.name);
   };
 
   const handleViewDocument = () => {
@@ -353,14 +368,13 @@ export default function BookmarkDetailScreen() {
     }
   };
 
-  const handleShareDocument = async () => {
+  const handleShareDocument = () => {
     if (!selectedDocumentForMenu) return;
-    try {
-      await shareDocumentFile(selectedDocumentForMenu.id, selectedDocumentForMenu.name);
-    } catch (error: unknown) {
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to share document');
-    }
+    const doc = selectedDocumentForMenu;
     setShowKebabMenu(false);
+    void shareDocumentFile(doc.id, doc.name).catch((error: unknown) => {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to share document');
+    });
   };
 
   const handleChatDocument = () => {
@@ -425,8 +439,10 @@ export default function BookmarkDetailScreen() {
 
   const handleRemoveFromBookmark = () => {
     if (!selectedDocumentForMenu) return;
+    const docId = selectedDocumentForMenu.id;
     setShowKebabMenu(false);
-    handleRemoveFile(selectedDocumentForMenu.id);
+    setSelectedDocumentForMenu(null);
+    handleRemoveFile(docId);
   };
 
   const handleRenameDocument = () => {
@@ -461,28 +477,39 @@ export default function BookmarkDetailScreen() {
 
   const handleDeleteDocument = () => {
     if (!selectedDocumentForMenu) return;
+    const doc = selectedDocumentForMenu;
+    // Close the action menu before the confirm dialog so it cannot linger under Alerts.
+    setShowKebabMenu(false);
     Alert.alert(
       'Delete Document',
-      `Are you sure you want to delete "${selectedDocumentForMenu.name}"?`,
+      `Are you sure you want to delete "${doc.name}"?`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => setSelectedDocumentForMenu(null),
+        },
         {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
             try {
-              const response = await apiClient.deleteFile(parseInt(selectedDocumentForMenu.id));
+              const response = await apiClient.deleteFile(parseInt(doc.id, 10));
               if (response.success) {
-                setFiles(prev => prev.filter(doc => doc.id !== selectedDocumentForMenu.id));
-                if (bookmark) setBookmark(prev => prev ? { ...prev, file_count: prev.file_count - 1 } : null);
-                Alert.alert('Success', 'Document deleted');
+                setFiles((prev) => prev.filter((d) => d.id !== doc.id));
+                setBookmark((prev) =>
+                  prev ? { ...prev, file_count: Math.max(0, prev.file_count - 1) } : null
+                );
+                if (detailCacheKey) screenCache.invalidate(detailCacheKey);
+                setSelectedDocumentForMenu(null);
               } else {
                 Alert.alert('Error', response.message || 'Failed to delete');
+                setSelectedDocumentForMenu(null);
               }
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to delete');
+              setSelectedDocumentForMenu(null);
             }
-            setShowKebabMenu(false);
           },
         },
       ]
@@ -546,6 +573,7 @@ export default function BookmarkDetailScreen() {
   const handleAddSelectedFiles = async () => {
     if (!bookmark || selectedFiles.size === 0) return;
 
+    setAddingFiles(true);
     try {
       const fileIds = Array.from(selectedFiles).map(id => parseInt(id));
       const response = await apiClient.addFilesToBookmark(bookmark.id, fileIds);
@@ -562,6 +590,8 @@ export default function BookmarkDetailScreen() {
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to add files');
+    } finally {
+      setAddingFiles(false);
     }
   };
 
@@ -1000,18 +1030,29 @@ export default function BookmarkDetailScreen() {
           </TouchableOpacity>
           <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
           <View style={dynamicStyles.headerActions}>
-            <TouchableOpacity onPress={handleToggleLock} style={dynamicStyles.headerIconButton} accessibilityLabel={bookmark.is_locked ? 'Unlock bookmark' : 'Lock bookmark'}>
+            <FeedbackTouchable
+              onPress={handleToggleLock}
+              style={dynamicStyles.headerIconButton}
+              accessibilityLabel={bookmark.is_locked ? 'Unlock bookmark' : 'Lock bookmark'}
+              loading={togglingLock}
+              spinnerColor="#F59E0B"
+            >
               <Ionicons name={bookmark.is_locked ? 'lock-open' : 'lock-closed-outline'} size={24} color="#F59E0B" />
-            </TouchableOpacity>
+            </FeedbackTouchable>
             {!bookmark.is_locked && (
               <TouchableOpacity onPress={handleShowAddFilesModal} style={dynamicStyles.headerIconButton} accessibilityLabel="Add files to bookmark">
                 <Ionicons name="add" size={24} color="#007AFF" />
               </TouchableOpacity>
             )}
             {!bookmark.is_locked && (
-              <TouchableOpacity onPress={handleDeleteBookmark} style={dynamicStyles.headerIconButton}>
+              <FeedbackTouchable
+                onPress={handleDeleteBookmark}
+                style={dynamicStyles.headerIconButton}
+                loading={deletingBookmark}
+                spinnerColor="#FF3B30"
+              >
                 <Ionicons name="trash-outline" size={24} color="#FF3B30" />
-              </TouchableOpacity>
+              </FeedbackTouchable>
             )}
           </View>
         </View>
@@ -1053,13 +1094,19 @@ export default function BookmarkDetailScreen() {
       <Modal visible={showEditModal} animationType="slide" presentationStyle="fullScreen">
         <SafeAreaView style={dynamicStyles.modalContainer} edges={['left', 'right', 'bottom']}>
           <View style={[dynamicStyles.modalHeader, { paddingTop: insets.top + 12 }]}>
-            <TouchableOpacity onPress={() => setShowEditModal(false)}>
+            <TouchableOpacity onPress={() => setShowEditModal(false)} disabled={savingEdit}>
               <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Edit Bookmark</Text>
-            <TouchableOpacity onPress={handleEditBookmark}>
-              <Text style={dynamicStyles.modalSaveButton}>Save</Text>
-            </TouchableOpacity>
+            <FeedbackTouchable
+              onPress={handleEditBookmark}
+              disabled={savingEdit}
+              loading={savingEdit}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
+            >
+              <Text style={dynamicStyles.modalSaveButton}>{savingEdit ? 'Saving...' : 'Save'}</Text>
+            </FeedbackTouchable>
           </View>
 
           <View style={dynamicStyles.modalContent}>
@@ -1120,17 +1167,20 @@ export default function BookmarkDetailScreen() {
               <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Add Files</Text>
-            <TouchableOpacity 
+            <FeedbackTouchable
               onPress={handleAddSelectedFiles}
-              disabled={selectedFiles.size === 0}
+              disabled={selectedFiles.size === 0 || addingFiles}
+              loading={addingFiles}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
             >
               <Text style={[
                 dynamicStyles.modalSaveButton,
-                selectedFiles.size === 0 && dynamicStyles.disabledButton
+                (selectedFiles.size === 0 || addingFiles) && dynamicStyles.disabledButton
               ]}>
-                Add ({selectedFiles.size})
+                {addingFiles ? 'Adding...' : `Add (${selectedFiles.size})`}
               </Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
 
            {loadingAvailableFiles ? (
@@ -1221,57 +1271,57 @@ export default function BookmarkDetailScreen() {
         </TouchableOpacity>
       </Modal>
 
-      <MinimizableBottomSheet
+      <AdaptiveListPickerModal
         visible={showCategoryModal}
         onClose={() => setShowCategoryModal(false)}
         title="Select Category"
-        heightRatio={0.7}
+        itemCount={receiptCategories.length}
+        footer={
+          categorizingReceipt ? (
+            <View style={dynamicStyles.categoryModalLoading}>
+              <ActivityIndicator size="large" color="#007AFF" />
+            </View>
+          ) : null
+        }
       >
-        <ScrollView style={dynamicStyles.categoryList}>
-          {receiptCategories.map((category) => (
-            <TouchableOpacity
-              key={category}
-              style={dynamicStyles.categoryModalItem}
-              onPress={() => handleSelectCategory(category)}
-              disabled={categorizingReceipt}
-            >
-              <Text style={dynamicStyles.categoryItemText}>{category}</Text>
-              <Ionicons name="chevron-forward" size={20} color="#999" />
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        {categorizingReceipt && (
-          <View style={dynamicStyles.categoryModalLoading}>
-            <ActivityIndicator size="large" color="#007AFF" />
-          </View>
-        )}
-      </MinimizableBottomSheet>
+        {receiptCategories.map((category) => (
+          <TouchableOpacity
+            key={category}
+            style={dynamicStyles.categoryModalItem}
+            onPress={() => handleSelectCategory(category)}
+            disabled={categorizingReceipt}
+          >
+            <Text style={dynamicStyles.categoryItemText}>{category}</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+        ))}
+      </AdaptiveListPickerModal>
 
-      <MinimizableBottomSheet
+      <AdaptiveListPickerModal
         visible={showPaymentStatusModal}
         onClose={() => setShowPaymentStatusModal(false)}
         title="Update Payment Status"
-        heightRatio={0.7}
+        itemCount={paymentStatuses.length}
+        footer={
+          updatingPaymentStatus ? (
+            <View style={dynamicStyles.categoryModalLoading}>
+              <ActivityIndicator size="large" color="#007AFF" />
+            </View>
+          ) : null
+        }
       >
-        <ScrollView style={dynamicStyles.categoryList}>
-          {paymentStatuses.map((status) => (
-            <TouchableOpacity
-              key={status}
-              style={dynamicStyles.categoryModalItem}
-              onPress={() => handleSelectPaymentStatus(status)}
-              disabled={updatingPaymentStatus}
-            >
-              <Text style={dynamicStyles.categoryItemText}>{status}</Text>
-              <Ionicons name="chevron-forward" size={20} color="#999" />
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        {updatingPaymentStatus && (
-          <View style={dynamicStyles.categoryModalLoading}>
-            <ActivityIndicator size="large" color="#007AFF" />
-          </View>
-        )}
-      </MinimizableBottomSheet>
+        {paymentStatuses.map((status) => (
+          <TouchableOpacity
+            key={status}
+            style={dynamicStyles.categoryModalItem}
+            onPress={() => handleSelectPaymentStatus(status)}
+            disabled={updatingPaymentStatus}
+          >
+            <Text style={dynamicStyles.categoryItemText}>{status}</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+        ))}
+      </AdaptiveListPickerModal>
 
       {/* Rename File Modal */}
       <Modal
@@ -1299,14 +1349,17 @@ export default function BookmarkDetailScreen() {
               <TouchableOpacity onPress={() => !renaming && setShowRenameModal(false)}>
                 <Text style={dynamicStyles.modalCancelButton}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
+              <FeedbackTouchable
                 onPress={handleConfirmRename}
                 disabled={renaming || !renameInputValue.trim()}
+                loading={renaming}
+                spinnerColor="#007AFF"
+                replaceWithSpinner={false}
               >
                 <Text style={[dynamicStyles.modalSaveButton, (renaming || !renameInputValue.trim()) && dynamicStyles.disabledButton]}>
                   {renaming ? 'Saving...' : 'Save'}
                 </Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
           </View>
         </TouchableOpacity>

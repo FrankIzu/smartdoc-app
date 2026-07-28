@@ -107,7 +107,9 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     if (enabled) {
       const config = await deviceSecurityService.initializeBiometrics();
       if (!config.enabled) {
-        throw new Error('Biometric (Face ID / Touch ID) is required to enable app lock. Set it up in your device Settings.');
+        throw new Error(
+          'A device lock is required to enable app lock. Set up Face ID, Touch ID/fingerprint, or a device PIN/passcode in your phone Settings.'
+        );
       }
     }
     setAppLockEnabledState(enabled);

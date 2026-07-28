@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ActionMenuModal, { type ActionMenuItem } from '../../../components/ActionMenuModal';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import FileNameText from '../../../components/FileNameText';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { useAuth } from '../../context/auth';
@@ -19,6 +21,7 @@ import { getFillableTemplate } from '../../../services/fillableApi';
 import { apiService } from '../../../services/api';
 import type { Envelope, EnvelopeDocument, FieldAssignmentInput, WizardField } from '../../../types/signature';
 import { makeFieldKey } from '../../../utils/fieldKeys';
+import { validateSignerFieldCoverage } from '../../../utils/signatureAssignmentCoverage';
 import { saveDraftStep } from '../../../services/signatureSessionCache';
 
 export default function AssignFieldsScreen() {
@@ -28,37 +31,66 @@ export default function AssignFieldsScreen() {
   const { user } = useAuth();
   const [envelope, setEnvelope] = useState<Envelope | null>(null);
   const [assignments, setAssignments] = useState<FieldAssignmentInput[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [assignMenuIndex, setAssignMenuIndex] = useState<number | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
-      if (!envelopeId) return;
-      const res = await getEnvelope(envelopeId);
-      setEnvelope(res.envelope);
-      const existing = res.envelope.field_assignments ?? [];
-      if (existing.length) {
-        setAssignments(
-          existing.map((a) => ({
-            recipient_id: a.recipient_id,
-            document_id: a.document_id ?? undefined,
-            field_key: a.field_key,
-            field_type: a.field_type,
-            required: a.required,
-          })),
-        );
-      } else {
-        const built = await buildDefaultAssignments(res.envelope);
-        setAssignments(built);
+      if (!envelopeId) {
+        setLoading(false);
+        setLoadError('Missing envelope');
+        return;
+      }
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const res = await getEnvelope(envelopeId);
+        if (cancelled) return;
+        setEnvelope(res.envelope);
+        const existing = res.envelope.field_assignments ?? [];
+        if (existing.length) {
+          setAssignments(
+            existing.map((a) => ({
+              recipient_id: a.recipient_id,
+              document_id: a.document_id ?? undefined,
+              field_key: a.field_key,
+              field_type: a.field_type,
+              required: a.required,
+            })),
+          );
+        } else {
+          const built = await buildDefaultAssignments(res.envelope);
+          if (cancelled) return;
+          setAssignments(built);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : 'Failed to load fields');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [envelopeId]);
 
   const signers = (envelope?.recipients ?? []).filter((r) => r.role === 'signer');
   const firstSignerId = signers[0]?.id;
+  const coverage = useMemo(
+    () => validateSignerFieldCoverage(signers, assignments),
+    [signers, assignments]
+  );
+  const fieldsNeedAssignment = assignments.length > 0;
+  const coverageOk = !fieldsNeedAssignment || coverage.ok;
+  const canProceed = !loading && !loadError && !!firstSignerId && coverageOk;
 
   const pickRecipient = (index: number) => {
-    if (!signers.length) return;
+    if (!signers.length || loading) return;
     setAssignMenuIndex(index);
   };
 
@@ -78,7 +110,7 @@ export default function AssignFieldsScreen() {
   }, [assignMenuIndex, colors.primary, signers]);
 
   const handleNext = async () => {
-    if (!envelopeId) return;
+    if (!envelopeId || loading || loadError || !firstSignerId || saving) return;
     if (!assignments.length) {
       Alert.alert(
         'No fields',
@@ -91,6 +123,11 @@ export default function AssignFieldsScreen() {
           },
         ],
       );
+      return;
+    }
+    const check = validateSignerFieldCoverage(signers, assignments);
+    if (!check.ok) {
+      Alert.alert('Assign fields', check.message);
       return;
     }
     setSaving(true);
@@ -114,43 +151,85 @@ export default function AssignFieldsScreen() {
         <Text style={[styles.title, { color: colors.text }]}>Assign fields</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={{ color: colors.textSecondary, marginBottom: 16 }}>
-          Tap a field to change its signer. {assignments.length} field(s) configured.
-        </Text>
-        {(envelope?.documents ?? []).map((doc) => {
-          const docAssignments = assignments.filter((a) => a.document_id === doc.id);
-          if (!docAssignments.length) return null;
-          return (
-            <View key={doc.id} style={[styles.docBlock, { borderColor: colors.border }]}>
-              <FileNameText name={doc.display_name} style={[styles.docName, { color: colors.text }]} />
-              {docAssignments.map((a) => {
-                const signer = signers.find((s) => s.id === a.recipient_id);
-                const globalIdx = assignments.indexOf(a);
-                return (
-                  <TouchableOpacity
-                    key={a.field_key}
-                    style={styles.fieldRow}
-                    onPress={() => pickRecipient(globalIdx)}
-                  >
-                    <Text style={{ color: colors.text, flex: 1 }} numberOfLines={1}>
-                      {a.field_key}
-                    </Text>
-                    <Text style={{ color: colors.primary, fontSize: 13 }}>
-                      {signer?.name || signer?.email || 'Unassigned'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          );
-        })}
-        <TouchableOpacity
-          style={[styles.nextBtn, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
-          disabled={saving || !firstSignerId}
-          onPress={() => void handleNext()}
+        {loading ? (
+          <View style={styles.loadingBlock}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={{ color: colors.textSecondary, marginTop: 12 }}>
+              Loading fields…
+            </Text>
+          </View>
+        ) : loadError ? (
+          <Text style={{ color: colors.error ?? '#EF4444', marginBottom: 16 }}>{loadError}</Text>
+        ) : (
+          <>
+            <Text style={{ color: colors.textSecondary, marginBottom: 16 }}>
+              Tap a field to change its signer. {assignments.length} field(s) configured.
+              {signers.length > 1
+                ? ' Each signer must have at least one field before you can continue.'
+                : ''}
+            </Text>
+            {fieldsNeedAssignment && !coverage.ok ? (
+              <View
+                style={[
+                  styles.coverageWarn,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.error ?? '#EF4444',
+                  },
+                ]}
+              >
+                <Text style={{ color: colors.error ?? '#EF4444', fontSize: 13, lineHeight: 18 }}>
+                  {coverage.message}
+                </Text>
+              </View>
+            ) : null}
+            {(envelope?.documents ?? []).map((doc) => {
+              const docAssignments = assignments.filter((a) => a.document_id === doc.id);
+              if (!docAssignments.length) return null;
+              return (
+                <View key={doc.id} style={[styles.docBlock, { borderColor: colors.border }]}>
+                  <FileNameText name={doc.display_name} style={[styles.docName, { color: colors.text }]} />
+                  {docAssignments.map((a) => {
+                    const signer = signers.find((s) => s.id === a.recipient_id);
+                    const globalIdx = assignments.indexOf(a);
+                    return (
+                      <TouchableOpacity
+                        key={a.field_key}
+                        style={styles.fieldRow}
+                        onPress={() => pickRecipient(globalIdx)}
+                      >
+                        <Text style={{ color: colors.text, flex: 1 }} numberOfLines={1}>
+                          {a.field_key}
+                        </Text>
+                        <Text style={{ color: colors.primary, fontSize: 13 }}>
+                          {signer?.name || signer?.email || 'Unassigned'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              );
+            })}
+          </>
+        )}
+        <FeedbackTouchable
+          style={[
+            styles.nextBtn,
+            {
+              backgroundColor: colors.primary,
+              opacity: canProceed && !saving ? 1 : 0.5,
+            },
+          ]}
+          disabled={!canProceed || saving}
+          loading={saving || loading}
+          onPress={handleNext}
+          spinnerColor="#fff"
+          replaceWithSpinner={false}
         >
-          <Text style={styles.nextText}>{saving ? 'Saving…' : 'Next: Review'}</Text>
-        </TouchableOpacity>
+          <Text style={styles.nextText}>
+            {loading ? 'Loading…' : saving ? 'Saving…' : 'Next: Review'}
+          </Text>
+        </FeedbackTouchable>
       </ScrollView>
       <ActionMenuModal
         visible={assignMenuIndex != null}
@@ -204,8 +283,19 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
   title: { fontSize: 18, fontWeight: '600' },
   content: { padding: 14, paddingBottom: 40 },
+  loadingBlock: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
   docBlock: { padding: 12, borderWidth: 1, borderRadius: 8, marginBottom: 8 },
   docName: { fontWeight: '600', marginBottom: 8, flexShrink: 1 },
+  coverageWarn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
   fieldRow: {
     flexDirection: 'row',
     alignItems: 'center',

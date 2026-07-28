@@ -23,6 +23,8 @@ export interface SermonViewerModalProps {
   pdfUri?: string | null;
   /** Preferred starting tab when sermon text is available. */
   defaultTab?: 'text' | 'pdf';
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 }
 
 /**
@@ -51,6 +53,7 @@ export default function SermonViewerModal({
   onClose,
   pdfUri = null,
   defaultTab = 'text',
+  expandNonce = 0,
 }: SermonViewerModalProps) {
   const { height: windowHeight } = useWindowDimensions();
   const sheetHeight = Math.round(windowHeight * 0.88);
@@ -181,6 +184,7 @@ export default function SermonViewerModal({
     <MinimizableBottomSheet
       visible={visible}
       onClose={onClose}
+      expandNonce={expandNonce}
       sheetHeight={sheetHeight}
       title={headerTitle}
     >

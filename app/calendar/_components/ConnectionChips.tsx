@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { GoogleLogo } from '../../../components/GoogleLogo';
 import { MicrosoftLogo } from '../../../components/MicrosoftLogo';
 import type { CalendarConnection } from '../../../services/calendarApi';
@@ -10,9 +11,11 @@ import { calendarConnectionProvider, connectionDisplayLabel, isActiveCalendarCon
 type Props = {
   connections: CalendarConnection[];
   canConnectMore: boolean;
-  onSetDefault: (connectionId: number) => void;
+  onSetDefault: (connectionId: number) => void | Promise<void>;
   onDisconnect: (connection: CalendarConnection) => void;
   onAddAnother: () => void;
+  /** Controlled busy while confirm→network disconnect runs. */
+  busyConnectionId?: number | null;
 };
 
 export function ConnectionChips({
@@ -21,6 +24,7 @@ export function ConnectionChips({
   onSetDefault,
   onDisconnect,
   onAddAnother,
+  busyConnectionId = null,
 }: Props) {
   const colors = useThemeColors();
   const styles = useMemo(
@@ -65,17 +69,19 @@ export function ConnectionChips({
           const label = connectionDisplayLabel(connection);
           const isDefault = !!connection.is_default;
           const isActive = isActiveCalendarConnection(connection);
+          const id = Number(connection.id);
+          const rowBusy = busyConnectionId === id;
           return (
             <View
               key={String(connection.id)}
               style={[styles.chip, isDefault ? styles.chipDefault : styles.chipNormal]}
             >
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}
-                onPress={() => {
-                  if (!isDefault && isActive) onSetDefault(connection.id);
-                }}
-                disabled={isDefault || !isActive}
+                onPress={() => onSetDefault(connection.id)}
+                disabled={isDefault || !isActive || busyConnectionId != null}
+                spinnerColor="#007AFF"
+                replaceWithSpinner={false}
                 accessibilityRole="button"
                 accessibilityLabel={
                   isDefault ? `${label}, default calendar` : `Set ${label} as default`
@@ -98,15 +104,18 @@ export function ConnectionChips({
                   <Ionicons name="checkmark-circle" size={14} color="#007AFF" style={{ marginLeft: 4 }} />
                 ) : null}
                 {!isActive ? <Text style={styles.paused}>· paused</Text> : null}
-              </TouchableOpacity>
-              <TouchableOpacity
+              </FeedbackTouchable>
+              <FeedbackTouchable
                 style={styles.disconnect}
                 onPress={() => onDisconnect(connection)}
+                disabled={busyConnectionId != null}
+                loading={rowBusy}
+                spinnerColor={colors.textSecondary}
                 accessibilityRole="button"
                 accessibilityLabel={`Disconnect ${label}`}
               >
                 <Ionicons name="close" size={14} color={colors.textSecondary} />
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
           );
         })}

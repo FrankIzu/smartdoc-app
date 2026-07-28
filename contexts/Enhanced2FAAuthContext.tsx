@@ -278,6 +278,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
 
         await deviceSecurityService.setLastLoginData({
           timestamp: new Date().toISOString(),
+          authMethod: 'password',
         });
 
         // Store authentication token and user data
@@ -421,6 +422,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
       if (result.success) {
         await deviceSecurityService.setLastLoginData({
           timestamp: new Date().toISOString(),
+          authMethod: 'biometric',
         });
 
         // Store authentication token and user data
@@ -643,6 +645,7 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         await deviceSecurityService.resetFailedAttempts();
         await deviceSecurityService.setLastLoginData({
           timestamp: new Date().toISOString(),
+          authMethod: 'password',
         });
 
         // Store authentication token and user data

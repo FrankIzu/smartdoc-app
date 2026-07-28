@@ -19,10 +19,10 @@ interface Props {
   tab?: EnvelopeTab;
   onPress: () => void;
   onSign?: () => void;
-  onViewCompletedPdf?: () => void;
-  onShare?: () => void;
+  onViewCompletedPdf?: () => void | Promise<void>;
+  onShare?: () => void | Promise<void>;
   onViewSubmissions?: () => void;
-  onViewAuditTrail?: () => void;
+  onViewAuditTrail?: () => void | Promise<void>;
 }
 
 function Badge({ badge }: { badge: { label: string; backgroundColor: string; color: string } }) {

@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
@@ -12,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { intakesListScreenKey } from '../../services/userScopedCache';
@@ -25,7 +27,10 @@ import {
 } from '../../types/intake';
 import { useAuth } from '../context/auth';
 
+/** In-memory TTL — soft-refresh still runs on focus. */
 const INTAKES_LIST_CACHE_MS = 30_000;
+/** Disk cache keeps empty/list results for instant paint across cold starts. */
+const INTAKES_DISK_CACHE_MS = 24 * 60 * 60_000;
 const INTAKES_PAGE_SIZE = 20;
 
 type ListTab = 'active' | 'archived' | 'templates';
@@ -34,6 +39,7 @@ type PaginatedIntakesCache = {
   items: Intake[];
   hasMore: boolean;
   page: number;
+  savedAt?: number;
 };
 
 const STATUS_COLORS: Record<IntakeStatus, { bg: string; text: string }> = {
@@ -49,6 +55,39 @@ const DUE_BADGE_COLORS: Record<string, { bg: string; text: string }> = {
   due_tomorrow: { bg: '#FFFBEB', text: '#B45309' },
   overdue: { bg: '#FEF2F2', text: '#B91C1C' },
 };
+
+function diskCacheKey(cacheKey: string | null): string | null {
+  return cacheKey ? `disk:${cacheKey}` : null;
+}
+
+async function readDiskIntakesCache(cacheKey: string | null): Promise<PaginatedIntakesCache | null> {
+  const key = diskCacheKey(cacheKey);
+  if (!key) return null;
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PaginatedIntakesCache;
+    if (!parsed || !Array.isArray(parsed.items)) return null;
+    const savedAt = parsed.savedAt ?? 0;
+    if (savedAt && Date.now() - savedAt > INTAKES_DISK_CACHE_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeDiskIntakesCache(cacheKey: string | null, data: PaginatedIntakesCache) {
+  const key = diskCacheKey(cacheKey);
+  if (!key) return;
+  try {
+    await AsyncStorage.setItem(
+      key,
+      JSON.stringify({ ...data, savedAt: Date.now() }),
+    );
+  } catch {
+    /* non-fatal */
+  }
+}
 
 function timeAgo(dateString?: string | null): string | null {
   if (!dateString) return null;
@@ -70,6 +109,8 @@ export default function IntakeListScreen() {
   const { user } = useAuth();
   const colors = useThemeColors();
   const [intakes, setIntakes] = useState<Intake[]>([]);
+  /** True after first successful hydrate or network response (including empty). */
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -85,8 +126,20 @@ export default function IntakeListScreen() {
   const loadingMoreRef = useRef(false);
   const pageRef = useRef(1);
   const onEndReachedCalledDuringMomentumRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+  const inFlightRef = useRef(false);
 
   const listCacheKey = intakesListScreenKey(user?.id, showArchived);
+
+  const applyCachePayload = useCallback((cached: PaginatedIntakesCache) => {
+    setIntakes(cached.items);
+    setHasMore(cached.hasMore);
+    hasMoreRef.current = cached.hasMore;
+    pageRef.current = cached.page;
+    hasLoadedRef.current = true;
+    setHasLoaded(true);
+    setLoading(false);
+  }, []);
 
   const loadIntakes = useCallback(async (archived: boolean, forceRefresh = false, append = false) => {
     if (!user) {
@@ -96,26 +149,36 @@ export default function IntakeListScreen() {
     if (append && (!hasMoreRef.current || loadingMoreRef.current)) return;
 
     const cacheKey = intakesListScreenKey(user.id, archived);
+
+    // Instant paint from memory (fresh) or disk (stale-while-revalidate).
     if (!forceRefresh && !append && cacheKey) {
-      const cached = screenCache.get<PaginatedIntakesCache>(cacheKey, INTAKES_LIST_CACHE_MS);
-      if (cached) {
-        setIntakes(cached.items);
-        setHasMore(cached.hasMore);
-        hasMoreRef.current = cached.hasMore;
-        pageRef.current = cached.page;
-        setLoading(false);
+      const mem = screenCache.get<PaginatedIntakesCache>(cacheKey, INTAKES_LIST_CACHE_MS);
+      if (mem) {
+        applyCachePayload(mem);
         setRefreshing(false);
         return;
       }
+      const disk = await readDiskIntakesCache(cacheKey);
+      if (disk) {
+        applyCachePayload(disk);
+        screenCache.set(cacheKey, disk);
+        // Continue to soft-revalidate below without a blocking spinner.
+      }
     }
 
-    const fetchPage = append ? pageRef.current + 1 : 1;
     if (append) {
       loadingMoreRef.current = true;
       setLoadingMore(true);
-    } else if (!forceRefresh) {
+    } else if (forceRefresh) {
+      // pull-to-refresh uses `refreshing`
+    } else if (!hasLoadedRef.current) {
       setLoading(true);
     }
+
+    if (!append && inFlightRef.current) return;
+    if (!append) inFlightRef.current = true;
+
+    const fetchPage = append ? pageRef.current + 1 : 1;
 
     try {
       const response = await apiService.getIntakes(
@@ -124,7 +187,7 @@ export default function IntakeListScreen() {
         INTAKES_PAGE_SIZE,
       );
       if (response.success) {
-        const rows = response.intakes || [];
+        const rows = (response.intakes || []) as Intake[];
         const pagination = response.pagination;
         const hasMorePage =
           pagination?.has_more === true ||
@@ -134,25 +197,36 @@ export default function IntakeListScreen() {
           const merged = append ? [...prev, ...rows] : rows;
           pageRef.current = fetchPage;
           if (!append && cacheKey) {
-            screenCache.set(cacheKey, { items: merged, hasMore: hasMorePage, page: fetchPage });
+            const payload: PaginatedIntakesCache = {
+              items: merged,
+              hasMore: hasMorePage,
+              page: fetchPage,
+            };
+            screenCache.set(cacheKey, payload);
+            void writeDiskIntakesCache(cacheKey, payload);
           }
           return merged;
         });
         setHasMore(hasMorePage);
         hasMoreRef.current = hasMorePage;
-      } else if (!append) {
+        hasLoadedRef.current = true;
+        setHasLoaded(true);
+      } else if (!append && !hasLoadedRef.current) {
         Alert.alert('Error', response.message || 'Failed to load Intakes');
       }
     } catch (error: any) {
       console.error('Load intakes error:', error);
-      if (!append) Alert.alert('Error', error.message || 'Failed to load Intakes');
+      if (!append && !hasLoadedRef.current) {
+        Alert.alert('Error', error.message || 'Failed to load Intakes');
+      }
     } finally {
+      if (!append) inFlightRef.current = false;
       setLoading(false);
       setRefreshing(false);
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [user]);
+  }, [user, applyCachePayload]);
 
   const loadTemplates = useCallback(async () => {
     if (!user) return;
@@ -179,14 +253,17 @@ export default function IntakeListScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!user) return;
+      if (!user) {
+        setLoading(false);
+        return;
+      }
       const now = Date.now();
       if (now - lastLoadTimeRef.current > RELOAD_DEBOUNCE_MS) {
         lastLoadTimeRef.current = now;
         if (activeTab === 'templates') {
           loadTemplates();
         } else {
-          loadIntakes(showArchived);
+          void loadIntakes(showArchived);
         }
       }
     }, [user, activeTab, showArchived, loadIntakes, loadTemplates])
@@ -202,7 +279,7 @@ export default function IntakeListScreen() {
     pageRef.current = 1;
     hasMoreRef.current = true;
     if (listCacheKey) screenCache.invalidate(listCacheKey);
-    loadIntakes(showArchived, true);
+    void loadIntakes(showArchived, true);
   };
 
   const handleTabChange = (tab: ListTab) => {
@@ -211,12 +288,26 @@ export default function IntakeListScreen() {
       loadTemplates();
       return;
     }
+    const archived = tab === 'archived';
     pageRef.current = 1;
     hasMoreRef.current = true;
     setHasMore(true);
-    loadIntakes(tab === 'archived');
-  };
 
+    const cacheKey = user?.id != null ? intakesListScreenKey(user.id, archived) : null;
+    const mem = cacheKey
+      ? screenCache.get<PaginatedIntakesCache>(cacheKey, INTAKES_LIST_CACHE_MS)
+      : null;
+    if (mem) {
+      applyCachePayload(mem);
+      return;
+    }
+
+    hasLoadedRef.current = false;
+    setHasLoaded(false);
+    setIntakes([]);
+    setLoading(true);
+    void loadIntakes(archived);
+  };
   const handleDeleteTemplate = (template: IntakeTemplate) => {
     Alert.alert(
       'Delete template',
@@ -530,18 +621,20 @@ export default function IntakeListScreen() {
           <Ionicons name="pencil" size={14} color={colors.text} />
           <Text style={dynamicStyles.templateActionText}>Edit</Text>
         </TouchableOpacity>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={dynamicStyles.templateActionBtn}
           onPress={() => handleDeleteTemplate(item)}
           disabled={deletingTemplateId === item.id}
+          loading={deletingTemplateId === item.id}
+          spinnerColor="#FF3B30"
         >
           <Ionicons name="trash-outline" size={14} color="#FF3B30" />
-        </TouchableOpacity>
+        </FeedbackTouchable>
       </View>
     </View>
   );
 
-  if (loading && activeTab !== 'templates') {
+  if (loading && !hasLoaded && activeTab !== 'templates') {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
@@ -549,11 +642,18 @@ export default function IntakeListScreen() {
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={dynamicStyles.title}>Intake</Text>
-          <View style={dynamicStyles.placeholder} />
+          <TouchableOpacity onPress={() => router.push('/intake/create')}>
+            <Ionicons name="add" size={24} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
+        <View style={dynamicStyles.tabsRow}>
+          <View style={[dynamicStyles.tabButton, dynamicStyles.tabButtonActive]}>
+            <Text style={[dynamicStyles.tabButtonText, dynamicStyles.tabButtonTextActive]}>Active</Text>
+          </View>
         </View>
         <View style={dynamicStyles.centerContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={dynamicStyles.loadingText}>Loading Intakes...</Text>
+          <Text style={[dynamicStyles.loadingText, { marginTop: 12 }]}>Loading Intakes...</Text>
         </View>
       </SafeAreaView>
     );
@@ -639,6 +739,11 @@ export default function IntakeListScreen() {
             showsVerticalScrollIndicator={false}
           />
         )
+      ) : !hasLoaded && loading ? (
+        <View style={dynamicStyles.centerContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={[dynamicStyles.loadingText, { marginTop: 12 }]}>Loading Intakes...</Text>
+        </View>
       ) : intakes.length === 0 ? (
         <View style={dynamicStyles.emptyContainer}>
           <Ionicons name="clipboard-outline" size={64} color={colors.textLight} />

@@ -19,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import LinkifiedMultilineInput from '../../components/LinkifiedMultilineInput';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
@@ -65,10 +66,25 @@ const DURATION_PRESETS: { minutes: number; label: string }[] = [
   { minutes: 480, label: '8 hours' },
 ];
 
+function paramString(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+/** Accept YYYY-MM-DD from calendar selection; otherwise today. */
+function initialEventDateFromParam(raw?: string): string {
+  if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [y, m, d] = raw.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    if (!Number.isNaN(dt.getTime()) && toLocalDateString(dt) === raw) return raw;
+  }
+  return toLocalDateString(new Date());
+}
+
 export default function CalendarCreateScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const params = useLocalSearchParams<{ viewUserId?: string }>();
+  const params = useLocalSearchParams<{ viewUserId?: string; date?: string }>();
   const { profile, refresh } = useCalendarProfile();
   const networkState = useNetworkState();
   const isAdmin = calendarIsCompanyAdmin(profile);
@@ -95,7 +111,7 @@ export default function CalendarCreateScreen() {
   const [categoryModal, setCategoryModal] = useState(false);
 
   const tz = useMemo(() => getDeviceIanaTimezone(), []);
-  const [eventDate, setEventDate] = useState(() => toLocalDateString(new Date()));
+  const [eventDate, setEventDate] = useState(() => initialEventDateFromParam(paramString(params.date)));
   const [eventTime, setEventTime] = useState(() => {
     const d = new Date();
     d.setHours(d.getHours() + 1, 0, 0, 0);
@@ -732,9 +748,15 @@ export default function CalendarCreateScreen() {
           ) : null}
         </View>
 
-        <TouchableOpacity style={[styles.btn, submitting && { opacity: 0.6 }]} disabled={submitting} onPress={submit}>
-          <Text style={styles.btnText}>{submitting ? 'Saving…' : 'Create event'}</Text>
-        </TouchableOpacity>
+        <FeedbackTouchable
+          style={[styles.btn, submitting && { opacity: 0.6 }]}
+          disabled={submitting}
+          loading={submitting}
+          onPress={submit}
+          spinnerColor="#fff"
+        >
+          <Text style={styles.btnText}>Create event</Text>
+        </FeedbackTouchable>
       </ScrollView>
       </KeyboardAvoidingView>
 
@@ -895,7 +917,7 @@ export default function CalendarCreateScreen() {
         </ScrollView>
       </MinimizableBottomSheet>
 
-      <Modal visible={categoryModal} animationType="slide" transparent>
+      <Modal visible={categoryModal} animationType="fade" transparent statusBarTranslucent>
         <View style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
           <Pressable
             style={[StyleSheet.absoluteFillObject, { backgroundColor: '#0008' }]}

@@ -127,6 +127,17 @@ function applyGrabdocsHmsRoomKitJoinDefaults() {
 /** Minimum bottom clearance on Android — edge-to-edge often reports 0 for the 3-button nav bar. */
 const ANDROID_NAV_INSET = 48;
 
+const DEFAULT_MEETING_EXIT_PATH = '/quick-reach/meeting-call';
+
+/** Where to go after leave / prejoin cancel / back. Calendar joins pass returnTo=calendar. */
+function resolveMeetingExitPath(returnToParam: unknown): string {
+  const raw = returnToParam == null ? '' : Array.isArray(returnToParam) ? String(returnToParam[0]) : String(returnToParam);
+  const v = raw.trim().toLowerCase();
+  if (v === 'calendar' || v === '/calendar') return '/calendar';
+  if (v.startsWith('/') && !v.includes('://')) return v;
+  return DEFAULT_MEETING_EXIT_PATH;
+}
+
 function PrejoinBackButton({ onPress, topInset }: { onPress: () => void; topInset: number }) {
   return (
     <View style={[styles.prejoinBackContainer, { top: topInset + 8 }]} pointerEvents="box-none">
@@ -147,13 +158,14 @@ export default function HMSMeetingInterfaceScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const params = useLocalSearchParams();
-  const { meetingId, title, userName, passcode, passcode_token: passcodeToken, force_join: forceJoinParam } = params;
+  const { meetingId, title, userName, passcode, passcode_token: passcodeToken, force_join: forceJoinParam, returnTo: returnToParam } = params;
   const forceJoinFromRoute =
     (() => {
       const f = forceJoinParam;
       const v = f == null ? '' : Array.isArray(f) ? String(f[0]) : String(f);
       return v === '1' || v.toLowerCase() === 'true';
     })();
+  const meetingExitPath = resolveMeetingExitPath(returnToParam);
   const meetingIdForDisplay =
     meetingId == null ? undefined : Array.isArray(meetingId) ? meetingId[0] : meetingId;
   const { user } = useAuth();
@@ -337,13 +349,18 @@ export default function HMSMeetingInterfaceScreen() {
     };
   }, [joinConfig, presenceConfirmed]);
 
-  // Room-kit HMSSDK.build reads `global.joinConfig` before mount; portrait lock aligns camera preview with phone use while `app.config` orientation is unlocked.
+  // Room-kit HMSSDK.build reads `global.joinConfig` before mount; portrait lock aligns camera preview.
+  // Cap wait so a slow orientation API cannot delay HMS/camera past ~400ms.
   useLayoutEffect(() => {
     if (Platform.OS === 'web') return;
     applyGrabdocsHmsRoomKitJoinDefaults();
 
     let cancelled = false;
     setOrientationReadyForHms(false);
+
+    const failSafe = setTimeout(() => {
+      if (!cancelled) setOrientationReadyForHms(true);
+    }, 400);
 
     const run = async () => {
       try {
@@ -368,66 +385,52 @@ export default function HMSMeetingInterfaceScreen() {
 
     return () => {
       cancelled = true;
+      clearTimeout(failSafe);
       ScreenOrientation.unlockAsync().catch(() => {});
     };
   }, [meetingId]);
 
+  // Permissions + join token in parallel — do not wait for camera dialogs before fetching the HMS token.
   useEffect(() => {
-    // Check permissions first, then initialize
-    const init = async () => {
+    let cancelled = false;
+
+    const requestPerms = async () => {
+      if (Platform.OS === 'web') {
+        if (!cancelled) setPermissionsGranted(true);
+        return;
+      }
       try {
-        // Check permissions and get result directly
-        let permissionsOk = false;
-        if (Platform.OS === 'web') {
-          permissionsOk = true;
-          setPermissionsGranted(true);
-        } else {
-          // Check permissions directly
-          try {
-            const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
-            let audioStatus: { status: string } = { status: 'granted' };
-            try {
-              const audioPermission = await Audio.requestPermissionsAsync();
-              audioStatus = audioPermission;
-            } catch (audioError) {
-              console.warn('⚠️ [HMS] Could not request audio permissions:', audioError);
-            }
-            
-            permissionsOk = cameraStatus.status === 'granted' && audioStatus.status === 'granted';
-            setPermissionsGranted(permissionsOk);
-            
-          } catch (permError) {
-            console.error('📱 [HMS] Error checking permissions:', permError);
-            permissionsOk = false;
-            setPermissionsGranted(false);
-          }
-        }
-        
-        // Initialize based on permissions
-        if (permissionsOk) {
-          // Small delay to ensure state is set
-          setTimeout(() => {
-    initializePrebuiltInterface();
-          }, 100);
-        } else {
-          console.warn('⚠️ [HMS] Permissions denied, showing error');
+        const [cameraStatus, audioStatus] = await Promise.all([
+          ImagePicker.requestCameraPermissionsAsync(),
+          Audio.requestPermissionsAsync().catch(() => ({ status: 'granted' as const })),
+        ]);
+        const ok = cameraStatus.status === 'granted' && audioStatus.status === 'granted';
+        if (cancelled) return;
+        setPermissionsGranted(ok);
+        if (!ok) {
+          setError(
+            'Camera and microphone permissions are required. Please enable them in Settings.',
+          );
           setIsLoading(false);
-          setError('Camera and microphone permissions are required. Please enable them in Settings.');
+        } else {
+          setError((prev) =>
+            prev && /permissions are required/i.test(prev) ? null : prev,
+          );
         }
-      } catch (error: any) {
-        console.error('❌ [HMS] Initialization sequence error:', error);
+      } catch (permError) {
+        console.error('📱 [HMS] Error checking permissions:', permError);
+        if (cancelled) return;
+        setPermissionsGranted(false);
+        setError(
+          'Camera and microphone permissions are required. Please enable them in Settings.',
+        );
         setIsLoading(false);
-        setError('Failed to initialize meeting. Please try again.');
-        errorLogger.logError(error, {
-          severity: 'error',
-          screenName: 'HMSMeetingInterface',
-          userAction: 'Initialization Sequence',
-          errorType: 'HMSInitSequenceError',
-          userId: user?.id,
-        });
       }
     };
-    init();
+
+    void requestPerms();
+    void initializePrebuiltInterface();
+
     // Intentionally run once on mount; initializePrebuiltInterface reads latest params from closure on first paint
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot mount init
   }, []);
@@ -436,18 +439,12 @@ export default function HMSMeetingInterfaceScreen() {
   const checkPermissions = async () => {
     try {
       if (Platform.OS !== 'web') {
-        const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
-        let audioStatus: { status: string } = { status: 'granted' };
-        
-        // Request audio permissions using expo-av
-        try {
-          const audioPermission = await Audio.requestPermissionsAsync();
-          audioStatus = audioPermission;
-        } catch (audioError) {
-          console.warn('⚠️ [HMS] Could not request audio permissions:', audioError);
-          // Continue with camera permission check
-        }
-        
+        const [cameraStatus, audioPermission] = await Promise.all([
+          ImagePicker.requestCameraPermissionsAsync(),
+          Audio.requestPermissionsAsync().catch(() => ({ status: 'granted' as const })),
+        ]);
+        const audioStatus = audioPermission;
+
         const granted = cameraStatus.status === 'granted' && audioStatus.status === 'granted';
         setPermissionsGranted(granted);
         
@@ -622,14 +619,15 @@ export default function HMSMeetingInterfaceScreen() {
     }
   }, [meetingId, title, userName]);
 
-  // Back / swipe: go to meeting list (Reach). Using replace avoids popping to (tabs)/Home first and keeps path correct (avoids grabdocs:/// unmatched route when tapping active meeting later).
+  // Back / swipe: return to origin (Reach list by default; Calendar when joined from calendar).
+  // Using replace avoids popping to (tabs)/Home first and keeps path correct (avoids grabdocs:/// unmatched route when tapping active meeting later).
   const goBackToApp = useCallback(() => {
     isNavigatingAwayRef.current = true;
     if (presenceConfirmed) {
       isMinimizingAwayRef.current = true;
     }
-    router.replace('/quick-reach/meeting-call' as any);
-  }, [router, presenceConfirmed]);
+    router.replace(meetingExitPath as any);
+  }, [router, presenceConfirmed, meetingExitPath]);
 
   const showPrejoinBack = !presenceConfirmed && !!meetingId;
 
@@ -1044,8 +1042,8 @@ export default function HMSMeetingInterfaceScreen() {
               console.error('⚠️ [LEAVE] Error calling leave endpoint:', error);
               console.error('⚠️ [LEAVE] Continuing with navigation despite error');
             }
-            // Navigate to meeting list (same as swipe-back) so stack/path stay correct
-            router.replace('/quick-reach/meeting-call' as any);
+            // Navigate back to origin (Reach list, or Calendar when joined from calendar)
+            router.replace(meetingExitPath as any);
           }
         }
       ]
@@ -1115,6 +1113,54 @@ export default function HMSMeetingInterfaceScreen() {
         </SafeAreaView>
       );
     }
+
+    // Token may arrive before the user answers the permission prompts — wait (do not mount HMS yet).
+    if (Platform.OS !== 'web' && permissionsGranted !== true) {
+      if (permissionsGranted === false) {
+        return (
+          <SafeAreaView style={styles.container}>
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorTitle}>Permissions Required</Text>
+              <Text style={styles.errorMessage}>
+                Camera and microphone permissions are required to join the meeting.
+              </Text>
+              <Text style={[styles.errorMessage, { marginTop: 16, fontSize: 14, color: '#999' }]}>
+                Please enable camera and microphone permissions in your device settings and try again.
+              </Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={async () => {
+                  await checkPermissions();
+                }}
+              >
+                <Text style={styles.retryButtonText}>Request Permissions</Text>
+              </TouchableOpacity>
+              {Platform.OS === 'ios' && (
+                <TouchableOpacity
+                  style={[styles.retryButton, { marginTop: 12, backgroundColor: '#007AFF' }]}
+                  onPress={async () => {
+                    await Linking.openSettings();
+                  }}
+                >
+                  <Text style={styles.retryButtonText}>Open Settings</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
+                <Text style={styles.backButtonText}>Go Back</Text>
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        );
+      }
+      return (
+        <SafeAreaView style={styles.container}>
+          <PrejoinBackButton onPress={goBackToApp} topInset={insets.top} />
+          <View style={styles.loadingContainer}>
+            <Text style={styles.loadingText}>Waiting for camera permission...</Text>
+          </View>
+        </SafeAreaView>
+      );
+    }
     
     // Validate all required props
     const validRoomCode = roomCode && typeof roomCode === 'string' && roomCode.trim().length > 0;
@@ -1167,46 +1213,6 @@ export default function HMSMeetingInterfaceScreen() {
           </View>
         </SafeAreaView>
       );
-    }
-    
-    if (Platform.OS !== 'web' && permissionsGranted === false) {
-      return (
-      <SafeAreaView style={styles.container}>
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorTitle}>Permissions Required</Text>
-            <Text style={styles.errorMessage}>
-              Camera and microphone permissions are required to join the meeting.
-            </Text>
-            <Text style={[styles.errorMessage, { marginTop: 16, fontSize: 14, color: '#999' }]}>
-              Please enable camera and microphone permissions in your device settings and try again.
-            </Text>
-            <TouchableOpacity 
-              style={styles.retryButton} 
-              onPress={async () => {
-                await checkPermissions();
-                if (permissionsGranted) {
-                  initializePrebuiltInterface();
-                }
-              }}
-            >
-              <Text style={styles.retryButtonText}>Request Permissions</Text>
-            </TouchableOpacity>
-            {Platform.OS === 'ios' && (
-              <TouchableOpacity 
-                style={[styles.retryButton, { marginTop: 12, backgroundColor: '#007AFF' }]} 
-                onPress={async () => {
-                  await Linking.openSettings();
-                }}
-              >
-                <Text style={styles.retryButtonText}>Open Settings</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={styles.backButton} onPress={goToAppHome}>
-              <Text style={styles.backButtonText}>Go Back</Text>
-            </TouchableOpacity>
-          </View>
-      </SafeAreaView>
-    );
     }
 
     if (Platform.OS !== 'web') applyGrabdocsHmsRoomKitJoinDefaults();
@@ -1364,7 +1370,7 @@ export default function HMSMeetingInterfaceScreen() {
                         } catch {
                           /* ignore */
                         }
-                        router.replace('/quick-reach/meeting-call' as any);
+                        router.replace(meetingExitPath as any);
                       }}
                     >
                       <Text style={styles.networkLeaveButtonText}>Leave</Text>
@@ -1498,7 +1504,7 @@ export default function HMSMeetingInterfaceScreen() {
                         if (!presenceConfirmed) {
                           if (!isNavigatingAwayRef.current) {
                             isNavigatingAwayRef.current = true;
-                            router.replace('/quick-reach/meeting-call' as any);
+                            router.replace(meetingExitPath as any);
                           }
                           return;
                         }
@@ -1515,7 +1521,7 @@ export default function HMSMeetingInterfaceScreen() {
                         }
 
                         isNavigatingAwayRef.current = true;
-                        router.replace('/quick-reach/meeting-call' as any);
+                        router.replace(meetingExitPath as any);
                       }}
                       style={hmsProps.style}
                       // Note: React Native HMSPrebuilt does NOT support onJoin callback

@@ -5,12 +5,17 @@ import { AppState, Platform, type AppStateStatus } from 'react-native';
 import { fetch as streamingFetch } from 'react-native-fetch-api';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
+import {
+    getUserPreferences,
+    validateFileAgainstUploadSettings,
+} from '../utils/userPreferences';
+import { assertUploadAllowedForCurrentNetwork } from '../utils/wifiOnlyUpload';
 import { createSmoothProgressEmitter } from './uploadProgressSmooth';
 import {
-  isAppBackgrounded,
-  type UploadRetryCallbacks,
-  waitForAppActive,
-  withUploadForegroundRetry,
+    isAppBackgrounded,
+    waitForAppActive,
+    withUploadForegroundRetry,
+    type UploadRetryCallbacks,
 } from './uploadResilience';
 
 // API response structure matching backend
@@ -985,6 +990,27 @@ class ApiService {
    * Uses native fetch() for FormData on React Native (axios XMLHttpRequest often fails with FormData)
    */
   async uploadFile(file: FormData, onProgress?: (progress: number) => void): Promise<ApiResponse> {
+    await assertUploadAllowedForCurrentNetwork();
+    // Best-effort size/type checks when FormData exposes a file entry (RN multipart).
+    try {
+      const prefs = await getUserPreferences();
+      const maybeFile = (file as any)?._parts?.find?.((p: any) => p?.[0] === 'file')?.[1];
+      if (maybeFile && typeof maybeFile === 'object') {
+        validateFileAgainstUploadSettings(
+          {
+            name: maybeFile.name || 'upload',
+            size: maybeFile.size,
+            type: maybeFile.type,
+          },
+          prefs,
+        );
+      }
+    } catch (e) {
+      if (e instanceof Error && (e.message.includes('File too large') || e.message.includes('not allowed'))) {
+        throw e;
+      }
+    }
+
     const { Platform } = require('react-native');
     const isReactNative = Platform.OS === 'ios' || Platform.OS === 'android';
 
@@ -1814,6 +1840,8 @@ class ApiService {
     maxParallelUploads: number = 3 // Number of chunks to upload simultaneously
   ): Promise<ApiResponse> {
     try {
+      await assertUploadAllowedForCurrentNetwork();
+
       // Read file to get size
       const response = await fetch(fileUri);
       const blob = await response.blob();
@@ -2878,7 +2906,8 @@ class ApiService {
    */
   async startChatJob(
     message: string,
-    filters?: any
+    filters?: any,
+    signal?: AbortSignal
   ): Promise<ApiResponse> {
     try {
       console.log('💬 [POLLING] Starting chat job');
@@ -2990,12 +3019,23 @@ class ApiService {
       // Use longer timeout for starting chat job (60s) to handle slow network conditions
       // The endpoint should return quickly, but network issues can cause delays
       const response = await this.client.post(MOBILE_ENDPOINTS.CHAT_SMART_START, payload, {
-        timeout: 60000 // 60 seconds timeout
+        timeout: 60000, // 60 seconds timeout
+        signal,
       });
       console.log('✅ [POLLING] Chat job started:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('❌ [POLLING] Failed to start chat job:', error);
+      // User cancelled — don't wrap as a start failure
+      if (
+        signal?.aborted ||
+        error?.code === 'ERR_CANCELED' ||
+        error?.name === 'CanceledError' ||
+        error?.name === 'AbortError' ||
+        axios.isCancel?.(error)
+      ) {
+        throw error;
+      }
       // Preserve 409 (e.g. additional_limit) for callers that remove placeholder rows
       if (error.response?.status === 409) {
         throw error;
@@ -3021,14 +3061,16 @@ class ApiService {
 
   async pollChatChunk(
     jobId: string,
-    cursor: number = 0
+    cursor: number = 0,
+    signal?: AbortSignal
   ): Promise<ApiResponse> {
     try {
       // Backend long-polls: holds the GET until data is ready. First chunk can take 10–60+ seconds.
       // Use a long timeout so we don't stop fake streaming with a timeout before preview arrives.
       const response = await this.client.get(MOBILE_ENDPOINTS.CHAT_SMART_CHUNK, {
         params: { job_id: jobId, cursor },
-        timeout: 90000 // 90 seconds – backend holds connection until first chunk is ready
+        timeout: 90000, // 90 seconds – backend holds connection until first chunk is ready
+        signal,
       });
       return response.data;
     } catch (error: any) {
@@ -3064,15 +3106,40 @@ class ApiService {
     // Declare in outer scope so catch block can cancel the job if start succeeded but later code threw
     let currentJobId: string | null = null;
 
+    // Drop all UI updates after the user cancels (matches web fetch+signal behavior).
+    const userOnChunk = onChunk;
+    onChunk = userOnChunk
+      ? (type: string, data: any) => {
+          if (signal?.aborted) return;
+          userOnChunk(type, data);
+        }
+      : undefined;
+
+    const isAbortError = (error: any): boolean =>
+      !!signal?.aborted ||
+      error?.code === 'ERR_CANCELED' ||
+      error?.name === 'CanceledError' ||
+      error?.name === 'AbortError' ||
+      !!axios.isCancel?.(error);
+
     try {
       console.log('💬 [POLLING] Starting chat message via polling');
+
+      if (signal?.aborted) {
+        console.log('🛑 [POLLING] Aborted before start');
+        return;
+      }
       
       // Step 1: Start job
       // CRITICAL: If this fails, we must NOT continue with polling
       let startResponse;
       try {
-        startResponse = await this.startChatJob(message, filters);
+        startResponse = await this.startChatJob(message, filters, signal);
       } catch (startError: any) {
+        if (isAbortError(startError)) {
+          console.log('🛑 [POLLING] Start aborted by user');
+          return;
+        }
         // Network errors or other start failures - don't continue
         console.error('❌ [POLLING] Failed to start chat job, aborting:', startError);
         if (onChunk) {
@@ -3100,6 +3167,24 @@ class ApiService {
 
       const jobId: string = startResponse.job_id;
       currentJobId = jobId; // set for catch-block cleanup
+
+      // Cancel the server job immediately on abort — don't wait for the next poll tick.
+      // Listener stays until abort ({ once: true }); do not remove it when this function
+      // returns early because pollChunks runs asynchronously after we return.
+      const cancelOnAbort = () => {
+        console.log('🛑 [POLLING] Abort signal — cancelling job immediately:', jobId);
+        void this.cancelChatJob(jobId).catch((cancelError) => {
+          console.error('❌ [POLLING] Failed to cancel job on abort:', cancelError);
+        });
+      };
+      if (signal) {
+        if (signal.aborted) {
+          cancelOnAbort();
+          return;
+        }
+        signal.addEventListener('abort', cancelOnAbort, { once: true });
+      }
+
       let cursor = 0;
       let isDone = false;
       let accumulatedContent = ''; // Track accumulated content for streaming-like display
@@ -3149,12 +3234,8 @@ class ApiService {
       const pollChunks = async (): Promise<void> => {
         // Check abort signal
         if (signal?.aborted) {
-          console.log('🛑 [POLLING] Abort signal received, cancelling job');
-          try {
-            await this.cancelChatJob(jobId);
-          } catch (cancelError) {
-            console.error('❌ [POLLING] Failed to cancel job:', cancelError);
-          }
+          console.log('🛑 [POLLING] Abort signal received, stopping poll loop');
+          cancelOnAbort();
           return;
         }
 
@@ -3172,8 +3253,14 @@ class ApiService {
         }
 
         try {
-          const chunkResponse = await this.pollChatChunk(jobId, cursor);
-          
+          const chunkResponse = await this.pollChatChunk(jobId, cursor, signal);
+
+          // User may have cancelled while this long-poll was in flight
+          if (signal?.aborted) {
+            console.log('🛑 [POLLING] Aborted after poll returned — ignoring chunk');
+            return;
+          }
+
           // Success - reset failure counter and delay
           const hadFailures = consecutiveFailures > 0;
           consecutiveFailures = 0;
@@ -3500,6 +3587,11 @@ class ApiService {
           }
 
         } catch (error: any) {
+          if (isAbortError(error)) {
+            console.log('🛑 [POLLING] Poll aborted by user');
+            cancelOnAbort();
+            return;
+          }
           const status = httpStatus(error);
           if (isPermanentError(error)) {
             const msg =
@@ -3540,6 +3632,10 @@ class ApiService {
       pollChunks();
 
     } catch (error: any) {
+      if (isAbortError(error)) {
+        console.log('🛑 [POLLING] Chat polling aborted by user');
+        return;
+      }
       console.error('❌ [POLLING] Chat polling failed:', error);
       
       // If we have a jobId, try to cancel it (best effort, don't fail if cancel fails)
@@ -5128,14 +5224,16 @@ class ApiService {
     message?: string;
   }): Promise<ApiResponse> {
     try {
+      // Backend expects `recipient_emails` (same contract as web quick-links).
       const response = await this.client.post(MOBILE_ENDPOINTS.WEB_UPLOAD_LINK_SEND_EMAIL(id), {
-        emails: data.emails,
+        recipient_emails: data.emails,
         message: data.message,
       });
       return response.data;
     } catch (error: any) {
       console.error('Share upload link error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to share upload link');
+      const errData = error.response?.data;
+      throw new Error(errData?.message || errData?.error || 'Failed to share upload link');
     }
   }
 
@@ -5180,7 +5278,10 @@ class ApiService {
     try {
       const params: Record<string, string | number> = { page, perPage };
       if (status) params.status = status;
-      const response = await this.client.get(MOBILE_ENDPOINTS.INTAKES, { params });
+      const response = await this.client.get(MOBILE_ENDPOINTS.INTAKES, {
+        params,
+        timeout: 15000,
+      });
       return response.data;
     } catch (error: any) {
       console.error('Get intakes error:', error);
@@ -5330,6 +5431,7 @@ class ApiService {
     file: { uri: string; name: string; type?: string },
   ): Promise<ApiResponse> {
     try {
+      await assertUploadAllowedForCurrentNetwork();
       const formData = new FormData();
       formData.append('file', {
         uri: file.uri,
@@ -5343,7 +5445,7 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       console.error('Upload intake item error:', error);
-      throw new Error(error.response?.data?.message || 'Failed to upload file');
+      throw new Error(error.response?.data?.message || error.message || 'Failed to upload file');
     }
   }
 
@@ -5478,6 +5580,32 @@ class ApiService {
     } catch (error: any) {
       console.error('Get devices failed:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch devices');
+    }
+  }
+
+  async trustCurrentDevice(deviceInfo?: {
+    fingerprint?: Record<string, unknown> | string;
+    deviceName?: string;
+    platform?: string;
+    installationId?: string;
+    deviceId?: string;
+  }): Promise<ApiResponse & { deviceToken?: string; deviceId?: string; deviceName?: string }> {
+    try {
+      const response = await this.client.post('/api/v1/mobile/devices/trust', {
+        deviceInfo,
+        installationId: deviceInfo?.installationId,
+        deviceId: deviceInfo?.deviceId,
+        deviceName: deviceInfo?.deviceName,
+        platform: deviceInfo?.platform,
+      });
+      const data = response.data;
+      if (data?.deviceToken) {
+        await secureStorage.setItem(STORAGE_KEYS.DEVICE_TOKEN, data.deviceToken);
+      }
+      return data;
+    } catch (error: any) {
+      console.error('Trust current device failed:', error);
+      throw new Error(error.response?.data?.message || 'Failed to trust device');
     }
   }
 
@@ -5669,7 +5797,11 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       console.error('Send meeting invite failed:', error);
-      throw new Error(error.response?.data?.message || 'Failed to send meeting invite');
+      throw new Error(
+        error.response?.data?.message ||
+          error.response?.data?.error ||
+          'Failed to send meeting invite'
+      );
     }
   }
 

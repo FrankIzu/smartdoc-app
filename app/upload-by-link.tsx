@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,11 +14,26 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../components/FeedbackTouchable';
 import { API_BASE_URL } from '../constants/Config';
 import { useLimitError } from '../contexts/LimitErrorContext';
 import { useThemeColors } from '../hooks/useThemeColors';
-import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
-import DocumentViewer from '../components/DocumentViewer';
+import { useFileStore } from '../stores/fileStore';
+import { extractLimitErrorData } from '../utils/limitErrorUtils';
+import { sanitizeDisplayFilename } from '../utils/displayFilename';
+import {
+  getRemainingUploadSlots,
+  getUploadLinkErrorMessage,
+  type UploadLinkErrorPayload,
+} from '../utils/uploadLinkErrors';
+import {
+  assertUploadAllowedForCurrentNetwork,
+  WIFI_ONLY_UPLOAD_MESSAGE,
+} from '../utils/wifiOnlyUpload';
+import {
+  getUserPreferences,
+  validateFileAgainstUploadSettings,
+} from '../utils/userPreferences';
 
 interface IntakeChecklistItem {
   label: string;
@@ -32,14 +47,12 @@ interface UploadLinkInfo {
   description: string;
   current_uploads: number;
   max_uploads: number | null;
+  remaining_uploads: number | null;
+  is_full: boolean;
   expires_at: string | null;
+  company_id?: number;
   /** Present only when this File Request link belongs to an Intake (client document checklist). */
   intake: { id: number; title: string; checklist: IntakeChecklistItem[] } | null;
-}
-
-interface UploadLinkResponse {
-  success: boolean;
-  upload_link: UploadLinkInfo;
 }
 
 interface UploadFile {
@@ -49,23 +62,54 @@ interface UploadFile {
   type: string;
 }
 
-
-const api = {
-  get: async <T,>(url: string): Promise<{ data: T }> => {
-    const response = await fetch(`${API_BASE_URL}${url}`);
-    const data = await response.json();
-    return { data };
-  },
-  post: async (url: string, data: FormData, options?: any): Promise<{ data: any }> => {
-    const response = await fetch(`${API_BASE_URL}${url}`, {
-      method: 'POST',
-      body: data,
-      ...options,
-    });
-    const responseData = await response.json();
-    return { data: responseData };
-  },
+type UploadPostResult = {
+  ok: boolean;
+  status: number;
+  data: {
+    success?: boolean;
+    message?: string;
+    uploaded_files?: Array<{ filename?: string; id?: number } | string>;
+    failed_files?: Array<{ filename?: string; error?: string }>;
+    errors?: string[];
+    auth_required?: boolean;
+    error_code?: string;
+  } & UploadLinkErrorPayload;
 };
+
+/** POST multipart with upload progress (fetch has no upload progress on RN). */
+function postFormDataWithProgress(
+  url: string,
+  formData: FormData,
+  onProgress?: (percent: number) => void,
+): Promise<UploadPostResult> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.onload = () => {
+      let data: UploadPostResult['data'] = {};
+      try {
+        data = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        data = { message: `Server returned non-JSON response. Status: ${xhr.status}` };
+      }
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        data,
+      });
+    };
+    xhr.onerror = () => reject(new Error('Network request failed'));
+    xhr.onabort = () => reject(new Error('Upload cancelled'));
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress(Math.round((event.loaded * 100) / event.total));
+        }
+      };
+    }
+    xhr.send(formData);
+  });
+}
 
 export default function UploadByLinkScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
@@ -85,60 +129,76 @@ export default function UploadByLinkScreen() {
   const [message, setMessage] = useState('');
   const [actionCode, setActionCode] = useState('');
 
-  useEffect(() => {
-    if (token) {
-      loadUploadInfo();
-    }
-  }, [token]);
-
-  const loadUploadInfo = async () => {
+  const loadUploadInfo = useCallback(async () => {
+    if (!token) return;
     try {
-      // Web endpoint (same as grabdocs.com/upload-to) so shared links are reachable
-      const response = await api.get<UploadLinkResponse>(`/api/v1/web/upload-to/${token}`);
-      if (response.data.success && response.data.upload_link) {
-        const raw = response.data.upload_link;
+      const response = await fetch(`${API_BASE_URL}/api/v1/web/upload-to/${encodeURIComponent(token)}`);
+      let data: {
+        success?: boolean;
+        upload_link?: Record<string, any>;
+      } & UploadLinkErrorPayload = {};
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (response.ok && data.success && data.upload_link) {
+        const raw = data.upload_link;
+        const current = raw.upload_count ?? raw.current_uploads ?? 0;
+        const maxUploads = raw.max_uploads ?? null;
+        const remaining =
+          raw.remaining_uploads ??
+          (maxUploads != null ? Math.max(0, maxUploads - current) : null);
         setUploadInfo({
           name: raw.link_name ?? raw.name ?? 'File Request',
           description: raw.description ?? '',
-          current_uploads: raw.upload_count ?? raw.current_uploads ?? 0,
-          max_uploads: raw.max_uploads ?? null,
+          current_uploads: current,
+          max_uploads: maxUploads,
+          remaining_uploads: remaining,
+          is_full: Boolean(raw.is_full) || remaining === 0,
           expires_at: raw.expires_at ?? null,
+          company_id: raw.company_id,
           intake: raw.intake ?? null,
         });
       } else {
-        Alert.alert('Error', 'Invalid or expired upload link');
-        router.back();
+        Alert.alert(
+          'Error',
+          getUploadLinkErrorMessage(data, 'Invalid or expired upload link'),
+          [{ text: 'OK', onPress: () => router.back() }],
+        );
+        setUploadInfo(null);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to load upload info:', error);
-      const status = error.response?.status;
-      const message =
-        status === 404
-          ? 'Upload link not found'
-          : status === 410
-          ? 'Upload link has expired'
-          : status === 409
-          ? 'Upload limit reached'
-          : 'Failed to load upload information';
-
-      Alert.alert('Error', message, [{ text: 'OK', onPress: () => router.back() }]);
+      Alert.alert('Error', 'Failed to load upload information', [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+      setUploadInfo(null);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [token, router]);
+
+  useEffect(() => {
+    if (token) {
+      void loadUploadInfo();
+    }
+  }, [token, loadUploadInfo]);
 
   const handleRefresh = () => {
     setRefreshing(true);
-    loadUploadInfo();
+    void loadUploadInfo();
   };
 
   const selectFiles = async () => {
-    const { useFileStore } = require('../stores/fileStore');
+    if (uploading) return;
     const fileStore = useFileStore.getState();
 
+    // Reset stuck picker lock from a prior attempt before opening again.
     if (fileStore.isDocumentPickerOpen) {
-      console.log('Document picker already in progress, ignoring request');
-      return;
+      await fileStore.forceResetDocumentPicker();
     }
 
     try {
@@ -146,6 +206,7 @@ export default function UploadByLinkScreen() {
       const result = await DocumentPicker.getDocumentAsync({
         multiple: true,
         type: '*/*',
+        copyToCacheDirectory: true,
       });
 
       if (!result.canceled && result.assets) {
@@ -156,16 +217,15 @@ export default function UploadByLinkScreen() {
           type: asset.mimeType || 'application/octet-stream',
         }));
 
-        // Check upload limits
-        if (uploadInfo?.max_uploads) {
-          const totalFiles = uploadInfo.current_uploads + selectedFiles.length + newFiles.length;
-          if (totalFiles > uploadInfo.max_uploads) {
-            Alert.alert(
-              'Upload Limit',
-              `Cannot upload ${newFiles.length} more files. Limit: ${uploadInfo.max_uploads}, Current: ${uploadInfo.current_uploads}, Selected: ${selectedFiles.length}`
-            );
-            return;
-          }
+        const remaining = getRemainingUploadSlots(uploadInfo ?? {});
+        if (remaining != null && selectedFiles.length + newFiles.length > remaining) {
+          Alert.alert(
+            'Upload Limit',
+            remaining === 0
+              ? 'This upload link has reached its file limit.'
+              : `This link only accepts ${remaining} more file(s). Please remove extra files before uploading.`,
+          );
+          return;
         }
 
         setSelectedFiles((prev) => [...prev, ...newFiles]);
@@ -174,7 +234,7 @@ export default function UploadByLinkScreen() {
       console.error('Failed to select files:', error);
       Alert.alert('Error', 'Failed to select files');
     } finally {
-      fileStore.setDocumentPickerOpen(false);
+      useFileStore.getState().setDocumentPickerOpen(false);
     }
   };
 
@@ -183,124 +243,177 @@ export default function UploadByLinkScreen() {
   };
 
   const uploadFiles = async () => {
+    if (!uploadInfo || !token) return;
+
     if (selectedFiles.length === 0) {
       Alert.alert('Error', 'Please select files to upload');
       return;
     }
 
-    setUploading(true);
-    const newProgress: { [key: string]: number } = {};
+    if (!senderName.trim()) {
+      Alert.alert('Error', 'Please enter your name');
+      return;
+    }
+
+    const remaining = getRemainingUploadSlots(uploadInfo);
+    if (uploadInfo.is_full || remaining === 0) {
+      Alert.alert('Upload Limit', 'This upload link has reached its file limit.');
+      return;
+    }
+    if (remaining != null && selectedFiles.length > remaining) {
+      Alert.alert(
+        'Upload Limit',
+        remaining === 1
+          ? 'This link only accepts 1 file. Please remove extra files before uploading.'
+          : `This link only accepts ${remaining} more file(s). Please remove extra files before uploading.`,
+      );
+      return;
+    }
 
     try {
+      await assertUploadAllowedForCurrentNetwork();
+      const prefs = await getUserPreferences();
+      for (const f of selectedFiles) {
+        validateFileAgainstUploadSettings(
+          { name: f.name, size: f.size, type: f.type },
+          prefs,
+        );
+      }
+    } catch (error: any) {
+      const msg = error?.message || WIFI_ONLY_UPLOAD_MESSAGE;
+      Alert.alert(
+        msg.includes('Wi‑Fi') || msg.includes('Wi-Fi') ? 'Wi‑Fi Required' : 'Upload Blocked',
+        msg,
+      );
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress({ overall: 0 });
+
+    try {
+      const preparedFiles: UploadFile[] = [];
       for (let i = 0; i < selectedFiles.length; i++) {
         let file = selectedFiles[i];
-        const fileKey = `${file.name}_${i}`;
-        newProgress[fileKey] = 0;
-        setUploadProgress({ ...newProgress });
-
-        // Convert HEIC to PNG before upload
         try {
           const { convertHeicToPng } = await import('../utils/imageConversion');
-          file = await convertHeicToPng(file, (progress, message) => {
-            // Scale conversion progress to 0-10% of total
-            newProgress[fileKey] = progress * 0.1;
-            setUploadProgress({ ...newProgress });
+          const converted = await convertHeicToPng(file, (progress) => {
+            // HEIC prep is a small slice before the network upload.
+            const prepShare = ((i + progress / 100) / selectedFiles.length) * 10;
+            setUploadProgress({ overall: Math.round(prepShare) });
           });
+          file = {
+            uri: converted.uri,
+            name: converted.name,
+            type: converted.type,
+            size: converted.size ?? file.size,
+          };
         } catch (conversionError) {
           console.warn('HEIC conversion failed, continuing with original:', conversionError);
         }
+        preparedFiles.push(file);
+      }
 
-        const formData = new FormData();
-        // API expects 'files' field (plural) - upload one file at a time
+      const formData = new FormData();
+      for (const file of preparedFiles) {
         formData.append('files', {
           uri: file.uri,
           name: file.name,
           type: file.type,
         } as any);
-
-        // Add all form fields (matching mobile API)
-        if (senderName.trim()) {
-          formData.append('sender_name', senderName.trim());
-        }
-        if (senderEmail.trim()) {
-          formData.append('sender_email', senderEmail.trim());
-        }
-        if (message.trim()) {
-          formData.append('message', message.trim());
-        }
-        if (actionCode.trim()) {
-          formData.append('action_code', actionCode.trim());
-        }
-
-        try {
-          // Web endpoint (same as grabdocs.com) so uploads go to the same link
-          const uploadUrl = `${API_BASE_URL}/api/v1/web/upload-to/${token}`;
-          newProgress[fileKey] = 10;
-          setUploadProgress({ ...newProgress });
-
-          const uploadResponse = await fetch(uploadUrl, {
-            method: 'POST',
-            body: formData,
-          });
-
-          newProgress[fileKey] = 50;
-          setUploadProgress({ ...newProgress });
-
-          const contentType = uploadResponse.headers.get('content-type');
-          let responseData: any;
-          if (contentType && contentType.includes('application/json')) {
-            responseData = await uploadResponse.json();
-          } else {
-            const textResponse = await uploadResponse.text();
-            console.error('❌ Non-JSON response from server:', textResponse.substring(0, 200));
-            throw new Error(`Server returned non-JSON response. Status: ${uploadResponse.status}`);
-          }
-
-          if (uploadResponse.ok && responseData.success) {
-            newProgress[fileKey] = 100;
-            setUploadProgress({ ...newProgress });
-          } else {
-            const err = new Error(responseData.message || 'Upload failed');
-            (err as any).responseData = responseData;
-            throw err;
-          }
-        } catch (fileError: any) {
-          const limitData = extractLimitErrorData(getErrorResponseData(fileError));
-          if (limitData) {
-            showLimitError(limitData);
-            break;
-          }
-          console.error(`❌ Failed to upload ${file.name}:`, fileError);
-          const errorMessage = fileError.message || `Failed to upload ${file.name}`;
-          Alert.alert('Upload Error', errorMessage);
-          break;
-        }
+      }
+      formData.append('sender_name', senderName.trim());
+      if (senderEmail.trim()) {
+        formData.append('sender_email', senderEmail.trim());
+      }
+      if (message.trim()) {
+        formData.append('sender_message', message.trim());
+      }
+      if (actionCode.trim()) {
+        formData.append('action_code', actionCode.trim());
       }
 
-      Alert.alert('Success', 'Files uploaded successfully!', [
-        {
-          text: 'OK',
-          onPress: () => {
-            setSelectedFiles([]);
-            setUploadProgress({});
-            setSenderName('');
-            setSenderEmail('');
-            setMessage('');
-            setActionCode('');
-            // Re-fetch so the client immediately sees updated checklist status (e.g. pending -> matched)
-            // without needing to reopen the page.
-            loadUploadInfo();
-          },
-        },
-      ]);
-    } catch (error: any) {
-      const limitData = extractLimitErrorData(getErrorResponseData(error));
+      const uploadUrl = `${API_BASE_URL}/api/v1/web/upload-to/${encodeURIComponent(token)}`;
+      const result = await postFormDataWithProgress(uploadUrl, formData, (percent) => {
+        // Map network upload into 10–100% after prep.
+        setUploadProgress({ overall: Math.min(100, 10 + Math.round(percent * 0.9)) });
+      });
+
+      if (result.data.auth_required || result.status === 401) {
+        Alert.alert(
+          'Sign in required',
+          getUploadLinkErrorMessage(result.data, 'This upload link requires you to sign in before uploading.'),
+        );
+        return;
+      }
+
+      const limitData = extractLimitErrorData(result.data);
       if (limitData) {
         showLimitError(limitData);
         return;
       }
+
+      if (!result.ok || !result.data.success) {
+        Alert.alert(
+          'Upload Error',
+          getUploadLinkErrorMessage(result.data, result.data.message || 'Upload failed'),
+        );
+        return;
+      }
+
+      const uploaded = result.data.uploaded_files ?? [];
+      const failed = result.data.failed_files ?? [];
+      const uploadedCount = uploaded.length;
+      setUploadProgress({ overall: 100 });
+
+      const finishOk = () => {
+        setSelectedFiles([]);
+        setUploadProgress({});
+        setSenderName('');
+        setSenderEmail('');
+        setMessage('');
+        setActionCode('');
+        void loadUploadInfo();
+      };
+
+      if (failed.length > 0 && uploadedCount === 0) {
+        const detail = failed
+          .map((f) =>
+            typeof f === 'string'
+              ? f
+              : `${sanitizeDisplayFilename(f.filename || 'file')}: ${f.error || 'failed'}`,
+          )
+          .join('\n');
+        Alert.alert('Upload Failed', detail || 'No files were uploaded.');
+        return;
+      }
+
+      if (failed.length > 0) {
+        const detail = failed
+          .map((f) =>
+            typeof f === 'string'
+              ? f
+              : `${sanitizeDisplayFilename(f.filename || 'file')}: ${f.error || 'failed'}`,
+          )
+          .join('\n');
+        Alert.alert(
+          'Partially uploaded',
+          `Uploaded ${uploadedCount} file(s).\n\nFailed:\n${detail}`,
+          [{ text: 'OK', onPress: finishOk }],
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Success',
+        uploadedCount > 0
+          ? `Successfully uploaded ${uploadedCount} file(s). Processing will continue in the background.`
+          : result.data.message || 'Files uploaded successfully!',
+        [{ text: 'OK', onPress: finishOk }],
+      );
+    } catch (error: any) {
       console.error('Upload failed:', error);
-      Alert.alert('Error', 'Failed to upload files');
+      Alert.alert('Error', error?.message || 'Failed to upload files');
     } finally {
       setUploading(false);
     }
@@ -324,19 +437,6 @@ export default function UploadByLinkScreen() {
 
     const diffInDays = Math.floor(diffInHours / 24);
     return `Expires in ${diffInDays} day${diffInDays !== 1 ? 's' : ''}`;
-  };
-
-  const formatDate = (dateString: string | undefined) => {
-    if (!dateString) return 'Unknown date';
-    try {
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) {
-        return 'Invalid date';
-      }
-      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (error) {
-      return 'Invalid date';
-    }
   };
 
   const getFileIcon = (fileName: string, fileKind?: string) => {
@@ -684,7 +784,7 @@ export default function UploadByLinkScreen() {
                 <Text style={dynamicStyles.statLabel}>Uploads</Text>
                 <Text style={dynamicStyles.statValue}>
                   {uploadInfo.current_uploads}
-                  {uploadInfo.max_uploads && ` / ${uploadInfo.max_uploads}`}
+                  {uploadInfo.max_uploads != null && ` / ${uploadInfo.max_uploads}`}
                 </Text>
               </View>
               {uploadInfo.expires_at && (
@@ -696,6 +796,15 @@ export default function UploadByLinkScreen() {
                 </View>
               )}
             </View>
+            {uploadInfo.is_full ? (
+              <Text style={{ marginTop: 10, fontSize: 13, color: '#FF3B30', fontWeight: '500' }}>
+                This upload link has reached its file limit.
+              </Text>
+            ) : getRemainingUploadSlots(uploadInfo) != null ? (
+              <Text style={{ marginTop: 10, fontSize: 12, color: colors.textSecondary }}>
+                {getRemainingUploadSlots(uploadInfo)} file(s) remaining
+              </Text>
+            ) : null}
           </View>
 
           {/* Intake checklist — only present when this link belongs to an Intake */}
@@ -738,9 +847,9 @@ export default function UploadByLinkScreen() {
 
           {/* Sender Information */}
           <View style={dynamicStyles.section}>
-            <Text style={dynamicStyles.sectionTitle}>Your Information (Optional)</Text>
+            <Text style={dynamicStyles.sectionTitle}>Your Information</Text>
             <View style={dynamicStyles.inputGroup}>
-              <Text style={dynamicStyles.label}>Your Name</Text>
+              <Text style={dynamicStyles.label}>Your Name *</Text>
               <TextInput
                 style={dynamicStyles.input}
                 value={senderName}
@@ -791,17 +900,19 @@ export default function UploadByLinkScreen() {
           </View>
 
           {/* File Selection */}
-          <View style={dynamicStyles.section}>
-            <Text style={dynamicStyles.sectionTitle}>Select Files</Text>
-            <TouchableOpacity
-              style={dynamicStyles.selectButton}
-              onPress={selectFiles}
-              disabled={uploading}
-            >
-              <Ionicons name="add-circle" size={24} color="#007AFF" />
-              <Text style={dynamicStyles.selectButtonText}>Choose Files</Text>
-            </TouchableOpacity>
-          </View>
+          {!uploadInfo.is_full && (
+            <View style={dynamicStyles.section}>
+              <Text style={dynamicStyles.sectionTitle}>Select Files</Text>
+              <TouchableOpacity
+                style={dynamicStyles.selectButton}
+                onPress={() => void selectFiles()}
+                disabled={uploading}
+              >
+                <Ionicons name="add-circle" size={24} color="#007AFF" />
+                <Text style={dynamicStyles.selectButtonText}>Choose Files</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Selected Files */}
           {selectedFiles.length > 0 && (
@@ -809,50 +920,53 @@ export default function UploadByLinkScreen() {
               <Text style={dynamicStyles.sectionTitle}>
                 Selected Files ({selectedFiles.length})
               </Text>
-              {selectedFiles.map((file, index) => {
-                const fileKey = `${file.name}_${index}`;
-                const progress = uploadProgress[fileKey] || 0;
-
-                return (
-                  <View key={`file-${file.name}-${index}`} style={dynamicStyles.fileItem}>
-                    <View style={dynamicStyles.fileIcon}>
-                      <Ionicons name={getFileIcon(file.name) as any} size={20} color="#007AFF" />
-                    </View>
-                    <View style={dynamicStyles.fileInfo}>
-                      <Text style={dynamicStyles.fileName}>{file.name}</Text>
-                      <Text style={dynamicStyles.fileSize}>{formatFileSize(file.size)}</Text>
-                      {uploading && progress > 0 && (
-                        <View style={dynamicStyles.progressContainer}>
-                          <View style={dynamicStyles.progressBar}>
-                            <View
-                              style={[dynamicStyles.progressFill, { width: `${progress}%` }]}
-                            />
-                          </View>
-                          <Text style={dynamicStyles.progressText}>{Math.round(progress)}%</Text>
-                        </View>
-                      )}
-                    </View>
-                    {!uploading && (
-                      <TouchableOpacity
-                        style={dynamicStyles.removeButton}
-                        onPress={() => removeFile(index)}
-                      >
-                        <Ionicons name="close-circle" size={20} color="#FF3B30" />
-                      </TouchableOpacity>
-                    )}
+              {selectedFiles.map((file, index) => (
+                <View key={`file-${file.name}-${index}`} style={dynamicStyles.fileItem}>
+                  <View style={dynamicStyles.fileIcon}>
+                    <Ionicons name={getFileIcon(file.name) as any} size={20} color="#007AFF" />
                   </View>
-                );
-              })}
+                  <View style={dynamicStyles.fileInfo}>
+                    <Text style={dynamicStyles.fileName}>{file.name}</Text>
+                    <Text style={dynamicStyles.fileSize}>{formatFileSize(file.size)}</Text>
+                  </View>
+                  {!uploading && (
+                    <TouchableOpacity
+                      style={dynamicStyles.removeButton}
+                      onPress={() => removeFile(index)}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+              {uploading && (
+                <View style={[dynamicStyles.progressContainer, { marginTop: 12 }]}>
+                  <View style={dynamicStyles.progressBar}>
+                    <View
+                      style={[
+                        dynamicStyles.progressFill,
+                        { width: `${uploadProgress.overall || 0}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={dynamicStyles.progressText}>
+                    {Math.round(uploadProgress.overall || 0)}%
+                  </Text>
+                </View>
+              )}
             </View>
           )}
 
           {/* Upload Button */}
-          {selectedFiles.length > 0 && (
+          {selectedFiles.length > 0 && !uploadInfo.is_full && (
             <View style={dynamicStyles.uploadContainer}>
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={[dynamicStyles.uploadButton, uploading && dynamicStyles.uploadButtonDisabled]}
                 onPress={uploadFiles}
                 disabled={uploading}
+                loading={uploading}
+                spinnerColor="#fff"
+                replaceWithSpinner={false}
               >
                 {uploading ? (
                   <ActivityIndicator size="small" color="#fff" />
@@ -864,7 +978,7 @@ export default function UploadByLinkScreen() {
                     ? 'Uploading...'
                     : `Upload ${selectedFiles.length} File${selectedFiles.length !== 1 ? 's' : ''}`}
                 </Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
           )}
         </ScrollView>

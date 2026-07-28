@@ -9,9 +9,17 @@ interface Props {
   onClose: () => void;
   onPrepare: () => void;
   onFill: () => void;
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 }
 
-export default function SignatureCreateChooser({ visible, onClose, onPrepare, onFill }: Props) {
+export default function SignatureCreateChooser({
+  visible,
+  onClose,
+  onPrepare,
+  onFill,
+  expandNonce = 0,
+}: Props) {
   const colors = useThemeColors();
 
   const styles = useMemo(
@@ -69,6 +77,7 @@ export default function SignatureCreateChooser({ visible, onClose, onPrepare, on
     <MinimizableBottomSheet
       visible={visible}
       onClose={onClose}
+      expandNonce={expandNonce}
       title="Create"
       heightRatio={0.44}
     >

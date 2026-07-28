@@ -4,7 +4,6 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { Link, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
     Platform,
@@ -16,12 +15,14 @@ import {
     View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { GoogleLogo } from '../../components/GoogleLogo';
 import { API_BASE_URL } from '../../constants/Config';
 import { useEnhanced2FAAuth } from '../../contexts/Enhanced2FAAuthContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { appleAuthService } from '../../services/appleAuth';
 import { googleAuthService } from '../../services/googleAuth';
+import deviceSecurityService from '../../services/deviceSecurity';
 import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../utils/defaultHomePath';
 import { exchangeGoogleLoginToken } from '../../utils/googleOAuthDeepLink';
 import { apiService } from '../../services/api';
@@ -69,37 +70,45 @@ export default function SignInScreen() {
 
   const checkBiometricAvailability = async () => {
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      const supportedTypes = await LocalAuthentication.supportedAuthenticationTypesAsync();
-      
       // Disable biometric in Expo Go (development only)
       const isExpoGo = __DEV__ && !Constants.executionEnvironment || Constants.executionEnvironment === 'storeClient';
-      const available = hasHardware && isEnrolled && supportedTypes.length > 0 && !isExpoGo;
-      setBiometricAvailable(available);
-      
-      if (available) {
-        // Determine the biometric type for better UX
+      if (isExpoGo) {
+        setBiometricAvailable(false);
+        return;
+      }
+
+      // Accept fingerprint/Face ID OR device PIN/passcode (same rules as deviceSecurityService).
+      const config = await deviceSecurityService.initializeBiometrics();
+      const deviceReady = config.enabled;
+
+      // Only offer biometric when the last account used username/password
+      // (SSO Google/Apple accounts cannot enroll biometric quick-login).
+      const eligibleForLastUser = deviceReady
+        ? await deviceSecurityService.isBiometricLoginEligibleForLastUser()
+        : false;
+
+      setBiometricAvailable(eligibleForLastUser);
+
+      if (eligibleForLastUser) {
+        const supportedTypes = config.types;
         if (supportedTypes.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
           setBiometricType('Face ID');
         } else if (supportedTypes.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-          setBiometricType('Touch ID');
+          setBiometricType(config.biometricsEnrolled ? 'Touch ID' : 'Passcode');
         } else if (supportedTypes.includes(LocalAuthentication.AuthenticationType.IRIS)) {
           setBiometricType('Iris');
+        } else if (config.passcodeEnrolled) {
+          setBiometricType('Passcode');
         } else {
           setBiometricType('Biometric');
         }
       }
-      
-      console.log('Biometric check:', { 
-        hasHardware, 
-        isEnrolled, 
-        supportedTypes: supportedTypes.map(type => 
-          type === LocalAuthentication.AuthenticationType.FINGERPRINT ? 'Fingerprint' :
-          type === LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION ? 'Face ID' :
-          type === LocalAuthentication.AuthenticationType.IRIS ? 'Iris' : 'Unknown'
-        ),
-        available 
+
+      console.log('Biometric check:', {
+        deviceReady,
+        eligibleForLastUser,
+        biometricsEnrolled: config.biometricsEnrolled,
+        passcodeEnrolled: config.passcodeEnrolled,
       });
     } catch (error) {
       console.error('Error checking biometric availability:', error);
@@ -298,7 +307,7 @@ export default function SignInScreen() {
         if (result.message?.includes('not enrolled') || result.message?.includes('not trusted')) {
           Alert.alert(
             'Biometric Setup Required',
-            'To use biometric authentication:\n\n1. First login with your username and password\n2. Ensure biometric authentication is enabled in your device settings\n3. Device will be trusted for future biometric logins',
+            'To use biometric authentication:\n\n1. First login with your username and password (not Google or Apple)\n2. Enable biometric authentication in Settings\n3. Device will be trusted for future biometric logins',
             [{ text: 'OK' }]
           );
         } else if (result.message?.includes('not available') || result.message?.includes('hardware')) {
@@ -584,10 +593,13 @@ export default function SignInScreen() {
             </View>
             
             {biometricAvailable && (
-              <TouchableOpacity 
+              <FeedbackTouchable 
                 style={styles.faceIdContainer}
                 onPress={handleBiometricLogin}
                 disabled={loading}
+                loading={loading}
+                spinnerColor="#007AFF"
+                replaceWithSpinner={false}
               >
                 <Ionicons 
                   name={
@@ -600,7 +612,7 @@ export default function SignInScreen() {
                   color="#007AFF" 
                 />
                 <Text style={styles.faceIdText}>{biometricType}</Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             )}
           </View>
 
@@ -612,17 +624,15 @@ export default function SignInScreen() {
           ) : null}
 
           {/* Sign In Button */}
-          <TouchableOpacity
+          <FeedbackTouchable
             style={[styles.signInButton, loading && styles.buttonDisabled]}
             onPress={handleSignIn}
             disabled={loading}
+            loading={loading}
+            spinnerColor="#fff"
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.signInButtonText}>Sign in</Text>
-            )}
-          </TouchableOpacity>
+            <Text style={styles.signInButtonText}>Sign in</Text>
+          </FeedbackTouchable>
 
           {/* Forgot Password */}
           <Link href="/forgot-password" asChild>
@@ -641,24 +651,30 @@ export default function SignInScreen() {
 
           {/* Social sign-in: regular full-width buttons with "Sign in with Google" / "Sign in with Apple" */}
           <View style={styles.socialContainer}>
-            <TouchableOpacity
+            <FeedbackTouchable
               style={[styles.socialButton, styles.googleButton, loading && styles.buttonDisabled]}
               onPress={handleGoogleSignIn}
               disabled={loading}
+              loading={loading}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
             >
               <GoogleLogo size={20} />
               <Text style={styles.socialButtonText}>Sign in with Google</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
             {Platform.OS === 'ios' && appleSignInAvailable && (
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={[styles.socialButton, styles.appleButton, loading && styles.buttonDisabled]}
                 onPress={handleAppleSignIn}
                 disabled={loading}
+                loading={loading}
+                spinnerColor="#fff"
+                replaceWithSpinner={false}
                 activeOpacity={0.8}
               >
                 <Ionicons name="logo-apple" size={20} color="#fff" />
                 <Text style={[styles.socialButtonText, styles.appleButtonText]}>Sign in with Apple</Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             )}
           </View>
 

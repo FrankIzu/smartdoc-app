@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
   calendarConnections,
@@ -31,6 +32,8 @@ export default function CalendarConnectionsScreen() {
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [oauthOpen, setOauthOpen] = useState(false);
   const [oauthProvider, setOauthProvider] = useState<CalendarProvider>('google');
+  const [busyConnectionId, setBusyConnectionId] = useState<number | null>(null);
+  const [cardBusyId, setCardBusyId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const c = await calendarConnections();
@@ -121,9 +124,9 @@ export default function CalendarConnectionsScreen() {
           <Text style={styles.btnText}>{list.length === 0 ? 'Connect calendar' : 'Connect another'}</Text>
         </TouchableOpacity>
       ) : null}
-      <TouchableOpacity style={[styles.btn, styles.secondary]} onPress={syncAll}>
+      <FeedbackTouchable style={[styles.btn, styles.secondary]} onPress={syncAll} spinnerColor={colors.text}>
         <Text style={[styles.btnText, { color: colors.text }]}>Sync all calendars</Text>
-      </TouchableOpacity>
+      </FeedbackTouchable>
 
       {loading ? <ActivityIndicator style={{ marginTop: 24 }} /> : null}
 
@@ -158,17 +161,21 @@ export default function CalendarConnectionsScreen() {
                 text: 'Disconnect',
                 style: 'destructive',
                 onPress: async () => {
+                  setBusyConnectionId(Number(connection.id));
                   try {
                     await calendarDeleteConnection(Number(connection.id));
                     await load();
                   } catch (e: any) {
                     Alert.alert('Error', e?.response?.data?.error || '');
+                  } finally {
+                    setBusyConnectionId(null);
                   }
                 },
               },
             ]);
           }}
           onAddAnother={() => setConnectModalOpen(true)}
+          busyConnectionId={busyConnectionId}
         />
       ) : null}
 
@@ -181,7 +188,9 @@ export default function CalendarConnectionsScreen() {
               {c.is_default ? ' · Default for new events' : ''}
             </Text>
             <View style={{ flexDirection: 'row', marginTop: 12, gap: 12 }}>
-              <TouchableOpacity
+              <FeedbackTouchable
+                spinnerColor="#007AFF"
+                disabled={cardBusyId != null}
                 onPress={async () => {
                   try {
                     await calendarResetConnection(Number(c.id));
@@ -192,8 +201,11 @@ export default function CalendarConnectionsScreen() {
                 }}
               >
                 <Text style={{ color: '#007AFF' }}>Resume / reset</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </FeedbackTouchable>
+              <FeedbackTouchable
+                spinnerColor="#ef4444"
+                disabled={cardBusyId != null}
+                loading={cardBusyId === Number(c.id)}
                 onPress={() => {
                   Alert.alert('Disconnect', 'Remove this connection?', [
                     { text: 'Cancel', style: 'cancel' },
@@ -201,11 +213,14 @@ export default function CalendarConnectionsScreen() {
                       text: 'Disconnect',
                       style: 'destructive',
                       onPress: async () => {
+                        setCardBusyId(Number(c.id));
                         try {
                           await calendarDeleteConnection(Number(c.id));
                           await load();
                         } catch (e: any) {
                           Alert.alert('Error', e?.response?.data?.error || '');
+                        } finally {
+                          setCardBusyId(null);
                         }
                       },
                     },
@@ -213,7 +228,7 @@ export default function CalendarConnectionsScreen() {
                 }}
               >
                 <Text style={{ color: '#ef4444' }}>Disconnect</Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
           </View>
         ))}

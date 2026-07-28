@@ -31,9 +31,9 @@ interface Props {
   onDeleteDocument?: () => void;
   onViewSubmission?: () => void;
   onViewSubmissions?: () => void;
-  onShare?: () => void;
-  onViewCompletedPdf?: () => void;
-  onViewAuditTrail?: () => void;
+  onShare?: () => void | Promise<void>;
+  onViewCompletedPdf?: () => void | Promise<void>;
+  onViewAuditTrail?: () => void | Promise<void>;
 }
 
 function Badge({ badge }: { badge: { label: string; backgroundColor: string; color: string } }) {
@@ -68,10 +68,10 @@ function EnvelopeRow({
   envelope: Envelope;
   onPress: () => void;
   onSign?: () => void;
-  onViewCompletedPdf?: () => void;
-  onShare?: () => void;
+  onViewCompletedPdf?: () => void | Promise<void>;
+  onShare?: () => void | Promise<void>;
   onViewSubmissions?: () => void;
-  onViewAuditTrail?: () => void;
+  onViewAuditTrail?: () => void | Promise<void>;
 }) {
   const colors = useThemeColors();
   const [menuVisible, setMenuVisible] = useState(false);
@@ -205,7 +205,7 @@ function TemplateRow({
   onViewDocument?: () => void;
   onFillDocument?: () => void;
   onDeleteDocument?: () => void;
-  onShare?: () => void;
+  onShare?: () => void | Promise<void>;
 }) {
   const colors = useThemeColors();
   const [menuVisible, setMenuVisible] = useState(false);
@@ -313,7 +313,7 @@ function SubmissionRow({
   onPress?: () => void;
   onViewSubmission?: () => void;
   onViewSubmissions?: () => void;
-  onShare?: () => void;
+  onShare?: () => void | Promise<void>;
 }) {
   const colors = useThemeColors();
   const [menuVisible, setMenuVisible] = useState(false);

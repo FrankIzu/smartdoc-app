@@ -2,15 +2,28 @@
 const TAB_BAR_MIN_HEIGHT = 56;
 const TAB_BAR_PADDING_TOP = 5;
 
+const TAB_ROOTS = new Set(['index', 'documents', 'chats', 'help', 'settings']);
+
 /** Bottom bar on main tab routes only — calendar stack has its own header/back navigation. */
 export function shouldShowPersistentBottomNav(pathname: string | null | undefined): boolean {
   if (!pathname) return false;
   const p = pathname;
+
   if (p === '/calendar' || p === '/calendar/' || p.startsWith('/calendar/')) return false;
-  if (!p.startsWith('/(tabs)')) return false;
-  const rest = p.replace(/^\/\(tabs\)\/?/, '') || 'index';
-  const root = rest.split('/')[0];
-  return ['index', 'documents', 'chats', 'help', 'settings'].includes(root);
+
+  // Expo Router may include or omit the "(tabs)" group in usePathname().
+  if (p === '/' || p === '/(tabs)' || p === '/(tabs)/' || p === '/(tabs)/index') {
+    return true;
+  }
+
+  if (p.startsWith('/(tabs)/')) {
+    const root = p.replace(/^\/\(tabs\)\//, '').split('/')[0] || 'index';
+    return TAB_ROOTS.has(root);
+  }
+
+  // Ungrouped tab paths: "/documents", "/chats", …
+  const root = p.replace(/^\//, '').split('/')[0] || '';
+  return TAB_ROOTS.has(root);
 }
 
 /** Total height of PersistentBottomNavigation (for sheet bottom anchoring). */

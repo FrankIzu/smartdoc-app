@@ -13,9 +13,11 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import LinkifiedText from '../../components/LinkifiedText';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
+import { resendCooldownKey, useResendCooldown } from '../../hooks/useResendCooldown';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
     calendarDeleteEvent,
@@ -43,6 +45,54 @@ import {
 import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
 import { navigateJoinMeeting } from '../../utils/calendarReachJoin';
 import { calendarDisplayLocation, formatUtcIsoForDevice } from '../../utils/calendarTime';
+
+function CalendarResendInviteButton({
+  eventId,
+  participantId,
+  deviceOffline,
+}: {
+  eventId: number;
+  participantId: number;
+  deviceOffline: boolean;
+}) {
+  const { remainingSec, isCoolingDown, markSent } = useResendCooldown(
+    resendCooldownKey('calendar', eventId, participantId),
+  );
+
+  return (
+    <FeedbackTouchable
+      spinnerColor="#007AFF"
+      disabled={isCoolingDown}
+      style={isCoolingDown ? { opacity: 0.55 } : undefined}
+      onPress={async () => {
+        if (deviceOffline) {
+          Alert.alert('Offline', 'Resend requires a connection.');
+          return;
+        }
+        if (isCoolingDown) {
+          Alert.alert('Please wait', `You can resend in ${remainingSec}s`);
+          return;
+        }
+        try {
+          await calendarResendInvite(eventId, participantId);
+          markSent();
+          Alert.alert('Sent', 'Invitation resent');
+        } catch (e: any) {
+          const status = e?.response?.status;
+          Alert.alert(
+            'Error',
+            e?.response?.data?.error ||
+              (status === 403 ? 'Only the organizer can resend invitations' : 'Resend failed')
+          );
+        }
+      }}
+    >
+      <Text style={{ color: '#007AFF' }}>
+        {isCoolingDown ? `Resend in ${remainingSec}s` : 'Resend'}
+      </Text>
+    </FeedbackTouchable>
+  );
+}
 
 function rsvpStatusBadge(status?: string | null): {
   label: string;
@@ -88,6 +138,9 @@ export default function CalendarEventDetailScreen() {
   const [newNoteBody, setNewNoteBody] = useState('');
   const [editingNote, setEditingNote] = useState<any | null>(null);
   const [rsvpComment, setRsvpComment] = useState('');
+  const [actionBusy, setActionBusy] = useState<'cancel' | 'remove' | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [deletingNoteId, setDeletingNoteId] = useState<number | null>(null);
 
   const loadEvent = useCallback(async () => {
     if (!Number.isFinite(eventId)) return;
@@ -294,11 +347,14 @@ export default function CalendarEventDetailScreen() {
   }, [deviceOffline, eventId, router]);
 
   const performRemoveFromCalendar = useCallback(async () => {
+    setActionBusy('remove');
     try {
       await calendarRemoveFromCalendar(eventId);
       await leaveEventAndGoToList();
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.error || 'Could not remove event from your calendar');
+    } finally {
+      setActionBusy(null);
     }
   }, [eventId, leaveEventAndGoToList]);
 
@@ -337,12 +393,14 @@ export default function CalendarEventDetailScreen() {
           text: 'Cancel event',
           style: 'destructive',
           onPress: async () => {
+            setActionBusy('cancel');
             try {
               await calendarDeleteEvent(eventId);
               await leaveEventAndGoToList();
             } catch (e: any) {
               const data = e?.response?.data;
               if (data?.code === 'use_remove_from_calendar') {
+                setActionBusy(null);
                 Alert.alert(
                   'Remove from calendar?',
                   data?.error ||
@@ -361,6 +419,8 @@ export default function CalendarEventDetailScreen() {
                 return;
               }
               Alert.alert('Error', data?.error || 'Cancel failed');
+            } finally {
+              setActionBusy((prev) => (prev === 'cancel' ? null : prev));
             }
           },
         },
@@ -377,6 +437,7 @@ export default function CalendarEventDetailScreen() {
       Alert.alert('Note', 'Enter title and content');
       return;
     }
+    setNoteBusy(true);
     try {
       if (editingNote) {
         await noteUpdate(editingNote.id, { title: newNoteTitle.trim(), content: newNoteBody.trim() });
@@ -394,6 +455,8 @@ export default function CalendarEventDetailScreen() {
       await loadNotes();
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.error || 'Could not save note');
+    } finally {
+      setNoteBusy(false);
     }
   };
 
@@ -574,8 +637,9 @@ export default function CalendarEventDetailScreen() {
               multiline
             />
             <View style={[styles.rowBtn, { marginTop: 8 }]}>
-              <TouchableOpacity
+              <FeedbackTouchable
                 style={styles.smallBtn}
+                spinnerColor={colors.text}
                 onPress={async () => {
                   if (deviceOffline) {
                     Alert.alert('Offline', 'RSVP requires a connection.');
@@ -591,9 +655,10 @@ export default function CalendarEventDetailScreen() {
                 }}
               >
                 <Text style={{ color: colors.text }}>Accept</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </FeedbackTouchable>
+              <FeedbackTouchable
                 style={styles.smallBtn}
+                spinnerColor={colors.text}
                 onPress={async () => {
                   if (deviceOffline) {
                     Alert.alert('Offline', 'RSVP requires a connection.');
@@ -609,9 +674,10 @@ export default function CalendarEventDetailScreen() {
                 }}
               >
                 <Text style={{ color: colors.text }}>Tentative</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </FeedbackTouchable>
+              <FeedbackTouchable
                 style={styles.smallBtn}
+                spinnerColor={colors.text}
                 onPress={async () => {
                   if (deviceOffline) {
                     Alert.alert('Offline', 'RSVP requires a connection.');
@@ -627,7 +693,7 @@ export default function CalendarEventDetailScreen() {
                 }}
               >
                 <Text style={{ color: colors.text }}>Decline</Text>
-              </TouchableOpacity>
+              </FeedbackTouchable>
             </View>
           </View>
         ) : null}
@@ -660,27 +726,11 @@ export default function CalendarEventDetailScreen() {
                   )}
                 </View>
                 {p.status === 'needs-action' && !p.is_organizer && canManageEvent && p.id ? (
-                  <TouchableOpacity
-                    onPress={async () => {
-                      if (deviceOffline) {
-                        Alert.alert('Offline', 'Resend requires a connection.');
-                        return;
-                      }
-                      try {
-                        await calendarResendInvite(eventId, p.id);
-                        Alert.alert('Sent', 'Invitation resent');
-                      } catch (e: any) {
-                        const status = e?.response?.status;
-                        Alert.alert(
-                          'Error',
-                          e?.response?.data?.error ||
-                            (status === 403 ? 'Only the organizer can resend invitations' : 'Resend failed')
-                        );
-                      }
-                    }}
-                  >
-                    <Text style={{ color: '#007AFF' }}>Resend</Text>
-                  </TouchableOpacity>
+                  <CalendarResendInviteButton
+                    eventId={eventId}
+                    participantId={p.id}
+                    deviceOffline={deviceOffline}
+                  />
                 ) : null}
               </View>
               );
@@ -693,25 +743,31 @@ export default function CalendarEventDetailScreen() {
             <TouchableOpacity style={styles.btn} onPress={handleEdit} accessibilityLabel="Edit event">
               <Text style={styles.btnText}>Edit event</Text>
             </TouchableOpacity>
-            <TouchableOpacity
+            <FeedbackTouchable
               style={[styles.btn, styles.btnDanger]}
               onPress={handleCancelEvent}
+              disabled={actionBusy != null}
+              loading={actionBusy === 'cancel'}
+              spinnerColor="#fff"
               accessibilityLabel="Cancel event"
             >
               <Text style={styles.btnText}>Cancel event</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
         ) : null}
 
         {canRemoveFromCalendar ? (
           <View style={{ marginTop: 24 }}>
-            <TouchableOpacity
+            <FeedbackTouchable
               style={[styles.btn, styles.btnDanger]}
               onPress={handleRemoveFromCalendar}
+              disabled={actionBusy != null}
+              loading={actionBusy === 'remove'}
+              spinnerColor="#fff"
               accessibilityLabel="Remove from my calendar"
             >
               <Text style={styles.btnText}>Remove from my calendar</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
         ) : null}
       </ScrollView>
@@ -748,7 +804,9 @@ export default function CalendarEventDetailScreen() {
                       >
                         <Text style={{ color: '#007AFF' }}>Edit</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity
+                      <FeedbackTouchable
+                        loading={deletingNoteId === n.id}
+                        spinnerColor="#ef4444"
                         onPress={() => {
                           Alert.alert('Delete note', 'Remove this note?', [
                             { text: 'Cancel', style: 'cancel' },
@@ -760,11 +818,14 @@ export default function CalendarEventDetailScreen() {
                                   Alert.alert('Offline', 'Deleting notes requires a connection.');
                                   return;
                                 }
+                                setDeletingNoteId(n.id);
                                 try {
                                   await noteDelete(n.id);
                                   await loadNotes();
                                 } catch (e: any) {
                                   Alert.alert('Error', e?.response?.data?.error || 'Failed');
+                                } finally {
+                                  setDeletingNoteId(null);
                                 }
                               },
                             },
@@ -772,7 +833,7 @@ export default function CalendarEventDetailScreen() {
                         }}
                       >
                         <Text style={{ color: '#ef4444' }}>Delete</Text>
-                      </TouchableOpacity>
+                      </FeedbackTouchable>
                     </View>
                   ) : null}
                 </View>
@@ -794,9 +855,15 @@ export default function CalendarEventDetailScreen() {
               value={newNoteBody}
               onChangeText={setNewNoteBody}
             />
-            <TouchableOpacity style={styles.btn} onPress={saveNote}>
-        <Text style={styles.btnText}>{editingNote ? 'Update note' : 'Add note'}</Text>
-            </TouchableOpacity>
+            <FeedbackTouchable
+              style={styles.btn}
+              onPress={saveNote}
+              disabled={noteBusy}
+              loading={noteBusy}
+              spinnerColor="#fff"
+            >
+              <Text style={styles.btnText}>{editingNote ? 'Update note' : 'Add note'}</Text>
+            </FeedbackTouchable>
             {editingNote ? (
               <TouchableOpacity
                 onPress={() => {

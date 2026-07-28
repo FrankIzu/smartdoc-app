@@ -12,12 +12,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
 import { SIGNATURE_HEADER_TITLE_MAX } from '../../utils/displayFilename';
 import EnvelopeDetailPanels from '../../components/signatures/EnvelopeDetailPanels';
+import { invalidateEnvelopeListCache } from '../../hooks/useEnvelopeList';
+import { markResendSent, resendCooldownKey } from '../../hooks/useResendCooldown';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { useAuth } from '../context/auth';
-import { invalidateEnvelopeListCache } from '../../hooks/useEnvelopeList';
 import {
   deleteEnvelopeDraft,
   duplicateEnvelope,
@@ -45,6 +47,9 @@ export default function EnvelopeDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [viewerFile, setViewerFile] = useState<{ id: string; name: string } | null>(null);
   const [openingPdfKind, setOpeningPdfKind] = useState<'audit' | 'certificate' | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -163,12 +168,15 @@ export default function EnvelopeDetailScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
+          setDeleting(true);
           try {
             await deleteEnvelopeDraft(eid);
             invalidateEnvelopeListCache('drafts');
             router.back();
           } catch (e: unknown) {
             Alert.alert('Error', e instanceof Error ? e.message : 'Could not delete');
+          } finally {
+            setDeleting(false);
           }
         },
       },
@@ -177,6 +185,7 @@ export default function EnvelopeDetailScreen() {
 
   const handleResend = async (recipientId: number) => {
     await resendRecipientInvite(eid, recipientId);
+    markResendSent(resendCooldownKey('envelope', eid, recipientId));
     Alert.alert('Sent', 'Reminder sent.');
     void load();
   };
@@ -208,12 +217,14 @@ export default function EnvelopeDetailScreen() {
         ) : null}
 
         {envelope.status === 'draft' ? (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={[styles.btn, { backgroundColor: colors.primary }]}
             onPress={handleResumeDraft}
+            spinnerColor="#fff"
+            replaceWithSpinner={false}
           >
             <Text style={styles.btnText}>Continue draft</Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
         ) : null}
         {canSign ? (
           <TouchableOpacity
@@ -227,62 +238,80 @@ export default function EnvelopeDetailScreen() {
         <EnvelopeDetailPanels
           envelope={envelope}
           canResend={isActive}
-          onResend={(recipientId) => void handleResend(recipientId)}
+          onResend={handleResend}
           onDelete={handleDeleteDraft}
+          deleting={deleting}
         />
 
         {envelopeFinalFileId(envelope) || envelope.status === 'completed' ? (
-          <TouchableOpacity style={styles.linkBtn} onPress={() => void openSignedPdf()}>
+          <FeedbackTouchable style={styles.linkBtn} onPress={openSignedPdf} spinnerColor={colors.primary} replaceWithSpinner={false}>
             <Text style={{ color: colors.primary }}>Download signed PDF</Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
         ) : null}
-        <TouchableOpacity
+        <FeedbackTouchable
           style={styles.linkBtn}
-          onPress={() => void openAuditTrailPdf()}
+          onPress={openAuditTrailPdf}
           disabled={openingPdfKind != null}
+          loading={openingPdfKind === 'audit'}
+          spinnerColor={colors.primary}
+          replaceWithSpinner={false}
         >
           <Text style={{ color: colors.primary }}>
             {openingPdfKind === 'audit' ? 'Opening audit trail…' : 'Audit trail PDF'}
           </Text>
-        </TouchableOpacity>
+        </FeedbackTouchable>
         {envelope.status === 'completed' ? (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={styles.linkBtn}
-            onPress={() => void openCertificatePdf()}
+            onPress={openCertificatePdf}
             disabled={openingPdfKind != null}
+            loading={openingPdfKind === 'certificate'}
+            spinnerColor={colors.primary}
+            replaceWithSpinner={false}
           >
             <Text style={{ color: colors.primary }}>
               {openingPdfKind === 'certificate' ? 'Opening certificate…' : 'Certificate'}
             </Text>
-          </TouchableOpacity>
+          </FeedbackTouchable>
         ) : null}
 
         {envelope.status !== 'draft' ? (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={styles.linkBtn}
-            onPress={() => {
-              void (async () => {
-                try {
-                  await duplicateEnvelope(eid);
-                  invalidateEnvelopeListCache('drafts');
-                  Alert.alert('Duplicated', 'A new draft was created.');
-                  router.push('/signatures?tab=drafts' as any);
-                } catch (e: unknown) {
-                  Alert.alert(
-                    'Could not duplicate',
-                    e instanceof Error ? e.message : 'Try again in a moment.',
-                  );
-                }
-              })();
+            loading={duplicating}
+            disabled={duplicating}
+            spinnerColor={colors.primary}
+            replaceWithSpinner={false}
+            onPress={async () => {
+              setDuplicating(true);
+              try {
+                await duplicateEnvelope(eid);
+                invalidateEnvelopeListCache('drafts');
+                Alert.alert('Duplicated', 'A new draft was created.');
+                router.push('/signatures?tab=drafts' as any);
+              } catch (e: unknown) {
+                Alert.alert(
+                  'Could not duplicate',
+                  e instanceof Error ? e.message : 'Try again in a moment.',
+                );
+              } finally {
+                setDuplicating(false);
+              }
             }}
           >
-            <Text style={{ color: colors.primary }}>Duplicate as draft</Text>
-          </TouchableOpacity>
+            <Text style={{ color: colors.primary }}>
+              {duplicating ? 'Duplicating…' : 'Duplicate as draft'}
+            </Text>
+          </FeedbackTouchable>
         ) : null}
 
         {isActive ? (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={styles.linkBtn}
+            loading={voiding}
+            disabled={voiding}
+            spinnerColor="#dc2626"
+            replaceWithSpinner={false}
             onPress={() =>
               Alert.alert('Void envelope?', 'Recipients will be notified.', [
                 { text: 'Cancel', style: 'cancel' },
@@ -290,15 +319,20 @@ export default function EnvelopeDetailScreen() {
                   text: 'Void',
                   style: 'destructive',
                   onPress: async () => {
-                    await voidEnvelope(eid);
-                    void load();
+                    setVoiding(true);
+                    try {
+                      await voidEnvelope(eid);
+                      void load();
+                    } finally {
+                      setVoiding(false);
+                    }
                   },
                 },
               ])
             }
           >
-            <Text style={{ color: '#dc2626' }}>Void envelope</Text>
-          </TouchableOpacity>
+            <Text style={{ color: '#dc2626' }}>{voiding ? 'Voiding…' : 'Void envelope'}</Text>
+          </FeedbackTouchable>
         ) : null}
       </ScrollView>
 

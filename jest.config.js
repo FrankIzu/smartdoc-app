@@ -2,7 +2,10 @@
 module.exports = {
   // Pure node env — no React Native renderer needed for geometry tests
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/utils/fillable/__tests__/**/*.test.ts'],
+  testMatch: [
+    '<rootDir>/utils/fillable/__tests__/**/*.test.ts',
+    '<rootDir>/utils/__tests__/**/*.test.ts',
+  ],
   // Exclude Python venv from module scanning (fixes jupyterlab-plotly haste collision)
   modulePathIgnorePatterns: ['<rootDir>/manager-francis/'],
   watchPathIgnorePatterns: ['<rootDir>/manager-francis/'],

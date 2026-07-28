@@ -1,5 +1,7 @@
 import { apiService } from './api';
 import { ensureFillableTemplateReady } from './fillableApi';
+import { invalidateFillPickListCache } from './fillDocumentListCache';
+import { invalidateSignatureActivityCache } from './signatureActivityCache';
 import { sanitizeDisplayFilename } from '../utils/displayFilename';
 import { useProgressStore } from './progressService';
 
@@ -94,9 +96,15 @@ export async function uploadFormDataWithGlobalProgress(
   }
 }
 
-/** Upload a PDF and create a fillable template ready for the prepare-fields step. */
+/**
+ * Upload a PDF and create a fillable template for the prepare/fill step.
+ *
+ * By default waits until page previews exist. Pass `{ waitForPages: false }` to
+ * return as soon as the template id exists so document lists can update immediately.
+ */
 export async function uploadPdfForSignature(
   asset: { uri: string; name?: string | null; mimeType?: string | null },
+  options?: { waitForPages?: boolean },
 ): Promise<{ fileId: number; templateId: number; displayName: string }> {
   const displayName = sanitizeDisplayFilename(asset.name || 'Document');
   const filename = displayName;
@@ -115,6 +123,10 @@ export async function uploadPdfForSignature(
     throw new Error('Upload finished but the document is not ready yet. Wait a moment and try again.');
   }
 
-  const { templateId } = await ensureFillableTemplateReady(fileId, displayName);
+  const { templateId } = await ensureFillableTemplateReady(fileId, displayName, {
+    waitForPages: options?.waitForPages,
+  });
+  invalidateSignatureActivityCache();
+  invalidateFillPickListCache();
   return { fileId, templateId, displayName };
 }

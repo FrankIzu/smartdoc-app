@@ -28,6 +28,8 @@ interface Props {
   variant?: 'signature' | 'initials';
   /** When false, only cursive typing is offered. Default true. */
   allowDraw?: boolean;
+  /** Bump on every open so a minimized sheet expands again. */
+  expandNonce?: number;
 }
 
 export default function SignatureCaptureModal({
@@ -37,6 +39,7 @@ export default function SignatureCaptureModal({
   onSave,
   variant = 'signature',
   allowDraw = true,
+  expandNonce = 0,
 }: Props) {
   const isInitials = variant === 'initials';
   const colors = useThemeColors();
@@ -141,6 +144,7 @@ export default function SignatureCaptureModal({
     <MinimizableBottomSheet
       visible={visible}
       onClose={onClose}
+      expandNonce={expandNonce}
       title={fieldLabel || (isInitials ? 'Add initials' : 'Sign here')}
       heightRatio={0.72}
     >
@@ -202,6 +206,9 @@ export default function SignatureCaptureModal({
                   placeholderTextColor={colors.textSecondary}
                   autoCapitalize="words"
                   autoCorrect={false}
+                  autoComplete={isInitials ? 'off' : 'name'}
+                  textContentType={isInitials ? 'none' : 'name'}
+                  importantForAutofill={isInitials ? 'no' : 'yes'}
                   autoFocus
                   returnKeyType="done"
                   blurOnSubmit

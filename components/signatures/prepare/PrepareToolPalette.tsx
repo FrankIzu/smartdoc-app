@@ -2,18 +2,18 @@
  * PrepareToolPalette — tool row + scrollable field list.
  *
  * Tools: cursor + 5 field types (tap a type to add one field, then drag to position).
- * Field list: tap to select and jump to page (blocked during gestureLock).
+ * Field list: tap to select and jump to page.
+ * Uses RNGH TouchableOpacity so taps stay reliable after field gestures.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import {
-  ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
+import { ScrollView, TouchableOpacity } from 'react-native-gesture-handler';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import type { PrepareTool, PrepareEditorState, PrepareEditorActions } from '../../../hooks/usePrepareEditor';
 import { FIELD_COLORS, FIELD_ICONS, FIELD_TYPES } from '../../../utils/fillable';
@@ -42,10 +42,7 @@ export default function PrepareToolPalette({ editor }: Props) {
     sortedAllFields,
     selectedFieldIds,
     jumpToField,
-    isGestureLocked,
   } = editor;
-
-  const locked = isGestureLocked;
 
   return (
     <View style={[styles.wrapper, { backgroundColor: colors.background, borderBottomColor: colors.border ?? '#E5E7EB' }]}>
@@ -63,13 +60,11 @@ export default function PrepareToolPalette({ editor }: Props) {
               key={tool}
               style={[
                 styles.toolBtn,
-                locked && styles.disabled,
                 isActive
                   ? { backgroundColor: color, borderColor: color }
                   : { backgroundColor: 'transparent', borderColor: color },
               ]}
               onPress={() => setPrepareTool(tool)}
-              disabled={locked}
               activeOpacity={0.75}
             >
               <Ionicons
@@ -100,14 +95,12 @@ export default function PrepareToolPalette({ editor }: Props) {
                 key={f.id}
                 style={[
                   styles.fieldChip,
-                  locked && styles.disabled,
                   {
                     borderColor: isSelected ? color : colors.border ?? '#D1D5DB',
                     backgroundColor: isSelected ? `${color}18` : 'transparent',
                   },
                 ]}
                 onPress={() => jumpToField(f.id)}
-                disabled={locked}
                 activeOpacity={0.75}
               >
                 <Ionicons
@@ -176,8 +169,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
     flexShrink: 1,
-  },
-  disabled: {
-    opacity: 0.4,
   },
 });

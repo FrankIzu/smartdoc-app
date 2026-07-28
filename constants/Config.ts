@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 // Local Development Configuration - Single source of truth for local backend IP
 // ⚠️ CHANGE THIS IP ADDRESS TO UPDATE ALL LOCAL DEVELOPMENT URLs
 // This affects: API backend URL, Expo dev server URL, and all local development endpoints
-export const LOCAL_DEV_IP = '192.168.1.8';
+export const LOCAL_DEV_IP = '192.168.1.10';
 export const LOCAL_DEV_PORT = 5000;
 export const EXPO_DEV_PORT = 8081; // Metro bundler default port
 export const LOCAL_DEV_URL = `http://${LOCAL_DEV_IP}:${LOCAL_DEV_PORT}`;
@@ -226,13 +226,13 @@ export const API_ENDPOINTS = {
   DELETE_USER: (id: number) => `/api/admin/users/${id}`,
   UPDATE_USER_ADMIN: (id: number) => `/api/admin/users/${id}/admin`,
   
-  // Upload Links
-  UPLOAD_LINKS: '/api/upload-links',
-  UPLOAD_LINK_BY_ID: (id: number) => `/api/upload-links/${id}`,
-  REGENERATE_UPLOAD_LINK: (id: number) => `/api/upload-links/${id}/regenerate`,
-  FILES_UPLOADED_VIA_LINKS: '/api/files/uploaded-via-links',
-  PUBLIC_UPLOAD_INFO: (token: string) => `/api/upload-to/${token}`,
-  PUBLIC_UPLOAD: (token: string) => `/api/upload-to/${token}`,
+  // Upload Links (web API — public upload-to + owner management)
+  UPLOAD_LINKS: '/api/v1/web/upload-links',
+  UPLOAD_LINK_BY_ID: (id: number) => `/api/v1/web/upload-links/${id}`,
+  REGENERATE_UPLOAD_LINK: (id: number) => `/api/v1/web/upload-links/${id}/regenerate`,
+  FILES_UPLOADED_VIA_LINKS: '/api/v1/web/files/uploaded-via-links',
+  PUBLIC_UPLOAD_INFO: (token: string) => `/api/v1/web/upload-to/${token}`,
+  PUBLIC_UPLOAD: (token: string) => `/api/v1/web/upload-to/${token}`,
   
   // Notifications
   NOTIFICATIONS: '/api/notifications',
@@ -278,6 +278,10 @@ export const STORAGE_KEYS = {
   CALENDAR_LAYOUT_MODE: 'calendar_layout_mode',
   /** Device-scoped AI File Manager session correlation id */
   AI_FM_SESSION: 'gd_ai_fm_session',
+  /** Legacy single-flag key; migrated into USER_PREFERENCES. */
+  WIFI_ONLY_UPLOAD: 'wifi_only_upload',
+  /** Full mobile settings preferences blob (display, upload, privacy, etc.). */
+  USER_PREFERENCES: 'user_app_preferences',
 } as const;
 
 /** After API/network failures, wait this long before showing the orange offline banner (reduces flicker on brief outages). */

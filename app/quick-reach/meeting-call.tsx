@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
+import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { parseMobileMeetingInfoResponse } from '../../utils/meetingJoinPresence';
@@ -403,6 +404,8 @@ export default function MeetingCallScreen() {
   const [featuresExpanded, setFeaturesExpanded] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isJoining, setIsJoining] = useState(false);
+  const [actionBusyKey, setActionBusyKey] = useState<string | null>(null);
+  const [inviteSending, setInviteSending] = useState(false);
   /** True when GET /api/v1/video/invited-meetings fails (own list may still show). */
   const [invitedLoadFailed, setInvitedLoadFailed] = useState(false);
 
@@ -868,6 +871,7 @@ export default function MeetingCallScreen() {
   };
 
   const endMeeting = async (meeting: Meeting) => {
+    const busyKey = `end:${meeting.id}`;
     Alert.alert(
       'End Meeting',
       'Are you sure you want to end this meeting?',
@@ -878,6 +882,7 @@ export default function MeetingCallScreen() {
           style: 'destructive',
           onPress: async () => {
             const roomId = meeting.id || meeting.meetingId;
+            setActionBusyKey(busyKey);
             Toast.show({ type: 'info', text1: 'Ending meeting...', visibilityTime: 2000 });
             const clearCurrentMeetingKey = () => {
               AsyncStorage.removeItem(REACH_CURRENT_MEETING_KEY).catch(() => {});
@@ -908,6 +913,7 @@ export default function MeetingCallScreen() {
                         text: 'End meeting',
                         style: 'destructive',
                         onPress: async () => {
+                          setActionBusyKey(busyKey);
                           Toast.show({ type: 'info', text1: 'Ending meeting...', visibilityTime: 2000 });
                           try {
                             const forceResponse = await apiClient.endMeeting(roomId, true);
@@ -921,6 +927,8 @@ export default function MeetingCallScreen() {
                           } catch (err: any) {
                             console.error('Force end meeting failed:', err);
                             Alert.alert('Error', err?.message || 'Failed to end meeting');
+                          } finally {
+                            setActionBusyKey(null);
                           }
                         },
                       },
@@ -948,6 +956,8 @@ export default function MeetingCallScreen() {
             } catch (error: any) {
               console.error('Failed to end meeting:', error);
               Alert.alert('Error', error?.message || 'Failed to end meeting');
+            } finally {
+              setActionBusyKey(null);
             }
           },
         },
@@ -956,6 +966,7 @@ export default function MeetingCallScreen() {
   };
 
   const deleteMeeting = async (meeting: Meeting) => {
+    const busyKey = `delete:${meeting.id}`;
     Alert.alert(
       'Delete Meeting',
       'Are you sure you want to delete this meeting?',
@@ -965,6 +976,7 @@ export default function MeetingCallScreen() {
           text: 'Delete', 
           style: 'destructive',
           onPress: async () => {
+            setActionBusyKey(busyKey);
             try {
               const response = await apiClient.deleteMeeting(meeting.id);
               
@@ -982,6 +994,7 @@ export default function MeetingCallScreen() {
                       text: 'Delete Permanently', 
                       style: 'destructive',
                       onPress: async () => {
+                        setActionBusyKey(busyKey);
                         try {
                           const confirmResponse = await apiClient.deleteMeeting(meeting.id, true);
                           if (confirmResponse.success) {
@@ -992,6 +1005,8 @@ export default function MeetingCallScreen() {
                           }
                         } catch (error: any) {
                           Alert.alert('Error', error.message || 'Failed to delete meeting');
+                        } finally {
+                          setActionBusyKey(null);
                         }
                       }
                     }
@@ -1003,6 +1018,8 @@ export default function MeetingCallScreen() {
             } catch (error: any) {
               console.error('Failed to delete meeting:', error);
               Alert.alert('Error', error.message || 'Failed to delete meeting');
+            } finally {
+              setActionBusyKey(null);
             }
           }
         }
@@ -1011,6 +1028,7 @@ export default function MeetingCallScreen() {
   };
 
   const removeMeetingFromList = async (meeting: Meeting) => {
+    const busyKey = `remove:${meeting.id}`;
     Alert.alert(
       '',
       'This removes the meeting from your list',
@@ -1019,6 +1037,7 @@ export default function MeetingCallScreen() {
         {
           text: 'Remove',
           onPress: async () => {
+            setActionBusyKey(busyKey);
             try {
               const res = await apiClient.dismissMeetingFromList(meeting.id);
               if (res.success) {
@@ -1029,6 +1048,8 @@ export default function MeetingCallScreen() {
               }
             } catch (error: any) {
               Alert.alert('Error', error?.message || 'Could not remove meeting');
+            } finally {
+              setActionBusyKey(null);
             }
           },
         },
@@ -1059,6 +1080,7 @@ export default function MeetingCallScreen() {
       return;
     }
 
+    setInviteSending(true);
     try {
       const response = await apiClient.sendMeetingInvite(selectedMeeting.meetingId, {
         emails: inviteEmails,
@@ -1076,9 +1098,14 @@ export default function MeetingCallScreen() {
       } else {
         Alert.alert('Error', response.message || 'Failed to send invitation');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to send invitation:', error);
-      Alert.alert('Error', 'Failed to send invitation');
+      Alert.alert(
+        'Error',
+        error?.message || error?.response?.data?.message || error?.response?.data?.error || 'Failed to send invitation'
+      );
+    } finally {
+      setInviteSending(false);
     }
   };
 
@@ -1111,33 +1138,67 @@ export default function MeetingCallScreen() {
     return out.replace(/ {2,}/g, ' ').trim();
   };
 
+  const buildLocalInviteText = (meeting: Meeting, inviteLink?: string) => {
+    let details = `GrabDocs Meeting Invitation\n\n`;
+    details += `Meeting: ${stripClipboardEmojis(meeting.title)}\n\n`;
+    if (meeting.startTime) {
+      try {
+        const when = new Date(meeting.startTime);
+        if (!Number.isNaN(when.getTime())) {
+          details += `Date & time: ${when.toLocaleString([], {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })}\n\n`;
+        }
+      } catch {
+        // ignore bad dates
+      }
+    }
+    const link = (inviteLink || meeting.roomUrl || '').trim();
+    if (link) details += `Join Meeting:\n${link}\n\n`;
+    details += `Dial-in:\n+1 415 993-7779\n`;
+    details += `Meeting ID: ${meeting.meetingId}\n`;
+    if (meeting.passcode) {
+      details += `Passcode: ${meeting.passcode}\n`;
+    }
+    return stripClipboardEmojis(details);
+  };
+
   const copyMeetingDetails = async (meeting: Meeting) => {
     try {
+      if (!meeting?.meetingId) {
+        Alert.alert('Error', 'Meeting ID not available');
+        return;
+      }
       // Use the same backend endpoint as web to get the properly formatted invitation text
       const response = await apiClient.copyMeetingInvite(meeting.meetingId);
       
       if (response.success && response.data?.invite_message) {
-        // Use the invitation message from backend (same format as web)
         await Clipboard.setStringAsync(stripClipboardEmojis(response.data.invite_message));
         Alert.alert('Copied', 'Meeting invitation copied to clipboard');
-      } else {
-        // Fallback: same masked join URL as copy when API returns invite_link but no full message
-        let details = `Meeting: ${stripClipboardEmojis(meeting.title)}\n`;
-        details += `Meeting ID: ${meeting.meetingId}\n`;
-        if (meeting.passcode) {
-          details += `Passcode: ${meeting.passcode}\n`;
-        }
-        const link =
-          response.data && typeof response.data === 'object' && 'invite_link' in response.data
-            ? String((response.data as { invite_link?: string }).invite_link ?? '').trim()
-            : '';
-        if (link) details += `Join: ${link}\n`;
-        await Clipboard.setStringAsync(details);
-        Alert.alert('Copied', 'Meeting details copied to clipboard');
+        return;
       }
+
+      const link =
+        response.data && typeof response.data === 'object' && 'invite_link' in response.data
+          ? String((response.data as { invite_link?: string }).invite_link ?? '').trim()
+          : '';
+      await Clipboard.setStringAsync(buildLocalInviteText(meeting, link));
+      Alert.alert('Copied', 'Meeting details copied to clipboard');
     } catch (error) {
       console.error('Copy error:', error);
-      Alert.alert('Error', 'Failed to copy meeting invitation');
+      // Offline / API failure — still copy usable details from the list item (same idea as web)
+      try {
+        await Clipboard.setStringAsync(buildLocalInviteText(meeting));
+        Alert.alert('Copied', 'Meeting details copied to clipboard');
+      } catch (clipboardError) {
+        console.error('Clipboard fallback failed:', clipboardError);
+        Alert.alert('Error', 'Failed to copy meeting invitation');
+      }
     }
   };
 
@@ -1651,27 +1712,29 @@ export default function MeetingCallScreen() {
       </View>
 
       <View style={dynamicStyles.meetingActions}>
-        <TouchableOpacity
+        <FeedbackTouchable
           style={[dynamicStyles.actionIcon, isJoining && { opacity: 0.5 }]}
           disabled={isJoining}
+          spinnerColor="#007AFF"
           onPress={(e) => {
             e.stopPropagation();
             if (isJoining) return;
-            joinMeeting(item);
+            return joinMeeting(item);
           }}
         >
           <Ionicons name="videocam" size={16} color="#007AFF" />
-        </TouchableOpacity>
+        </FeedbackTouchable>
         
-        <TouchableOpacity
+        <FeedbackTouchable
           style={dynamicStyles.actionIcon}
+          spinnerColor="#5856D6"
           onPress={(e) => {
             e.stopPropagation();
-            copyMeetingDetails(item);
+            return copyMeetingDetails(item);
           }}
         >
           <Ionicons name="copy" size={16} color="#5856D6" />
-        </TouchableOpacity>
+        </FeedbackTouchable>
 
         {meetingHasKnownAssets(item, assetPresenceMap) ? (
           <TouchableOpacity
@@ -1697,15 +1760,18 @@ export default function MeetingCallScreen() {
         </TouchableOpacity>
         
         {(item.status === 'active') && (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={dynamicStyles.actionIcon}
+            disabled={actionBusyKey != null}
+            loading={actionBusyKey === `end:${item.id}`}
+            spinnerColor="#FF3B30"
             onPress={(e) => {
               e.stopPropagation();
               endMeeting(item);
             }}
           >
             <Ionicons name="stop-circle" size={16} color="#FF3B30" />
-          </TouchableOpacity>
+          </FeedbackTouchable>
         )}
         
         <TouchableOpacity
@@ -1720,29 +1786,35 @@ export default function MeetingCallScreen() {
         </TouchableOpacity>
         
         {canDeleteReachMeetingFromList(item, user?.id) ? (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={dynamicStyles.actionIcon}
             accessibilityLabel="Delete meeting"
+            disabled={actionBusyKey != null}
+            loading={actionBusyKey === `delete:${item.id}`}
+            spinnerColor="#FF3B30"
             onPress={(e) => {
               e.stopPropagation();
               deleteMeeting(item);
             }}
           >
             <Ionicons name="trash-outline" size={16} color="#FF3B30" />
-          </TouchableOpacity>
+          </FeedbackTouchable>
         ) : !isReachMeetingOwner(item, user?.id) &&
           !isReachMeetingHost(item, user?.id) &&
           item.status !== 'active' ? (
-          <TouchableOpacity
+          <FeedbackTouchable
             style={dynamicStyles.actionIcon}
             accessibilityLabel="Remove from my list"
+            disabled={actionBusyKey != null}
+            loading={actionBusyKey === `remove:${item.id}`}
+            spinnerColor={colors.textSecondary || '#8E8E93'}
             onPress={(e) => {
               e.stopPropagation();
               removeMeetingFromList(item);
             }}
           >
             <Ionicons name="close-circle-outline" size={18} color={colors.textSecondary || '#8E8E93'} />
-          </TouchableOpacity>
+          </FeedbackTouchable>
         ) : null}
       </View>
     </TouchableOpacity>
@@ -1891,7 +1963,7 @@ export default function MeetingCallScreen() {
       {/* Join Meeting Modal */}
       <Modal
         visible={showJoinModal}
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         onRequestClose={() => setShowJoinModal(false)}
         statusBarTranslucent
@@ -1918,17 +1990,20 @@ export default function MeetingCallScreen() {
                     <Text style={dynamicStyles.cancelButton}>Cancel</Text>
                   </TouchableOpacity>
                   <Text style={dynamicStyles.modalTitle}>Join Meeting</Text>
-                  <TouchableOpacity 
+                  <FeedbackTouchable
                     onPress={joinMeetingById}
                     disabled={isJoining || !meetingId.trim()}
+                    loading={isJoining}
+                    spinnerColor="#007AFF"
+                    replaceWithSpinner={false}
                   >
                     <Text style={[
                       dynamicStyles.joinButton,
                       (!meetingId.trim() || isJoining) && dynamicStyles.joinButtonDisabled
                     ]}>
-                      Join
+                      {isJoining ? 'Joining...' : 'Join'}
                     </Text>
-                  </TouchableOpacity>
+                  </FeedbackTouchable>
                 </View>
                 
                 <View style={dynamicStyles.modalContent}>
@@ -1974,17 +2049,20 @@ export default function MeetingCallScreen() {
               <Text style={dynamicStyles.cancelButton}>Cancel</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Invite to Meeting</Text>
-            <TouchableOpacity 
+            <FeedbackTouchable
               onPress={inviteToMeeting}
-              disabled={inviteEmails.length === 0}
+              disabled={inviteEmails.length === 0 || inviteSending}
+              loading={inviteSending}
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
             >
               <Text style={[
                 dynamicStyles.joinButton,
-                inviteEmails.length === 0 && dynamicStyles.joinButtonDisabled
+                (inviteEmails.length === 0 || inviteSending) && dynamicStyles.joinButtonDisabled
               ]}>
-                Send
+                {inviteSending ? 'Sending...' : 'Send'}
               </Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
           
           <View style={dynamicStyles.modalContent}>
@@ -2046,7 +2124,9 @@ export default function MeetingCallScreen() {
               <Text style={dynamicStyles.cancelButton}>Close</Text>
             </TouchableOpacity>
             <Text style={dynamicStyles.modalTitle}>Meeting Information</Text>
-            <TouchableOpacity 
+            <FeedbackTouchable
+              spinnerColor="#007AFF"
+              replaceWithSpinner={false}
               onPress={async () => {
                 if (infoMeeting) {
                   await copyMeetingDetails(infoMeeting);
@@ -2054,7 +2134,7 @@ export default function MeetingCallScreen() {
               }}
             >
               <Text style={dynamicStyles.joinButton}>Copy</Text>
-            </TouchableOpacity>
+            </FeedbackTouchable>
           </View>
           
           <ScrollView style={dynamicStyles.modalContent}>

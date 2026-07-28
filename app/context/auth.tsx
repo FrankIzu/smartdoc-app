@@ -80,6 +80,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const exchanged = await exchangeGoogleLoginToken(loginToken);
         if (exchanged) {
           await setUserFromExternal(exchanged.user, exchanged.jwt);
+          try {
+            const deviceSecurityService = (await import('../../services/deviceSecurity')).default;
+            await deviceSecurityService.setLastLoginData({
+              timestamp: new Date().toISOString(),
+              authMethod: 'google',
+            });
+            await deviceSecurityService.disableBiometricLoginPreference();
+          } catch {
+            /* non-fatal */
+          }
           console.log('✅ Google OAuth deep link: session established');
         }
       } else if (parsed.hostname === 'login-error') {
@@ -316,6 +326,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
           setUser(localUser);
           console.log('✅ Sign in successful for:', localUser.name);
+          try {
+            const deviceSecurityService = (await import('../../services/deviceSecurity')).default;
+            await deviceSecurityService.setLastLoginData({
+              timestamp: new Date().toISOString(),
+              authMethod: 'password',
+            });
+          } catch {
+            /* non-fatal */
+          }
           return;
         }
         
