@@ -292,7 +292,7 @@ jobs:
           if [ "$PROFILE" = "production" ]; then
             PROFILE="production-ci"
           fi
-          echo "Running EAS build with profile=$PROFILE (DEBUG=*)..."
+          echo "Running EAS build with profile=$PROFILE..."
           export EAS_LOCAL_BUILD_SKIP_CLEANUP=1
           export EAS_LOCAL_BUILD_WORKINGDIR="$GITHUB_WORKSPACE/eas-build"
           mkdir -p "$EAS_LOCAL_BUILD_WORKINGDIR"
@@ -300,9 +300,10 @@ jobs:
           exit "${PIPESTATUS[0]:-0}"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EAS_DANGEROUS_OVERRIDE_IOS_BUNDLE_IDENTIFIER: "com.grabdocs.mobile"
+          # Do NOT set EAS_DANGEROUS_OVERRIDE_IOS_BUNDLE_IDENTIFIER — it forces EVERY
+          # target (including GrabDocsBroadcastUpload) to the main app bundle ID, so EAS
+          # tries to strip Push/Sign in with Apple/Associated Domains from com.grabdocs.mobile.
           HOME: ${{ env.HOME || '/Users/runner' }}
-          EXPO_DEBUG: "1"
           EXT_PROVISIONING_PROFILE_BASE64: ${{ secrets.EXT_PROVISIONING_PROFILE_BASE64 }}
           EXT_PROVISIONING_PROFILE_UUID: ${{ secrets.EXT_PROVISIONING_PROFILE_UUID }}
 
