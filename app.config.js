@@ -171,7 +171,15 @@ const baseExpo = {
     [
       "expo-build-properties",
       {
-        ios: { deploymentTarget: "16.0" },
+        ios: {
+          deploymentTarget: "16.0",
+          // Google Sign-In pulls AppCheckCore (Swift), which needs modular headers
+          // on these ObjC pods when linking as static libraries.
+          extraPods: [
+            { name: "GoogleUtilities", modular_headers: true },
+            { name: "RecaptchaInterop", modular_headers: true },
+          ],
+        },
         android: {
           minSdkVersion: 24,
           compileSdkVersion: 36,
