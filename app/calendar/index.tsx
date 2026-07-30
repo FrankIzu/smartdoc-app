@@ -71,6 +71,7 @@ import {
     toLocalDateString,
 } from '../../utils/calendarTime';
 import { openMapsForLocationLabel } from '../../utils/openMapsQuery';
+import { persistentBottomNavInset } from '../../utils/persistentBottomNavInset';
 import { useAuth } from '../context/auth';
 import { GoogleLogo } from '../../components/GoogleLogo';
 import { MicrosoftLogo } from '../../components/MicrosoftLogo';
@@ -165,7 +166,8 @@ export default function CalendarHomeScreen() {
 
   const monthVerticalScrollRef = useRef<ScrollView>(null);
 
-  const calendarFabBottom = Math.max(insets.bottom, 8) + 16;
+  // Bottom nav overlays the screen; keep FAB / lists above it.
+  const calendarFabBottom = persistentBottomNavInset(insets.bottom) + 16;
   const calendarScrollBottomPad = calendarFabBottom + 56 + 16;
 
   const refreshConnections = useCallback(async () => {

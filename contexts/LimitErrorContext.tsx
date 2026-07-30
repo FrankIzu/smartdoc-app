@@ -28,13 +28,13 @@ export function LimitErrorProvider({ children }: { children: React.ReactNode }) 
     (data: LimitErrorData) => {
       const title = getTitle(data.limitType, data.errorCode);
       const message = data.message;
-      const actionUrl = data.actionUrl || '/settings?tab=billing';
+      const actionUrl = data.actionUrl || 'https://grabdocs.com/pricing';
 
       const buttons: { text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }[] = [
         { text: 'Dismiss', style: 'cancel' },
       ];
 
-      // Add Upgrade button - open billing/settings
+      // Add Upgrade button - open pricing page (or custom action URL)
       const openBilling = () => {
         if (actionUrl.startsWith('http')) {
           Linking.openURL(actionUrl).catch(() => {});

@@ -16,9 +16,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { workspacesListScreenKey } from '../../services/userScopedCache';
+import { screenCache } from '../../utils/screenCache';
+import { useAuth } from '../context/auth';
 
 export default function CreateWorkspaceScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const colors = useThemeColors();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -179,6 +183,8 @@ export default function CreateWorkspaceScreen() {
       });
 
       if (response.success) {
+        const listKey = workspacesListScreenKey(user?.id);
+        if (listKey) screenCache.invalidate(listKey);
         Alert.alert('Success', 'Workspace created successfully', [
           { text: 'OK', onPress: () => router.back() }
         ]);

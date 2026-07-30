@@ -4,12 +4,14 @@ const TAB_BAR_PADDING_TOP = 5;
 
 const TAB_ROOTS = new Set(['index', 'documents', 'chats', 'help', 'settings']);
 
-/** Bottom bar on main tab routes only — calendar stack has its own header/back navigation. */
+/** Bottom bar on main shell routes. Nested calendar screens keep header/back only. */
 export function shouldShowPersistentBottomNav(pathname: string | null | undefined): boolean {
   if (!pathname) return false;
   const p = pathname;
 
-  if (p === '/calendar' || p === '/calendar/' || p.startsWith('/calendar/')) return false;
+  // Main calendar list/shell — not create/detail/edit/etc.
+  if (p === '/calendar' || p === '/calendar/') return true;
+  if (p.startsWith('/calendar/')) return false;
 
   // Expo Router may include or omit the "(tabs)" group in usePathname().
   if (p === '/' || p === '/(tabs)' || p === '/(tabs)/' || p === '/(tabs)/index') {
