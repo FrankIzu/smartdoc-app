@@ -8495,7 +8495,7 @@ export default function ChatsScreen() {
             keyboardDismissMode="interactive"
           >
           {/* Chat Type Selection */}
-          <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Chat Type</Text>
+          <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: colors.text }}>Chat Type</Text>
           
           <TouchableOpacity 
             style={[dynamicStyles.optionItem, newChatType === 'ai_assistant' && dynamicStyles.selectedOption]}
@@ -8570,7 +8570,7 @@ export default function ChatsScreen() {
           {/* Document Selection for Document-Focused Chat */}
           {newChatType === 'document_focused' && (
             <View style={{ marginTop: 24 }}>
-              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select Document</Text>
+              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: colors.text }}>Select Document</Text>
               
               {/* Search for documents */}
               <View style={dynamicStyles.searchInputContainer}>
@@ -8609,7 +8609,7 @@ export default function ChatsScreen() {
           {/* Workspace Selection for Workspace Chat */}
           {newChatType === 'workspace' && (
             <View style={{ marginTop: 24 }}>
-              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select Workspace</Text>
+              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: colors.text }}>Select Workspace</Text>
               
               {/* Search for workspaces */}
               <View style={dynamicStyles.searchInputContainer}>
@@ -8648,7 +8648,7 @@ export default function ChatsScreen() {
           {/* User Selection for Direct Message */}
           {newChatType === 'user_direct' && (
             <View style={{ marginTop: 24 }}>
-              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select User</Text>
+              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: colors.text }}>Select User</Text>
               
               {/* Search for users */}
               <View style={dynamicStyles.searchInputContainer}>
@@ -8704,7 +8704,7 @@ export default function ChatsScreen() {
           {/* Bookmark Selection for Bookmark-Focused Chat */}
           {newChatType === 'bookmark_focused' && (
             <View style={{ marginTop: 24 }}>
-              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>Select Bookmark Collection</Text>
+              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: colors.text }}>Select Bookmark Collection</Text>
               
               {/* Search for bookmarks */}
               <View style={dynamicStyles.searchInputContainer}>

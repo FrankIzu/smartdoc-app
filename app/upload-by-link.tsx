@@ -210,6 +210,11 @@ export default function UploadByLinkScreen() {
       });
 
       if (!result.canceled && result.assets) {
+        const blockedExtensions = new Set([
+          'zip', 'rar', '7z', 'tar', 'gz', 'bz2',
+          'mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv', 'webm', 'mpeg', 'mpg', 'm4v', '3gp',
+          'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'aiff', 'ape', 'opus',
+        ]);
         const newFiles: UploadFile[] = result.assets.map((asset) => ({
           uri: asset.uri,
           name: asset.name,
@@ -217,13 +222,32 @@ export default function UploadByLinkScreen() {
           type: asset.mimeType || 'application/octet-stream',
         }));
 
+        const validationErrors: string[] = [];
+        for (const file of newFiles) {
+          const ext = (file.name.split('.').pop() || '').toLowerCase();
+          if (ext && blockedExtensions.has(ext)) {
+            validationErrors.push(
+              `${sanitizeDisplayFilename(file.name)}: .${ext} is not allowed (ZIP, audio, and video are blocked).`,
+            );
+          }
+        }
+        if (validationErrors.length > 0) {
+          Alert.alert(
+            'Invalid files',
+            `No files were added. Fix these issues and select again:\n\n${validationErrors.join('\n')}`,
+          );
+          return;
+        }
+
         const remaining = getRemainingUploadSlots(uploadInfo ?? {});
         if (remaining != null && selectedFiles.length + newFiles.length > remaining) {
           Alert.alert(
             'Upload Limit',
             remaining === 0
               ? 'This upload link has reached its file limit.'
-              : `This link only accepts ${remaining} more file(s). Please remove extra files before uploading.`,
+              : remaining === 1
+                ? 'This link accepts only 1 more file. Please select a single file.'
+                : `This link only accepts ${remaining} more file(s). Please select fewer files.`,
           );
           return;
         }
@@ -264,8 +288,8 @@ export default function UploadByLinkScreen() {
       Alert.alert(
         'Upload Limit',
         remaining === 1
-          ? 'This link only accepts 1 file. Please remove extra files before uploading.'
-          : `This link only accepts ${remaining} more file(s). Please remove extra files before uploading.`,
+          ? 'This link accepts only 1 more file. Please remove extra files before uploading.'
+          : `This link accepts only ${remaining} more file(s). Please remove extra files before uploading.`,
       );
       return;
     }
@@ -354,9 +378,19 @@ export default function UploadByLinkScreen() {
       }
 
       if (!result.ok || !result.data.success) {
+        const failed = result.data.failed_files ?? [];
+        const detail = failed
+          .map((f) =>
+            typeof f === 'string'
+              ? f
+              : `${sanitizeDisplayFilename(f.filename || 'file')}: ${f.error || 'failed'}`,
+          )
+          .join('\n');
         Alert.alert(
-          'Upload Error',
-          getUploadLinkErrorMessage(result.data, result.data.message || 'Upload failed'),
+          result.data.validation_failed ? 'Upload rejected' : 'Upload Error',
+          detail
+            ? `${getUploadLinkErrorMessage(result.data, result.data.message || 'Upload failed')}\n\n${detail}`
+            : getUploadLinkErrorMessage(result.data, result.data.message || 'Upload failed'),
         );
         return;
       }
@@ -364,6 +398,10 @@ export default function UploadByLinkScreen() {
       const uploaded = result.data.uploaded_files ?? [];
       const failed = result.data.failed_files ?? [];
       const uploadedCount = uploaded.length;
+      const remainingAfter =
+        typeof result.data.remaining_uploads === 'number'
+          ? result.data.remaining_uploads
+          : null;
       setUploadProgress({ overall: 100 });
 
       const finishOk = () => {
@@ -396,9 +434,13 @@ export default function UploadByLinkScreen() {
               : `${sanitizeDisplayFilename(f.filename || 'file')}: ${f.error || 'failed'}`,
           )
           .join('\n');
+        const remainingNote =
+          remainingAfter != null && remainingAfter > 0
+            ? `\n\nThis link accepts ${remainingAfter} more file${remainingAfter === 1 ? '' : 's'}. Retry only the failed ones.`
+            : '\n\nSuccessful files were kept; retry only the failed ones.';
         Alert.alert(
           'Partially uploaded',
-          `Uploaded ${uploadedCount} file(s).\n\nFailed:\n${detail}`,
+          `Uploaded ${uploadedCount} of ${uploadedCount + failed.length} file(s).${remainingNote}\n\nFailed:\n${detail}`,
           [{ text: 'OK', onPress: finishOk }],
         );
         return;
