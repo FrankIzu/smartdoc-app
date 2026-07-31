@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Animated, Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { PanGestureHandler, State } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface ProgressData {
   id: string;
@@ -16,17 +17,18 @@ interface GlobalProgressBarProps {
   minimized: boolean;
   progressData: ProgressData[];
   onMinimize: () => void;
+  onExpand: () => void;
   onClose: () => void;
 }
-
-const { width: screenWidth } = Dimensions.get('window');
 
 function SmoothProgressFill({
   progress,
   backgroundColor,
+  style,
 }: {
   progress: number;
   backgroundColor: string;
+  style?: object;
 }) {
   const anim = React.useRef(new Animated.Value(progress)).current;
   React.useEffect(() => {
@@ -44,6 +46,7 @@ function SmoothProgressFill({
     <Animated.View
       style={[
         styles.progressFill,
+        style,
         {
           width: widthPct,
           backgroundColor,
@@ -53,21 +56,48 @@ function SmoothProgressFill({
   );
 }
 
+function overallProgress(progressData: ProgressData[]): number {
+  if (progressData.length === 0) return 0;
+  const sum = progressData.reduce((acc, item) => acc + Math.min(100, Math.max(0, item.progress)), 0);
+  return sum / progressData.length;
+}
+
+function overallStatus(progressData: ProgressData[]): ProgressData['status'] {
+  if (progressData.some((p) => p.status === 'error')) return 'error';
+  if (progressData.some((p) => p.status === 'in-progress' || p.status === 'pending')) return 'in-progress';
+  if (progressData.length > 0 && progressData.every((p) => p.status === 'completed')) return 'completed';
+  return 'in-progress';
+}
+
+function getStatusColor(status: ProgressData['status']) {
+  switch (status) {
+    case 'completed':
+      return '#10B981';
+    case 'error':
+      return '#EF4444';
+    case 'in-progress':
+      return '#3B82F6';
+    default:
+      return '#6B7280';
+  }
+}
+
 export default function GlobalProgressBar({
   visible,
   minimized,
   progressData,
   onMinimize,
+  onExpand,
   onClose,
 }: GlobalProgressBarProps) {
+  const insets = useSafeAreaInsets();
   const slideAnimation = React.useRef(new Animated.Value(0)).current;
   const swipeAnimation = React.useRef(new Animated.Value(0)).current;
-  const lastGestureY = React.useRef(0);
 
   React.useEffect(() => {
     if (visible) {
       Animated.timing(slideAnimation, {
-        toValue: minimized ? 0 : 1,
+        toValue: 1,
         duration: 300,
         useNativeDriver: true,
       }).start();
@@ -78,30 +108,22 @@ export default function GlobalProgressBar({
         useNativeDriver: true,
       }).start();
     }
-  }, [visible, minimized, slideAnimation]);
-
-  const onGestureEvent = Animated.event(
-    [{ nativeEvent: { translationY: swipeAnimation } }],
-    { useNativeDriver: true }
-  );
+  }, [visible, slideAnimation]);
 
   const onHandlerStateChange = (event: any) => {
     if (event.nativeEvent.state === State.END) {
       const { translationY, velocityY } = event.nativeEvent;
-      
-      // If swiped up significantly or with high velocity, close the progress bar
+
       if (translationY < -50 || velocityY < -500) {
-        // Animate out and close
         Animated.timing(swipeAnimation, {
           toValue: -200,
           duration: 200,
           useNativeDriver: true,
         }).start(() => {
           onClose();
-          swipeAnimation.setValue(0); // Reset for next time
+          swipeAnimation.setValue(0);
         });
       } else {
-        // Snap back to original position
         Animated.spring(swipeAnimation, {
           toValue: 0,
           useNativeDriver: true,
@@ -112,43 +134,56 @@ export default function GlobalProgressBar({
 
   if (!visible) return null;
 
+  const collapsedProgress = overallProgress(progressData);
+  const collapsedStatus = overallStatus(progressData);
+  const completedCount = progressData.filter((p) => p.status === 'completed').length;
+  const slideHiddenOffset = minimized ? -(insets.top + 6) : -120;
+
   const translateY = Animated.add(
     slideAnimation.interpolate({
       inputRange: [0, 1],
-      outputRange: [minimized ? -60 : 0, 0],
+      outputRange: [slideHiddenOffset, 0],
     }),
     swipeAnimation
   );
 
-  const getStatusIcon = (status: ProgressData['status']) => {
-    switch (status) {
-      case 'completed':
-        return <Ionicons name="checkmark-circle" size={16} color="#10B981" />;
-      case 'error':
-        return <Ionicons name="close-circle" size={16} color="#EF4444" />;
-      case 'in-progress':
-        return <Ionicons name="time" size={16} color="#3B82F6" />;
-      default:
-        return <Ionicons name="ellipse" size={16} color="#6B7280" />;
-    }
-  };
+  // Collapsed: only a thin progress strip below the safe area. Tap to expand.
+  if (minimized) {
+    return (
+      <Animated.View
+        style={[
+          styles.collapsedContainer,
+          {
+            paddingTop: insets.top,
+            transform: [{ translateY }],
+          },
+        ]}
+      >
+        <Pressable
+          onPress={onExpand}
+          style={styles.collapsedTapArea}
+          accessibilityLabel={`Upload progress ${Math.round(collapsedProgress)} percent. Tap to expand.`}
+          accessibilityRole="button"
+        >
+          <View style={styles.collapsedTrack}>
+            <SmoothProgressFill
+              progress={collapsedProgress}
+              backgroundColor={getStatusColor(collapsedStatus)}
+              style={styles.collapsedFill}
+            />
+          </View>
+        </Pressable>
+      </Animated.View>
+    );
+  }
 
-  const getStatusColor = (status: ProgressData['status']) => {
-    switch (status) {
-      case 'completed':
-        return '#10B981';
-      case 'error':
-        return '#EF4444';
-      case 'in-progress':
-        return '#3B82F6';
-      default:
-        return '#6B7280';
-    }
-  };
-
+  // Expanded: full header, controls, and per-file progress rows.
   return (
     <PanGestureHandler
-      onGestureEvent={onGestureEvent}
+      onGestureEvent={Animated.event(
+        [{ nativeEvent: { translationY: swipeAnimation } }],
+        { useNativeDriver: true }
+      )}
       onHandlerStateChange={onHandlerStateChange}
       activeOffsetY={[-10, 10]}
       failOffsetX={[-50, 50]}
@@ -157,45 +192,43 @@ export default function GlobalProgressBar({
         style={[
           styles.container,
           {
+            paddingTop: insets.top,
             transform: [{ translateY }],
           },
         ]}
-        accessibilityLabel={`Upload progress: ${progressData.filter((p) => p.status === 'completed').length} of ${progressData.length} complete`}
+        accessibilityLabel={`Upload progress: ${completedCount} of ${progressData.length} complete`}
         accessibilityRole="progressbar"
       >
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.dragHandle} />
-          <Text style={styles.title}>Progress</Text>
-          <Text style={styles.count}>
-            {progressData.filter(p => p.status === 'completed').length} / {progressData.length}
-          </Text>
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <View style={styles.dragHandle} />
+            <Text style={styles.title}>Progress</Text>
+            <Text style={styles.count}>
+              {completedCount} / {progressData.length}
+            </Text>
+          </View>
+          <View style={styles.headerRight}>
+            <TouchableOpacity
+              onPress={onMinimize}
+              style={styles.button}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Minimize upload progress"
+              accessibilityRole="button"
+            >
+              <Ionicons name="chevron-down" size={20} color="#6B7280" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.button}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Close upload progress"
+              accessibilityRole="button"
+            >
+              <Ionicons name="close" size={20} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
         </View>
-        <View style={styles.headerRight}>
-          <TouchableOpacity
-            onPress={onMinimize}
-            style={styles.button}
-            accessibilityLabel={minimized ? 'Expand upload progress' : 'Minimize upload progress'}
-            accessibilityRole="button"
-          >
-            <Ionicons
-              name={minimized ? 'chevron-up' : 'chevron-down'}
-              size={20}
-              color="#6B7280"
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={onClose}
-            style={styles.button}
-            accessibilityLabel="Close upload progress"
-            accessibilityRole="button"
-          >
-            <Ionicons name="close" size={20} color="#6B7280" />
-          </TouchableOpacity>
-        </View>
-      </View>
 
-      {!minimized && (
         <View style={styles.content}>
           {progressData.map((item) => (
             <View
@@ -218,7 +251,6 @@ export default function GlobalProgressBar({
             </View>
           ))}
         </View>
-      )}
       </Animated.View>
     </PanGestureHandler>
   );
@@ -243,6 +275,27 @@ const styles = StyleSheet.create({
     elevation: 5,
     zIndex: 1000,
   },
+  collapsedContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    backgroundColor: 'transparent',
+  },
+  collapsedTapArea: {
+    minHeight: 20,
+    justifyContent: 'flex-end',
+  },
+  collapsedTrack: {
+    height: 3,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  collapsedFill: {
+    height: 3,
+    borderRadius: 0,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -254,6 +307,8 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
   },
   dragHandle: {
     width: 30,
@@ -292,23 +347,6 @@ const styles = StyleSheet.create({
   progressItem: {
     marginBottom: 4,
   },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  progressTitle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  progressText: {
-    fontSize: 14,
-    color: '#374151',
-    marginLeft: 8,
-    flex: 1,
-  },
   progressPercent: {
     fontSize: 12,
     fontWeight: '600',
@@ -328,10 +366,5 @@ const styles = StyleSheet.create({
   progressFill: {
     height: '100%',
     borderRadius: 2,
-  },
-  progressMessage: {
-    fontSize: 12,
-    color: '#6B7280',
-    fontStyle: 'italic',
   },
 });

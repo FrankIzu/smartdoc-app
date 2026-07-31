@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     ActivityIndicator,
     Alert,
-    FlatList,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -17,6 +16,7 @@ import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { Form } from '../../types/form';
+import { countFormFields, normalizeFormFields } from '../../utils/normalizeFormFields';
 
 interface FormTemplate {
   id: number;
@@ -116,7 +116,7 @@ export default function CreateFormScreen() {
           name: template.name,
           description: template.description,
           category: template.category || template.type,
-          fields: template.json_fields || [], // Map json_fields to fields
+          fields: normalizeFormFields(template.json_fields),
           preview_data: template.preview_data || null
         }));
         
@@ -201,7 +201,6 @@ export default function CreateFormScreen() {
       params: {
         templateId: 'blank',
         templateName: 'Blank Form',
-        fields: JSON.stringify([])
       }
     });
   };
@@ -212,8 +211,7 @@ export default function CreateFormScreen() {
       params: {
         templateId: template.id.toString(),
         templateName: template.name,
-        templateDescription: template.description,
-        fields: JSON.stringify(template.fields)
+        templateDescription: template.description || '',
       }
     });
   };
@@ -222,11 +220,8 @@ export default function CreateFormScreen() {
     router.push({
       pathname: '/forms/builder',
       params: {
-        templateId: 'user-form',
-        templateName: form.title,
-        templateDescription: form.description,
-        fields: JSON.stringify(form.json_fields),
         formId: form.id.toString(),
+        templateName: form.title,
         isPublished: form.is_published ? 'true' : 'false',
       }
     });
@@ -283,8 +278,8 @@ export default function CreateFormScreen() {
     }
   };
 
-  const renderTemplateItem = ({ item }: { item: FormTemplate }) => (
-    <TouchableOpacity style={[styles.templateCard, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => selectTemplate(item)}>
+  const renderTemplateItem = (item: FormTemplate) => (
+    <TouchableOpacity key={item.id} style={[styles.templateCard, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => selectTemplate(item)}>
       <View style={[styles.templateIcon, { backgroundColor: getTemplateColor(item.category, item.name) + '20' }]}>
         <Ionicons 
           name={getTemplateIcon(item.category) as any} 
@@ -299,7 +294,7 @@ export default function CreateFormScreen() {
           <View style={[styles.categoryBadge, { backgroundColor: getTemplateColor(item.category, item.name) }]}>
             <Text style={styles.categoryText}>{item.category}</Text>
           </View>
-          <Text style={[styles.fieldsCount, { color: colors.textSecondary }]}>{(item.fields || []).length} fields</Text>
+          <Text style={[styles.fieldsCount, { color: colors.textSecondary }]}>{item.fields.length} fields</Text>
         </View>
       </View>
       <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
@@ -335,8 +330,9 @@ export default function CreateFormScreen() {
     );
   };
 
-  const renderUserFormItem = ({ item }: { item: Form }) => (
+  const renderUserFormItem = (item: Form) => (
     <TouchableOpacity 
+      key={item.id}
       style={[styles.templateCard, { backgroundColor: colors.card, borderColor: colors.border }]} 
       onPress={() => selectUserForm(item)}
       activeOpacity={0.7}
@@ -357,7 +353,7 @@ export default function CreateFormScreen() {
           </View>
           <View style={styles.metaRight}>
             <Text style={[styles.fieldsCount, { color: colors.textSecondary }]}>
-              {item.json_fields?.length || 0} fields • {item.response_count || 0} responses
+              {countFormFields(item.json_fields)} fields • {item.response_count || 0} responses
             </Text>
             <FeedbackTouchable
               style={styles.deleteButton}
@@ -460,13 +456,7 @@ export default function CreateFormScreen() {
               Select a pre-built template to get started quickly
             </Text>
             
-            <FlatList
-              data={templates}
-              renderItem={renderTemplateItem}
-              keyExtractor={(item) => item.id.toString()}
-              scrollEnabled={false}
-              showsVerticalScrollIndicator={false}
-            />
+            {templates.map((item) => renderTemplateItem(item))}
           </View>
         ) : (
           <View style={styles.section}>
@@ -485,13 +475,7 @@ export default function CreateFormScreen() {
                 </Text>
               </View>
             ) : (
-              <FlatList
-                data={userForms}
-                renderItem={renderUserFormItem}
-                keyExtractor={(item) => item.id.toString()}
-                scrollEnabled={false}
-                showsVerticalScrollIndicator={false}
-              />
+              userForms.map((item) => renderUserFormItem(item))
             )}
           </View>
         )}

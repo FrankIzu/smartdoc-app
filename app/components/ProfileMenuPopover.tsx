@@ -26,11 +26,8 @@ import {
   extractDefaultHomeFromAuthPayload,
   loadPersistedDefaultHomeWebPath,
   MOBILE_MAIN_HOME_WEB_ALIAS,
-  MOBILE_NO_DEFAULT_SCREEN_STORAGE,
-  NO_DEFAULT_SCREEN_LABEL,
   normalizeWebDefaultHomePath,
   persistDefaultHomeWebPath,
-  persistExplicitNoDefaultScreenPreference,
   reconcilePersistenceWithServerNoDefault,
   WebDefaultHomePath,
 } from '../../utils/defaultHomePath';
@@ -45,8 +42,6 @@ type ProfileUser = {
 };
 
 type MenuPanel = 'main' | 'defaultHome';
-
-type DefaultHomePickerSelection = WebDefaultHomePath | 'no-default';
 
 function getUserInitials(u: ProfileUser | null): string | null {
   if (!u) return null;
@@ -91,7 +86,7 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPanel, setMenuPanel] = useState<MenuPanel>('main');
   const [menuAnchor, setMenuAnchor] = useState({ top: 0, right: 0 });
-  const [defaultHomeWebPath, setDefaultHomeWebPath] = useState<WebDefaultHomePath | null>(
+  const [defaultHomeWebPath, setDefaultHomeWebPath] = useState<WebDefaultHomePath>(
     normalizeWebDefaultHomePath(MOBILE_MAIN_HOME_WEB_ALIAS),
   );
   const [defaultHomeSaving, setDefaultHomeSaving] = useState(false);
@@ -100,7 +95,6 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
   const initials = getUserInitials(user);
 
   const defaultHomeLabel = useMemo(() => {
-    if (defaultHomeWebPath === null) return NO_DEFAULT_SCREEN_LABEL;
     return DEFAULT_HOME_SCREEN_OPTIONS.find((o) => o.webPath === defaultHomeWebPath)?.label ?? 'Home';
   }, [defaultHomeWebPath]);
 
@@ -114,7 +108,7 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
 
   const refreshDefaultHome = useCallback(async () => {
     const fromPersist = await loadPersistedDefaultHomeWebPath();
-    let resolvedForServer: WebDefaultHomePath | null = MOBILE_MAIN_HOME_WEB_ALIAS;
+    let resolvedForServer: WebDefaultHomePath = MOBILE_MAIN_HOME_WEB_ALIAS;
     let serverSpecified = false;
 
     try {
@@ -124,9 +118,7 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
         if (p?.kind === 'none') {
           serverSpecified = true;
           await reconcilePersistenceWithServerNoDefault();
-          const after = await loadPersistedDefaultHomeWebPath();
-          resolvedForServer =
-            after === MOBILE_MAIN_HOME_WEB_ALIAS ? MOBILE_MAIN_HOME_WEB_ALIAS : null;
+          resolvedForServer = MOBILE_MAIN_HOME_WEB_ALIAS;
         } else if (p?.kind === 'path') {
           serverSpecified = true;
           await persistDefaultHomeWebPath(p.path);
@@ -137,11 +129,12 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
       /* keep persisted / fallback */
     }
 
-    let displaySelection: WebDefaultHomePath | null;
+    let displaySelection: WebDefaultHomePath;
     if (!serverSpecified) {
-      if (fromPersist === MOBILE_NO_DEFAULT_SCREEN_STORAGE) displaySelection = null;
-      else if (fromPersist === null) displaySelection = MOBILE_MAIN_HOME_WEB_ALIAS;
-      else displaySelection = fromPersist;
+      displaySelection =
+        fromPersist && fromPersist !== MOBILE_MAIN_HOME_WEB_ALIAS
+          ? (fromPersist as WebDefaultHomePath)
+          : MOBILE_MAIN_HOME_WEB_ALIAS;
     } else {
       displaySelection = resolvedForServer;
     }
@@ -159,19 +152,13 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
     });
   }, [refreshDefaultHome]);
 
-  const applyDefaultHomeSelection = async (selection: DefaultHomePickerSelection) => {
+  const applyDefaultHomeSelection = async (selection: WebDefaultHomePath) => {
     try {
       setDefaultHomeSaving(true);
-      if (selection === 'no-default') {
-        await api.updateWebDefaultHomePath(null);
-        await persistExplicitNoDefaultScreenPreference();
-        setDefaultHomeWebPath(null);
-        closeMenu();
-        return;
-      }
       let next = selection;
       if (selection === MOBILE_MAIN_HOME_WEB_ALIAS) {
         await api.updateWebDefaultHomePath(null);
+        next = MOBILE_MAIN_HOME_WEB_ALIAS;
       } else {
         const res = await api.updateWebDefaultHomePath(selection);
         const returned =
@@ -200,6 +187,11 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
   const handleOpenSettings = () => {
     closeMenu();
     router.navigate('/(tabs)/settings');
+  };
+
+  const handleOpenBillingUsage = () => {
+    closeMenu();
+    router.push('/billing' as any);
   };
 
   const handleSignOut = () => {
@@ -360,6 +352,22 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
 
                     <TouchableOpacity
                       style={[dynamicStyles.popoverItem, dynamicStyles.popoverItemBorder]}
+                      onPress={handleOpenBillingUsage}
+                      accessibilityRole="button"
+                      accessibilityLabel="Billing and Usage"
+                    >
+                      <Ionicons
+                        name="card-outline"
+                        size={20}
+                        color={colors.text}
+                        style={dynamicStyles.popoverItemIcon}
+                      />
+                      <Text style={dynamicStyles.popoverItemText}>Billing & Usage</Text>
+                      <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[dynamicStyles.popoverItem, dynamicStyles.popoverItemBorder]}
                       onPress={handleOpenSettings}
                       accessibilityRole="button"
                       accessibilityLabel="Settings"
@@ -404,18 +412,6 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
                       {defaultHomeSaving ? <ActivityIndicator size="small" color="#007AFF" /> : null}
                     </View>
                     <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
-                      <TouchableOpacity
-                        style={dynamicStyles.defaultHomeOptionRow}
-                        onPress={() => !defaultHomeSaving && void applyDefaultHomeSelection('no-default')}
-                        disabled={defaultHomeSaving}
-                      >
-                        <Text style={dynamicStyles.defaultHomeOptionLabel}>{NO_DEFAULT_SCREEN_LABEL}</Text>
-                        {defaultHomeWebPath === null ? (
-                          <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
-                        ) : (
-                          <Ionicons name="ellipse-outline" size={22} color={colors.border} />
-                        )}
-                      </TouchableOpacity>
                       {DEFAULT_HOME_SCREEN_OPTIONS.map((opt) => (
                         <TouchableOpacity
                           key={opt.webPath}
@@ -424,7 +420,7 @@ export function ProfileMenuPopover({ user, buttonStyle }: ProfileMenuPopoverProp
                           disabled={defaultHomeSaving}
                         >
                           <Text style={dynamicStyles.defaultHomeOptionLabel}>{opt.label}</Text>
-                          {defaultHomeWebPath !== null && defaultHomeWebPath === opt.webPath ? (
+                          {defaultHomeWebPath === opt.webPath ? (
                             <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
                           ) : (
                             <Ionicons name="ellipse-outline" size={22} color={colors.border} />

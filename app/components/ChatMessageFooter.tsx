@@ -52,11 +52,11 @@ export interface ChatMessageFooterProps {
   moreSourcesDisabled?: boolean;
 }
 
-/** Plain-text body for copy/share — matches web ChatFeedback.buildShareBodyPlain. */
+/** Plain-text body for copy/share — label on its own line, content below. */
 function buildShareBodyPlain(query: string | undefined, response: string): string {
   const q = query?.trim();
   if (q) {
-    return `You: ${q}\n\nChatGD: ${response}`;
+    return `You:\n${q}\n\nChatGD:\n${response}`;
   }
   return response;
 }

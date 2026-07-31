@@ -35,6 +35,13 @@ if (fs.existsSync(pluginPath)) {
   allOk &= check('Plugin file exists', false, 'plugins/ios-hms-screenshare.js not found');
 }
 
+// 3b. Android screenshare activity plugin
+allOk &= check(
+  'Android screenshare plugin registered',
+  appConfig.includes('android-hms-screenshare'),
+  'plugins/android-hms-screenshare'
+);
+
 // 4. Constants/Config
 const configPath = path.join(ROOT, 'constants', 'Config.ts');
 if (fs.existsSync(configPath)) {

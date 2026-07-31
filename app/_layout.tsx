@@ -329,6 +329,7 @@ function RootLayoutNav() {
           <Stack.Screen name="intake" options={{ headerShown: false }} />
           <Stack.Screen name="signatures" options={{ headerShown: false }} />
           <Stack.Screen name="workspaces" options={{ headerShown: false }} />
+          <Stack.Screen name="billing" options={{ headerShown: false }} />
           <Stack.Screen name="scanner" options={{ headerShown: false }} />
           <Stack.Screen name="public-upload" options={{ headerShown: false }} />
           <Stack.Screen name="notifications" options={{ headerShown: false }} />
@@ -355,6 +356,7 @@ Go to Settings → Security & 2FA to turn it on."
         minimized={minimized}
         progressData={progressData}
         onMinimize={minimizeProgress}
+        onExpand={expandProgress}
         onClose={closeProgress}
       />
     </>

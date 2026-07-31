@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
-    FlatList,
     Modal,
     ScrollView,
     StyleSheet,
@@ -13,17 +12,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService } from '../services/api';
-
-interface FormField {
-  id: string;
-  type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'date' | 'number';
-  label: string;
-  name?: string;
-  placeholder?: string;
-  required: boolean;
-  options?: string[];
-  validation?: any;
-}
+import type { FormField } from '../types/form';
+import { fieldDisplayLabel, normalizeFormFields } from '../utils/normalizeFormFields';
 
 interface FormData {
   id: string;
@@ -151,7 +141,7 @@ export default function QuickFormViewer({
           id: form.id.toString(),
           name: form.title || form.name || 'Untitled Form',
           description: form.description || '',
-          fields: form.json_fields || [],
+          fields: normalizeFormFields(form.json_fields),
           responseCount: form.response_count || 0
         });
       } else {
@@ -165,7 +155,8 @@ export default function QuickFormViewer({
     }
   };
 
-  const renderField = ({ item }: { item: FormField }) => {
+  const renderField = (item: FormField) => {
+    const label = fieldDisplayLabel(item);
     const getFieldIcon = (type: string) => {
       switch (type) {
         case 'text': return 'text';
@@ -182,7 +173,7 @@ export default function QuickFormViewer({
     };
 
     return (
-      <View style={styles.fieldContainer}>
+      <View key={item.id} style={styles.fieldContainer}>
         <View style={styles.fieldHeader}>
           <Ionicons 
             name={getFieldIcon(item.type) as any} 
@@ -191,7 +182,7 @@ export default function QuickFormViewer({
             style={styles.fieldIcon}
           />
           <Text style={dynamicStyles.fieldLabel}>
-            {item.label}
+            {label}
             {item.required && <Text style={styles.required}> *</Text>}
           </Text>
         </View>
@@ -200,7 +191,7 @@ export default function QuickFormViewer({
           {item.type === 'textarea' ? (
             <View style={styles.textareaPreview}>
               <Text style={dynamicStyles.placeholderText}>
-                {item.placeholder || `Enter ${item.label.toLowerCase()}...`}
+                {item.placeholder || `Enter ${label.toLowerCase()}...`}
               </Text>
             </View>
           ) : item.type === 'select' || item.type === 'radio' ? (
@@ -222,7 +213,7 @@ export default function QuickFormViewer({
           ) : (
             <View style={styles.inputPreview}>
               <Text style={dynamicStyles.placeholderText}>
-                {item.placeholder || `Enter ${item.label.toLowerCase()}...`}
+                {item.placeholder || `Enter ${label.toLowerCase()}...`}
               </Text>
             </View>
           )}
@@ -304,13 +295,7 @@ export default function QuickFormViewer({
               )}
             </View>
             
-            <FlatList
-              data={formData.fields}
-              renderItem={renderField}
-              keyExtractor={(item) => item.id}
-              scrollEnabled={false}
-              style={styles.fieldsList}
-            />
+            {formData.fields.map((item) => renderField(item))}
             
             <View style={dynamicStyles.formFooter}>
               <Text style={dynamicStyles.footerText}>

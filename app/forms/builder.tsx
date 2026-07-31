@@ -25,6 +25,7 @@ import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMen
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { normalizeFormFields } from '../../utils/normalizeFormFields';
 
 interface FormField {
   id: string;
@@ -54,58 +55,6 @@ const FIELD_TYPES = [
   { id: 'date', name: 'Date', icon: 'calendar' },
   { id: 'number', name: 'Number', icon: 'keypad' },
 ];
-
-const SUPPORTED_FIELD_TYPES = new Set(FIELD_TYPES.map((t) => t.id));
-
-/** Normalize route/API field payloads into a flat FormField[] the builder can render safely. */
-function normalizeFormFields(raw: unknown): FormField[] {
-  let list: unknown[] = [];
-  if (typeof raw === 'string') {
-    try {
-      raw = JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  }
-  if (Array.isArray(raw)) {
-    list = raw;
-  } else if (raw && typeof raw === 'object') {
-    const nested = (raw as { fields?: unknown }).fields;
-    if (Array.isArray(nested)) list = nested;
-  }
-
-  return list
-    .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object' && !Array.isArray(f))
-    .map((f, index) => {
-      const id = String(f.id ?? f.name ?? f.key ?? `field_${index + 1}`);
-      const typeRaw = String(f.type ?? 'text').toLowerCase();
-      const type = (SUPPORTED_FIELD_TYPES.has(typeRaw) ? typeRaw : 'text') as FormField['type'];
-      const rawOpts = f.options ?? f.choices ?? f.enum;
-      const options = Array.isArray(rawOpts)
-        ? rawOpts.map((o) =>
-            typeof o === 'string'
-              ? o
-              : String(
-                  (o as { label?: string; value?: string })?.label ??
-                    (o as { value?: string })?.value ??
-                    o,
-                ),
-          )
-        : type === 'select' || type === 'radio' || type === 'checkbox'
-          ? ['Option 1']
-          : undefined;
-      return {
-        id,
-        type,
-        label: String(f.label ?? f.title ?? `Field ${index + 1}`),
-        name: String(f.name ?? id),
-        placeholder: f.placeholder != null ? String(f.placeholder) : undefined,
-        required: !!f.required,
-        options,
-        validation: f.validation,
-      } as FormField;
-    });
-}
 
 export default function FormBuilderScreen() {
   const router = useRouter();
@@ -139,39 +88,99 @@ export default function FormBuilderScreen() {
   });
   const [publishing, setPublishing] = useState(false);
   const [shareMenuUrl, setShareMenuUrl] = useState<string | null>(null);
+  const [loadingForm, setLoadingForm] = useState(() => {
+    const hasFormId = !!(params.formId as string);
+    const templateId = params.templateId as string;
+    const hasTemplateId = templateId && templateId !== 'blank' && Number.isFinite(parseInt(templateId, 10));
+    return hasFormId || !!hasTemplateId;
+  });
 
-  // Load form when formId is present (e.g. editing existing form) to get is_published
+  // Load saved form from API when formId is present.
   useEffect(() => {
-    const id = formId ?? (params.formId ? parseInt(params.formId as string) : null);
+    const id = formId ?? (params.formId ? parseInt(params.formId as string, 10) : null);
     if (!id || !Number.isFinite(id)) {
       setPublishStatusReady(true);
       return;
     }
     let cancelled = false;
+    setLoadingForm(true);
     apiService.getFormById(id).then((res: any) => {
       if (cancelled) return;
       const form = res?.form ?? res?.data ?? res;
-      if (form && typeof form.is_published === 'boolean') {
-        setIsPublished(form.is_published);
+      if (form) {
+        if (typeof form.is_published === 'boolean') {
+          setIsPublished(form.is_published);
+        }
+        if (form.share_url) setFormShareUrl(form.share_url);
+        setFormData({
+          name: form.title || form.name || (params.templateName as string) || 'Untitled Form',
+          description: form.description || (params.templateDescription as string) || '',
+          fields: normalizeFormFields(form.json_fields).map((field) => ({
+            ...field,
+            name: field.id,
+          })),
+        });
       }
-      if (form?.share_url) setFormShareUrl(form.share_url);
       setPublishStatusReady(true);
+      setLoadingForm(false);
     }).catch(() => {
-      if (!cancelled) setPublishStatusReady(true);
+      if (!cancelled) {
+        setPublishStatusReady(true);
+        setLoadingForm(false);
+      }
     });
     return () => { cancelled = true; };
   }, [formId, params.formId]);
 
+  // Load template fields from API by templateId (avoids passing large JSON via URL params).
   useEffect(() => {
+    if (params.formId) return;
+    const templateId = params.templateId as string;
+    if (!templateId || templateId === 'blank' || templateId === 'user-form') return;
+
+    const numericId = parseInt(templateId, 10);
+    if (!Number.isFinite(numericId)) return;
+
+    let cancelled = false;
+    setLoadingForm(true);
+    apiService.getFormTemplates().then((res: any) => {
+      if (cancelled) return;
+      const templates = res?.templates ?? [];
+      const template = templates.find((t: any) => t.id === numericId);
+      if (template) {
+        setFormData({
+          name: template.name || template.title || (params.templateName as string) || 'Untitled Form',
+          description: template.description || (params.templateDescription as string) || '',
+          fields: normalizeFormFields(template.json_fields).map((field) => ({
+            ...field,
+            name: field.id,
+          })),
+        });
+      }
+      setLoadingForm(false);
+    }).catch(() => {
+      if (!cancelled) setLoadingForm(false);
+    });
+    return () => { cancelled = true; };
+  }, [params.templateId, params.formId]);
+
+  // Legacy fallback: fields passed directly in route params.
+  useEffect(() => {
+    if (params.formId) return;
+    const templateId = params.templateId as string;
+    if (templateId && templateId !== 'blank' && Number.isFinite(parseInt(templateId, 10))) return;
     if (params.fields == null || params.fields === '') return;
     try {
       const raw = Array.isArray(params.fields) ? params.fields[0] : params.fields;
-      const normalized = normalizeFormFields(raw);
+      const normalized = normalizeFormFields(raw).map((field) => ({
+        ...field,
+        name: field.id,
+      }));
       setFormData((prev) => ({ ...prev, fields: normalized }));
     } catch (error) {
       console.error('Failed to parse fields:', error);
     }
-  }, [params.fields]);
+  }, [params.fields, params.formId, params.templateId]);
 
   useEffect(() => {
     if (currentView === 'responses' && params.formId) {
@@ -1087,6 +1096,24 @@ export default function FormBuilderScreen() {
     </View>
   );
 
+  if (loadingForm) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Form Builder</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={styles.loadingFormContainer}>
+          <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
+          <Text style={[styles.loadingFormText, { color: colors.textSecondary }]}>Loading form...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -1385,6 +1412,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#000',
+  },
+  loadingFormContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingFormText: {
+    marginTop: 12,
+    fontSize: 16,
   },
   tabContainer: {
     flexDirection: 'row',

@@ -24,6 +24,7 @@ import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityCon
 import { useTheme } from '../../contexts/ThemeContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
+import { getMyPlan, getSettingsUsageStats } from '../../services/subscriptionApi';
 import { userProfileScreenKey } from '../../services/userScopedCache';
 import deviceSecurityService from '../../services/deviceSecurity';
 import { useUserPreferences } from '../../contexts/UserPreferencesContext';
@@ -33,11 +34,8 @@ import {
   extractDefaultHomeFromAuthPayload,
   loadPersistedDefaultHomeWebPath,
   MOBILE_MAIN_HOME_WEB_ALIAS,
-  MOBILE_NO_DEFAULT_SCREEN_STORAGE,
-  NO_DEFAULT_SCREEN_LABEL,
   normalizeWebDefaultHomePath,
   persistDefaultHomeWebPath,
-  persistExplicitNoDefaultScreenPreference,
   reconcilePersistenceWithServerNoDefault,
   WebDefaultHomePath,
 } from '../../utils/defaultHomePath';
@@ -105,13 +103,14 @@ export default function SettingsScreen() {
   /** False for SSO accounts — biometric quick-login needs username/password enrollment. */
   const [passwordBiometricSupported, setPasswordBiometricSupported] = useState(true);
   const [deviceInfo, setDeviceInfo] = useState<DeviceFingerprint | null>(null);
-  const [defaultHomeWebPath, setDefaultHomeWebPath] = useState<WebDefaultHomePath | null>(
+  const [defaultHomeWebPath, setDefaultHomeWebPath] = useState<WebDefaultHomePath>(
     normalizeWebDefaultHomePath(MOBILE_MAIN_HOME_WEB_ALIAS),
   );
   const [defaultHomePickerOpen, setDefaultHomePickerOpen] = useState(false);
   const [defaultHomeSaving, setDefaultHomeSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [clearingDeviceTrust, setClearingDeviceTrust] = useState(false);
+  const [planDisplayName, setPlanDisplayName] = useState<string | null>(null);
   // const [showSetPinModal, setShowSetPinModal] = useState(false);
   // const [pinValue, setPinValue] = useState('');
   // const [pinConfirm, setPinConfirm] = useState('');
@@ -224,7 +223,7 @@ export default function SettingsScreen() {
         if (settingsCacheKey) screenCache.set(settingsCacheKey, profileData);
       }
 
-      let resolvedForServer: WebDefaultHomePath | null = MOBILE_MAIN_HOME_WEB_ALIAS;
+      let resolvedForServer: WebDefaultHomePath = MOBILE_MAIN_HOME_WEB_ALIAS;
       let serverSpecified = false;
 
       try {
@@ -233,11 +232,10 @@ export default function SettingsScreen() {
           if (!p || p.kind === 'absent') {
             /* no server default-home field */
           } else if (p.kind === 'none') {
+            // DB NULL / empty / invalid → Home
             serverSpecified = true;
             await reconcilePersistenceWithServerNoDefault();
-            const after = await loadPersistedDefaultHomeWebPath();
-            resolvedForServer =
-              after === MOBILE_MAIN_HOME_WEB_ALIAS ? MOBILE_MAIN_HOME_WEB_ALIAS : null;
+            resolvedForServer = MOBILE_MAIN_HOME_WEB_ALIAS;
           } else if (p.kind === 'path') {
             serverSpecified = true;
             await persistDefaultHomeWebPath(p.path);
@@ -248,16 +246,35 @@ export default function SettingsScreen() {
         /* keep persisted / fallback */
       }
 
-      let displaySelection: WebDefaultHomePath | null;
+      let displaySelection: WebDefaultHomePath;
       if (!serverSpecified) {
-        if (fromPersist === MOBILE_NO_DEFAULT_SCREEN_STORAGE) displaySelection = null;
-        else if (fromPersist === null) displaySelection = MOBILE_MAIN_HOME_WEB_ALIAS;
-        else displaySelection = fromPersist;
+        displaySelection =
+          fromPersist && fromPersist !== MOBILE_MAIN_HOME_WEB_ALIAS
+            ? (fromPersist as WebDefaultHomePath)
+            : MOBILE_MAIN_HOME_WEB_ALIAS;
       } else {
         displaySelection = resolvedForServer;
       }
 
       setDefaultHomeWebPath(displaySelection);
+
+      // Real plan label for Account (not hardcoded Free/Enterprise)
+      try {
+        const usage = await getSettingsUsageStats('month');
+        const fromUsage = usage?.plan_display_name || usage?.subscription?.plan?.display_name;
+        if (fromUsage) {
+          setPlanDisplayName(fromUsage);
+        } else {
+          const myPlan = await getMyPlan().catch(() => null);
+          const name =
+            myPlan?.subscription?.plan?.display_name ||
+            myPlan?.subscription?.plan_display_name ||
+            myPlan?.plan_display_name;
+          if (name) setPlanDisplayName(name);
+        }
+      } catch {
+        /* keep previous / fallback label */
+      }
 
       const [biometricConfig, info, userPrefs] = await Promise.all([
         deviceSecurityService.initializeBiometrics(),
@@ -349,25 +366,18 @@ export default function SettingsScreen() {
   };
 
   const defaultHomeLabel = useMemo(() => {
-    if (defaultHomeWebPath === null) return NO_DEFAULT_SCREEN_LABEL;
-    return DEFAULT_HOME_SCREEN_OPTIONS.find((o) => o.webPath === defaultHomeWebPath)?.label ?? 'Home';
+    const path = defaultHomeWebPath || MOBILE_MAIN_HOME_WEB_ALIAS;
+    return DEFAULT_HOME_SCREEN_OPTIONS.find((o) => o.webPath === path)?.label ?? 'Home';
   }, [defaultHomeWebPath]);
 
-  type DefaultHomePickerSelection = WebDefaultHomePath | 'no-default';
-
-  const applyDefaultHomeSelection = async (selection: DefaultHomePickerSelection) => {
+  const applyDefaultHomeSelection = async (selection: WebDefaultHomePath) => {
     try {
       setDefaultHomeSaving(true);
-      if (selection === 'no-default') {
-        await api.updateWebDefaultHomePath(null);
-        await persistExplicitNoDefaultScreenPreference();
-        setDefaultHomeWebPath(null);
-        setDefaultHomePickerOpen(false);
-        return;
-      }
       let next = selection;
       if (selection === MOBILE_MAIN_HOME_WEB_ALIAS) {
+        // Home → DB NULL; login opens main dashboard
         await api.updateWebDefaultHomePath(null);
+        next = MOBILE_MAIN_HOME_WEB_ALIAS;
       } else {
         const res = await api.updateWebDefaultHomePath(selection);
         const returned =
@@ -1079,6 +1089,14 @@ export default function SettingsScreen() {
           </CollapsibleSection>
         )} */}
 
+        {/* Billing & Usage — top-level (not nested under Account) */}
+        <InfoItem
+          icon="card-outline"
+          title="Billing & Usage"
+          value={planDisplayName || 'View plan, usage, and invoices'}
+          onPress={() => router.push('/billing' as any)}
+        />
+
         {/* Enhanced 2FA Security Section */}
         <CollapsibleSection
           title="Security & 2FA"
@@ -1773,13 +1791,7 @@ export default function SettingsScreen() {
           {/* User Profile Info */}
           {profile && (
             <>
-              <TouchableOpacity 
-                style={dynamicStyles.profileCard}
-                onPress={() => Alert.alert('Subscription Plan', profile.is_admin 
-                  ? 'Enterprise Plan\n\n✓ Unlimited storage\n✓ Advanced analytics\n✓ Priority support\n✓ Admin features\n✓ Custom integrations'
-                  : 'Free Plan\n\n• 5GB storage\n• Basic features\n• Community support\n\nUpgrade to Pro for:\n✓ 100GB storage\n✓ Advanced features\n✓ Priority support'
-                )}
-              >
+              <View style={dynamicStyles.profileCard}>
                 <View style={dynamicStyles.profileIcon}>
                   {(() => {
                     const first = (profile.first_name || '').trim();
@@ -1799,7 +1811,8 @@ export default function SettingsScreen() {
                   </Text>
                   <Text style={dynamicStyles.profileEmail}>{profile.email}</Text>
                   <Text style={[dynamicStyles.profileEmail, { marginTop: 4, fontSize: 13, opacity: 0.8 }]}>
-                    Member since • {formatJoinDate(profile.created_at)} • {profile.is_admin ? "Enterprise" : "Free Plan"}
+                    Member since • {formatJoinDate(profile.created_at)} •{' '}
+                    {planDisplayName || (profile.is_admin ? 'Enterprise' : 'Free Plan')}
                   </Text>
                   {profile.is_admin && (
                     <View style={dynamicStyles.adminBadge}>
@@ -1808,7 +1821,7 @@ export default function SettingsScreen() {
                     </View>
                   )}
                 </View>
-              </TouchableOpacity>
+              </View>
             </>
           )}
           
@@ -1889,22 +1902,6 @@ export default function SettingsScreen() {
               Choose where the app opens after you sign in (same as web).
             </Text>
             <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
-              <FeedbackTouchable
-                key="__no_default__"
-                style={dynamicStyles.defaultHomeOptionRow}
-                onPress={() => applyDefaultHomeSelection('no-default')}
-                disabled={defaultHomeSaving}
-                loading={defaultHomeSaving}
-                replaceWithSpinner={false}
-                spinnerColor="#007AFF"
-              >
-                <Text style={dynamicStyles.defaultHomeOptionLabel}>{NO_DEFAULT_SCREEN_LABEL}</Text>
-                {defaultHomeWebPath === null ? (
-                  <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
-                ) : (
-                  <Ionicons name="ellipse-outline" size={22} color={colors.border} />
-                )}
-              </FeedbackTouchable>
               {DEFAULT_HOME_SCREEN_OPTIONS.map((opt) => (
                 <FeedbackTouchable
                   key={opt.webPath}
@@ -1916,7 +1913,7 @@ export default function SettingsScreen() {
                   spinnerColor="#007AFF"
                 >
                   <Text style={dynamicStyles.defaultHomeOptionLabel}>{opt.label}</Text>
-                  {defaultHomeWebPath !== null && defaultHomeWebPath === opt.webPath ? (
+                  {(defaultHomeWebPath || MOBILE_MAIN_HOME_WEB_ALIAS) === opt.webPath ? (
                     <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
                   ) : (
                     <Ionicons name="ellipse-outline" size={22} color={colors.border} />

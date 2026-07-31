@@ -28,25 +28,27 @@ export function LimitErrorProvider({ children }: { children: React.ReactNode }) 
     (data: LimitErrorData) => {
       const title = getTitle(data.limitType, data.errorCode);
       const message = data.message;
-      const actionUrl = data.actionUrl || 'https://grabdocs.com/pricing';
+      const actionUrl = data.actionUrl;
 
       const buttons: { text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }[] = [
         { text: 'Dismiss', style: 'cancel' },
+        {
+          text: 'View plans',
+          onPress: () => {
+            Linking.openURL('https://grabdocs.com/pricing').catch(() => {});
+          },
+        },
       ];
-
-      // Add Upgrade button - open pricing page (or custom action URL)
-      const openBilling = () => {
-        if (actionUrl.startsWith('http')) {
-          Linking.openURL(actionUrl).catch(() => {});
-        } else {
-          // In-app route: /settings?tab=billing -> (tabs)/settings with tab
-          router.navigate('/(tabs)/settings');
-        }
-      };
 
       buttons.unshift({
         text: 'Upgrade Plan',
-        onPress: openBilling,
+        onPress: () => {
+          if (actionUrl?.startsWith('http')) {
+            Linking.openURL(actionUrl).catch(() => {});
+            return;
+          }
+          router.push('/billing' as any);
+        },
       });
 
       Alert.alert(title, message, buttons);

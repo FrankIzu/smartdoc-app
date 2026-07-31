@@ -156,6 +156,7 @@ const baseExpo = {
   },
   plugins: [
     "./plugins/android-pip",
+    "./plugins/android-hms-screenshare",
     "./plugins/android-large-screen",
     "./plugins/android-disable-release-lint",
     "./plugins/android-autofill-highlight",

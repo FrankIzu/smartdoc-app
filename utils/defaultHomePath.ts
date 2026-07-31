@@ -5,17 +5,15 @@ import { STORAGE_KEYS } from '../constants/Config';
 import { apiClient } from '../services/api';
 
 /**
- * Mobile-only sentinel for the main dashboard (`/(tabs)`). Stored locally when the user picks "Home"; not sent on PUT.
+ * Mobile-only sentinel for the main dashboard (`/(tabs)`). Stored locally when the user picks "Home";
+ * PUT sends null (DB NULL). Server NULL / empty / invalid → treat as Home on mobile.
  *
  * Web `/upload` is the ChatGD composer screen; Expo has no `/upload` pathname — navigate to chats with `openStartNew`
  * so users land on the ask-a-question composer, not only the history list.
  */
 export const MOBILE_MAIN_HOME_WEB_ALIAS = '/';
 
-/**
- * Persisted when the user chooses "No default screen" so we can show that in Settings even though
- * the server stores NULL (same as an old unset row). Not a web path — do not send to the API.
- */
+/** @deprecated Legacy local sentinel for removed "None" option — treated as Home. */
 export const MOBILE_NO_DEFAULT_SCREEN_STORAGE = '__grabdocs_no_default_screen__' as const;
 
 const ALLOWED_WEB_PATHS = [
@@ -37,9 +35,6 @@ const ALLOWED_WEB_PATHS = [
 export type WebDefaultHomePath = (typeof ALLOWED_WEB_PATHS)[number];
 
 export type PersistedDefaultHomePreference = WebDefaultHomePath | typeof MOBILE_NO_DEFAULT_SCREEN_STORAGE;
-
-/** Mobile settings + API: explicit database null — open main dashboard only after sign-in (same navigation as Home). */
-export const NO_DEFAULT_SCREEN_LABEL = 'None';
 
 export type ParsedDefaultHomeFromApi =
   | { kind: 'absent' }
@@ -166,10 +161,6 @@ export async function clearPersistedDefaultHomeWebPath(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEYS.DEFAULT_HOME_WEB_PATH);
 }
 
-export async function persistExplicitNoDefaultScreenPreference(): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEYS.DEFAULT_HOME_WEB_PATH, MOBILE_NO_DEFAULT_SCREEN_STORAGE);
-}
-
 export async function persistDefaultHomeWebPath(webPath: string): Promise<void> {
   const n = normalizeWebDefaultHomePath(webPath);
   await AsyncStorage.setItem(STORAGE_KEYS.DEFAULT_HOME_WEB_PATH, n);
@@ -178,18 +169,16 @@ export async function persistDefaultHomeWebPath(webPath: string): Promise<void> 
 export async function loadPersistedDefaultHomeWebPath(): Promise<PersistedDefaultHomePreference | null> {
   const raw = await AsyncStorage.getItem(STORAGE_KEYS.DEFAULT_HOME_WEB_PATH);
   if (!raw?.trim()) return null;
-  if (raw === MOBILE_NO_DEFAULT_SCREEN_STORAGE) return MOBILE_NO_DEFAULT_SCREEN_STORAGE;
+  // Legacy "None" sentinel → Home
+  if (raw === MOBILE_NO_DEFAULT_SCREEN_STORAGE) return MOBILE_MAIN_HOME_WEB_ALIAS;
   return normalizeWebDefaultHomePath(raw);
 }
 
 /**
- * Server default home is NULL: clear a stored path from a previous session, but keep mobile-only "Home"
- * (`/`, no PUT) or the explicit no-default sentinel.
+ * Server default home is NULL/empty/invalid: keep or set mobile Home (`/`); drop other cached paths.
  */
 export async function reconcilePersistenceWithServerNoDefault(): Promise<void> {
-  const cached = await loadPersistedDefaultHomeWebPath();
-  if (cached === MOBILE_MAIN_HOME_WEB_ALIAS || cached === MOBILE_NO_DEFAULT_SCREEN_STORAGE) return;
-  await clearPersistedDefaultHomeWebPath();
+  await persistDefaultHomeWebPath(MOBILE_MAIN_HOME_WEB_ALIAS);
 }
 
 export async function refreshDefaultHomePathFromWebAuthCheck(): Promise<WebDefaultHomePath | null> {
@@ -243,8 +232,7 @@ export async function resolveDefaultHomeWebPath(loginUser?: unknown): Promise<We
   }
 
   const cached = await loadPersistedDefaultHomeWebPath();
-  if (cached === MOBILE_NO_DEFAULT_SCREEN_STORAGE) return MOBILE_MAIN_HOME_WEB_ALIAS;
-  if (cached) return cached;
+  if (cached) return cached === MOBILE_NO_DEFAULT_SCREEN_STORAGE ? MOBILE_MAIN_HOME_WEB_ALIAS : cached;
 
   return MOBILE_MAIN_HOME_WEB_ALIAS;
 }
