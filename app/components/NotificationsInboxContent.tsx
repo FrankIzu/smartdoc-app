@@ -36,6 +36,9 @@ export interface AppNotification {
     invitation_id?: number;
     inviter_name?: string;
     role?: string;
+    video_call_id?: number;
+    join_request_id?: number;
+    room_name?: string;
     [key: string]: any;
   };
 }
@@ -279,6 +282,11 @@ export function NotificationsInboxContent({
       n.metadata?.action_type === 'workspace_invitation') &&
     n.metadata?.invitation_id != null;
 
+  const isJoinRequest = (n: AppNotification) =>
+    (n.type === 'join_request' || n.metadata?.action_type === 'join_request') &&
+    n.metadata?.video_call_id != null &&
+    n.metadata?.join_request_id != null;
+
   const handleAcceptWorkspaceInvitation = useCallback(
     async (n: AppNotification) => {
       const invitationId = n.metadata?.invitation_id;
@@ -344,6 +352,80 @@ export function NotificationsInboxContent({
         }, 800);
       } catch (err: any) {
         alert(err?.message || 'Failed to reject workspace invitation');
+      } finally {
+        setActionLoading((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    [onListMutated]
+  );
+
+  const handleAcceptJoinRequest = useCallback(
+    async (n: AppNotification) => {
+      const videoCallId = n.metadata?.video_call_id;
+      const joinRequestId = n.metadata?.join_request_id;
+      if (videoCallId == null || joinRequestId == null) return;
+      const key = `accept_join_request_${n.id}`;
+      setActionLoading((prev) => ({ ...prev, [key]: true }));
+      try {
+        await apiClient.approveJoinRequest(Number(videoCallId), Number(joinRequestId));
+        try {
+          await apiClient.markNotificationRead(n.id);
+        } catch {
+          // Best-effort
+        }
+        setActionTaken((prev) => ({ ...prev, [n.id]: 'accepted' }));
+        setNotifications((prev) =>
+          prev.map((n2) => (n2.id === n.id ? { ...n2, read: true } : n2))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+        onListMutated?.();
+        setTimeout(() => {
+          setNotifications((prev) => prev.filter((n2) => n2.id !== n.id));
+          setActionTaken((prev) => {
+            const next = { ...prev };
+            delete next[n.id];
+            return next;
+          });
+        }, 800);
+      } catch (err: any) {
+        alert(err?.message || 'Failed to approve join request');
+      } finally {
+        setActionLoading((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    [onListMutated]
+  );
+
+  const handleRejectJoinRequest = useCallback(
+    async (n: AppNotification) => {
+      const videoCallId = n.metadata?.video_call_id;
+      const joinRequestId = n.metadata?.join_request_id;
+      if (videoCallId == null || joinRequestId == null) return;
+      const key = `reject_join_request_${n.id}`;
+      setActionLoading((prev) => ({ ...prev, [key]: true }));
+      try {
+        await apiClient.rejectJoinRequest(Number(videoCallId), Number(joinRequestId));
+        try {
+          await apiClient.markNotificationRead(n.id);
+        } catch {
+          // Best-effort
+        }
+        setActionTaken((prev) => ({ ...prev, [n.id]: 'rejected' }));
+        setNotifications((prev) =>
+          prev.map((n2) => (n2.id === n.id ? { ...n2, read: true } : n2))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+        onListMutated?.();
+        setTimeout(() => {
+          setNotifications((prev) => prev.filter((n2) => n2.id !== n.id));
+          setActionTaken((prev) => {
+            const next = { ...prev };
+            delete next[n.id];
+            return next;
+          });
+        }, 800);
+      } catch (err: any) {
+        alert(err?.message || 'Failed to reject join request');
       } finally {
         setActionLoading((prev) => ({ ...prev, [key]: false }));
       }
@@ -484,7 +566,9 @@ export function NotificationsInboxContent({
                         ? 'warning'
                         : n.type === 'error'
                           ? 'alert-circle'
-                          : 'notifications'
+                          : n.type === 'join_request'
+                            ? 'people'
+                            : 'notifications'
                   }
                   size={22}
                   color={n.read ? colors.textSecondary : '#007AFF'}
@@ -564,6 +648,33 @@ export function NotificationsInboxContent({
                       style={[styles.actionBtn, { backgroundColor: '#FF3B30' }]}
                     >
                       {actionLoading[`reject_workspace_${n.id}`] ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Ionicons name="close" size={18} color="#fff" />
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : isJoinRequest(n) ? (
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => handleAcceptJoinRequest(n)}
+                      disabled={actionLoading[`accept_join_request_${n.id}`]}
+                      style={[styles.actionBtn, { backgroundColor: '#34C759' }]}
+                      accessibilityLabel="Accept join request"
+                    >
+                      {actionLoading[`accept_join_request_${n.id}`] ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Ionicons name="checkmark" size={18} color="#fff" />
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleRejectJoinRequest(n)}
+                      disabled={actionLoading[`reject_join_request_${n.id}`]}
+                      style={[styles.actionBtn, { backgroundColor: '#FF3B30' }]}
+                      accessibilityLabel="Reject join request"
+                    >
+                      {actionLoading[`reject_join_request_${n.id}`] ? (
                         <ActivityIndicator size="small" color="#fff" />
                       ) : (
                         <Ionicons name="close" size={18} color="#fff" />

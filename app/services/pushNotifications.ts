@@ -431,7 +431,8 @@ export function getNotificationScreen(data: Record<string, any>): string {
     case 'file_share_viewed':
       return '/(tabs)/documents';
     case 'join_request':
-      return data?.video_call_id != null ? `/quick-reach/meeting-call?roomId=${data.video_call_id}` : '/quick-reach/meeting-call';
+      // Navigate to notifications so host can Accept/Reject inline (same as workspace/file invites)
+      return '/notifications';
     case 'join_request_approved':
       return data?.meeting_id != null ? `/join-meeting?meeting_id=${encodeURIComponent(String(data.meeting_id))}` : '/(tabs)';
     case 'transcript_ready':

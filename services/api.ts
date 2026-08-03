@@ -258,6 +258,12 @@ const MOBILE_ENDPOINTS = {
   // Workspace invitations (from notification – same web endpoints)
   WORKSPACE_INVITATION_ACCEPT: (invitationId: number) => `/api/v1/web/workspaces/invitations/${invitationId}/accept`,
   WORKSPACE_INVITATION_REJECT: (invitationId: number) => `/api/v1/web/workspaces/invitations/${invitationId}/reject`,
+
+  // Meeting join requests (host approve/reject from notification – same as web)
+  JOIN_REQUEST_APPROVE: (videoCallId: number, joinRequestId: number) =>
+    `/api/v1/video/room/${videoCallId}/join-requests/${joinRequestId}/approve`,
+  JOIN_REQUEST_REJECT: (videoCallId: number, joinRequestId: number) =>
+    `/api/v1/video/room/${videoCallId}/join-requests/${joinRequestId}/reject`,
   
   // Push notifications (for when user is not in app)
   PUSH_TOKEN: '/api/v1/mobile/push-token',
@@ -4002,6 +4008,36 @@ class ApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.message || 'Failed to reject workspace invitation');
+    }
+  }
+
+  async approveJoinRequest(videoCallId: number, joinRequestId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(
+        MOBILE_ENDPOINTS.JOIN_REQUEST_APPROVE(videoCallId, joinRequestId),
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.message ||
+          error.response?.data?.error ||
+          'Failed to approve join request',
+      );
+    }
+  }
+
+  async rejectJoinRequest(videoCallId: number, joinRequestId: number): Promise<ApiResponse> {
+    try {
+      const response = await this.client.post(
+        MOBILE_ENDPOINTS.JOIN_REQUEST_REJECT(videoCallId, joinRequestId),
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.message ||
+          error.response?.data?.error ||
+          'Failed to reject join request',
+      );
     }
   }
 
