@@ -1,5 +1,6 @@
 import { Linking } from 'react-native';
 import { apiService } from '../services/api';
+import { persistMobileAuthTokens } from './authTokenStorage';
 
 export type GoogleOAuthExchangeUser = {
   id: string;
@@ -13,49 +14,71 @@ export type GoogleOAuthExchangeUser = {
 export type GoogleOAuthExchangeResult = {
   user: GoogleOAuthExchangeUser;
   jwt?: string;
+  refreshToken?: string;
 };
 
-/** Extract session token from grabdocs://login-success?token=... */
-export function parseLoginSuccessToken(url: string | null | undefined): string | null {
+/**
+ * Extract the one-time OAuth exchange code from grabdocs://login-success?code=...
+ * Backend sends `code` (opaque exchange token, not a JWT). Legacy `token=` is still accepted.
+ */
+export function parseLoginSuccessExchangeCode(url: string | null | undefined): string | null {
   if (!url?.trim()) return null;
   try {
     const parsed = new URL(url);
     if (parsed.hostname !== 'login-success') return null;
-    const token = parsed.searchParams.get('token');
-    return token?.trim() ? token : null;
+    const code = parsed.searchParams.get('code');
+    if (code?.trim()) return code.trim();
+    const legacyToken = parsed.searchParams.get('token');
+    return legacyToken?.trim() ? legacyToken.trim() : null;
   } catch {
     return null;
   }
 }
 
+/** @deprecated Use parseLoginSuccessExchangeCode — kept for existing call sites. */
+export function parseLoginSuccessToken(url: string | null | undefined): string | null {
+  return parseLoginSuccessExchangeCode(url);
+}
+
 export function isLoginSuccessDeepLink(url: string | null | undefined): boolean {
-  return !!parseLoginSuccessToken(url);
+  return !!parseLoginSuccessExchangeCode(url);
 }
 
 const exchangeCache = new Map<string, GoogleOAuthExchangeResult>();
 const inFlightExchanges = new Map<string, Promise<GoogleOAuthExchangeResult | null>>();
 
-/** Exchange a one-time login token for a JWT + user. Dedupes concurrent and repeat calls for the same token. */
+/** Exchange a one-time login code for access + refresh tokens. Dedupes concurrent calls. */
 export async function exchangeGoogleLoginToken(
-  loginToken: string
+  exchangeCode: string
 ): Promise<GoogleOAuthExchangeResult | null> {
-  const token = loginToken.trim();
-  if (!token) return null;
+  const code = exchangeCode.trim();
+  if (!code) return null;
 
-  const cached = exchangeCache.get(token);
+  const cached = exchangeCache.get(code);
   if (cached) return cached;
 
-  const existing = inFlightExchanges.get(token);
+  const existing = inFlightExchanges.get(code);
   if (existing) return existing;
 
   const promise = (async (): Promise<GoogleOAuthExchangeResult | null> => {
     try {
-      const result = await apiService.exchangeGoogleOAuthToken(token);
+      const result = await apiService.exchangeGoogleOAuthToken(code);
       if (!result.success || !result.user) return null;
 
       const u = result.user;
       const name =
         [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.email || '';
+      const accessToken = result.token || result.access_token;
+      const refreshToken = result.refresh_token;
+
+      if (accessToken || refreshToken) {
+        await persistMobileAuthTokens({
+          token: accessToken,
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+      }
+
       const exchanged: GoogleOAuthExchangeResult = {
         user: {
           id: String(u.id),
@@ -65,18 +88,19 @@ export async function exchangeGoogleLoginToken(
           last_name: u.lastName ?? undefined,
           username: u.username ?? undefined,
         },
-        jwt: (result as { token?: string }).token,
+        jwt: accessToken,
+        refreshToken,
       };
-      exchangeCache.set(token, exchanged);
+      exchangeCache.set(code, exchanged);
       return exchanged;
     } catch {
       return null;
     } finally {
-      inFlightExchanges.delete(token);
+      inFlightExchanges.delete(code);
     }
   })();
 
-  inFlightExchanges.set(token, promise);
+  inFlightExchanges.set(code, promise);
   return promise;
 }
 

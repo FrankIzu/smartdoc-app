@@ -49,7 +49,7 @@ import PersistentBottomNavigation from './components/PersistentBottomNavigation'
 import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
 import { LimitErrorProvider } from '../contexts/LimitErrorContext';
-import { getNotificationScreen, parseNotificationPath, initializePushNotifications, pushNotificationService } from './services/pushNotifications';
+import { getNotificationScreen, parseNotificationPath, initializePushNotifications, pushNotificationService, isJoinRequestNotificationAction, executeJoinRequestNotificationAction } from './services/pushNotifications';
 
 // Prevent the splash screen from auto-hiding (ignore if native splash not ready yet)
 SplashScreen.preventAutoHideAsync().catch((err) => {
@@ -179,6 +179,36 @@ function RootLayoutNav() {
     [router]
   );
 
+  const handleNotificationResponse = useCallback(
+    async (response: Notifications.NotificationResponse) => {
+      if (!userRef.current) return;
+
+      const notifId = response.notification.request.identifier;
+      const actionId = response.actionIdentifier;
+      const data = (response.notification.request.content.data || {}) as Record<string, unknown>;
+
+      if (isJoinRequestNotificationAction(actionId)) {
+        if (lastHandledNotifIdRef.current === notifId) return;
+        lastHandledNotifIdRef.current = notifId;
+        AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId).catch(() => {});
+        try {
+          await executeJoinRequestNotificationAction(actionId, data as Record<string, any>);
+          await Notifications.dismissNotificationAsync(notifId).catch(() => {});
+        } catch (err) {
+          console.warn('Join request notification action failed:', err);
+        }
+        return;
+      }
+
+      if (actionId !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
+      if (lastHandledNotifIdRef.current === notifId) return;
+      lastHandledNotifIdRef.current = notifId;
+      AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId).catch(() => {});
+      navigateFromNotificationData(data);
+    },
+    [navigateFromNotificationData]
+  );
+
   // AsyncStorage key used to persist the last notification ID that was handled so that
   // a stale lastNotificationResponse from a previous session is never re-processed after
   // the user logs in (or after an app restart).
@@ -196,59 +226,37 @@ function RootLayoutNav() {
     if (!user) return;
     // Fresh login in this session (Google, email, etc.) — never hijack with stale notification state.
     if (coldStartAuthenticatedUserIdRef.current !== user.id) return;
-    if (
-      !lastNotificationResponse ||
-      lastNotificationResponse.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER
-    )
-      return;
+    if (!lastNotificationResponse) return;
 
     const notifId = lastNotificationResponse.notification.request.identifier;
-
-    // Synchronously mark as in-progress to prevent concurrent re-runs from processing twice.
     if (lastHandledNotifIdRef.current === notifId) return;
-    lastHandledNotifIdRef.current = notifId;
 
     void (async () => {
       try {
-        // Cross-session check: if we already handled this notification in a previous app
-        // session it will be persisted here — skip it to avoid re-routing on login.
         const previouslyHandledId = await AsyncStorage.getItem(LAST_HANDLED_NOTIF_KEY);
-        if (previouslyHandledId === notifId) return;
-
-        // Persist before navigating so a crash/restart doesn't re-process it.
-        await AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId);
+        if (previouslyHandledId === notifId) {
+          lastHandledNotifIdRef.current = notifId;
+          return;
+        }
       } catch {
         // Non-fatal: storage errors must not block notification routing.
       }
 
-      const data = lastNotificationResponse.notification.request.content.data || {};
-      navigateFromNotificationData(data as Record<string, unknown>);
+      await handleNotificationResponse(lastNotificationResponse);
     })();
-  }, [user, lastNotificationResponse, navigateFromNotificationData]);
+  }, [user, lastNotificationResponse, handleNotificationResponse]);
 
-  // When user taps a push notification (app already running), open the right screen.
-  // Guards: only act for an authenticated user, only on a genuine tap (DEFAULT_ACTION_IDENTIFIER),
-  // and dedup via the same in-memory + AsyncStorage keys as the cold-start handler so a single
-  // notification is never routed twice (and a stale one can't hijack navigation).
+  // When user taps a push notification (app already running), open the right screen or run action buttons.
   useEffect(() => {
     pushNotificationService.addNotificationResponseReceivedListener((response) => {
-      if (!userRef.current) return;
-      if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
-
-      const notifId = response.notification.request.identifier;
-      if (lastHandledNotifIdRef.current === notifId) return;
-      lastHandledNotifIdRef.current = notifId;
-      AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId).catch(() => {});
-
-      const data = response.notification.request.content.data || {};
-      navigateFromNotificationData(data as Record<string, unknown>);
+      void handleNotificationResponse(response);
     }).then((subscription) => {
       pushListenerRef.current = subscription;
     });
     return () => {
       pushListenerRef.current?.remove();
     };
-  }, [navigateFromNotificationData]);
+  }, [handleNotificationResponse]);
 
   const showLock = !!user && appLockEnabled && isLocked;
   const mainContentRef = useRef<any>(null);

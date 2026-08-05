@@ -368,7 +368,11 @@ export default function SignInScreen() {
           setError('Failed to retrieve user information. Please try again.');
           return;
         }
-        await setUserFromExternal(userData, sessionResult.token);
+        await setUserFromExternal(
+          userData,
+          sessionResult.token ?? sessionResult.access_token,
+          sessionResult.refresh_token,
+        );
         const webPath = await resolveDefaultHomeWebPath(backendUser);
         navigateTabsThenDefaultHome(router, webPath);
         return;
@@ -385,7 +389,7 @@ export default function SignInScreen() {
           setError('Google sign-in failed. Please try again.');
           return;
         }
-        await setUserFromExternal(exchanged.user, exchanged.jwt);
+        await setUserFromExternal(exchanged.user, exchanged.jwt, exchanged.refreshToken);
         const webPath = await resolveDefaultHomeWebPath();
         navigateTabsThenDefaultHome(router, webPath);
         return;

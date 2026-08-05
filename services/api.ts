@@ -5,6 +5,7 @@ import { AppState, Platform, type AppStateStatus } from 'react-native';
 import { fetch as streamingFetch } from 'react-native-fetch-api';
 import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../constants/Config';
 import { secureStorage } from '../utils/storage';
+import { clearMobileAuthTokens, getStoredRefreshToken, persistMobileAuthTokens } from '../utils/authTokenStorage';
 import {
     getUserPreferences,
     validateFileAgainstUploadSettings,
@@ -97,6 +98,7 @@ const MOBILE_ENDPOINTS = {
   // Authentication
   AUTH_CHECK: '/api/v1/mobile/auth-check',
   LOGIN: '/api/v1/mobile/login',
+  REFRESH: '/api/v1/mobile/refresh',
   LOGOUT: '/api/v1/mobile/logout',
   SIGNUP: '/api/v1/mobile/signup',
   FORGOT_PASSWORD: '/api/v1/mobile/forgot-password',
@@ -307,7 +309,8 @@ function shouldSkipSessionExpiryOn401(url?: string): boolean {
     u.includes('/signup') ||
     u.includes('/register') ||
     u.includes('/otp') ||
-    u.includes('/verify')
+    u.includes('/verify') ||
+    u.includes('/oauth/exchange-token')
   ) {
     return true;
   }
@@ -330,6 +333,7 @@ class ApiService {
   public client: AxiosInstance;
   private onSessionExpired?: () => void;
   private sessionExpiryInFlight = false;
+  private refreshInFlight: Promise<boolean> | null = null;
 
   setOnSessionExpired(callback: () => void) {
     this.onSessionExpired = callback;
@@ -466,12 +470,27 @@ class ApiService {
         // });
 
         if (error.response?.status === 401) {
-          const reqUrl = String(error.config?.url || '');
-          const skip =
+          const originalRequest = error.config as SessionAwareAxiosConfig & { _retriedAfterRefresh?: boolean };
+          const reqUrl = String(originalRequest?.url || '');
+          const skipSessionClear =
             shouldSkipSessionExpiryOn401(reqUrl) ||
-            !!(error.config as SessionAwareAxiosConfig | undefined)?.skipSessionExpiry;
+            !!originalRequest?.skipSessionExpiry;
+          const isRefreshCall = reqUrl.includes('/mobile/refresh');
 
-          if (!skip && !this.sessionExpiryInFlight) {
+          if (!skipSessionClear && !isRefreshCall && !originalRequest._retriedAfterRefresh) {
+            originalRequest._retriedAfterRefresh = true;
+            const refreshed = await this.tryRefreshAccessToken();
+            if (refreshed) {
+              const token = await secureStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+              if (token && token !== 'session_token') {
+                originalRequest.headers = originalRequest.headers ?? {};
+                originalRequest.headers.Authorization = `Bearer ${token}`;
+              }
+              return this.client(originalRequest);
+            }
+          }
+
+          if (!skipSessionClear && !this.sessionExpiryInFlight) {
             // Confirm the app session is actually dead before wiping login.
             // A single flaky/unauthorized meeting API must not force Sign In.
             this.sessionExpiryInFlight = true;
@@ -513,11 +532,60 @@ class ApiService {
 
   private async clearAuthData() {
     try {
-      await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+      await clearMobileAuthTokens();
       await secureStorage.removeItem(STORAGE_KEYS.USER_DATA);
-      await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TOKEN); // Clear device token on logout
+      await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TOKEN);
     } catch (error) {
       console.warn('Failed to clear auth data:', error);
+    }
+  }
+
+  /** Exchange stored refresh token for a new access + refresh pair (CASA 2.2.3). */
+  async tryRefreshAccessToken(): Promise<boolean> {
+    if (this.refreshInFlight) {
+      return this.refreshInFlight;
+    }
+
+    this.refreshInFlight = (async () => {
+      try {
+        const refreshToken = await getStoredRefreshToken();
+        if (!refreshToken) return false;
+
+        const response = await this.client.post(
+          MOBILE_ENDPOINTS.REFRESH,
+          { refresh_token: refreshToken },
+          { skipSessionExpiry: true, timeout: 15000 } as any,
+        );
+        const data = response?.data;
+        if (!data?.success) return false;
+
+        await persistMobileAuthTokens({
+          token: data.token ?? data.access_token,
+          access_token: data.access_token ?? data.token,
+          refresh_token: data.refresh_token,
+        });
+        return true;
+      } catch {
+        return false;
+      } finally {
+        this.refreshInFlight = null;
+      }
+    })();
+
+    return this.refreshInFlight;
+  }
+
+  private async persistLoginResult(result: Record<string, any>): Promise<void> {
+    if (result.user) {
+      await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+    }
+    await persistMobileAuthTokens({
+      token: result.token,
+      access_token: result.access_token,
+      refresh_token: result.refresh_token,
+    });
+    if (result.deviceToken) {
+      await secureStorage.setItem(STORAGE_KEYS.DEVICE_TOKEN, result.deviceToken);
     }
   }
 
@@ -563,23 +631,16 @@ class ApiService {
         }
         
         // Login successful (no 2FA required)
-        if (result.user) {
-          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
-          console.log('💾 Stored mobile user data');
-        }
-        
-        // Store JWT when provided. If backend uses cookie session, keep auth token empty.
+        await this.persistLoginResult(result);
         if (result.token) {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
           console.log('💾 Stored authentication token:', result.token.substring(0, 20) + '...');
         } else {
-          await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
           console.log('ℹ️ No JWT token returned; using cookie-based session');
         }
-        
-        // Store device token if device is trusted
+        if (result.refresh_token) {
+          console.log('💾 Stored refresh token');
+        }
         if (result.deviceToken) {
-          await secureStorage.setItem(STORAGE_KEYS.DEVICE_TOKEN, result.deviceToken);
           console.log('💾 Stored device token for trusted device');
         }
         
@@ -625,11 +686,14 @@ class ApiService {
 
   async logout(expoPushToken?: string | null): Promise<ApiResponse> {
     try {
-      // Pass the current device's Expo push token so the backend can unregister
-      // ONLY this device (and not the user's other devices). Without this, the
-      // backend falls back to clearing all of this user's tokens.
-      const body = expoPushToken ? { token: expoPushToken } : undefined;
-      const response = await this.client.post(MOBILE_ENDPOINTS.LOGOUT, body);
+      const refreshToken = await getStoredRefreshToken();
+      const body: Record<string, string> = {};
+      if (expoPushToken) body.token = expoPushToken;
+      if (refreshToken) body.refresh_token = refreshToken;
+      const response = await this.client.post(
+        MOBILE_ENDPOINTS.LOGOUT,
+        Object.keys(body).length > 0 ? body : undefined,
+      );
       await this.clearAuthData();
       return response.data;
     } catch (error: any) {
@@ -681,20 +745,26 @@ class ApiService {
   }
 
   /**
-   * Exchange a temporary Google OAuth token (from backend redirect flow) for a session.
-   * Used when the app is opened via grabdocs://login-success?token=...
-   * Returns JWT token for mobile requests.
+   * Exchange a one-time Google OAuth code (grabdocs://login-success?code=...) for tokens.
+   * The `code` is an opaque exchange token — not a JWT.
    */
-  async exchangeGoogleOAuthToken(loginToken: string): Promise<{ success: boolean; user?: { id: number; username: string; email: string; firstName?: string; lastName?: string }; token?: string }> {
+  async exchangeGoogleOAuthToken(exchangeCode: string): Promise<{
+    success: boolean;
+    user?: { id: number; username: string; email: string; firstName?: string; lastName?: string };
+    token?: string;
+    access_token?: string;
+    refresh_token?: string;
+  }> {
     const response = await this.client.post('/api/v1/web/oauth/exchange-token', {
-      login_token: loginToken,
+      code: exchangeCode,
     }, {
       headers: { 
         'Content-Type': 'application/json',
-        'X-Platform': 'mobile', // Indicate this is a mobile request to get JWT token
+        'X-Platform': 'mobile',
       },
       withCredentials: true,
-    });
+      skipSessionExpiry: true,
+    } as any);
     return response.data;
   }
 
@@ -704,7 +774,7 @@ class ApiService {
    * call is synchronous from the app's perspective and avoids the Android deep-link navigation race.
    * Backend contract: POST { id_token } -> { success, user, token } (mobile JWT).
    */
-  async googleSignInWithIdToken(idToken: string): Promise<{ success: boolean; user?: { id: number | string; username?: string; email?: string; firstName?: string; lastName?: string; name?: string }; token?: string; message?: string }> {
+  async googleSignInWithIdToken(idToken: string): Promise<{ success: boolean; user?: { id: number | string; username?: string; email?: string; firstName?: string; lastName?: string; name?: string }; token?: string; access_token?: string; refresh_token?: string; message?: string }> {
     try {
       const response = await this.client.post('/api/v1/web/auth/google-id-token', {
         id_token: idToken,
@@ -805,7 +875,7 @@ class ApiService {
       
       if (result.success) {
         if (result.user) {
-          await secureStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.user));
+          await this.persistLoginResult(result);
           console.log('💾 Stored phone login user data');
         }
         

@@ -132,7 +132,11 @@ export default function SignUpScreen() {
           setError('Failed to retrieve user information. Please try again.');
           return;
         }
-        await setUserFromExternal(userData, sessionResult.token);
+        await setUserFromExternal(
+          userData,
+          sessionResult.token ?? sessionResult.access_token,
+          sessionResult.refresh_token,
+        );
         const webPath = await resolveDefaultHomeWebPath(backendUser);
         navigateTabsThenDefaultHome(router, webPath);
         return;
@@ -147,7 +151,7 @@ export default function SignUpScreen() {
           setError('Google sign-up failed. Please try again.');
           return;
         }
-        await setUserFromExternal(exchanged.user, exchanged.jwt);
+        await setUserFromExternal(exchanged.user, exchanged.jwt, exchanged.refreshToken);
         const webPath = await resolveDefaultHomeWebPath();
         navigateTabsThenDefaultHome(router, webPath);
         return;

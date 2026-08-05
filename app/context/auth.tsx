@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Linking } from 'react-native';
 import { STORAGE_KEYS } from '../../constants/Config';
+import { persistMobileAuthTokens } from '../../utils/authTokenStorage';
 import { apiService } from '../../services/api';
 import {
     extractDefaultHomePathFromUser,
@@ -31,7 +32,7 @@ interface AuthContextType {
   loadRememberedCredentials: () => Promise<{ email: string; password: string; remember: boolean } | null>;
   refreshSession: () => Promise<void>;
   /** Directly set authenticated user from external providers (Apple, Google) without calling checkAuth. */
-  setUserFromExternal: (userData: User, token?: string) => Promise<void>;
+  setUserFromExternal: (userData: User, token?: string, refreshToken?: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -67,7 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     checkSession();
   }, []); // Empty dependency array ensures this only runs once
 
-  // Handle Google OAuth backend redirect: grabdocs://login-success?token=... or grabdocs://login-error?...
+  // Handle Google OAuth backend redirect: grabdocs://login-success?code=... or grabdocs://login-error?...
   // Uses setUserFromExternal (defined below) so storage + React state are set in one consistent call,
   // matching the Apple sign-in path. Safe to reference here because this function is only called
   // from useEffect/Linking listeners, well after all const declarations are initialised.
@@ -79,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (loginToken) {
         const exchanged = await exchangeGoogleLoginToken(loginToken);
         if (exchanged) {
-          await setUserFromExternal(exchanged.user, exchanged.jwt);
+          await setUserFromExternal(exchanged.user, exchanged.jwt, exchanged.refreshToken);
           try {
             const deviceSecurityService = (await import('../../services/deviceSecurity')).default;
             await deviceSecurityService.setLastLoginData({
@@ -202,7 +203,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Clear all possible storage locations
     const storageKeys = [
       'user',
-      'auth_token', 
+      'auth_token',
+      'refresh_token',
       'session_id',
       'auth-storage', // Zustand persistence
       'user_data',
@@ -485,14 +487,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Directly establishes an authenticated session from an external provider (Apple, Google).
   // Bypasses checkAuth so a missing or cookie-only session cannot bounce the user back to login.
-  const setUserFromExternal = async (userData: User, token?: string) => {
+  const setUserFromExternal = async (userData: User, token?: string, refreshToken?: string) => {
     try {
-      // Write JWT before user so any concurrent checkAuth() sees Authorization immediately.
-      if (token) {
-        await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
-      } else {
-        await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
-      }
+      await persistMobileAuthTokens({
+        token: token ?? null,
+        refresh_token: refreshToken,
+      });
       await secureStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
       void (async () => {

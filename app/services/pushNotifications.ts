@@ -1,6 +1,40 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
+import { apiClient } from '../../services/api';
+
+/** iOS category + action identifiers for meeting join-request lock-screen buttons. */
+export const JOIN_REQUEST_NOTIFICATION_CATEGORY = 'join_request';
+export const JOIN_REQUEST_ACTION_ACCEPT = 'ACCEPT_JOIN_REQUEST';
+export const JOIN_REQUEST_ACTION_REJECT = 'REJECT_JOIN_REQUEST';
+
+export function isJoinRequestNotificationAction(actionIdentifier: string): boolean {
+  return (
+    actionIdentifier === JOIN_REQUEST_ACTION_ACCEPT ||
+    actionIdentifier === JOIN_REQUEST_ACTION_REJECT
+  );
+}
+
+/** Approve/reject a join request from a push notification action button. */
+export async function executeJoinRequestNotificationAction(
+  actionIdentifier: string,
+  data: Record<string, any>,
+): Promise<'accepted' | 'rejected'> {
+  const videoCallId = data?.video_call_id ?? data?.room_id;
+  const joinRequestId = data?.join_request_id;
+  if (videoCallId == null || joinRequestId == null) {
+    throw new Error('Missing join request details');
+  }
+  if (actionIdentifier === JOIN_REQUEST_ACTION_ACCEPT) {
+    await apiClient.approveJoinRequest(Number(videoCallId), Number(joinRequestId));
+    return 'accepted';
+  }
+  if (actionIdentifier === JOIN_REQUEST_ACTION_REJECT) {
+    await apiClient.rejectJoinRequest(Number(videoCallId), Number(joinRequestId));
+    return 'rejected';
+  }
+  throw new Error('Unknown join request action');
+}
 
 // Lazy-load expo-notifications so we never import it in Expo Go (SDK 53+ removed push from Expo Go).
 // Importing it at top level triggers "expo-notifications was removed from Expo Go" error.
@@ -50,7 +84,26 @@ class PushNotificationService {
         };
       },
     });
+    await this.registerNotificationCategories();
     this.initialized = true;
+  }
+
+  /** Register iOS/Android notification categories with inline action buttons. */
+  private async registerNotificationCategories() {
+    const Notifications = await getNotifications();
+    if (!Notifications) return;
+    await Notifications.setNotificationCategoryAsync(JOIN_REQUEST_NOTIFICATION_CATEGORY, [
+      {
+        identifier: JOIN_REQUEST_ACTION_ACCEPT,
+        buttonTitle: 'Accept',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: JOIN_REQUEST_ACTION_REJECT,
+        buttonTitle: 'Reject',
+        options: { opensAppToForeground: true, isDestructive: true },
+      },
+    ]);
   }
 
   // Register for push notifications

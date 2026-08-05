@@ -10,14 +10,14 @@ import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../utils
 import { useAuth } from './context/auth';
 
 /**
- * Deep-link target: grabdocs://login-success?token=...
- * Fallback when Android did not return the token to sign-in.tsx — this screen exchanges
- * the token itself (from route params or Linking URL) instead of waiting on AuthContext.
+ * Deep-link target: grabdocs://login-success?code=...
+ * Fallback when Android did not return the code to sign-in.tsx — this screen exchanges
+ * the opaque code itself (from route params or Linking URL) instead of waiting on AuthContext.
  */
 export default function LoginSuccessScreen() {
   const { user, setUserFromExternal } = useAuth();
   const router = useRouter();
-  const params = useLocalSearchParams<{ token?: string }>();
+  const params = useLocalSearchParams<{ token?: string; code?: string }>();
   const [giveUp, setGiveUp] = useState(false);
   const [error, setError] = useState(false);
   const navigatedRef = useRef(false);
@@ -34,7 +34,9 @@ export default function LoginSuccessScreen() {
     exchangeStartedRef.current = true;
 
     void (async () => {
-      let loginToken = typeof params.token === 'string' ? params.token.trim() : '';
+      let loginToken =
+        (typeof params.code === 'string' ? params.code.trim() : '') ||
+        (typeof params.token === 'string' ? params.token.trim() : '');
 
       if (!loginToken) {
         const initialUrl = await Linking.getInitialURL();
@@ -70,9 +72,9 @@ export default function LoginSuccessScreen() {
         return;
       }
 
-      await setUserFromExternal(exchanged.user, exchanged.jwt);
+      await setUserFromExternal(exchanged.user, exchanged.jwt, exchanged.refreshToken);
     })();
-  }, [user?.id, params.token, setUserFromExternal]);
+  }, [user?.id, params.token, params.code, setUserFromExternal]);
 
   useEffect(() => {
     if (!user?.id || navigatedRef.current) return;

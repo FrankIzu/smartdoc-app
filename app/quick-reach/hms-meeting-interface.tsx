@@ -222,8 +222,10 @@ export default function HMSMeetingInterfaceScreen() {
   const [joinSoundReady, setJoinSoundReady] = useState(false);
   /** Canonical GrabDocs meeting id from join response (preferred for list/storage merge). */
   const [resolvedStorageMeetingId, setResolvedStorageMeetingId] = useState<string | null>(null);
-  /** True only after HMS room join + `/join-by-id/confirm` — gates presence side effects (storage, heartbeat, etc.). */
+  /** True only after HMS room join + `/join-by-id/confirm` — gates presence side effects (storage, etc.). */
   const [presenceConfirmed, setPresenceConfirmed] = useState(false);
+  /** True once HMS reports room entry (before/without confirm). Allows heartbeat safety-net upsert. */
+  const [inHmsRoom, setInHmsRoom] = useState(false);
 
   useEffect(() => {
     presenceConfirmedRef.current = presenceConfirmed;
@@ -477,9 +479,10 @@ export default function HMSMeetingInterfaceScreen() {
     }
   };
 
-  // Heartbeat uses room_id from prepare response — MOBILE-INFO is lobby-only, not a join gate.
+  // Heartbeat after HMS room entry (not only after confirm) so a missed confirm can
+  // still recreate ActiveParticipant via the backend heartbeat upsert safety net.
   useEffect(() => {
-    if (!roomId || !presenceConfirmed) return;
+    if (!roomId || !inHmsRoom) return;
 
     // Clear any existing interval
     if (heartbeatIntervalRef.current) {
@@ -511,7 +514,7 @@ export default function HMSMeetingInterfaceScreen() {
         heartbeatIntervalRef.current = null;
       }
     };
-  }, [roomId, presenceConfirmed]);
+  }, [roomId, inHmsRoom]);
 
   // Poll recording status only after token is ready - notify when joining a meeting that is already being recorded.
   // Defer first check so we never show the popup during GrabDocs / HMS prejoin.
@@ -803,6 +806,7 @@ export default function HMSMeetingInterfaceScreen() {
       try {
         presenceConfirmSentRef.current = false;
         setPresenceConfirmed(false);
+        setInHmsRoom(false);
         setJoinStuckExhausted(false);
         hmsJoinRetryRef.current = 0;
         guestIdRef.current = null;
@@ -922,6 +926,9 @@ export default function HMSMeetingInterfaceScreen() {
       presenceConfirmSentRef.current = false;
       return;
     }
+
+    // User is in the HMS room — enable heartbeat even if confirm fails/retries.
+    setInHmsRoom(true);
 
     // Web Prebuilt parity: skip confirm when backend already marked join_phase=joined.
     if (!needsJoinConfirm(joinPhaseRef.current)) {

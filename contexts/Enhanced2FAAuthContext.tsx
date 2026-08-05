@@ -5,6 +5,7 @@ import { apiClient } from '../services/api';
 import { deviceSecurityService } from '../services/deviceSecurity';
 import { googleAuthService } from '../services/googleAuth';
 import { secureStorage } from '../utils/storage';
+import { persistMobileAuthTokens, clearMobileAuthTokens } from '../utils/authTokenStorage';
 
 // Import types from the real service
 type DeviceFingerprint = any;
@@ -281,13 +282,15 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
           authMethod: 'password',
         });
 
-        // Store authentication token and user data
+        // Store authentication tokens and user data
+        await persistMobileAuthTokens({
+          token: result.token || 'session_token',
+          access_token: result.access_token ?? result.token,
+          refresh_token: result.refresh_token,
+        });
         if (result.token) {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
           console.log('💾 Stored authentication token');
         } else {
-          // Fallback to session_token for development
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
           console.log('💾 Stored fallback session_token');
         }
 
@@ -426,12 +429,14 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         });
 
         // Store authentication token and user data
+        await persistMobileAuthTokens({
+          token: result.token || 'session_token',
+          access_token: result.access_token ?? result.token,
+          refresh_token: result.refresh_token,
+        });
         if (result.token) {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
           console.log('💾 Stored authentication token (biometric)');
         } else {
-          // Fallback to session_token for development
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
           console.log('💾 Stored fallback session_token (biometric)');
         }
 
@@ -514,12 +519,14 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
 
       if (result.success && result.user) {
         // Store authentication token and user data
+        await persistMobileAuthTokens({
+          token: result.token || 'session_token',
+          access_token: result.access_token ?? result.token,
+          refresh_token: result.refresh_token,
+        });
         if (result.token) {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
           console.log('💾 Stored authentication token (Google)');
         } else {
-          // Fallback to session_token for development
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
           console.log('💾 Stored fallback session_token (Google)');
         }
 
@@ -649,12 +656,14 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
         });
 
         // Store authentication token and user data
+        await persistMobileAuthTokens({
+          token: result.token || 'session_token',
+          access_token: result.access_token ?? result.token,
+          refresh_token: result.refresh_token,
+        });
         if (result.token) {
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, result.token);
           console.log('💾 Stored authentication token (phone)');
         } else {
-          // Fallback to session_token for development
-          await secureStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'session_token');
           console.log('💾 Stored fallback session_token (phone)');
         }
 
@@ -848,9 +857,9 @@ export function Enhanced2FAAuthProvider({ children }: { children: React.ReactNod
 
       // Clear stored authentication data
       try {
-        await secureStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+        await clearMobileAuthTokens();
         await secureStorage.removeItem(STORAGE_KEYS.USER_DATA);
-        await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TOKEN); // Clear device token on logout
+        await secureStorage.removeItem(STORAGE_KEYS.DEVICE_TOKEN);
         console.log('💾 Cleared authentication data and device token');
       } catch (error) {
         console.warn('Failed to clear auth data:', error);
