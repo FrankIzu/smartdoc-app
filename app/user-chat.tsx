@@ -36,6 +36,7 @@ import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService as api } from '../services/api';
 import { secureStorage } from '../utils/storage';
 import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
+import ChatComposerInput from '../components/ChatComposerInput';
 import { getChatNetworkErrorMessage, isNetworkError } from '../utils/networkErrors';
 import { useAuth } from './context/auth';
 
@@ -64,10 +65,6 @@ interface Chat {
 }
 
 // Storage key helpers scoped per authenticated user
-const USER_CHAT_INPUT_MIN_HEIGHT = 40;
-/** Cap composer growth at five rows. */
-const USER_CHAT_INPUT_MAX_HEIGHT = 136;
-
 const ANDROID_TEXT_INPUT_PROPS =
   Platform.OS === 'android' ? { underlineColorAndroid: 'transparent' as const } : {};
 
@@ -130,7 +127,6 @@ export default function UserChatScreen() {
   const [mentionResults, setMentionResults] = useState<any[]>([]);
   const [selectedRecipient, setSelectedRecipient] = useState<{ type: 'user' | 'workspace'; data: any } | null>(null);
   const messageInputRef = useRef<TextInput>(null);
-  const [textInputHeight, setTextInputHeight] = useState(USER_CHAT_INPUT_MIN_HEIGHT);
   
   // Keyboard tracking for Android
   const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
@@ -1015,9 +1011,11 @@ export default function UserChatScreen() {
     }
   };
 
+  const newMessageRef = useRef('');
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const handleTyping = (text: string) => {
+    newMessageRef.current = text;
     setNewMessage(text);
     
     // Emit typing event (only if in existing chat)
@@ -1585,8 +1583,7 @@ export default function UserChatScreen() {
       flexDirection: 'row',
       alignItems: 'flex-end',
       paddingHorizontal: 16,
-      paddingVertical: 8,
-      paddingBottom: 4,
+      paddingVertical: 6,
       borderTopWidth: 0,
       backgroundColor: 'transparent',
     },
@@ -1598,39 +1595,24 @@ export default function UserChatScreen() {
     },
     messageInputShell: {
       flex: 1,
-      flexDirection: 'row',
-      alignItems: 'flex-end',
       backgroundColor: colors.surface,
       borderRadius: 22,
       borderWidth: 1,
       borderColor: colors.border,
-      paddingLeft: 12,
-      paddingRight: 2,
+      paddingHorizontal: 8,
       paddingVertical: 3,
       overflow: 'hidden',
     },
     messageInput: {
-      flex: 1,
       backgroundColor: 'transparent',
       borderRadius: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 5,
-      paddingTop: 5,
-      paddingRight: 6,
-      fontSize: 16,
       color: colors.text,
-      marginRight: 0,
-      minHeight: USER_CHAT_INPUT_MIN_HEIGHT,
-      maxHeight: USER_CHAT_INPUT_MAX_HEIGHT,
       textAlignVertical: 'top',
       includeFontPadding: false,
-      ...(Platform.OS === 'android'
-        ? {
-            borderWidth: 0,
-            paddingVertical: 4,
-            paddingTop: 6,
-          }
-        : {}),
+      ...(Platform.OS === 'android' ? { borderWidth: 0 } : {}),
+    },
+    composerSendWrap: {
+      marginLeft: 6,
     },
     sendButton: {
       width: 32,
@@ -1998,26 +1980,19 @@ export default function UserChatScreen() {
                 },
               ]}
             >
-              <View style={dynamicStyles.messageInputShell}>
-                <TextInput
-                  {...ANDROID_TEXT_INPUT_PROPS}
-                  ref={messageInputRef}
-                  style={[dynamicStyles.messageInput, { height: Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, textInputHeight)) }]}
-                  placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
-                  placeholderTextColor={colors.textSecondary}
-                  value={newMessage}
-                  onChangeText={handleTyping}
-                  editable={!connectivitySendDisabled}
-                  multiline
-                  submitBehavior="submit"
-                  returnKeyType="send"
-                  onSubmitEditing={handleSendMessage}
-                  maxLength={4000}
-                  onContentSizeChange={(event) => {
-                    const { height } = event.nativeEvent.contentSize;
-                    setTextInputHeight(Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, height)));
-                  }}
-                />
+              <ChatComposerInput
+                ref={messageInputRef}
+                shellStyle={dynamicStyles.messageInputShell}
+                inputStyle={dynamicStyles.messageInput}
+                placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
+                placeholderTextColor={colors.textSecondary}
+                value={newMessage}
+                onChangeText={handleTyping}
+                editable={!connectivitySendDisabled}
+                returnKeyType="default"
+                maxLength={4000}
+              />
+              <View style={dynamicStyles.composerSendWrap}>
                 <TouchableOpacity 
                   style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage || connectivitySendDisabled) && { opacity: 0.5 }]} 
                   onPress={handleSendMessage} 
@@ -2167,26 +2142,19 @@ export default function UserChatScreen() {
                 },
               ]}
             >
-              <View style={dynamicStyles.messageInputShell}>
-                <TextInput
-                  {...ANDROID_TEXT_INPUT_PROPS}
-                  ref={messageInputRef}
-                  style={[dynamicStyles.messageInput, { height: Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, textInputHeight)) }]}
-                  placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
-                  placeholderTextColor={colors.textSecondary}
-                  value={newMessage}
-                  onChangeText={handleTyping}
-                  editable={!connectivitySendDisabled}
-                  multiline
-                  submitBehavior="submit"
-                  returnKeyType="send"
-                  onSubmitEditing={handleSendMessage}
-                  maxLength={4000}
-                  onContentSizeChange={(event) => {
-                    const { height } = event.nativeEvent.contentSize;
-                    setTextInputHeight(Math.max(USER_CHAT_INPUT_MIN_HEIGHT, Math.min(USER_CHAT_INPUT_MAX_HEIGHT, height)));
-                  }}
-                />
+              <ChatComposerInput
+                ref={messageInputRef}
+                shellStyle={dynamicStyles.messageInputShell}
+                inputStyle={dynamicStyles.messageInput}
+                placeholder={isNewChat ? "Type @ to search for a user or workspace..." : "Type a message..."}
+                placeholderTextColor={colors.textSecondary}
+                value={newMessage}
+                onChangeText={handleTyping}
+                editable={!connectivitySendDisabled}
+                returnKeyType="default"
+                maxLength={4000}
+              />
+              <View style={dynamicStyles.composerSendWrap}>
                 <TouchableOpacity 
                   style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage || connectivitySendDisabled) && { opacity: 0.5 }]} 
                   onPress={handleSendMessage} 

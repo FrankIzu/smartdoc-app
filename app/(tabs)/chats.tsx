@@ -60,6 +60,11 @@ import { parseGrabDocsFileViewUrl } from '../../utils/chatFileLinks';
 import { isSermonFile } from '../../utils/isSermonFile';
 import { localizeUtcDatesInAssistantText } from '../../utils/chatUtcDisplay';
 import { removeFileExtension } from '../../utils/fileUtils';
+import {
+  CHAT_COMPOSER_MAX_HEIGHT,
+  CHAT_COMPOSER_MIN_HEIGHT,
+} from '../../utils/chatComposerMetrics';
+import ChatComposerInput from '../../components/ChatComposerInput';
 import { getChatNetworkErrorMessage, isNetworkError, isRateLimitError } from '../../utils/networkErrors';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
@@ -175,11 +180,6 @@ const ChatConversationHeader = React.memo(function ChatConversationHeader({
     </AnimatedHeaderContainer>
   );
 });
-
-/** One-row default composer height. */
-const CHATGD_MESSAGE_INPUT_MIN_HEIGHT = 40;
-/** Cap composer growth at five rows. */
-const CHATGD_MESSAGE_INPUT_MAX_HEIGHT = 136;
 
 /** Default ChatGD composer hint; overridden by entry route (calendar) or chat context (file / bookmark). */
 const CHATGD_DEFAULT_INPUT_PLACEHOLDER = 'Ask questions from your documents';
@@ -850,9 +850,6 @@ export default function ChatsScreen() {
   const mentionAbortControllerRef = useRef<AbortController | null>(null);
   // True while a Tier 3 server search is in-flight (shown as a subtle indicator, not a blocking spinner)
   const [isMentionSearching, setIsMentionSearching] = useState(false);
-  
-  // Text input height state
-  const [textInputHeight, setTextInputHeight] = useState(CHATGD_MESSAGE_INPUT_MIN_HEIGHT);
   
   // Mention cursor tracking — keeps the raw input value and cursor position in sync
   // across the onChangeText → onSelectionChange event ordering gap in React Native.
@@ -8234,10 +8231,11 @@ export default function ChatsScreen() {
           },
         ]}
       >
-        {/* ── TOP AREA: messages or loading; flex spacer when empty keeps composer pinned above tab bar ── */}
         {isEmptyChat ? (
           <View style={dynamicStyles.emptyChatTopSpacer} />
-        ) : messagesLoading ? (
+        ) : null}
+        {/* ── TOP AREA: messages or loading (hidden in empty state — 60/40 spacers position the input) ── */}
+        {!isEmptyChat && (messagesLoading ? (
           <View style={dynamicStyles.loadingContainer}>
             <ActivityIndicator size="large" color="#007AFF" />
             <Text style={dynamicStyles.loadingText}>Loading messages...</Text>
@@ -8291,7 +8289,7 @@ export default function ChatsScreen() {
               nestedScrollEnabled={true}
               removeClippedSubviews={false}
           />
-        )}
+        ))}
 
         {/* Selected Mention Display */}
         {selectedMention && (
@@ -8447,70 +8445,61 @@ export default function ChatsScreen() {
             dynamicStyles.inputContainer,
             isEmptyChat && dynamicStyles.inputContainerEmpty,
             {
-              paddingBottom: 8,
               zIndex: 10,
             },
           ]}
           onLayout={(event) => {
             const { y, height } = event.nativeEvent.layout;
             setInputContainerY(y);
-            setInputContainerHeight(height);
+            setInputContainerHeight((prev) =>
+              Math.abs(prev - height) < 2 ? prev : height
+            );
           }}
         >
-          <View style={dynamicStyles.messageInputShell}>
-            <TextInput
-              {...ANDROID_TEXT_INPUT_PROPS}
-              style={[dynamicStyles.messageInput, { height: Math.max(CHATGD_MESSAGE_INPUT_MIN_HEIGHT, Math.min(CHATGD_MESSAGE_INPUT_MAX_HEIGHT, textInputHeight)) }]}
-              value={newMessage}
-              onChangeText={handleMentionInput}
-              editable={!connectivitySendDisabled}
-              onSelectionChange={(e) => {
-                const { start } = e.nativeEvent.selection;
-                mentionCursorRef.current = start;
-                // Re-run detection with the precise cursor position.
-                // Use newMessageRef (not the newMessage state) because the state
-                // update from handleMentionInput may not have flushed yet.
-                detectMention(newMessageRef.current, start);
-              }}
-              placeholder={messageInputPlaceholder}
-              placeholderTextColor={colors.textSecondary}
-              multiline
-              submitBehavior="submit"
-              returnKeyType="send"
-              onSubmitEditing={() => (sendingMessage ? stopProcessing() : sendMessage())}
-              maxLength={1000}
-              onContentSizeChange={(event) => {
-                const { height } = event.nativeEvent.contentSize;
-                setTextInputHeight(
-                  Math.max(CHATGD_MESSAGE_INPUT_MIN_HEIGHT, Math.min(CHATGD_MESSAGE_INPUT_MAX_HEIGHT, height))
-                );
-              }}
-            />
-            <Animated.View
+          <ChatComposerInput
+            shellStyle={dynamicStyles.messageInputShell}
+            inputStyle={dynamicStyles.messageInput}
+            value={newMessage}
+            onChangeText={handleMentionInput}
+            editable={!connectivitySendDisabled}
+            onSelectionChange={(e) => {
+              const { start } = e.nativeEvent.selection;
+              mentionCursorRef.current = start;
+              detectMention(newMessageRef.current, start);
+            }}
+            placeholder={messageInputPlaceholder}
+            placeholderTextColor={colors.textSecondary}
+            returnKeyType="default"
+            maxLength={1000}
+          />
+          <Animated.View
+            style={[
+              dynamicStyles.composerSendWrap,
+              {
+                transform: [{ scale: bounceAnim }],
+              },
+            ]}
+          >
+            <TouchableOpacity
               style={[
-                dynamicStyles.composerSendWrap,
-                {
-                  transform: [{ scale: bounceAnim }],
-                },
+                dynamicStyles.sendButton,
+                ((!newMessage.trim() && !sendingMessage) || connectivitySendDisabled) && { opacity: 0.5 }
               ]}
+              onPress={sendingMessage ? stopProcessing : () => void sendMessage()}
+              disabled={(!newMessage.trim() && !sendingMessage) || connectivitySendDisabled}
             >
-              <TouchableOpacity
-                style={[
-                  dynamicStyles.sendButton,
-                  ((!newMessage.trim() && !sendingMessage) || connectivitySendDisabled) && { opacity: 0.5 }
-                ]}
-                onPress={sendingMessage ? stopProcessing : () => void sendMessage()}
-                disabled={(!newMessage.trim() && !sendingMessage) || connectivitySendDisabled}
-              >
-                {sendingMessage ? (
-                  <Ionicons name="close" size={18} color="#fff" />
-                ) : (
-                  <Ionicons name="arrow-up" size={18} color="#fff" />
-                )}
-              </TouchableOpacity>
-            </Animated.View>
-          </View>
+              {sendingMessage ? (
+                <Ionicons name="close" size={18} color="#fff" />
+              ) : (
+                <Ionicons name="arrow-up" size={18} color="#fff" />
+              )}
+            </TouchableOpacity>
+          </Animated.View>
         </View>
+
+        {isEmptyChat ? (
+          <View style={dynamicStyles.emptyChatBottomSpacer} />
+        ) : null}
 
       </View>
       </TapToToggleHeaderView>
@@ -9125,8 +9114,7 @@ export default function ChatsScreen() {
       flexDirection: 'row',
       alignItems: 'flex-end',
       paddingHorizontal: 16,
-      paddingVertical: 8,
-      paddingBottom: 4,
+      paddingVertical: 6,
       borderTopWidth: 0,
       backgroundColor: 'transparent',
       elevation: 0,
@@ -9147,9 +9135,9 @@ export default function ChatsScreen() {
       shadowRadius: 0,
       elevation: 0,
     },
-    // Flex spacer above the composer when the thread is empty (pins input above tab bar).
+    // 60% of empty-state vertical space above the composer
     emptyChatTopSpacer: {
-      flex: 1,
+      flex: 3,
     },
     // Flex spacer above the input — holds the welcome graphic and fills the upper half
     emptyChatWelcomeArea: {
@@ -9173,49 +9161,30 @@ export default function ChatsScreen() {
       textAlign: 'center',
       lineHeight: 20,
     },
-    // Flex spacer below the input — mirrors emptyChatWelcomeArea so the input sits at centre
+    // 40% of empty-state vertical space below the composer
     emptyChatBottomSpacer: {
-      flex: 1,
+      flex: 2,
     },
     messageInputShell: {
       flex: 1,
-      flexDirection: 'row',
-      alignItems: 'flex-end',
       backgroundColor: colors.surface,
       borderRadius: 22,
       borderWidth: 1,
       borderColor: colors.border,
-      paddingLeft: 12,
-      paddingRight: 2,
+      paddingHorizontal: 8,
       paddingVertical: 3,
       overflow: 'hidden',
     },
     messageInput: {
-      flex: 1,
       backgroundColor: 'transparent',
       borderRadius: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 5,
-      paddingTop: 5,
-      paddingRight: 6,
-      fontSize: 16,
       color: colors.text,
-      marginRight: 0,
-      minHeight: CHATGD_MESSAGE_INPUT_MIN_HEIGHT,
-      maxHeight: CHATGD_MESSAGE_INPUT_MAX_HEIGHT,
       textAlignVertical: 'top',
       includeFontPadding: false,
-      ...(Platform.OS === 'android'
-        ? {
-            borderWidth: 0,
-            paddingVertical: 4,
-            paddingTop: 6,
-          }
-        : {}),
+      ...(Platform.OS === 'android' ? { borderWidth: 0 } : {}),
     },
     composerSendWrap: {
-      marginBottom: 4,
-      marginRight: 4,
+      marginLeft: 6,
     },
     sendButton: {
       width: 32,
@@ -9815,7 +9784,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000',
     marginRight: 8,
-    minHeight: CHATGD_MESSAGE_INPUT_MIN_HEIGHT,
+    minHeight: CHAT_COMPOSER_MIN_HEIGHT,
     maxHeight: 120,
     textAlignVertical: 'top',
     includeFontPadding: false,
