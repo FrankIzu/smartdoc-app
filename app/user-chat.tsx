@@ -25,14 +25,18 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
+import Toast from 'react-native-toast-message';
 import { io, Socket } from 'socket.io-client';
+import ChatConnectivityBanner from '../components/ChatConnectivityBanner';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useLimitError } from '../contexts/LimitErrorContext';
+import { useChatConnectivity } from '../hooks/useChatConnectivity';
 import { userChatFavoritesStorageKey } from '../services/userScopedCache';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { apiService as api } from '../services/api';
 import { secureStorage } from '../utils/storage';
 import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
+import { getChatNetworkErrorMessage, isNetworkError } from '../utils/networkErrors';
 import { useAuth } from './context/auth';
 
 interface ChatParticipant {
@@ -61,7 +65,8 @@ interface Chat {
 
 // Storage key helpers scoped per authenticated user
 const USER_CHAT_INPUT_MIN_HEIGHT = 40;
-const USER_CHAT_INPUT_MAX_HEIGHT = 64;
+/** Cap composer growth at five rows. */
+const USER_CHAT_INPUT_MAX_HEIGHT = 136;
 
 const ANDROID_TEXT_INPUT_PROPS =
   Platform.OS === 'android' ? { underlineColorAndroid: 'transparent' as const } : {};
@@ -83,6 +88,14 @@ export default function UserChatScreen() {
   const insets = useSafeAreaInsets();
   const { user: authUser } = useAuth();
   const { showLimitError } = useLimitError();
+  const {
+    offlineBannerVisible,
+    bannerText,
+    sendDisabled: connectivitySendDisabled,
+    confirmSend,
+    recordNetworkFailure,
+    clearNetworkFailures,
+  } = useChatConnectivity();
 
   const persistFavoriteChats = useCallback(async (ids: Set<number>) => {
     const key = userChatFavoritesStorageKey(authUser?.id);
@@ -906,6 +919,9 @@ export default function UserChatScreen() {
   };
 
   const sendMessageToChat = async (chatId: number, messageText: string) => {
+    const canProceed = await confirmSend();
+    if (!canProceed) return;
+
     console.log('📤 [USER-CHAT] ===== SENDING MESSAGE =====');
     console.log('📤 [USER-CHAT] Chat ID:', chatId);
     console.log('📤 [USER-CHAT] Message text:', messageText);
@@ -965,6 +981,7 @@ export default function UserChatScreen() {
             ? { ...chat, last_message: newMsg.content.substring(0, 50), updated_at: newMsg.created_at || new Date().toISOString() }
             : chat
         ));
+        clearNetworkFailures();
       }
       setNewMessage('');
       console.log('📤 [USER-CHAT] Message sent successfully, cleared input');
@@ -973,6 +990,9 @@ export default function UserChatScreen() {
       if (limitData) {
         showLimitError(limitData);
         return;
+      }
+      if (isNetworkError(error)) {
+        recordNetworkFailure();
       }
       console.error('❌ [USER-CHAT] Failed to send message:', error);
       console.error('❌ [USER-CHAT] Error details:', {
@@ -983,8 +1003,12 @@ export default function UserChatScreen() {
         messageText,
         userId: userProfile?.id
       });
-      const errorMessage = error?.message || 'Failed to send message. Please try again.';
-      Alert.alert('Error', errorMessage);
+      Toast.show({
+        type: 'error',
+        text1: "Couldn't send message",
+        text2: getChatNetworkErrorMessage(error),
+        visibilityTime: 4000,
+      });
     } finally {
       setSendingMessage(false);
       console.log('📤 [USER-CHAT] Send operation completed (success or error)');
@@ -1566,6 +1590,12 @@ export default function UserChatScreen() {
       borderTopWidth: 0,
       backgroundColor: 'transparent',
     },
+    connectivityBanner: {
+      marginHorizontal: 0,
+    },
+    connectivityBannerText: {
+      color: colors.text,
+    },
     messageInputShell: {
       flex: 1,
       flexDirection: 'row',
@@ -1948,6 +1978,16 @@ export default function UserChatScreen() {
               </View>
             )}
 
+            <ChatConnectivityBanner
+              visible={offlineBannerVisible}
+              text={bannerText}
+              tintColor={colors.tint ?? colors.primary ?? '#007AFF'}
+              textColor={colors.text}
+              borderColor={colors.border}
+              style={dynamicStyles.connectivityBanner}
+              textStyle={dynamicStyles.connectivityBannerText}
+            />
+
             <View 
               ref={inputContainerRef}
               style={[
@@ -1967,6 +2007,7 @@ export default function UserChatScreen() {
                   placeholderTextColor={colors.textSecondary}
                   value={newMessage}
                   onChangeText={handleTyping}
+                  editable={!connectivitySendDisabled}
                   multiline
                   submitBehavior="submit"
                   returnKeyType="send"
@@ -1978,9 +2019,9 @@ export default function UserChatScreen() {
                   }}
                 />
                 <TouchableOpacity 
-                  style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
+                  style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage || connectivitySendDisabled) && { opacity: 0.5 }]} 
                   onPress={handleSendMessage} 
-                  disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
+                  disabled={sendingMessage || connectivitySendDisabled || (!newMessage.trim() && !selectedRecipient)}
                 >
                   {sendingMessage ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -2106,6 +2147,16 @@ export default function UserChatScreen() {
               </View>
             )}
 
+            <ChatConnectivityBanner
+              visible={offlineBannerVisible}
+              text={bannerText}
+              tintColor={colors.tint ?? colors.primary ?? '#007AFF'}
+              textColor={colors.text}
+              borderColor={colors.border}
+              style={dynamicStyles.connectivityBanner}
+              textStyle={dynamicStyles.connectivityBannerText}
+            />
+
             <View 
               ref={inputContainerRef}
               style={[
@@ -2125,6 +2176,7 @@ export default function UserChatScreen() {
                   placeholderTextColor={colors.textSecondary}
                   value={newMessage}
                   onChangeText={handleTyping}
+                  editable={!connectivitySendDisabled}
                   multiline
                   submitBehavior="submit"
                   returnKeyType="send"
@@ -2136,9 +2188,9 @@ export default function UserChatScreen() {
                   }}
                 />
                 <TouchableOpacity 
-                  style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage) && { opacity: 0.5 }]} 
+                  style={[dynamicStyles.sendButton, ((!newMessage.trim() && !selectedRecipient) || sendingMessage || connectivitySendDisabled) && { opacity: 0.5 }]} 
                   onPress={handleSendMessage} 
-                  disabled={sendingMessage || (!newMessage.trim() && !selectedRecipient)}
+                  disabled={sendingMessage || connectivitySendDisabled || (!newMessage.trim() && !selectedRecipient)}
                 >
                   {sendingMessage ? (
                     <ActivityIndicator size="small" color="#fff" />

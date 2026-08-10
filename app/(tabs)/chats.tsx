@@ -41,6 +41,7 @@ import Toast from 'react-native-toast-message';
 import { io, Socket } from 'socket.io-client';
 import AssistantMessageBody from '../../components/AssistantMessageBody';
 import ChartImageModal from '../../components/ChartImageModal';
+import ChatConnectivityBanner from '../../components/ChatConnectivityBanner';
 import InAppWebViewModal, { shouldUseExternalLinking } from '../../components/InAppWebViewModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import GeneralFileViewerModal from '../../components/GeneralFileViewerModal';
@@ -49,6 +50,7 @@ import { API_BASE_URL, STORAGE_KEYS } from '../../constants/Config';
 import { useScrollRestoresHeaderProps } from '../../contexts/HeaderVisibilityContext';
 import { useLimitError } from '../../contexts/LimitErrorContext';
 import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
+import { useChatConnectivity } from '../../hooks/useChatConnectivity';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService as api } from '../../services/api';
 import { errorLogger } from '../../services/errorLogger';
@@ -58,9 +60,11 @@ import { parseGrabDocsFileViewUrl } from '../../utils/chatFileLinks';
 import { isSermonFile } from '../../utils/isSermonFile';
 import { localizeUtcDatesInAssistantText } from '../../utils/chatUtcDisplay';
 import { removeFileExtension } from '../../utils/fileUtils';
+import { getChatNetworkErrorMessage, isNetworkError, isRateLimitError } from '../../utils/networkErrors';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/dialogSurfaceStyles';
 import { screenCache } from '../../utils/screenCache';
+import { persistentBottomNavInset } from '../../utils/persistentBottomNavInset';
 import {
   chatContextsStorageKey,
   chatListScreenKey,
@@ -174,8 +178,8 @@ const ChatConversationHeader = React.memo(function ChatConversationHeader({
 
 /** One-row default composer height. */
 const CHATGD_MESSAGE_INPUT_MIN_HEIGHT = 40;
-/** Cap composer growth at two rows. */
-const CHATGD_MESSAGE_INPUT_MAX_HEIGHT = 64;
+/** Cap composer growth at five rows. */
+const CHATGD_MESSAGE_INPUT_MAX_HEIGHT = 136;
 
 /** Default ChatGD composer hint; overridden by entry route (calendar) or chat context (file / bookmark). */
 const CHATGD_DEFAULT_INPUT_PLACEHOLDER = 'Ask questions from your documents';
@@ -363,6 +367,33 @@ function parseChatActivityTimestamp(raw: string | null | undefined): number {
   return Number.isFinite(t) ? t : 0;
 }
 
+/** True when local state has real message activity (not an AsyncStorage context stub). */
+function chatHasLocalActivity(chat: Chat): boolean {
+  const preview = String(chat.last_message || '').trim();
+  return preview.length > 0 && preview !== 'No messages yet';
+}
+
+/** Map user-chat API row → list Chat; never invent "now" — that breaks sort vs ChatGD history. */
+function mapUserChatListRow(chat: any): Chat {
+  const activityAt = chat.last_message_at || chat.created_at || '';
+  return {
+    id: chat.id,
+    title: chat.display_name || 'Untitled Chat',
+    type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
+    source: 'user' as const,
+    participants: chat.participants || [],
+    last_message: chat.latest_message?.content || 'No messages yet',
+    updated_at: activityAt,
+    created_at: chat.created_at || activityAt,
+    unread_count: chat.unread_count || 0,
+    last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
+    workspace: chat.workspace_id
+      ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace
+      : undefined,
+    ...(chat.last_message_at ? { last_message_at: chat.last_message_at } : {}),
+  };
+}
+
 // Helper: Save document/bookmark/user/workspace chat contexts to AsyncStorage
 const savePersistedChatContexts = async (
   userId: string | number | null | undefined,
@@ -510,6 +541,14 @@ export default function ChatsScreen() {
   const authUserId = authUser?.id ?? null;
   const { showLimitError } = useLimitError();
   const scrollRestoresHeaderProps = useScrollRestoresHeaderProps();
+  const {
+    offlineBannerVisible,
+    bannerText,
+    sendDisabled: connectivitySendDisabled,
+    confirmSend,
+    recordNetworkFailure,
+    clearNetworkFailures,
+  } = useChatConnectivity();
 
   const [chats, setChats] = useState<Chat[]>([DEFAULT_CHAT_ASSISTANT]); // Initialize with ChatGD Assistant
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
@@ -694,6 +733,15 @@ export default function ChatsScreen() {
     if (isSheet || keyboardTop == null) return 0;
     return Math.max(0, Dimensions.get('window').height - keyboardTop - insets.bottom);
   }, [isSheet, keyboardTop, insets.bottom]);
+  /** Keep composer above PersistentBottomNavigation when keyboard is closed. */
+  const bottomNavInset = useMemo(
+    () => (isSheet ? 0 : persistentBottomNavInset(insets.bottom)),
+    [isSheet, insets.bottom]
+  );
+  const composerBottomInset = useMemo(() => {
+    if (keyboardTop != null) return composerKeyboardLift;
+    return bottomNavInset;
+  }, [keyboardTop, composerKeyboardLift, bottomNavInset]);
   const inputContainerRef = useRef<View>(null);
   const [inputContainerY, setInputContainerY] = useState(0);
   const [inputContainerHeight, setInputContainerHeight] = useState(68);
@@ -2239,7 +2287,7 @@ export default function ChatsScreen() {
     }
   }, []);
 
-  // Animate layout when the chat switches between empty-state (centered input) and conversation (bottom input)
+  // Animate layout when the chat switches between empty-state and conversation (composer stays bottom-pinned)
   useEffect(() => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
   }, [isEmptyChat]);
@@ -2352,19 +2400,7 @@ export default function ChatsScreen() {
               if (userChatsResponse.success && (userChatsResponse as any).chats) {
                 rawUserChats = (userChatsResponse as any).chats;
                 userChatHasMore = (userChatsResponse as any).pagination?.has_more ?? false;
-                userChats = rawUserChats.map((chat: any) => ({
-                  id: chat.id,
-                  title: chat.display_name || 'Untitled Chat',
-                  type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
-                  source: 'user' as const,
-                  participants: chat.participants || [],
-                  last_message: chat.latest_message?.content || 'No messages yet',
-                  updated_at: chat.last_message_at || new Date().toISOString(),
-                  created_at: chat.created_at || new Date().toISOString(),
-                  unread_count: chat.unread_count || 0,
-                  last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
-                  workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
-                }));
+                userChats = rawUserChats.map(mapUserChatListRow);
               }
             } catch (userChatError) {
               if (__DEV__) console.warn('Failed to load user chats:', userChatError);
@@ -2482,8 +2518,8 @@ export default function ChatsScreen() {
                 // Handle timestamp formatting for chat timestamps
                 // Use last_message_at for chat listings (when last message was sent)
                 // Use created_at for chat creation time
-                let updatedAt = (history as any).last_message_at || history.updated_at || new Date().toISOString();
-                let createdAt = history.created_at || new Date().toISOString();
+                let updatedAt = (history as any).last_message_at || history.updated_at || history.created_at || '';
+                let createdAt = history.created_at || updatedAt || '';
                 
                 // Don't add timezone indicators - treat as local time
                 // The backend timestamps are already in the correct format
@@ -2518,6 +2554,9 @@ export default function ChatsScreen() {
                   updated_at: String(updatedAt),
                   created_at: String(createdAt),
                   unread_count: 0,
+                  ...((history as any).last_message_at
+                    ? { last_message_at: String((history as any).last_message_at) }
+                    : {}),
                   // Store context data for future use
                   // Priority: persistent_context (most up-to-date) > selected_files/selected_bookmarks (initial context)
                   document_context: (() => {
@@ -2673,8 +2712,9 @@ export default function ChatsScreen() {
             source: persistedKey.startsWith('user_') ? 'user' as const : 'llm' as const,
             participants: context.participants || [],
             last_message: '',
-            updated_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
+            // No fake "now" — stubs must not beat API last_message_at on reload
+            updated_at: '',
+            created_at: '',
             document_context: context.document_context,
             bookmark_context: context.bookmark_context,
             workspace: context.workspace
@@ -2724,8 +2764,8 @@ export default function ChatsScreen() {
             source: key.startsWith('user_') ? 'user' as const : 'llm' as const,
             participants: context.participants || [],
             last_message: '',
-            updated_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
+            updated_at: '',
+            created_at: '',
             document_context: context.document_context,
             bookmark_context: context.bookmark_context,
             workspace: context.workspace
@@ -2768,8 +2808,11 @@ export default function ChatsScreen() {
               bookmark_context: localChat.bookmark_context || chat.bookmark_context,
               participants: localChat.participants || chat.participants,
               workspace: localChat.workspace || chat.workspace,
-              // Keep fresher local activity so a just-active chat stays near the top
-              ...(getLastMessageTimestamp(localChat) > getLastMessageTimestamp(chat)
+              // User DMs/workspaces: API last_message_at is authoritative (never inflate from stubs).
+              // AI context chats: keep fresher in-memory activity after a just-sent message.
+              ...((localChat.type !== 'user_direct' && localChat.type !== 'workspace') &&
+                chatHasLocalActivity(localChat) &&
+                getLastMessageTimestamp(localChat) > getLastMessageTimestamp(chat)
                 ? {
                     updated_at: localChat.updated_at,
                     last_message: localChat.last_message || chat.last_message,
@@ -2778,7 +2821,12 @@ export default function ChatsScreen() {
                   }
                 : {}),
             });
-            if (getLastMessageTimestamp(localChat) > getLastMessageTimestamp(chat)) {
+            if (
+              localChat.type !== 'user_direct' &&
+              localChat.type !== 'workspace' &&
+              chatHasLocalActivity(localChat) &&
+              getLastMessageTimestamp(localChat) > getLastMessageTimestamp(chat)
+            ) {
               delete (uniqueChatsMap.get(key) as any).last_message_at;
             }
           } else {
@@ -2954,7 +3002,12 @@ export default function ChatsScreen() {
       const allChatsArray = Array.from(uniqueChatsMap.values()).map((chat) => {
         const local = localByKey.get(getChatKey(chat));
         if (!local) return chat;
-        if (getLastMessageTimestamp(local) > getLastMessageTimestamp(chat)) {
+        // User chats: trust API timestamps on reload (in-memory may carry stale inflated times).
+        if (chat.type === 'user_direct' || chat.type === 'workspace') return chat;
+        if (
+          chatHasLocalActivity(local) &&
+          getLastMessageTimestamp(local) > getLastMessageTimestamp(chat)
+        ) {
           const merged: Chat = {
             ...chat,
             updated_at: local.updated_at,
@@ -3119,19 +3172,7 @@ export default function ChatsScreen() {
               try {
                 const res = await api.getChats(CHATS_PAGE_SIZE, userChatOffset);
                 if (res.success && (res as any).chats) {
-                  const moreUserChats: Chat[] = ((res as any).chats as any[]).map((chat: any) => ({
-                    id: chat.id,
-                    title: chat.display_name || 'Untitled Chat',
-                    type: chat.type === 'direct' ? 'user_direct' as const : 'workspace' as const,
-                    source: 'user' as const,
-                    participants: chat.participants || [],
-                    last_message: chat.latest_message?.content || 'No messages yet',
-                    updated_at: chat.last_message_at || new Date().toISOString(),
-                    created_at: chat.created_at || new Date().toISOString(),
-                    unread_count: chat.unread_count || 0,
-                    last_message_sender_id: chat.latest_message?.sender?.id ?? chat.latest_message?.sender_id ?? null,
-                    workspace: chat.workspace_id ? { id: chat.workspace_id, name: chat.display_name, slug: '' } as Workspace : undefined,
-                  }));
+                  const moreUserChats: Chat[] = ((res as any).chats as any[]).map(mapUserChatListRow);
                   setChats(prev => {
                     const existing = new Set(prev.map(c => `${c.type}-${c.id}`));
                     const deduped = moreUserChats.filter(c => !existing.has(`${c.type}-${c.id}`));
@@ -3165,9 +3206,10 @@ export default function ChatsScreen() {
                 source: 'llm' as const,
                 participants: [{ id: 1, username: 'ChatGD Assistant', email: 'ai@grabdocs.com' }],
                 last_message: lastMessage,
-                updated_at: String(history.last_message_at || history.updated_at || new Date().toISOString()),
-                created_at: String(history.created_at || new Date().toISOString()),
+                updated_at: String(history.last_message_at || history.updated_at || history.created_at || ''),
+                created_at: String(history.created_at || history.updated_at || ''),
                 unread_count: 0,
+                ...(history.last_message_at ? { last_message_at: String(history.last_message_at) } : {}),
               } as Chat;
             });
           setChats(prev => {
@@ -4686,11 +4728,12 @@ export default function ChatsScreen() {
           break;
 
         case 'error': {
+          recordNetworkFailure();
           const errorText =
-            data.message ||
-            data.content ||
-            data.error ||
-            'Sorry, there was an error processing your request. Please try again.';
+            getChatNetworkErrorMessage(
+              { message: data.message || data.error || data.content },
+              { inline: true }
+            );
           console.error('❌ Streaming error:', errorText);
           setMessages(prev => {
             const newMessages = [...prev];
@@ -4926,6 +4969,7 @@ export default function ChatsScreen() {
         }
 
         case 'complete': {
+          clearNetworkFailures();
           console.log('✅ Stream complete');
           console.log('✅ Final content buffer:', contentBufferRef.current);
           console.log('✅ Complete event data:', {
@@ -5114,6 +5158,9 @@ export default function ChatsScreen() {
       });
       return;
     }
+
+    const canProceed = await confirmSend();
+    if (!canProceed) return;
     
     // Update ref with current chat ID at the start of sending
     currentChatIdRef.current = selectedChat.id !== -1 ? Number(selectedChat.id) : null;
@@ -5577,6 +5624,7 @@ export default function ChatsScreen() {
             last_message_sender_id: userId ?? undefined,
           }));
           console.log('📤 [CHATS-WEB] User direct message successfully added to UI and chat list updated');
+          clearNetworkFailures();
         } else {
           console.warn('⚠️ [CHATS-WEB] User direct message API call succeeded but no message in response');
         }
@@ -5715,6 +5763,7 @@ export default function ChatsScreen() {
             last_message_sender_id: userId ?? undefined,
           }));
           console.log('📤 [CHATS-WEB] Workspace message successfully added to UI and chat list updated');
+          clearNetworkFailures();
         } else {
           console.warn('⚠️ [CHATS-WEB] Workspace message API call succeeded but no message in response');
         }
@@ -5782,65 +5831,62 @@ export default function ChatsScreen() {
         userId: userProfileRef.current?.data?.id ?? userProfileRef.current?.id,
       });
       
-      // Determine user-friendly error message based on error type
-      let fallbackResponse = "I apologize, but I'm experiencing some technical difficulties right now. Let me try to help you with a general response based on your question.\n\n" +
-        "Based on your query, I can provide some general guidance, though I may not have access to your specific documents at the moment. " +
-        "Please try again in a moment, or feel free to rephrase your question if you'd like to continue our conversation.";
-      
-      if (error.message?.includes('429') || error.message?.includes('Rate limit') || error.message?.includes('rate limit')) {
-        fallbackResponse = "⏱️ Rate limit exceeded. Please wait a moment before trying again.\n\n" +
-          "You've sent too many requests in a short period. This helps ensure fair usage for all users.\n\n" +
-          "Please wait a few seconds and try again.";
-        
-        // Stop fake streaming immediately for rate limit errors
-        if (isFakeStreamingRef.current) {
-          stopStreaming(assistantMessageIndex, false);
-          isFakeStreamingRef.current = false;
-        }
-      } else if (error.message?.includes('Network request timed out') || 
-          error.message?.includes('timeout') ||
-          error.message?.includes('ECONNABORTED') ||
-          error.message?.includes('TypeError: Network request timed out')) {
-        fallbackResponse = "⚠️ Connection timed out. Please check your internet connection and try again.\n\n" +
-          "I'm unable to process your request right now due to a connection timeout. This usually happens when:\n" +
-          "• Your internet connection is slow or unstable\n" +
-          "• The server is temporarily busy\n\n" +
-          "Please try again in a moment.";
-      } else if (error.message?.includes('Network Error') || 
-                 error.message?.includes('ERR_NETWORK') ||
-                 error.message?.includes('fetch')) {
-        fallbackResponse = "🌐 Unable to connect to the server. Please check your internet connection.\n\n" +
-          "I'm unable to reach the server right now. This usually means:\n" +
-          "• Your internet connection is not working\n" +
-          "• The server is temporarily unavailable\n" +
-          "• There might be a network configuration issue\n\n" +
-          "Please check your connection and try again.";
-      } else if (error.message?.includes('No response from server')) {
-        fallbackResponse = "🔌 No response from server. Please check your connection and try again.\n\n" +
-          "The server didn't respond to your request. This could be due to:\n" +
-          "• Server maintenance or downtime\n" +
-          "• Network connectivity issues\n" +
-          "• Server overload\n\n" +
-          "Please try again in a few moments.";
+      if (isNetworkError(error)) {
+        recordNetworkFailure();
+      }
+
+      const chatType = selectedChat?.type;
+      const isUserChat = chatType === 'user_direct' || chatType === 'workspace';
+      const isAiChat =
+        chatType === 'ai_assistant' ||
+        chatType === 'document_focused' ||
+        chatType === 'bookmark_focused';
+
+      if (isUserChat) {
+        setNewMessage(messageText);
+        setSendingMessage(false);
+        stopBounceAnimation();
+        Toast.show({
+          type: 'error',
+          text1: "Couldn't send message",
+          text2: getChatNetworkErrorMessage(error),
+          visibilityTime: 4000,
+        });
+        return;
+      }
+
+      if (!isAiChat) {
+        setSendingMessage(false);
+        stopBounceAnimation();
+        Toast.show({
+          type: 'error',
+          text1: "Couldn't send message",
+          text2: getChatNetworkErrorMessage(error),
+          visibilityTime: 4000,
+        });
+        return;
+      }
+
+      const fallbackResponse = getChatNetworkErrorMessage(error, { inline: true });
+
+      if (isRateLimitError(error) && isFakeStreamingRef.current) {
+        stopStreaming(assistantMessageIndex, false);
+        isFakeStreamingRef.current = false;
       }
       
       // Replace fake streaming with error fallback content
-      // CRITICAL: DON'T stop fake streaming here - let it continue until error content actually starts displaying
-      // Fake streaming will be stopped automatically in the streaming interval when displayedCharsRef.current > 0
       contentBufferRef.current = fallbackResponse;
       displayedCharsRef.current = 0;
       isPreviewPhaseRef.current = true;
       isStreamingRef.current = true;
       
-      // Continue streaming with error message
       startOrContinueStreaming(assistantMessageIndex);
       
-      // Stop streaming after content is fully displayed; then clear sending state
       setTimeout(() => {
         stopStreaming(assistantMessageIndex, true);
         setSendingMessage(false);
         stopBounceAnimation();
-      }, fallbackResponse.length * 50 + 1000); // 50ms per character + 1 second buffer
+      }, fallbackResponse.length * 50 + 1000);
       
     } finally {
       console.log('📤 [CHATS-WEB] Send operation completed (success or error)');
@@ -8183,14 +8229,15 @@ export default function ChatsScreen() {
       <View
         style={[
           dynamicStyles.chatContainer,
-          isEmptyChat && { justifyContent: 'center' },
           {
-            paddingBottom: composerKeyboardLift,
+            paddingBottom: composerBottomInset,
           },
         ]}
       >
-        {/* ── TOP AREA: messages or loading (hidden in empty state — justifyContent centers the input) ── */}
-        {!isEmptyChat && (messagesLoading ? (
+        {/* ── TOP AREA: messages or loading; flex spacer when empty keeps composer pinned above tab bar ── */}
+        {isEmptyChat ? (
+          <View style={dynamicStyles.emptyChatTopSpacer} />
+        ) : messagesLoading ? (
           <View style={dynamicStyles.loadingContainer}>
             <ActivityIndicator size="large" color="#007AFF" />
             <Text style={dynamicStyles.loadingText}>Loading messages...</Text>
@@ -8244,7 +8291,7 @@ export default function ChatsScreen() {
               nestedScrollEnabled={true}
               removeClippedSubviews={false}
           />
-        ))}
+        )}
 
         {/* Selected Mention Display */}
         {selectedMention && (
@@ -8316,8 +8363,8 @@ export default function ChatsScreen() {
               bottom: isSheet
                 ? inputContainerHeight
                 : keyboardTop != null
-                  ? Math.max(0, Dimensions.get('window').height - insets.bottom - keyboardTop) + inputContainerHeight
-                  : inputContainerHeight,
+                  ? composerKeyboardLift + inputContainerHeight
+                  : bottomNavInset + inputContainerHeight,
               // Cap height so the dropdown never fills more than 40% of the visible area
               // above the keyboard — keeps messages and the text input visible at all times.
               maxHeight: keyboardTop != null
@@ -8383,6 +8430,16 @@ export default function ChatsScreen() {
           </View>
         )}
 
+        <ChatConnectivityBanner
+          visible={offlineBannerVisible}
+          text={bannerText}
+          tintColor={colors.tint ?? colors.primary ?? '#007AFF'}
+          textColor={colors.text}
+          borderColor={colors.border}
+          style={dynamicStyles.connectivityBanner}
+          textStyle={dynamicStyles.connectivityBannerText}
+        />
+
         {/* ── INPUT BAR ── always rendered; styles differ in empty vs conversation state */}
         <View 
           ref={inputContainerRef}
@@ -8406,6 +8463,7 @@ export default function ChatsScreen() {
               style={[dynamicStyles.messageInput, { height: Math.max(CHATGD_MESSAGE_INPUT_MIN_HEIGHT, Math.min(CHATGD_MESSAGE_INPUT_MAX_HEIGHT, textInputHeight)) }]}
               value={newMessage}
               onChangeText={handleMentionInput}
+              editable={!connectivitySendDisabled}
               onSelectionChange={(e) => {
                 const { start } = e.nativeEvent.selection;
                 mentionCursorRef.current = start;
@@ -8439,10 +8497,10 @@ export default function ChatsScreen() {
               <TouchableOpacity
                 style={[
                   dynamicStyles.sendButton,
-                  (!newMessage.trim() && !sendingMessage) && { opacity: 0.5 }
+                  ((!newMessage.trim() && !sendingMessage) || connectivitySendDisabled) && { opacity: 0.5 }
                 ]}
                 onPress={sendingMessage ? stopProcessing : () => void sendMessage()}
-                disabled={!newMessage.trim() && !sendingMessage}
+                disabled={(!newMessage.trim() && !sendingMessage) || connectivitySendDisabled}
               >
                 {sendingMessage ? (
                   <Ionicons name="close" size={18} color="#fff" />
@@ -9074,6 +9132,12 @@ export default function ChatsScreen() {
       elevation: 0,
       zIndex: 10,
     },
+    connectivityBanner: {
+      marginHorizontal: 0,
+    },
+    connectivityBannerText: {
+      color: colors.text,
+    },
     // Overrides applied to inputContainer when chat is empty (centered state)
     inputContainerEmpty: {
       borderTopWidth: 0,
@@ -9082,6 +9146,10 @@ export default function ChatsScreen() {
       shadowOpacity: 0,
       shadowRadius: 0,
       elevation: 0,
+    },
+    // Flex spacer above the composer when the thread is empty (pins input above tab bar).
+    emptyChatTopSpacer: {
+      flex: 1,
     },
     // Flex spacer above the input — holds the welcome graphic and fills the upper half
     emptyChatWelcomeArea: {
