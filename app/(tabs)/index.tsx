@@ -615,6 +615,12 @@ function DashboardScreen() {
       case 'intake':
         router.push('/intake');
         break;
+      case 'email-sync':
+        router.push('/email-sync');
+        break;
+      case 'notes':
+        router.push('/drafts');
+        break;
       case 'signatures':
         router.push('/signatures' as any);
         break;
@@ -974,12 +980,12 @@ function DashboardScreen() {
               onPress={() => navigatePrimaryShell(router, '/(tabs)/documents')}
             />
             <StatCard
-              key="stat-draft"
-              title="Notes"
-              icon="create-outline"
-              color="#5AC8FA"
-              subtitle="Create notes"
-              onPress={() => router.push('/drafts')}
+              key="stat-chats"
+              title="ChatGD"
+              icon="chatbubbles"
+              color="#AF52DE"
+              subtitle="Ask a question"
+              onPress={() => router.push(expoHrefForWebDefaultHome('/upload'))}
             />
           </View>
           <View style={dynamicStyles.statsRow}>
@@ -992,12 +998,12 @@ function DashboardScreen() {
               onPress={() => router.push('/analytics/dashboard')}
             />
             <StatCard
-              key="stat-chats"
-              title="ChatGD"
-              icon="chatbubbles"
-              color="#AF52DE"
-              subtitle="Ask a question"
-              onPress={() => router.push(expoHrefForWebDefaultHome('/upload'))}
+              key="stat-email-replies"
+              title="Email Replies"
+              icon="mail-outline"
+              color="#007AFF"
+              subtitle="Reply with AI"
+              onPress={() => handleQuickAction('email-sync')}
             />
           </View>
         </View>
@@ -1072,6 +1078,14 @@ function DashboardScreen() {
               icon="people"
               color="#5856D6"
               onPress={() => handleQuickAction('workspaces')}
+            />
+            <QuickActionCard
+              key="action-notes"
+              title="Notes"
+              subtitle="Create notes"
+              icon="create-outline"
+              color="#5AC8FA"
+              onPress={() => handleQuickAction('notes')}
             />
             <QuickActionCard
               key="action-bookmarks"

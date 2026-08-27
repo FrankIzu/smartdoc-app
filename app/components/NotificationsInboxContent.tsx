@@ -149,46 +149,78 @@ export function NotificationsInboxContent({
     }
   }, [notifications.length, onListMutated]);
 
-  const handleNotificationPress = useCallback(
+  const isEmailReplyNotification = (n: AppNotification) => {
+    const meta = n.metadata;
+    return (
+      (n.type === 'inbound_email' || meta?.action_type === 'email_reply') &&
+      Boolean(meta?.has_actions) &&
+      meta?.action_type === 'email_reply' &&
+      (meta?.thread_id != null || meta?.threadId != null || Boolean(meta?.screen))
+    );
+  };
+
+  const resolveNotificationPath = useCallback((n: AppNotification) => {
+    const meta = n.metadata || {};
+    // Prefer mobile `screen` / type resolver — web `navigation_path` is not valid in Expo.
+    if (n.type === 'inbound_email' || meta.action_type === 'email_reply') {
+      return getNotificationScreen({ type: n.type || 'inbound_email', ...meta });
+    }
+    if (meta.navigation_path) {
+      const p = String(meta.navigation_path);
+      return p.startsWith('/') ? p : `/${p}`;
+    }
+    return getNotificationScreen({ type: n.type, ...meta });
+  }, []);
+
+  const navigateFromNotification = useCallback(
     (n: AppNotification) => {
-      if (n.metadata?.has_actions) return;
       if (!n.read) markAsRead(n.id);
-      let path =
-        n.metadata?.navigation_path
-          ? (n.metadata.navigation_path as string).startsWith('/')
-            ? (n.metadata.navigation_path as string)
-            : `/${n.metadata.navigation_path}`
-          : getNotificationScreen({ type: n.type, ...(n.metadata || {}) });
+      let path = resolveNotificationPath(n);
       if (path.startsWith('/calendar/event/')) {
         path = path.replace('/calendar/event/', '/calendar/');
       }
-      if (path !== '/notifications') {
-        if (variant === 'modal') onDismiss?.();
-        try {
-          if (path.includes('signatures') || n.type.startsWith('signature_')) {
-            router.push(
-              resolveSignatureRoute({
-                navigation_path: path,
-                envelopeId: n.metadata?.envelope_id as string | undefined,
-                public_id: n.metadata?.public_id as string | undefined,
-                token: n.metadata?.token as string | undefined,
-                type: n.metadata?.action as string | undefined,
-              }) as any,
-            );
-            return;
-          }
-          const { pathname, params } = parseNotificationPath(path);
-          if (params && Object.keys(params).length > 0) {
-            router.push({ pathname, params } as any);
-          } else {
-            router.push(pathname as any);
-          }
-        } catch {
-          router.push('/notifications' as any);
+      if (path === '/notifications') return;
+      if (variant === 'modal') onDismiss?.();
+      try {
+        if (path.includes('signatures') || n.type.startsWith('signature_')) {
+          router.push(
+            resolveSignatureRoute({
+              navigation_path: path,
+              envelopeId: n.metadata?.envelope_id as string | undefined,
+              public_id: n.metadata?.public_id as string | undefined,
+              token: n.metadata?.token as string | undefined,
+              type: n.metadata?.action as string | undefined,
+            }) as any,
+          );
+          return;
         }
+        const { pathname, params } = parseNotificationPath(path);
+        if (params && Object.keys(params).length > 0) {
+          router.push({ pathname, params } as any);
+        } else {
+          router.push(pathname as any);
+        }
+      } catch {
+        router.push('/notifications' as any);
       }
     },
-    [markAsRead, router, variant, onDismiss]
+    [markAsRead, resolveNotificationPath, router, variant, onDismiss]
+  );
+
+  const handleNotificationPress = useCallback(
+    (n: AppNotification) => {
+      // Invites / join requests use their own buttons; email Reply uses the Reply button (or row tap).
+      if (n.metadata?.has_actions && !isEmailReplyNotification(n)) return;
+      navigateFromNotification(n);
+    },
+    [navigateFromNotification]
+  );
+
+  const handleEmailReply = useCallback(
+    (n: AppNotification) => {
+      navigateFromNotification(n);
+    },
+    [navigateFromNotification]
   );
 
   const finalizeSuccessfulAction = useCallback(
@@ -524,7 +556,9 @@ export function NotificationsInboxContent({
                           ? 'alert-circle'
                           : n.type === 'join_request'
                             ? 'people'
-                            : 'notifications'
+                            : n.type === 'inbound_email'
+                              ? 'mail-outline'
+                              : 'notifications'
                   }
                   size={22}
                   color={n.read ? colors.textSecondary : '#007AFF'}
@@ -631,6 +665,23 @@ export function NotificationsInboxContent({
                       </View>
                     );
                   }
+                  if (isEmailReplyNotification(n)) {
+                    return (
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity
+                          onPress={(e) => {
+                            // Nested inside row TouchableOpacity — stop bubbling on RN where supported.
+                            (e as any)?.stopPropagation?.();
+                            handleEmailReply(n);
+                          }}
+                          style={styles.replyBtn}
+                          accessibilityLabel="Reply to email"
+                        >
+                          <Text style={styles.replyBtnText}>Reply</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  }
                   return null;
                 })()}
               </View>
@@ -677,6 +728,19 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  replyBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#111827',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  replyBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
   unreadDot: {
     width: 24,

@@ -335,6 +335,8 @@ function RootLayoutNav() {
           <Stack.Screen name="join-meeting" options={{ headerShown: false }} />
           <Stack.Screen name="upload-links" options={{ headerShown: false }} />
           <Stack.Screen name="intake" options={{ headerShown: false }} />
+          <Stack.Screen name="email-sync" options={{ headerShown: false }} />
+          <Stack.Screen name="email-oauth" options={{ headerShown: false }} />
           <Stack.Screen name="signatures" options={{ headerShown: false }} />
           <Stack.Screen name="workspaces" options={{ headerShown: false }} />
           <Stack.Screen name="billing" options={{ headerShown: false }} />

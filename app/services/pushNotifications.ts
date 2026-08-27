@@ -455,6 +455,7 @@ export const NOTIFICATION_TYPES = [
   'join_request',
   'transcript_ready',
   'intake_file_received',
+  'inbound_email',
 ] as const;
 
 /**
@@ -509,6 +510,17 @@ export function getNotificationScreen(data: Record<string, any>): string {
     case 'intake_file_received':
       // Backend already sends extra_data.screen = `/intake/{id}` (handled above); this is a defensive fallback.
       return data?.intake_id != null ? `/intake/${data.intake_id}` : '/intake';
+    case 'inbound_email': {
+      const tid = data?.thread_id ?? data?.threadId;
+      const ws = data?.workspace_id ?? data?.workspaceId;
+      if (tid != null) {
+        const q = new URLSearchParams({ threadId: String(tid), compose: '1' });
+        if (ws != null) q.set('workspaceId', String(ws));
+        return `/email-sync?${q.toString()}`;
+      }
+      if (ws != null) return `/email-sync?workspaceId=${ws}`;
+      return '/email-sync';
+    }
     case 'signature_request':
     case 'signature_invite':
     case 'signature_reminder':

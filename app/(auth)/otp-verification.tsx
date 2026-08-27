@@ -72,7 +72,7 @@ function buildUserDataFromAuthCheckData(
   return { id: String(data.id), name, email };
 }
 
-const OTP_LENGTH = 6;
+const OTP_LENGTH = 8;
 
 export default function OtpVerificationScreen() {
   const router = useRouter();
@@ -210,11 +210,11 @@ export default function OtpVerificationScreen() {
 
   const handleOtpChange = (text: string) => {
     if (isLoading) return;
-    const digits = text.replace(/\D/g, '').slice(0, OTP_LENGTH);
-    setOtpValue(digits);
+    const code = text.replace(/[^A-Za-z0-9]/g, '').slice(0, OTP_LENGTH);
+    setOtpValue(code);
     setError('');
-    if (digits.length === OTP_LENGTH) {
-      handleVerifyOtp(digits);
+    if (code.length === OTP_LENGTH) {
+      handleVerifyOtp(code);
     }
   };
 
@@ -228,7 +228,7 @@ export default function OtpVerificationScreen() {
     const finalCode = code ?? otpValue;
 
     if (finalCode.length !== OTP_LENGTH) {
-      setError('Please enter the complete 6-digit code');
+      setError('Please enter the complete 8-character code');
       return;
     }
 
@@ -454,7 +454,7 @@ export default function OtpVerificationScreen() {
 
         <Text style={styles.title}>Enter Verification Code</Text>
         <Text style={styles.subtitle}>
-          We&apos;ve sent a 6-digit code to your {getMethodText()}
+          We&apos;ve sent an 8-character code to your {getMethodText()}
         </Text>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -466,7 +466,10 @@ export default function OtpVerificationScreen() {
           onChangeText={handleOtpChange}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
-          keyboardType="number-pad"
+          keyboardType={Platform.OS === 'ios' ? 'default' : 'visible-password'}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          spellCheck={false}
           maxLength={OTP_LENGTH}
           textContentType="oneTimeCode"
           autoComplete={Platform.OS === 'android'
@@ -639,8 +642,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   otpBox: {
-    width: 46,
-    height: 58,
+    flex: 1,
+    maxWidth: 40,
+    height: 52,
+    marginHorizontal: 2,
     borderWidth: 2,
     borderColor: '#e0e0e0',
     borderRadius: 10,
@@ -666,7 +671,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff5f5',
   },
   otpDigit: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: 'bold',
     color: Colors.text,
   },

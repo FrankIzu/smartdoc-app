@@ -213,7 +213,7 @@ export default function PhoneLoginScreen() {
         <View style={styles.stepContainer}>
             <Text style={styles.stepTitle}>Enter Verification Code</Text>
             <Text style={styles.stepDescription}>
-                We sent a 6-digit code to {maskedPhone}
+                We sent an 8-character code to {maskedPhone}
             </Text>
             
             {testOtp && (
@@ -224,12 +224,15 @@ export default function PhoneLoginScreen() {
 
             <TextInput
                 style={styles.otpInput}
-                placeholder="000000"
+                placeholder="A1B2C3D4"
                 placeholderTextColor="#999"
                 value={otpCode}
-                onChangeText={setOtpCode}
-                keyboardType="number-pad"
-                maxLength={6}
+                onChangeText={(text) => setOtpCode(text.replace(/[^A-Za-z0-9]/g, '').slice(0, 8))}
+                keyboardType={Platform.OS === 'ios' ? 'default' : 'visible-password'}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                spellCheck={false}
+                maxLength={8}
                 autoFocus
             />
 
