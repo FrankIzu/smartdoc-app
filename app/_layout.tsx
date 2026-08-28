@@ -49,7 +49,7 @@ import PersistentBottomNavigation from './components/PersistentBottomNavigation'
 import UpdateRequiredScreen from './components/UpdateRequiredScreen';
 import { AuthProvider, useAuth } from './context/auth';
 import { LimitErrorProvider } from '../contexts/LimitErrorContext';
-import { getNotificationScreen, parseNotificationPath, initializePushNotifications, pushNotificationService, isJoinRequestNotificationAction, executeJoinRequestNotificationAction } from './services/pushNotifications';
+import { getNotificationScreen, parseNotificationPath, initializePushNotifications, pushNotificationService, isJoinRequestNotificationAction, executeJoinRequestNotificationAction, isEmailReplyNotificationAction, getEmailReplyComposeScreen } from './services/pushNotifications';
 
 // Prevent the splash screen from auto-hiding (ignore if native splash not ready yet)
 SplashScreen.preventAutoHideAsync().catch((err) => {
@@ -200,13 +200,32 @@ function RootLayoutNav() {
         return;
       }
 
+      if (isEmailReplyNotificationAction(actionId)) {
+        if (lastHandledNotifIdRef.current === notifId) return;
+        lastHandledNotifIdRef.current = notifId;
+        AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId).catch(() => {});
+        try {
+          const path = getEmailReplyComposeScreen(data as Record<string, any>);
+          const { pathname, params } = parseNotificationPath(path);
+          if (params && Object.keys(params).length > 0) {
+            router.push({ pathname, params } as any);
+          } else {
+            router.push(pathname as any);
+          }
+          await Notifications.dismissNotificationAsync(notifId).catch(() => {});
+        } catch (err) {
+          console.warn('Email reply notification action failed:', err);
+        }
+        return;
+      }
+
       if (actionId !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
       if (lastHandledNotifIdRef.current === notifId) return;
       lastHandledNotifIdRef.current = notifId;
       AsyncStorage.setItem(LAST_HANDLED_NOTIF_KEY, notifId).catch(() => {});
       navigateFromNotificationData(data);
     },
-    [navigateFromNotificationData]
+    [navigateFromNotificationData, router]
   );
 
   // AsyncStorage key used to persist the last notification ID that was handled so that

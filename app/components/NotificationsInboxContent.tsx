@@ -15,7 +15,8 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { resolveSignatureRoute } from '../../utils/signatureRouteResolver';
 import { useAuth } from '../context/auth';
-import { getNotificationScreen, parseNotificationPath } from '../services/pushNotifications';
+import { getNotificationScreen, parseNotificationPath, getEmailReplyComposeScreen } from '../services/pushNotifications';
+import { formatUtcIsoForDevice } from '../../utils/calendarTime';
 import { AnimatedHeaderContainer } from './AnimatedHeaderContainer';
 
 export interface AppNotification {
@@ -218,9 +219,36 @@ export function NotificationsInboxContent({
 
   const handleEmailReply = useCallback(
     (n: AppNotification) => {
-      navigateFromNotification(n);
+      if (!n.read) markAsRead(n.id);
+      let path = getEmailReplyComposeScreen({ type: n.type || 'inbound_email', ...(n.metadata || {}) });
+      if (path.startsWith('/calendar/event/')) {
+        path = path.replace('/calendar/event/', '/calendar/');
+      }
+      if (variant === 'modal') onDismiss?.();
+      try {
+        if (path.includes('signatures') || n.type.startsWith('signature_')) {
+          router.push(
+            resolveSignatureRoute({
+              navigation_path: path,
+              envelopeId: n.metadata?.envelope_id as string | undefined,
+              public_id: n.metadata?.public_id as string | undefined,
+              token: n.metadata?.token as string | undefined,
+              type: n.metadata?.action as string | undefined,
+            }) as any,
+          );
+          return;
+        }
+        const { pathname, params } = parseNotificationPath(path);
+        if (params && Object.keys(params).length > 0) {
+          router.push({ pathname, params } as any);
+        } else {
+          router.push(pathname as any);
+        }
+      } catch {
+        router.push('/notifications' as any);
+      }
     },
-    [navigateFromNotification]
+    [markAsRead, onDismiss, router, variant]
   );
 
   const finalizeSuccessfulAction = useCallback(
@@ -573,7 +601,7 @@ export function NotificationsInboxContent({
                 </Text>
                 <Text style={dynamicStyles.time}>
                   {n.created_at
-                    ? new Date(n.created_at).toLocaleDateString(undefined, {
+                    ? formatUtcIsoForDevice(n.created_at, {
                         month: 'short',
                         day: 'numeric',
                         hour: '2-digit',

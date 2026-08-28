@@ -8,11 +8,19 @@ export const JOIN_REQUEST_NOTIFICATION_CATEGORY = 'join_request';
 export const JOIN_REQUEST_ACTION_ACCEPT = 'ACCEPT_JOIN_REQUEST';
 export const JOIN_REQUEST_ACTION_REJECT = 'REJECT_JOIN_REQUEST';
 
+/** iOS/Android category for single-email reply lock-screen button. */
+export const EMAIL_REPLY_NOTIFICATION_CATEGORY = 'email_reply';
+export const EMAIL_REPLY_ACTION_REPLY = 'REPLY_TO_EMAIL';
+
 export function isJoinRequestNotificationAction(actionIdentifier: string): boolean {
   return (
     actionIdentifier === JOIN_REQUEST_ACTION_ACCEPT ||
     actionIdentifier === JOIN_REQUEST_ACTION_REJECT
   );
+}
+
+export function isEmailReplyNotificationAction(actionIdentifier: string): boolean {
+  return actionIdentifier === EMAIL_REPLY_ACTION_REPLY;
 }
 
 /** Approve/reject a join request from a push notification action button. */
@@ -34,6 +42,18 @@ export async function executeJoinRequestNotificationAction(
     return 'rejected';
   }
   throw new Error('Unknown join request action');
+}
+
+/** Resolve compose screen for email reply (lock screen action + in-app Reply button). */
+export function getEmailReplyComposeScreen(data: Record<string, any>): string {
+  const tid = data?.thread_id ?? data?.threadId;
+  const ws = data?.workspace_id ?? data?.workspaceId;
+  if (tid != null) {
+    const q = new URLSearchParams({ threadId: String(tid), compose: '1' });
+    if (ws != null) q.set('workspaceId', String(ws));
+    return `/email-sync?${q.toString()}`;
+  }
+  return getNotificationScreen(data);
 }
 
 // Lazy-load expo-notifications so we never import it in Expo Go (SDK 53+ removed push from Expo Go).
@@ -102,6 +122,13 @@ class PushNotificationService {
         identifier: JOIN_REQUEST_ACTION_REJECT,
         buttonTitle: 'Reject',
         options: { opensAppToForeground: true, isDestructive: true },
+      },
+    ]);
+    await Notifications.setNotificationCategoryAsync(EMAIL_REPLY_NOTIFICATION_CATEGORY, [
+      {
+        identifier: EMAIL_REPLY_ACTION_REPLY,
+        buttonTitle: 'Reply',
+        options: { opensAppToForeground: true },
       },
     ]);
   }
@@ -196,6 +223,7 @@ class PushNotificationService {
       { id: 'calendar_reminder', name: 'Calendar reminder', description: 'Upcoming calendar event reminders', importance: Notifications.AndroidImportance.HIGH },
       { id: 'file_share_viewed', name: 'File share viewed', description: 'Someone viewed your shared file', importance: Notifications.AndroidImportance.DEFAULT },
       { id: 'join_request', name: 'Join request', description: 'Meeting join requests', importance: Notifications.AndroidImportance.HIGH },
+      { id: 'inbound_email', name: 'Email replies', description: 'Emails needing a reply', importance: Notifications.AndroidImportance.HIGH },
       { id: 'transcript_ready', name: 'Transcript ready', description: 'Meeting transcript is ready', importance: Notifications.AndroidImportance.DEFAULT },
     ];
 
