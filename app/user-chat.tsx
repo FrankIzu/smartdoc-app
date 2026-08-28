@@ -40,6 +40,7 @@ import ChatComposerInput from '../components/ChatComposerInput';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import { getChatNetworkErrorMessage, isNetworkError } from '../utils/networkErrors';
 import { isValidPhoneNumber } from '../utils/phoneUtils';
+import { showInviteDeliveryToastMobile } from '../utils/inviteDeliveryFeedback';
 import { useAuth } from './context/auth';
 
 interface ChatParticipant {
@@ -842,7 +843,7 @@ export default function UserChatScreen() {
         smsConsent: ph ? inviteSmsConsent : false,
       });
       if (res.success) {
-        Toast.show({ type: 'success', text1: res.message || 'Invite sent' });
+        showInviteDeliveryToastMobile(res as any, Toast);
         setShowInviteModal(false);
         setInviteEmail('');
         setInvitePhone('');
