@@ -96,6 +96,33 @@ export function senderLabel(participants?: string[] | null): string {
   return local.replace(/[._]/g, ' ');
 }
 
+/** Prefer display name from `Name <email>`; fall back to local-part if only an address. */
+export function senderDisplayName(raw?: string | null): string {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  const angle = s.match(/^(?:"?([^"<]+)"?\s*)?<([^>]+)>$/);
+  if (angle) {
+    const name = (angle[1] || '').trim();
+    if (name) return name;
+    const email = angle[2].trim();
+    return email.includes('@') ? email.split('@')[0].replace(/[._]/g, ' ') : email;
+  }
+  if (s.includes('@') && !s.includes(' ')) {
+    return s.split('@')[0].replace(/[._]+/g, ' ');
+  }
+  return s;
+}
+
+/** Extract email address for detail views. */
+export function senderNameAndEmail(raw?: string | null): string {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  const angle = s.match(/<([^>]+)>/);
+  if (angle) return angle[1].trim();
+  if (s.includes('@')) return s;
+  return '';
+}
+
 export function threadStatusDotColor(t: {
   attention_status?: string | null;
   reply_status?: string | null;

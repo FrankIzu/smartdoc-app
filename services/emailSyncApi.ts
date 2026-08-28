@@ -98,7 +98,34 @@ export type EmailDraft = {
   subject?: string | null;
   body_text?: string | null;
   reply_mode?: string;
+  tone?: string | null;
   attachments?: { id: number; filename?: string; size_bytes?: number; source_type?: string; file_id?: number | null }[];
+};
+
+export type ThreadAnalysis = {
+  intent_summary: string;
+  requests: { label: string; type: string }[];
+  thread_summary?: string;
+  search_queries?: { query: string; type: string; confidence?: number }[];
+  auto_suggest_eligible?: boolean;
+  confidence?: number;
+};
+
+export type GenerateDraftBody = {
+  tone?: string;
+  reply_mode?: 'reply' | 'reply_all';
+  custom_instructions?: string;
+  body_text?: string;
+  source?: string;
+  mention_attachments?: boolean;
+};
+
+export type ResearchGenerateBody = {
+  research_text: string;
+  tone?: string;
+  reply_mode?: 'reply' | 'reply_all';
+  custom_instructions?: string;
+  body_text?: string;
 };
 
 export type ReplyFromInfo = {
@@ -284,15 +311,32 @@ export async function unarchiveMailboxThread(threadId: number) {
   return undismissMailboxThread(threadId);
 }
 
-export async function generateMailboxDraft(
-  threadId: number,
-  body: { tone?: string; reply_mode?: 'reply' | 'reply_all' }
-) {
+export async function generateMailboxDraft(threadId: number, body: GenerateDraftBody) {
   const { data } = await client().post(`${MAILBOX}/threads/${threadId}/drafts/generate`, body);
   return data as {
     draft: EmailDraft;
     thread?: EmailThread;
     reply_from?: ReplyFromInfo | null;
+    error?: string;
+    code?: string;
+  };
+}
+
+export async function analyzeMailboxThread(threadId: number) {
+  const { data } = await client().post(`${MAILBOX}/threads/${threadId}/analyze`);
+  return data as { analysis: ThreadAnalysis; cached?: boolean };
+}
+
+export async function researchAndGenerateMailboxDraft(threadId: number, body: ResearchGenerateBody) {
+  const { data } = await client().post(`${MAILBOX}/threads/${threadId}/research-and-generate`, body);
+  return data as {
+    draft: EmailDraft;
+    thread?: EmailThread;
+    reply_from?: ReplyFromInfo | null;
+    research?: unknown[];
+    overall_status?: string;
+    research_note?: string;
+    truncated?: boolean;
     error?: string;
     code?: string;
   };
@@ -336,6 +380,8 @@ export async function getMailboxSettings(workspaceId: number) {
   return data as {
     allowed_senders?: string[];
     subject_patterns?: string[];
+    grabdocs_research_enabled?: boolean | null;
+    workspace_search_expanded?: boolean | null;
     undo_send_seconds?: number;
     [key: string]: unknown;
   };

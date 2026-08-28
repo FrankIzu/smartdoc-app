@@ -14,7 +14,7 @@ import {
   retryImport,
   type EmailImportEvent,
 } from '../../services/emailSyncApi';
-import { formatEmailWhen, getFileTypeFromFilename, importStatusBadge } from './_components/emailFormat';
+import { formatEmailWhen, getFileTypeFromFilename, importStatusBadge, senderDisplayName, senderNameAndEmail } from './_components/emailFormat';
 import { emailSyncCacheImports, emailSyncCacheSetImports, emailSyncCacheSetPending } from './_components/emailSyncCache';
 
 function ImportRow({
@@ -32,6 +32,8 @@ function ImportRow({
   const [menu, setMenu] = useState(false);
   const badge = importStatusBadge(item.status, item.failure_category, colors.isDark);
   const when = formatEmailWhen(item.created_at);
+  const senderName = senderDisplayName(item.email_sender);
+  const senderDetail = senderNameAndEmail(item.email_sender);
   const items = useMemo((): ActionMenuItem[] => {
     const next: ActionMenuItem[] = [];
     if (importCanView(item)) {
@@ -57,25 +59,25 @@ function ImportRow({
         onPress={importCanView(item) ? onView : () => setMenu(true)}
         activeOpacity={0.7}
       >
-        <View style={styles.body}>
+        <View style={styles.cardBody}>
           <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
             {item.attachment_filename || item.email_subject || `Import ${item.id}`}
           </Text>
-          <View style={styles.badgeRow}>
+          <View style={styles.metaRow}>
             <View style={[styles.badge, { backgroundColor: badge.backgroundColor }]}>
               <Text style={[styles.badgeTxt, { color: badge.color }]}>{badge.label}</Text>
             </View>
             {when ? (
-              <Text style={[styles.when, { color: colors.textSecondary }]} numberOfLines={1}>
+              <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={1}>
                 {when}
               </Text>
             ) : null}
+            {senderName ? (
+              <Text style={[styles.meta, styles.sender, { color: colors.textSecondary }]} numberOfLines={1}>
+                {senderName}
+              </Text>
+            ) : null}
           </View>
-          {item.email_sender ? (
-            <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={1}>
-              {item.email_sender}
-            </Text>
-          ) : null}
         </View>
         <TouchableOpacity
           style={styles.kebab}
@@ -89,6 +91,7 @@ function ImportRow({
       <ActionMenuModal
         visible={menu}
         title={item.attachment_filename || item.email_subject || 'Import'}
+        message={senderDetail || undefined}
         items={items}
         onClose={() => setMenu(false)}
       />
@@ -222,18 +225,20 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     marginHorizontal: 14,
     marginBottom: 8,
     borderRadius: 10,
     borderWidth: 1,
+    gap: 8,
   },
-  body: { flex: 1, marginRight: 8, minWidth: 0 },
-  title: { fontSize: 16, fontWeight: '600', marginBottom: 6 },
-  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 4 },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  cardBody: { flex: 1, minWidth: 0, gap: 6 },
+  title: { fontSize: 15, fontWeight: '600' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, flexShrink: 0 },
   badgeTxt: { fontSize: 11, fontWeight: '600' },
-  when: { fontSize: 12 },
-  meta: { fontSize: 12, lineHeight: 16 },
-  kebab: { padding: 4, marginLeft: 4 },
+  meta: { fontSize: 12, flexShrink: 0 },
+  sender: { flexShrink: 1, minWidth: 0 },
+  kebab: { padding: 4 },
 });

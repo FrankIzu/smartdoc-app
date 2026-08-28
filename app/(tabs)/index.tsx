@@ -6,8 +6,6 @@ import {
     Alert,
     Animated,
     Image,
-    KeyboardAvoidingView,
-    Modal,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -16,20 +14,19 @@ import {
     useWindowDimensions,
     View
 } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { SignatureIcon } from '../../components/SignatureIcon';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
+import { SignatureIcon } from '../../components/SignatureIcon';
 import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
-import { expoHrefForWebDefaultHome } from '../../utils/defaultHomePath';
-import { navigatePrimaryShell } from '../../utils/tabNavigation';
 import { apiClient } from '../../services/api';
 import { useProgressStore } from '../../services/progressService';
-import { useFileStore } from '../../stores/fileStore';
 import { dashboardScreenKey } from '../../services/userScopedCache';
+import { useFileStore } from '../../stores/fileStore';
+import { expoHrefForWebDefaultHome } from '../../utils/defaultHomePath';
 import { screenCache } from '../../utils/screenCache';
+import { navigatePrimaryShell } from '../../utils/tabNavigation';
 import { NotificationsInboxContent } from '../components/NotificationsInboxContent';
 import { ProfileMenuPopover } from '../components/ProfileMenuPopover';
 import { UploadOptionsModal } from '../components/UploadOptionsModal';
@@ -1002,7 +999,7 @@ function DashboardScreen() {
               title="Email Replies"
               icon="mail-outline"
               color="#007AFF"
-              subtitle="Reply with AI"
+              subtitle="Draft reply with AI"
               onPress={() => handleQuickAction('email-sync')}
             />
           </View>

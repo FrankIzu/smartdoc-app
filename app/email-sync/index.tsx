@@ -2,14 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,29 +18,29 @@ import { GoogleLogo } from '../../components/GoogleLogo';
 import { MicrosoftLogo } from '../../components/MicrosoftLogo';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
-  closeMailboxThread,
-  dismissMailboxThread,
-  dismissMailboxThreads,
-  emailApiError,
-  emailSyncWorkspaceId,
-  listMailboxThreads,
-  mailboxCapabilities,
-  mailboxPendingCount,
-  syncMailbox,
-  undismissMailboxThread,
-  type EmailThread,
-  type ThreadAttention,
+    closeMailboxThread,
+    dismissMailboxThread,
+    dismissMailboxThreads,
+    emailApiError,
+    emailSyncWorkspaceId,
+    listMailboxThreads,
+    mailboxCapabilities,
+    mailboxPendingCount,
+    syncMailbox,
+    undismissMailboxThread,
+    type EmailThread,
+    type ThreadAttention,
 } from '../../services/emailSyncApi';
-import { openEmailInboxOAuth } from './_components/emailOAuth';
-import { formatEmailWhen, threadStatusDotColor } from './_components/emailFormat';
 import { AttachmentNamesRow } from './_components/AttachmentNamesRow';
 import { EmailSyncTopTabs, type EmailSyncTab } from './_components/EmailSyncTopTabs';
+import { formatEmailWhen, threadStatusDotColor } from './_components/emailFormat';
+import { openEmailInboxOAuth } from './_components/emailOAuth';
 import {
-  emailSyncCachePending,
-  emailSyncCacheReplies,
-  emailSyncCacheSetPending,
-  emailSyncCacheSetReplies,
-  emailSyncCacheSetWorkspace,
+    emailSyncCachePending,
+    emailSyncCacheReplies,
+    emailSyncCacheSetPending,
+    emailSyncCacheSetReplies,
+    emailSyncCacheSetWorkspace,
 } from './_components/emailSyncCache';
 import { EmailImportsPane } from './imports';
 import { EmailSetupPane } from './mailbox';

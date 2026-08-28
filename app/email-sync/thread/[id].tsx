@@ -16,17 +16,20 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import ActionMenuModal, { type ActionMenuItem } from '../../../components/ActionMenuModal';
+import AdaptiveListPickerModal from '../../../components/AdaptiveListPickerModal';
 import DocumentViewer from '../../../components/DocumentViewer';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import {
   addDraftAttachmentFile,
   addDraftAttachmentFileId,
+  analyzeMailboxThread,
   closeMailboxThread,
   deleteDraftAttachment,
   deleteMailboxDraft,
@@ -34,11 +37,14 @@ import {
   downloadMessageAttachment,
   emailApiError,
   generateMailboxDraft,
+  getMailboxSettings,
   getMailboxThread,
   mailboxCapabilities,
   nextPendingMailboxThread,
   patchMailboxDraft,
+  patchMailboxSettings,
   reconcileMailboxSend,
+  researchAndGenerateMailboxDraft,
   sendMailboxDraft,
   undismissMailboxThread,
   undoMailboxSend,
@@ -46,12 +52,22 @@ import {
   type EmailMessage,
   type EmailThread,
   type ReplyFromInfo,
+  type ThreadAnalysis,
   type ThreadAttention,
 } from '../../../services/emailSyncApi';
 import { AttachmentNamesRow, type AttachPreview } from '../_components/AttachmentNamesRow';
 import { EmailHtmlBody } from '../_components/EmailHtmlBody';
 import { formatEmailWhen } from '../_components/emailFormat';
 import { GrabDocsAttachPicker } from '../_components/GrabDocsAttachPicker';
+import {
+  canReplyAll,
+  DEFAULT_REPLY_TONE,
+  prepopulateResearchQuestion,
+  REPLY_TONES,
+  requestIcon,
+  restoreTone,
+  type ReplyTone,
+} from '../_components/emailReplyShared';
 
 function getFileTypeFromFilename(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
@@ -102,6 +118,7 @@ export default function EmailThreadScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const ws = workspaceId ? Number(workspaceId) : undefined;
 
   const [thread, setThread] = useState<EmailThread | null>(null);
@@ -125,10 +142,24 @@ export default function EmailThreadScreen() {
   const [cc, setCc] = useState('');
   const [subject, setSubject] = useState('');
   const [headersOpen, setHeadersOpen] = useState(false);
-  const [replyMenu, setReplyMenu] = useState(false);
   const [attachMenu, setAttachMenu] = useState(false);
+  const [toneMenu, setToneMenu] = useState(false);
   const [gdOpen, setGdOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [grabdocsResearchOn, setGrabdocsResearchOn] = useState(false);
+  const [replyTone, setReplyTone] = useState<ReplyTone>(DEFAULT_REPLY_TONE);
+  const [replyAll, setReplyAll] = useState(false);
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [analysis, setAnalysis] = useState<ThreadAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const [researchQuestion, setResearchQuestion] = useState('');
+  const [researchAiSuggested, setResearchAiSuggested] = useState(false);
+  const [researchNote, setResearchNote] = useState('');
+  const [researchPhase, setResearchPhase] = useState<'idle' | 'searching' | 'writing' | 'ready'>('idle');
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [generatingMessage, setGeneratingMessage] = useState<string | null>(null);
+  const [suggestedReply, setSuggestedReply] = useState(false);
   const [viewerFileId, setViewerFileId] = useState<number | null>(null);
   const [viewerFileName, setViewerFileName] = useState('');
   const [directPreview, setDirectPreview] = useState<{
@@ -140,12 +171,29 @@ export default function EmailThreadScreen() {
   const lastTapRef = useRef(0);
   const autoComposeRef = useRef(false);
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const generateInFlightRef = useRef(false);
+  const generateGenRef = useRef(0);
+  const researchStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSuggestCancelledRef = useRef(false);
+  const userHasTypedRef = useRef(false);
+  const composingRef = useRef(false);
+  const analyzedForRef = useRef<number | null>(null);
+  const draftRef = useRef<EmailDraft | null>(null);
+  const threadRef = useRef<EmailThread | null>(null);
+  composingRef.current = composing;
+  draftRef.current = draft;
+  threadRef.current = thread;
 
   useEffect(() => {
     return () => {
       if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+      if (researchStageTimerRef.current) clearTimeout(researchStageTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (replyFrom?.forward_without_send_as) setHeadersOpen(true);
+  }, [threadId, replyFrom?.forward_without_send_as]);
 
   const applyDraft = (d: EmailDraft | null, openComposer = true) => {
     setDraft(d);
@@ -154,6 +202,8 @@ export default function EmailThreadScreen() {
     setCc((d.cc || []).join(', '));
     setSubject(d.subject || '');
     setBody(d.body_text || '');
+    if (d.tone) setReplyTone(restoreTone(d.tone));
+    setReplyAll(d.reply_mode === 'reply_all');
     if (openComposer) setComposing(true);
   };
 
@@ -182,12 +232,34 @@ export default function EmailThreadScreen() {
     let alive = true;
     (async () => {
       setLoading(true);
+      setAnalysis(null);
+      setResearchQuestion('');
+      setResearchAiSuggested(false);
+      setResearchNote('');
+      setResearchPhase('idle');
+      setCustomInstructions('');
+      setSuggestedReply(false);
+      setReplyTone(DEFAULT_REPLY_TONE);
+      setReplyAll(false);
+      autoSuggestCancelledRef.current = false;
+      userHasTypedRef.current = false;
+      generateInFlightRef.current = false;
+      generateGenRef.current += 1;
+      setGeneratingMessage(null);
+      analyzedForRef.current = null;
       try {
         await load();
         if (ws) {
-          const caps = await mailboxCapabilities(ws);
+          const [caps, settings] = await Promise.all([
+            mailboxCapabilities(ws),
+            getMailboxSettings(ws).catch(() => ({})),
+          ]);
           const send = (caps.connections || []).some((c) => c.send_enabled);
-          if (alive) setSendReady(caps.connections?.length ? send : true);
+          if (alive) {
+            setSendReady(caps.connections?.length ? send : true);
+            setGrabdocsResearchOn(settings.grabdocs_research_enabled === true);
+            setWorkspaceOpen(settings.workspace_search_expanded === true);
+          }
         }
       } catch (e) {
         Alert.alert('Mail', emailApiError(e, 'Could not load'));
@@ -198,7 +270,7 @@ export default function EmailThreadScreen() {
     return () => {
       alive = false;
     };
-  }, [load, ws]);
+  }, [load, ws, threadId]);
 
   useEffect(() => {
     if (undoLeft <= 0) return;
@@ -229,21 +301,35 @@ export default function EmailThreadScreen() {
     });
   };
 
-  const generate = async (mode: 'reply' | 'reply_all') => {
+  const generate = async (opts?: { source?: string }) => {
+    if (generateInFlightRef.current) return;
+    const replyMode = replyAll ? 'reply_all' : 'reply';
+    const gen = ++generateGenRef.current;
+    setGeneratingMessage('Drafting reply…');
+    generateInFlightRef.current = true;
     setBusy(true);
-    setReplyMenu(false);
     try {
       if (draft && composing) {
         try {
           await persistDraft();
         } catch {
-          /* still generate; server may use last saved body */
+          /* still generate */
         }
       }
-      const data = await generateMailboxDraft(threadId, { tone: 'professional', reply_mode: mode });
+      const payload: Record<string, unknown> = {
+        reply_mode: replyMode,
+        tone: replyTone,
+      };
+      if (customInstructions.trim()) payload.custom_instructions = customInstructions.trim();
+      if (opts?.source) payload.source = opts.source;
+      const currentDraft = draftRef.current;
+      if (currentDraft) payload.body_text = body || currentDraft.body_text || '';
+      const data = await generateMailboxDraft(threadId, payload as any);
+      if (generateGenRef.current !== gen) return;
       if (data.reply_from) setReplyFrom(data.reply_from);
       if (data.thread) setThread(data.thread);
       applyDraft(data.draft);
+      setSuggestedReply(opts?.source === 'auto_suggest');
     } catch (e: any) {
       const status = e?.response?.status;
       const code = e?.response?.data?.code;
@@ -254,18 +340,113 @@ export default function EmailThreadScreen() {
         Alert.alert('Draft', msg);
       }
     } finally {
+      generateInFlightRef.current = false;
       setBusy(false);
+      if (generateGenRef.current === gen) setGeneratingMessage(null);
+    }
+  };
+
+  const runAnalyze = async (opts: { hasDraft: boolean; attention?: string; openForCompose?: boolean }) => {
+    if (dismissed) return;
+    setAnalysisLoading(true);
+    try {
+      const res = await analyzeMailboxThread(threadId);
+      const next = res.analysis;
+      setAnalysis(next);
+      const prep = prepopulateResearchQuestion(next);
+      setResearchQuestion(prep.text);
+      setResearchAiSuggested(prep.aiSuggested);
+      setResearchNote('');
+      const eligible = !!next?.auto_suggest_eligible;
+      if (
+        eligible
+        && (composingRef.current || opts.openForCompose)
+        && !opts.hasDraft
+        && !draftRef.current
+        && !userHasTypedRef.current
+        && !generateInFlightRef.current
+        && !autoSuggestCancelledRef.current
+        && opts.attention === 'needs_reply'
+      ) {
+        await generate({ source: 'auto_suggest' });
+      }
+    } catch {
+      setAnalysis(null);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
+  const researchAndGenerate = async () => {
+    const q = researchQuestion.trim();
+    if (!q || generateInFlightRef.current) return;
+    const gen = ++generateGenRef.current;
+    setGeneratingMessage('Researching workspace…');
+    setResearchPhase('searching');
+    generateInFlightRef.current = true;
+    setBusy(true);
+    if (researchStageTimerRef.current) clearTimeout(researchStageTimerRef.current);
+    researchStageTimerRef.current = setTimeout(() => {
+      if (generateGenRef.current !== gen) return;
+      setResearchPhase('writing');
+    }, 5000);
+    try {
+      if (draft && composing) {
+        try {
+          await persistDraft();
+        } catch {
+          /* continue */
+        }
+      }
+      const payload: Record<string, unknown> = {
+        research_text: q,
+        tone: replyTone,
+        reply_mode: replyAll ? 'reply_all' : 'reply',
+      };
+      if (customInstructions.trim()) payload.custom_instructions = customInstructions.trim();
+      const currentDraft = draftRef.current;
+      if (currentDraft) payload.body_text = body || currentDraft.body_text || '';
+      const res = await researchAndGenerateMailboxDraft(threadId, payload as any);
+      if (generateGenRef.current !== gen) return;
+      if (res.reply_from) setReplyFrom(res.reply_from);
+      if (res.thread) setThread(res.thread);
+      applyDraft(res.draft);
+      setSuggestedReply(true);
+      setResearchNote(res.research_note || '');
+      setResearchPhase('ready');
+    } catch (e: any) {
+      Alert.alert('Research', emailApiError(e, 'Could not research and generate'));
+      if (generateGenRef.current === gen) setResearchPhase('idle');
+    } finally {
+      if (researchStageTimerRef.current) {
+        clearTimeout(researchStageTimerRef.current);
+        researchStageTimerRef.current = null;
+      }
+      generateInFlightRef.current = false;
+      setBusy(false);
+      if (generateGenRef.current === gen) setGeneratingMessage(null);
     }
   };
 
   useEffect(() => {
-    if (!wantCompose || loading || autoComposeRef.current || dismissed) return;
-    autoComposeRef.current = true;
-    if (draft) {
+    if (loading || dismissed) return;
+    if (analyzedForRef.current === threadId) return;
+    analyzedForRef.current = threadId;
+    void runAnalyze({
+      hasDraft: !!draftRef.current,
+      attention: threadRef.current?.attention_status,
+      openForCompose: wantCompose,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, dismissed, threadId]);
+
+  useEffect(() => {
+    if (!wantCompose || loading || dismissed) return;
+    if (!autoComposeRef.current) {
+      autoComposeRef.current = true;
       setComposing(true);
-      return;
     }
-    void generate('reply');
+    if (draft) setComposing(true);
   }, [wantCompose, loading, draft, dismissed]);
 
   const goNextPending = async () => {
@@ -365,6 +546,12 @@ export default function EmailThreadScreen() {
           backgroundColor: colors.isDark ? '#3b2f1a' : '#FEF3C7',
         },
         bannerTxt: { color: colors.isDark ? '#FDE68A' : '#92400E', fontSize: 13, lineHeight: 18 },
+        composePanel: {
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+          backgroundColor: colors.background,
+          flexGrow: 0,
+        },
         composer: {
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
@@ -378,6 +565,28 @@ export default function EmailThreadScreen() {
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
           paddingVertical: 6,
+        },
+        fromBlock: {
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+          paddingVertical: 8,
+        },
+        composeHeaderSection: {
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+          marginBottom: 8,
+        },
+        composeHeaderToggle: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          paddingVertical: 6,
+        },
+        composeHeaderFields: {
+          paddingBottom: 8,
+          gap: 0,
         },
         label: { width: 36, fontSize: 13, color: colors.textSecondary },
         fieldInput: { flex: 1, color: colors.text, fontSize: 15, paddingVertical: 4 },
@@ -407,7 +616,7 @@ export default function EmailThreadScreen() {
           backgroundColor: '#007AFF',
           borderRadius: 18,
           paddingHorizontal: 16,
-          paddingVertical: 8,
+          paddingVertical: 10,
         },
         replyBar: {
           borderTopWidth: StyleSheet.hairlineWidth,
@@ -432,6 +641,91 @@ export default function EmailThreadScreen() {
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: colors.border,
         },
+        insight: {
+          padding: 10,
+          borderRadius: 12,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          backgroundColor: colors.surface,
+        },
+        workspaceHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingVertical: 4,
+        },
+        actions: {
+          paddingHorizontal: 12,
+          paddingTop: 10,
+          paddingBottom: 8,
+          backgroundColor: colors.background,
+          gap: 8,
+        },
+        actionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+        toneSelect: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 4,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          borderRadius: 10,
+          paddingHorizontal: 10,
+          paddingVertical: 10,
+          backgroundColor: colors.surface,
+          minWidth: 112,
+          maxWidth: 132,
+        },
+        toneOption: {
+          paddingVertical: 14,
+          paddingHorizontal: 16,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+        },
+        toneOptionSelected: { color: '#007AFF', fontWeight: '600' },
+        customInput: {
+          width: '100%',
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          color: colors.text,
+          fontSize: 15,
+          backgroundColor: colors.surface,
+        },
+        researchInput: {
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          borderRadius: 10,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          color: colors.text,
+          fontSize: 13,
+          minHeight: 72,
+          textAlignVertical: 'top',
+          backgroundColor: colors.isDark ? '#111' : '#fff',
+        },
+        secondaryBtn: {
+          alignSelf: 'flex-start',
+          borderWidth: 1.5,
+          borderColor: colors.isDark ? '#9CA3AF' : '#6B7280',
+          borderRadius: 10,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          backgroundColor: colors.surface,
+        },
+        secondaryBtnText: {
+          color: colors.text,
+          fontSize: 13,
+          fontWeight: '600',
+        },
+        generateBtn: {
+          backgroundColor: colors.isDark ? '#f4f4f5' : '#111827',
+          borderRadius: 10,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+        },
         undo: {
           position: 'absolute',
           left: 16,
@@ -446,10 +740,25 @@ export default function EmailThreadScreen() {
     [colors]
   );
 
-  const replyMenuItems: ActionMenuItem[] = [
-    { id: 'reply', label: 'Reply', icon: 'arrow-undo', onPress: () => generate('reply') },
-    { id: 'all', label: 'Reply all', icon: 'people-outline', onPress: () => generate('reply_all') },
-  ];
+  const toggleWorkspaceOpen = () => {
+    const next = !workspaceOpen;
+    setWorkspaceOpen(next);
+    if (ws) {
+      void patchMailboxSettings({ workspace_id: ws, workspace_search_expanded: next }).catch(() => {});
+    }
+  };
+
+  const toneLabel = REPLY_TONES.find((t) => t.value === replyTone)?.label || 'Professional';
+  const drafting = !!generatingMessage;
+  const workspaceGenerating = researchPhase === 'searching' || researchPhase === 'writing';
+  const showReplyAll = canReplyAll(messages);
+  const researchStatusLine = researchPhase === 'searching'
+    ? 'Researching workspace…'
+    : researchPhase === 'writing'
+      ? 'Writing your reply…'
+      : researchPhase === 'ready'
+        ? 'Draft ready'
+        : null;
 
   const attachItems: ActionMenuItem[] = [
     {
@@ -665,165 +974,345 @@ export default function EmailThreadScreen() {
           })}
         </ScrollView>
 
-        {composing && draft ? (
-          <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, keyboardOpen ? 12 : 8) }]}>
-            <TouchableOpacity onPress={() => setHeadersOpen((v) => !v)} style={{ paddingVertical: 4 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                From {replyFrom?.from_address || 'mailbox'}
-                {headersOpen ? '' : ` · To ${to || '…'}`}
-                {'  '}
-                <Ionicons name={headersOpen ? 'chevron-up' : 'chevron-down'} size={12} color={colors.textSecondary} />
-              </Text>
-            </TouchableOpacity>
-            {replyFrom?.using_send_as_alias && replyFrom.mailbox_address ? (
-              <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>
-                Via {replyFrom.mailbox_address}
-              </Text>
-            ) : null}
-            {replyFrom?.forward_without_send_as && replyFrom.customer_addressed ? (
-              <Text style={[styles.bannerTxt, { marginBottom: 6 }]}>
-                Customer wrote to {replyFrom.customer_addressed}. Send-as isn’t set for that address, so this sends from{' '}
-                {replyFrom.from_address}.
-              </Text>
-            ) : null}
-            {headersOpen ? (
-              <>
-                <View style={styles.headerField}>
-                  <Text style={styles.label}>To</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={to}
-                    onChangeText={setTo}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    onEndEditing={() => void persistDraft().catch(() => {})}
-                  />
-                </View>
-                <View style={styles.headerField}>
-                  <Text style={styles.label}>Cc</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={cc}
-                    onChangeText={setCc}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    onEndEditing={() => void persistDraft().catch(() => {})}
-                  />
-                </View>
-                <View style={styles.headerField}>
-                  <Text style={styles.label}>Subj</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={subject}
-                    onChangeText={setSubject}
-                    onEndEditing={() => void persistDraft().catch(() => {})}
-                  />
-                </View>
-              </>
-            ) : null}
-            <TextInput
-              style={styles.input}
-              value={body}
-              onChangeText={setBody}
-              placeholder="Reply"
-              placeholderTextColor={colors.textSecondary}
-              multiline
-              textAlignVertical="top"
-            />
-            {(draft.attachments || []).length > 0 && (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
-                {(draft.attachments || []).map((a) => (
-                  <TouchableOpacity
-                    key={a.id}
-                    style={styles.chip}
-                    onPress={() => {
-                      const name = a.filename || 'Attachment';
-                      const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [
-                        { text: 'Cancel', style: 'cancel' },
-                      ];
-                      if (a.file_id) {
-                        buttons.push({
-                          text: 'Open',
-                          onPress: () => {
-                            setDirectPreview(null);
-                            setViewerFileId(a.file_id!);
-                            setViewerFileName(name);
-                          },
-                        });
-                      }
-                      buttons.push({
-                        text: 'Remove',
-                        style: 'destructive',
-                        onPress: async () => {
-                          await deleteDraftAttachment(draft.id, a.id);
-                          await load();
-                          setComposing(true);
-                        },
-                      });
-                      Alert.alert(name, undefined, buttons);
-                    }}
-                  >
-                    <Text style={{ color: colors.text, fontSize: 12 }} numberOfLines={1}>
-                      {a.filename || `File ${a.id}`} ×
+        {!dismissed ? (
+          <ScrollView
+            style={[styles.composePanel, { maxHeight: Math.round(windowHeight * 0.58) }]}
+            contentContainerStyle={{
+              paddingBottom: Math.max(insets.bottom, keyboardOpen ? 12 : 8),
+              gap: 0,
+            }}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
+            <View style={styles.actions}>
+              {(analysis || analysisLoading || grabdocsResearchOn) ? (
+                <View style={styles.insight}>
+                  {grabdocsResearchOn ? (
+                    <View style={{ marginBottom: analysis || analysisLoading ? 10 : 0 }}>
+                      <TouchableOpacity
+                        style={styles.workspaceHeader}
+                        onPress={toggleWorkspaceOpen}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded: workspaceOpen }}
+                      >
+                        <Ionicons
+                          name={workspaceOpen ? 'chevron-down' : 'chevron-forward'}
+                          size={16}
+                          color={colors.textSecondary}
+                        />
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, flex: 1 }}>
+                          Workspace search
+                        </Text>
+                        {workspaceOpen && researchAiSuggested ? (
+                          <Text style={{ fontSize: 10, color: colors.textSecondary }}>AI suggested</Text>
+                        ) : null}
+                      </TouchableOpacity>
+                      {workspaceOpen ? (
+                        <View style={{ marginTop: 8, gap: 8 }}>
+                          <TextInput
+                            style={styles.researchInput}
+                            value={researchQuestion}
+                            onChangeText={(v) => {
+                              setResearchQuestion(v);
+                              setResearchAiSuggested(false);
+                            }}
+                            placeholder="What should GrabDocs look up?"
+                            placeholderTextColor={colors.textSecondary}
+                            multiline
+                            editable={!workspaceGenerating && !drafting && !busy}
+                          />
+                          {researchStatusLine ? (
+                            <Text style={{ fontSize: 12, color: colors.textSecondary }}>{researchStatusLine}</Text>
+                          ) : null}
+                          <TouchableOpacity
+                            style={[
+                              styles.secondaryBtn,
+                              (!researchQuestion.trim() || drafting || workspaceGenerating || busy) && { opacity: 0.45 },
+                            ]}
+                            disabled={!researchQuestion.trim() || drafting || workspaceGenerating || busy}
+                            onPress={() => void researchAndGenerate()}
+                            accessibilityRole="button"
+                            accessibilityLabel="Generate from Workspace"
+                          >
+                            <Text style={styles.secondaryBtnText}>Generate from Workspace</Text>
+                          </TouchableOpacity>
+                          {researchNote ? (
+                            <Text style={{ fontSize: 12, color: colors.textSecondary }}>{researchNote}</Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {analysisLoading && !analysis ? (
+                    <Text style={{ fontSize: 12, color: colors.textSecondary }}>Understanding this email…</Text>
+                  ) : null}
+                  {analysis?.intent_summary ? (
+                    <Text style={{ fontSize: 12, color: colors.text, marginBottom: 4 }}>
+                      <Text style={{ fontWeight: '700' }}>AI detected: </Text>
+                      {analysis.intent_summary}
                     </Text>
+                  ) : null}
+                  {(analysis?.requests || []).map((r, i) => (
+                    <Text key={`${r.label}-${i}`} style={{ fontSize: 12, color: colors.text, marginTop: 2 }}>
+                      {requestIcon(r.type)} {r.label}
+                    </Text>
+                  ))}
+                  {analysis?.thread_summary ? (
+                    <TouchableOpacity onPress={() => setShowSummary((s) => !s)} style={{ marginTop: 6 }}>
+                      <Text style={{ fontSize: 11, color: colors.textSecondary, textDecorationLine: 'underline' }}>
+                        {showSummary ? 'Hide summary' : 'Summary'}
+                      </Text>
+                      {showSummary ? (
+                        <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>{analysis.thread_summary}</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ) : null}
+              <TextInput
+                style={styles.customInput}
+                value={customInstructions}
+                onChangeText={setCustomInstructions}
+                placeholder="Tell AI anything to include…"
+                placeholderTextColor={colors.textSecondary}
+                editable={!drafting && !busy}
+              />
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={[styles.toneSelect, (drafting || busy) && { opacity: 0.5 }]}
+                  onPress={() => setToneMenu(true)}
+                  disabled={drafting || busy}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Tone, ${toneLabel}`}
+                >
+                  <Text style={{ color: colors.text, fontSize: 14, flexShrink: 1 }} numberOfLines={1}>
+                    {toneLabel}
+                  </Text>
+                  <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+                {showReplyAll ? (
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}
+                    onPress={() => !drafting && !busy && setReplyAll((v) => !v)}
+                    disabled={drafting || busy}
+                  >
+                    <Ionicons
+                      name={replyAll ? 'checkbox' : 'square-outline'}
+                      size={18}
+                      color={replyAll ? '#007AFF' : colors.textSecondary}
+                    />
+                    <Text style={{ fontSize: 13, color: colors.text }} numberOfLines={1}>Reply all</Text>
                   </TouchableOpacity>
-                ))}
+                ) : null}
+                <View style={{ flex: 1, minWidth: 4 }} />
+                {drafting && !workspaceGenerating ? (
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginRight: 4 }} numberOfLines={1}>
+                    {generatingMessage}
+                  </Text>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.generateBtn, { opacity: drafting || busy ? 0.5 : 1 }]}
+                  onPress={() => void generate()}
+                  disabled={drafting || busy || !sendReady}
+                >
+                  <Text style={{ color: colors.isDark ? '#111' : '#fff', fontWeight: '700', fontSize: 14 }}>Generate</Text>
+                </TouchableOpacity>
               </View>
-            )}
-            <View style={styles.tools}>
-              <TouchableOpacity onPress={() => setAttachMenu(true)} style={{ padding: 8 }}>
-                <Ionicons name="attach" size={22} color={colors.text} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => generate((draft.reply_mode as 'reply' | 'reply_all') || 'reply')}
-                style={{ padding: 8 }}
-                disabled={busy}
-              >
-                <Text style={{ color: '#007AFF', fontWeight: '600', fontSize: 13 }}>
-                  {busy ? '…' : 'Regenerate'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={async () => {
-                  try {
-                    await deleteMailboxDraft(draft.id);
-                    setDraft(null);
-                    setComposing(false);
-                  } catch (e: any) {
-                    if (e?.response?.status === 409) Alert.alert('Discard', 'Undo the pending send first.');
-                    else Alert.alert('Discard', emailApiError(e, 'Failed'));
-                  }
-                }}
-                style={{ padding: 8 }}
-              >
-                <Ionicons name="trash-outline" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.send} onPress={() => send(true)} disabled={busy || !sendReady}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{busy ? '…' : 'Send'}</Text>
-              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => send(false)} disabled={busy || !sendReady} style={{ alignSelf: 'flex-end', paddingTop: 2, paddingBottom: 2 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Send without opening next</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={[styles.replyBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-            <TouchableOpacity
-              style={styles.replyBtn}
-              onPress={() => (draft ? setComposing(true) : setReplyMenu(true))}
-              disabled={busy || !sendReady}
-            >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
-                {busy ? 'Writing…' : draft ? 'Continue draft' : 'Reply'}
-              </Text>
-            </TouchableOpacity>
-            {!draft && (
-              <TouchableOpacity style={styles.replySecondary} onPress={() => setReplyMenu(true)} disabled={busy || !sendReady}>
-                <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+
+            {composing && draft ? (
+              <View style={styles.composer}>
+                {suggestedReply ? (
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>
+                    AI prepared a suggested reply — review before sending.
+                  </Text>
+                ) : null}
+                <View style={styles.composeHeaderSection}>
+                  <TouchableOpacity
+                    onPress={() => setHeadersOpen((v) => !v)}
+                    style={styles.composeHeaderToggle}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: headersOpen }}
+                  >
+                    <Ionicons
+                      name="chevron-down"
+                      size={16}
+                      color={colors.textSecondary}
+                      style={{ transform: [{ rotate: headersOpen ? '0deg' : '-90deg' }] }}
+                    />
+                    {headersOpen ? (
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>Hide From, To, Cc, Subject</Text>
+                    ) : (
+                      <Text style={{ fontSize: 14, color: colors.text, flex: 1 }} numberOfLines={1}>
+                        {replyFrom?.from_address || 'Connected mailbox'}
+                        {subject ? ` · ${subject}` : ''}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                  {headersOpen ? (
+                    <View style={styles.composeHeaderFields}>
+                      <View style={styles.fromBlock}>
+                        <Text style={styles.label}>From</Text>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={[styles.fieldInput, { paddingVertical: 0 }]} numberOfLines={2}>
+                            {replyFrom?.from_address || 'Connected mailbox'}
+                          </Text>
+                          {replyFrom?.using_send_as_alias && replyFrom.mailbox_address ? (
+                            <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                              Via {replyFrom.mailbox_address}
+                            </Text>
+                          ) : null}
+                          {replyFrom?.forward_without_send_as && replyFrom.customer_addressed ? (
+                            <Text style={[styles.bannerTxt, { marginTop: 4, fontSize: 11 }]}>
+                              Customer wrote to {replyFrom.customer_addressed}. Send-as isn’t set for that address, so this sends from{' '}
+                              {replyFrom.from_address}.
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                      <View style={styles.headerField}>
+                        <Text style={styles.label}>To</Text>
+                        <TextInput
+                          style={styles.fieldInput}
+                          value={to}
+                          onChangeText={setTo}
+                          autoCapitalize="none"
+                          keyboardType="email-address"
+                          editable={!drafting && !busy}
+                          onEndEditing={() => void persistDraft().catch(() => {})}
+                        />
+                      </View>
+                      <View style={styles.headerField}>
+                        <Text style={styles.label}>Cc</Text>
+                        <TextInput
+                          style={styles.fieldInput}
+                          value={cc}
+                          onChangeText={setCc}
+                          autoCapitalize="none"
+                          keyboardType="email-address"
+                          editable={!drafting && !busy}
+                          onEndEditing={() => void persistDraft().catch(() => {})}
+                        />
+                      </View>
+                      <View style={styles.headerField}>
+                        <Text style={styles.label}>Subj</Text>
+                        <TextInput
+                          style={styles.fieldInput}
+                          value={subject}
+                          onChangeText={setSubject}
+                          editable={!drafting && !busy}
+                          onEndEditing={() => void persistDraft().catch(() => {})}
+                        />
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+                <View style={{ position: 'relative' }}>
+                  {drafting && !workspaceGenerating ? (
+                    <View
+                      style={{
+                        ...StyleSheet.absoluteFillObject,
+                        zIndex: 2,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: colors.isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.85)',
+                        borderRadius: 12,
+                      }}
+                    >
+                      <ActivityIndicator color="#007AFF" />
+                      <Text style={{ marginTop: 6, fontSize: 13, color: colors.textSecondary }}>{generatingMessage}</Text>
+                    </View>
+                  ) : null}
+                  <TextInput
+                    style={[styles.input, drafting ? { opacity: 0.45 } : null]}
+                    value={body}
+                    onChangeText={(v) => {
+                      setSuggestedReply(false);
+                      userHasTypedRef.current = true;
+                      autoSuggestCancelledRef.current = true;
+                      setBody(v);
+                    }}
+                    placeholder="Reply"
+                    placeholderTextColor={colors.textSecondary}
+                    multiline
+                    textAlignVertical="top"
+                    editable={!drafting && !busy}
+                    onEndEditing={() => void persistDraft().catch(() => {})}
+                  />
+                </View>
+                {(draft.attachments || []).length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
+                    {(draft.attachments || []).map((a) => (
+                      <TouchableOpacity
+                        key={a.id}
+                        style={styles.chip}
+                        onPress={() => {
+                          const name = a.filename || 'Attachment';
+                          const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [
+                            { text: 'Cancel', style: 'cancel' },
+                          ];
+                          if (a.file_id) {
+                            buttons.push({
+                              text: 'Open',
+                              onPress: () => {
+                                setDirectPreview(null);
+                                setViewerFileId(a.file_id!);
+                                setViewerFileName(name);
+                              },
+                            });
+                          }
+                          buttons.push({
+                            text: 'Remove',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await deleteDraftAttachment(draft.id, a.id);
+                              await load();
+                              setComposing(true);
+                            },
+                          });
+                          Alert.alert(name, undefined, buttons);
+                        }}
+                      >
+                        <Text style={{ color: colors.text, fontSize: 12 }} numberOfLines={1}>
+                          {a.filename || `File ${a.id}`} ×
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+                <View style={styles.tools}>
+                  <TouchableOpacity onPress={() => setAttachMenu(true)} style={{ padding: 8 }} disabled={drafting || busy}>
+                    <Ionicons name="attach" size={22} color={colors.text} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        await deleteMailboxDraft(draft.id);
+                        setDraft(null);
+                        setComposing(false);
+                        setSuggestedReply(false);
+                      } catch (e: any) {
+                        if (e?.response?.status === 409) Alert.alert('Discard', 'Undo the pending send first.');
+                        else Alert.alert('Discard', emailApiError(e, 'Failed'));
+                      }
+                    }}
+                    style={{ padding: 8 }}
+                    disabled={drafting || busy}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.send} onPress={() => send(true)} disabled={busy || !sendReady || drafting}>
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{busy ? '…' : 'Send'}</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity onPress={() => send(false)} disabled={busy || !sendReady || drafting} style={{ alignSelf: 'flex-end', paddingTop: 2, paddingBottom: 2 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Send without opening next</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </ScrollView>
+        ) : null}
 
         {undoLeft > 0 && pendingSend ? (
           <View style={[styles.undo, { bottom: Math.max(insets.bottom, 12) + 72 }]}>
@@ -851,7 +1340,32 @@ export default function EmailThreadScreen() {
         ) : null}
       </KeyboardAvoidingView>
 
-      <ActionMenuModal visible={replyMenu} title="Reply" items={replyMenuItems} onClose={() => setReplyMenu(false)} />
+      <AdaptiveListPickerModal
+        visible={toneMenu}
+        onClose={() => setToneMenu(false)}
+        title="Tone"
+        itemCount={REPLY_TONES.length}
+      >
+        {REPLY_TONES.map((t) => (
+          <TouchableOpacity
+            key={t.value}
+            style={styles.toneOption}
+            onPress={() => {
+              setReplyTone(t.value);
+              setToneMenu(false);
+            }}
+          >
+            <Text
+              style={[
+                { color: colors.text, fontSize: 16 },
+                replyTone === t.value && styles.toneOptionSelected,
+              ]}
+            >
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </AdaptiveListPickerModal>
       <ActionMenuModal visible={attachMenu} title="Attach" items={attachItems} onClose={() => setAttachMenu(false)} />
 
       <GrabDocsAttachPicker

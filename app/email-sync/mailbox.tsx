@@ -59,6 +59,9 @@ export function EmailSetupPane({
   const [aliases, setAliases] = useState<EmailInboxAlias[]>(cached?.aliases || []);
   const [senders, setSenders] = useState<string[]>(cached?.senders || []);
   const [patterns, setPatterns] = useState<string[]>(cached?.patterns || []);
+  const [grabdocsResearch, setGrabdocsResearch] = useState<boolean | null>(
+    cached?.grabdocsResearch ?? null,
+  );
   const [loading, setLoading] = useState(!cached);
   const [menuConn, setMenuConn] = useState<InboxConnection | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -87,11 +90,13 @@ export function EmailSetupPane({
       aliases: Array.isArray(a) ? a : [],
       senders: s.allowed_senders || [],
       patterns: s.subject_patterns || [],
+      grabdocsResearch: (s.grabdocs_research_enabled ?? null) as boolean | null,
     };
     setConns(next.conns);
     setAliases(next.aliases);
     setSenders(next.senders);
     setPatterns(next.patterns);
+    setGrabdocsResearch(next.grabdocsResearch);
     emailSyncCacheSetSetup(next);
     const n = Number(count) || 0;
     emailSyncCacheSetPending(n);
@@ -128,9 +133,46 @@ export function EmailSetupPane({
       const r = await openEmailInboxOAuth(provider, workspaceId);
       if (r.result === 'error') Alert.alert('Could not connect', r.reason.replace(/_/g, ' '));
       await load(workspaceId);
+      if (r.result === 'success') {
+        const settings = await getMailboxSettings(workspaceId).catch(() => ({}));
+        if (settings.grabdocs_research_enabled == null) {
+          Alert.alert(
+            'GrabDocs research',
+            'Use GrabDocs to look up calendar, documents, and workspace data while drafting replies. Uses AI credits per research.',
+            [
+              {
+                text: 'Not now',
+                onPress: () => {
+                  void patchMailboxSettings({
+                    workspace_id: workspaceId,
+                    grabdocs_research_enabled: false,
+                  }).then(() => load(workspaceId));
+                },
+              },
+              {
+                text: 'Turn on',
+                onPress: () => {
+                  void patchMailboxSettings({
+                    workspace_id: workspaceId,
+                    grabdocs_research_enabled: true,
+                  }).then(() => load(workspaceId));
+                },
+              },
+            ],
+          );
+        }
+      }
     } finally {
       setBusy(false);
     }
+  };
+
+  const patchResearch = (enabled: boolean) => {
+    if (!workspaceId) return;
+    setGrabdocsResearch(enabled);
+    void patchMailboxSettings({ workspace_id: workspaceId, grabdocs_research_enabled: enabled }).catch((e) =>
+      Alert.alert('Settings', emailApiError(e, 'Could not save')),
+    );
   };
 
   const openRules = async (c: InboxConnection) => {
@@ -352,6 +394,48 @@ export function EmailSetupPane({
             placeholder="invoice, W-2, signature"
             emptyLabel="None"
           />
+
+          <Text style={styles.section}>Reply settings</Text>
+          <View style={[styles.card, { padding: 14, marginBottom: 8 }]}>
+            {grabdocsResearch == null ? (
+              <>
+                <Text style={[styles.name, { fontSize: 15 }]}>Use GrabDocs when drafting replies?</Text>
+                <Text style={[styles.sub, { marginTop: 6, lineHeight: 18 }]}>
+                  Look up calendar, documents, and workspace data while drafting. Uses AI credits per research.
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <TouchableOpacity
+                    style={[styles.chip, styles.chipOn, { marginTop: 0 }]}
+                    onPress={() => patchResearch(true)}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: '600' }}>Turn on</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.chip, { marginTop: 0 }]} onPress={() => patchResearch(false)}>
+                    <Text style={{ color: colors.text }}>Not now</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
+                onPress={() => patchResearch(!grabdocsResearch)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={grabdocsResearch ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={grabdocsResearch ? '#007AFF' : colors.textSecondary}
+                  style={{ marginTop: 1 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.name, { fontSize: 15 }]}>Look up workspace data</Text>
+                  <Text style={[styles.sub, { marginTop: 2, fontSize: 11, lineHeight: 15 }]}>
+                    Searches your calendar, files, and workspace to help draft replies.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
 
           <Text style={styles.section}>Forwarding</Text>
           <View style={styles.card}>
