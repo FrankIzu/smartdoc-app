@@ -143,7 +143,12 @@ const baseExpo = {
       {
         action: "VIEW",
         autoVerify: true,
-        data: [{ scheme: "https", host: "app.grabdocs.com", pathPrefix: "/calendar" }],
+        data: [
+          { scheme: "https", host: "app.grabdocs.com", pathPrefix: "/secure-message-invite" },
+          { scheme: "https", host: "app.grabdocs.com", pathPrefix: "/workspace-invite" },
+          { scheme: "https", host: "grabdocs.com", pathPrefix: "/secure-message-invite" },
+          { scheme: "https", host: "grabdocs.com", pathPrefix: "/workspace-invite" },
+        ],
         category: ["BROWSABLE", "DEFAULT"],
       },
     ],

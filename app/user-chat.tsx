@@ -37,7 +37,9 @@ import { apiService as api } from '../services/api';
 import { secureStorage } from '../utils/storage';
 import { extractLimitErrorData, getErrorResponseData } from '../utils/limitErrorUtils';
 import ChatComposerInput from '../components/ChatComposerInput';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 import { getChatNetworkErrorMessage, isNetworkError } from '../utils/networkErrors';
+import { isValidPhoneNumber } from '../utils/phoneUtils';
 import { useAuth } from './context/auth';
 
 interface ChatParticipant {
@@ -55,13 +57,17 @@ interface Workspace {
 interface Chat {
   id: number;
   title: string;
-  type: 'user_direct' | 'workspace';
+  type: 'user_direct' | 'workspace' | 'direct';
   participants: ChatParticipant[];
   last_message: string;
   updated_at: string;
   created_at: string;
   unread_count?: number;
   workspace?: Workspace;
+  invite_pending?: boolean;
+  secure_message_invite_id?: number | null;
+  invitee_label?: string | null;
+  display_name?: string;
 }
 
 // Storage key helpers scoped per authenticated user
@@ -122,6 +128,11 @@ export default function UserChatScreen() {
   const [users, setUsers] = useState<ChatParticipant[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [isNewChat, setIsNewChat] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [invitePhone, setInvitePhone] = useState('');
+  const [inviteSmsConsent, setInviteSmsConsent] = useState(false);
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [showMentionResults, setShowMentionResults] = useState(false);
   const [mentionResults, setMentionResults] = useState<any[]>([]);
@@ -633,6 +644,10 @@ export default function UserChatScreen() {
         name: chat.workspace?.name || chat.display_name?.replace(/^#/, '') || 'Workspace',
         slug: chat.workspace?.slug || ''
       } : undefined,
+      invite_pending: !!chat.invite_pending,
+      secure_message_invite_id: chat.secure_message_invite_id ?? null,
+      invitee_label: chat.invitee_label ?? null,
+      display_name: chat.display_name,
     };
   };
 
@@ -804,6 +819,84 @@ export default function UserChatScreen() {
     }, 100);
   };
 
+  const handleInviteSubmit = async () => {
+    const em = inviteEmail.trim();
+    const ph = invitePhone.trim();
+    if (!em && !ph) {
+      Alert.alert('Invite', 'Enter an email or phone number');
+      return;
+    }
+    if (ph && !isValidPhoneNumber(ph)) {
+      Alert.alert('Invite', 'Enter a valid phone number');
+      return;
+    }
+    if (ph && !inviteSmsConsent) {
+      Alert.alert('Invite', 'Confirm you have permission to text this number');
+      return;
+    }
+    setInviteSubmitting(true);
+    try {
+      const res = await api.inviteSecureMessage({
+        email: em || undefined,
+        phone: ph || undefined,
+        smsConsent: ph ? inviteSmsConsent : false,
+      });
+      if (res.success) {
+        Toast.show({ type: 'success', text1: res.message || 'Invite sent' });
+        setShowInviteModal(false);
+        setInviteEmail('');
+        setInvitePhone('');
+        setInviteSmsConsent(false);
+        if ((res as any).chat) {
+          setSelectedChat((res as any).chat);
+          setIsNewChat(false);
+        }
+        loadChats();
+      } else {
+        Alert.alert('Invite', (res as any).error || 'Failed to send invite');
+      }
+    } catch (e: any) {
+      Alert.alert('Invite', e?.message || 'Failed to send invite');
+    } finally {
+      setInviteSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await api.getSecureMessageInvitesPendingForMe();
+        const list = (res as any)?.invitations || [];
+        if (list.length > 0) {
+          Alert.alert(
+            'Secure Messaging invitation',
+            `${list[0].inviter_display_name} invited you to securely message them.`,
+            [
+              { text: 'Later', style: 'cancel' },
+              {
+                text: 'Accept',
+                onPress: async () => {
+                  try {
+                    const acc = await api.acceptSecureMessageInvite({ invitation_id: list[0].id });
+                    if (acc.success && (acc as any).chat?.id) {
+                      Toast.show({ type: 'success', text1: 'Invitation accepted' });
+                      setSelectedChat((acc as any).chat);
+                      loadChats();
+                    }
+                  } catch (err: any) {
+                    Alert.alert('Error', err?.message || 'Could not accept');
+                  }
+                },
+              },
+            ],
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
   const handleSelectRecipient = (recipient: { type: 'user' | 'workspace'; data: any }) => {
     if (recipient.type === 'user') {
       const myId = currentUserIdRef.current;
@@ -872,6 +965,11 @@ export default function UserChatScreen() {
     console.log('📤 [USER-CHAT] selectedRecipient:', selectedRecipient);
     console.log('📤 [USER-CHAT] selectedChat:', selectedChat);
     console.log('📤 [USER-CHAT] newMessage:', newMessage);
+
+    if (selectedChat?.invite_pending) {
+      Alert.alert('Invite pending', 'They must accept the invitation before you can send messages.');
+      return;
+    }
     
     // If in new chat mode and no recipient selected, try to start chat
     if (isNewChat && !selectedRecipient) {
@@ -1811,10 +1909,13 @@ export default function UserChatScreen() {
               </View>
             </TouchableOpacity>
           ) : (
-            <View style={{ flex: 1, alignItems: 'center' }}>
+              <View style={{ flex: 1, alignItems: 'center' }}>
               <Text style={dynamicStyles.headerTitle}>
-                {isNewChat ? 'New Message' : selectedChat?.title || ''}
+                {isNewChat ? 'New Message' : selectedChat?.display_name || selectedChat?.title || ''}
               </Text>
+              {selectedChat?.invite_pending && (
+                <Text style={{ fontSize: 11, color: '#B45309' }}>Invite pending · messaging disabled</Text>
+              )}
               {isNewChat && selectedRecipient && (
                 <Text style={{ fontSize: 12, color: colors.textSecondary }}>
                   {selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}
@@ -2199,6 +2300,9 @@ export default function UserChatScreen() {
               color={refreshing ? "#999" : "#007AFF"} 
             />
           </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowInviteModal(true)} style={dynamicStyles.newChatButton}>
+            <Ionicons name="person-add-outline" size={24} color="#007AFF" />
+          </TouchableOpacity>
           <TouchableOpacity onPress={handleNewChat} style={dynamicStyles.newChatButton}>
             <Ionicons name="add" size={26} color="#007AFF" />
           </TouchableOpacity>
@@ -2292,7 +2396,12 @@ export default function UserChatScreen() {
                   <View style={dynamicStyles.chatContent}>
                     <View style={dynamicStyles.chatItemHeader}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                        <Text style={dynamicStyles.chatTitle} numberOfLines={1}>{item.title}</Text>
+                        <Text style={dynamicStyles.chatTitle} numberOfLines={1}>
+                          {item.display_name || item.title}
+                        </Text>
+                        {item.invite_pending && (
+                          <Text style={{ marginLeft: 6, fontSize: 10, color: '#B45309' }}>Pending</Text>
+                        )}
                         {favoriteChatIds.has(item.id) && (
                           <Ionicons name="star" size={16} color="#FFD700" style={{ marginLeft: 6 }} />
                         )}
@@ -2329,6 +2438,57 @@ export default function UserChatScreen() {
       )}
 
       {renderChatMenuModal()}
+
+      <Modal visible={showInviteModal} animationType="slide" transparent onRequestClose={() => setShowInviteModal(false)}>
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <View style={{ backgroundColor: colors.background, padding: 20, borderTopLeftRadius: 16, borderTopRightRadius: 16, gap: 12 }}>
+            <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>Invite to Secure Messaging</Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+              Invite by email or SMS. Message content is never included.
+            </Text>
+            <TextInput
+              {...ANDROID_TEXT_INPUT_PROPS}
+              style={{ borderWidth: 1, borderColor: colors.textSecondary, borderRadius: 8, padding: 12, color: colors.text }}
+              placeholder="Email"
+              placeholderTextColor={colors.textSecondary}
+              value={inviteEmail}
+              onChangeText={setInviteEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            <PhoneNumberInput
+              value={invitePhone}
+              onChange={setInvitePhone}
+              placeholder="Phone number"
+            />
+            {!!invitePhone.trim() && (
+              <TouchableOpacity
+                onPress={() => setInviteSmsConsent((v) => !v)}
+                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}
+              >
+                <Ionicons
+                  name={inviteSmsConsent ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color="#007AFF"
+                />
+                <Text style={{ flex: 1, fontSize: 12, color: colors.textSecondary }}>
+                  I have permission to contact this number by SMS for a GrabDocs invite.
+                </Text>
+              </TouchableOpacity>
+            )}
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
+              <TouchableOpacity onPress={() => setShowInviteModal(false)}>
+                <Text style={{ color: colors.textSecondary, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleInviteSubmit} disabled={inviteSubmitting}>
+                <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>
+                  {inviteSubmitting ? 'Sending…' : 'Send invite'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </SafeAreaView>
   );

@@ -173,6 +173,13 @@ const MOBILE_ENDPOINTS = {
   USER_CHAT_SEND: (chatId: number) => `/api/v1/web/user-chat/chats/${chatId}/send`,
   USER_CHAT_START: '/api/v1/web/user-chat/start-chat',
   USER_CHAT_SEARCH_USERS: '/api/v1/web/user-chat/search-users',
+  USER_CHAT_INVITE: '/api/v1/mobile/user-chat/invite',
+  USER_CHAT_INVITE_ACCEPT: '/api/v1/mobile/user-chat/invites/accept',
+  USER_CHAT_INVITE_RESOLVE: '/api/v1/mobile/user-chat/invites/resolve',
+  USER_CHAT_INVITES_PENDING_FOR_ME: '/api/v1/mobile/user-chat/invites/pending-for-me',
+  USER_CHAT_INVITES_OUTGOING: '/api/v1/mobile/user-chat/invites/pending',
+  USER_CHAT_INVITE_RESEND: (id: number) => `/api/v1/mobile/user-chat/invites/${id}/resend`,
+  USER_CHAT_INVITE_REVOKE: (id: number) => `/api/v1/mobile/user-chat/invites/${id}/revoke`,
   
   // Bookmarks
   BOOKMARKS: '/api/v1/mobile/bookmarks',
@@ -4072,6 +4079,27 @@ class ApiService {
     }
   }
 
+  async getWorkspaceInvitationByToken(token: string): Promise<ApiResponse> {
+    const response = await this.client.get(
+      `/api/v1/web/workspaces/invitations/${encodeURIComponent(token)}`,
+    );
+    return response.data;
+  }
+
+  async acceptWorkspaceInvitationByToken(token: string): Promise<ApiResponse> {
+    const response = await this.client.post(
+      `/api/v1/web/workspaces/invitations/${encodeURIComponent(token)}/accept`,
+    );
+    return response.data;
+  }
+
+  async processWorkspaceInvitationByToken(token: string): Promise<ApiResponse> {
+    const response = await this.client.post(
+      `/api/v1/web/workspaces/invitations/${encodeURIComponent(token)}/process`,
+    );
+    return response.data;
+  }
+
   async rejectWorkspaceInvitation(invitationId: number): Promise<ApiResponse> {
     try {
       const response = await this.client.post(MOBILE_ENDPOINTS.WORKSPACE_INVITATION_REJECT(invitationId));
@@ -4798,6 +4826,49 @@ class ApiService {
       const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to search users';
       throw new Error(errorMessage);
     }
+  }
+
+  async inviteSecureMessage(data: {
+    email?: string;
+    phone?: string;
+    smsConsent?: boolean;
+  }): Promise<ApiResponse> {
+    const response = await this.client.post(MOBILE_ENDPOINTS.USER_CHAT_INVITE, {
+      email: data.email,
+      phone: data.phone,
+      smsConsent: data.smsConsent,
+    });
+    return response.data;
+  }
+
+  async acceptSecureMessageInvite(data: {
+    token?: string;
+    invitation_id?: number;
+  }): Promise<ApiResponse> {
+    const response = await this.client.post(MOBILE_ENDPOINTS.USER_CHAT_INVITE_ACCEPT, data);
+    return response.data;
+  }
+
+  async resolveSecureMessageInvite(token: string): Promise<ApiResponse> {
+    const response = await this.client.get(MOBILE_ENDPOINTS.USER_CHAT_INVITE_RESOLVE, {
+      params: { token },
+    });
+    return response.data;
+  }
+
+  async getSecureMessageInvitesPendingForMe(): Promise<ApiResponse> {
+    const response = await this.client.get(MOBILE_ENDPOINTS.USER_CHAT_INVITES_PENDING_FOR_ME);
+    return response.data;
+  }
+
+  async resendSecureMessageInvite(inviteId: number): Promise<ApiResponse> {
+    const response = await this.client.post(MOBILE_ENDPOINTS.USER_CHAT_INVITE_RESEND(inviteId));
+    return response.data;
+  }
+
+  async revokeSecureMessageInvite(inviteId: number): Promise<ApiResponse> {
+    const response = await this.client.post(MOBILE_ENDPOINTS.USER_CHAT_INVITE_REVOKE(inviteId));
+    return response.data;
   }
 
   // ==================== MOBILE BOOKMARKS ====================
