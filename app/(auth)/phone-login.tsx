@@ -21,6 +21,8 @@ type PhoneLoginStep = 'phone' | 'verify' | 'password';
 
 const RESEND_COOLDOWN_SEC = 60;
 
+const OTP_LENGTH = 6;
+
 export default function PhoneLoginScreen() {
     const router = useRouter();
     const [step, setStep] = useState<PhoneLoginStep>('phone');
@@ -90,8 +92,13 @@ export default function PhoneLoginScreen() {
     };
 
     const handleOtpSubmit = async () => {
-        if (!otpCode) {
+        const code = otpCode.trim();
+        if (!code) {
             setError('Please enter the verification code');
+            return;
+        }
+        if (code.length !== OTP_LENGTH) {
+            setError(`Please enter the complete ${OTP_LENGTH}-character code`);
             return;
         }
 
@@ -99,7 +106,7 @@ export default function PhoneLoginScreen() {
             setLoading(true);
             setError('');
 
-            const verifyResponse = await apiService.verifyOtp(phoneNumber, otpCode);
+            const verifyResponse = await apiService.verifyOtp(phoneNumber, code);
             
             if (verifyResponse.success) {
                 setStep('password');
@@ -213,7 +220,7 @@ export default function PhoneLoginScreen() {
         <View style={styles.stepContainer}>
             <Text style={styles.stepTitle}>Enter Verification Code</Text>
             <Text style={styles.stepDescription}>
-                We sent an 8-character code to {maskedPhone}
+                We sent a 6-character code to {maskedPhone}
             </Text>
             
             {testOtp && (
@@ -224,15 +231,15 @@ export default function PhoneLoginScreen() {
 
             <TextInput
                 style={styles.otpInput}
-                placeholder="A1B2C3D4"
+                placeholder="ABC123"
                 placeholderTextColor="#999"
                 value={otpCode}
-                onChangeText={(text) => setOtpCode(text.replace(/[^A-Za-z0-9]/g, '').slice(0, 8))}
+                onChangeText={(text) => setOtpCode(text.replace(/[^A-Za-z0-9]/g, '').slice(0, OTP_LENGTH))}
                 keyboardType={Platform.OS === 'ios' ? 'default' : 'visible-password'}
                 autoCapitalize="characters"
                 autoCorrect={false}
                 spellCheck={false}
-                maxLength={8}
+                maxLength={OTP_LENGTH}
                 autoFocus
             />
 

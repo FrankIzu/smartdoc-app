@@ -72,7 +72,7 @@ function buildUserDataFromAuthCheckData(
   return { id: String(data.id), name, email };
 }
 
-const OTP_LENGTH = 8;
+const OTP_LENGTH = 6;
 
 export default function OtpVerificationScreen() {
   const router = useRouter();
@@ -228,7 +228,7 @@ export default function OtpVerificationScreen() {
     const finalCode = code ?? otpValue;
 
     if (finalCode.length !== OTP_LENGTH) {
-      setError('Please enter the complete 8-character code');
+      setError('Please enter the complete 6-character code');
       return;
     }
 
@@ -454,7 +454,7 @@ export default function OtpVerificationScreen() {
 
         <Text style={styles.title}>Enter Verification Code</Text>
         <Text style={styles.subtitle}>
-          We&apos;ve sent an 8-character code to your {getMethodText()}
+          We&apos;ve sent a 6-character code to your {getMethodText()}
         </Text>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
