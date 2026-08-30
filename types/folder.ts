@@ -81,6 +81,8 @@ export interface GetWebFilesParams {
   page?: number;
   perPage?: number;
   fileKind?: string;
+  /** Lightweight metadata rows only (matches web email attach picker). */
+  listOnly?: boolean;
   signal?: AbortSignal;
 }
 

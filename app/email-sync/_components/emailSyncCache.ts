@@ -19,6 +19,7 @@ let setup: {
   aliases: EmailInboxAlias[];
   senders: string[];
   patterns: string[];
+  needsReplySensitivity?: 'conservative' | 'balanced' | 'aggressive';
   grabdocsResearch?: boolean | null;
   at: number;
 } | null = null;
@@ -60,6 +61,7 @@ export function emailSyncCacheSetSetup(data: {
   aliases: EmailInboxAlias[];
   senders: string[];
   patterns: string[];
+  needsReplySensitivity?: 'conservative' | 'balanced' | 'aggressive';
   grabdocsResearch?: boolean | null;
 }) {
   setup = { ...data, at: Date.now() };

@@ -70,16 +70,28 @@ export function getFileTypeFromFilename(filename: string): string {
 
 export function formatEmailWhen(iso?: string | null): string {
   if (!iso) return '';
-  const d = new Date(iso);
+  const raw = iso.trim();
+  // Backend stores UTC; Python isoformat() often omits Z — treat naive as UTC.
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const d = new Date(hasZone ? raw : `${raw}Z`);
   if (Number.isNaN(d.getTime())) return '';
   const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
   if (sameDay) {
     return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  if (
+    d.getFullYear() === yesterday.getFullYear() &&
+    d.getMonth() === yesterday.getMonth() &&
+    d.getDate() === yesterday.getDate()
+  ) {
+    return 'Yesterday';
+  }
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 

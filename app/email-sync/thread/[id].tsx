@@ -611,13 +611,24 @@ export default function EmailThreadScreen() {
           marginRight: 6,
           marginTop: 4,
         },
-        send: {
+        sendRow: {
           marginLeft: 'auto',
-          backgroundColor: '#007AFF',
-          borderRadius: 18,
-          paddingHorizontal: 16,
-          paddingVertical: 10,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
         },
+        sendNext: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          backgroundColor: '#2563EB',
+          borderRadius: 8,
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+        },
+        sendNextTxt: { color: '#fff', fontWeight: '600', fontSize: 12 },
+        sendOnly: { paddingHorizontal: 8, paddingVertical: 6 },
+        sendOnlyTxt: { color: colors.text, fontSize: 12, fontWeight: '500' },
         replyBar: {
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
@@ -1302,13 +1313,24 @@ export default function EmailThreadScreen() {
                   >
                     <Ionicons name="trash-outline" size={20} color={colors.textSecondary} />
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.send} onPress={() => send(true)} disabled={busy || !sendReady || drafting}>
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{busy ? '…' : 'Send'}</Text>
-                  </TouchableOpacity>
+                  <View style={styles.sendRow}>
+                    <TouchableOpacity
+                      style={[styles.sendNext, (busy || !sendReady || drafting) && { opacity: 0.5 }]}
+                      onPress={() => send(true)}
+                      disabled={busy || !sendReady || drafting}
+                    >
+                      <Ionicons name="paper-plane" size={14} color="#fff" />
+                      <Text style={styles.sendNextTxt}>{busy ? 'Sending…' : 'Send & Next'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.sendOnly, (busy || !sendReady || drafting) && { opacity: 0.5 }]}
+                      onPress={() => send(false)}
+                      disabled={busy || !sendReady || drafting}
+                    >
+                      <Text style={styles.sendOnlyTxt}>Send</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                <TouchableOpacity onPress={() => send(false)} disabled={busy || !sendReady || drafting} style={{ alignSelf: 'flex-end', paddingTop: 2, paddingBottom: 2 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Send without opening next</Text>
-                </TouchableOpacity>
               </View>
             ) : null}
           </ScrollView>
@@ -1372,10 +1394,12 @@ export default function EmailThreadScreen() {
         visible={gdOpen}
         workspaceId={ws}
         onClose={() => setGdOpen(false)}
-        onPickFile={async (file) => {
-          if (!draft) return;
+        onAddFiles={async (files) => {
+          if (!draft || !files.length) return;
           try {
-            await addDraftAttachmentFileId(draft.id, file.id);
+            for (const file of files) {
+              await addDraftAttachmentFileId(draft.id, file.id);
+            }
             setGdOpen(false);
             await load();
             setComposing(true);

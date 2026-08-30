@@ -375,11 +375,14 @@ export async function syncMailbox(workspaceId: number) {
   return data;
 }
 
+export type NeedsReplySensitivity = 'conservative' | 'balanced' | 'aggressive';
+
 export async function getMailboxSettings(workspaceId: number) {
   const { data } = await client().get(`${MAILBOX}/settings`, { params: { workspace_id: workspaceId } });
   return data as {
     allowed_senders?: string[];
     subject_patterns?: string[];
+    needs_reply_sensitivity?: NeedsReplySensitivity;
     grabdocs_research_enabled?: boolean | null;
     workspace_search_expanded?: boolean | null;
     undo_send_seconds?: number;

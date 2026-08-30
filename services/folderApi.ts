@@ -69,10 +69,11 @@ function buildWebFilesParams(params: GetWebFilesParams): Record<string, string |
     q.root_files = '1';
   }
 
-  if (params.workspaceId != null && q.workspace_id == null && scope !== 'current_folder') {
+  if (params.workspaceId != null) {
     q.workspace_id = params.workspaceId;
   }
   if (params.fileKind) q.file_kind = params.fileKind;
+  if (params.listOnly) q.list_only = '1';
   return q;
 }
 

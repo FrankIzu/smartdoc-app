@@ -37,12 +37,21 @@ import {
   type ConnectionRules,
   type EmailInboxAlias,
   type InboxConnection,
+  type NeedsReplySensitivity,
 } from '../../services/emailSyncApi';
 import { CollapsibleChipList } from './_components/CollapsibleChipList';
 import { openEmailInboxOAuth } from './_components/emailOAuth';
 import { emailSyncCacheSetPending, emailSyncCacheSetSetup, emailSyncCacheSetup } from './_components/emailSyncCache';
 
 const FILE_TYPES = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx', 'csv'];
+
+const SENSITIVITY_LEVELS: NeedsReplySensitivity[] = ['conservative', 'balanced', 'aggressive'];
+
+const SENSITIVITY_HINT: Record<NeedsReplySensitivity, string> = {
+  conservative: 'Shows fewer emails, prioritizing high-confidence replies.',
+  balanced: 'Recommended. Focuses on emails most likely to need a response.',
+  aggressive: 'Catches more possible replies, but may include mail that does not require action.',
+};
 
 export function EmailSetupPane({
   workspaceId,
@@ -59,6 +68,9 @@ export function EmailSetupPane({
   const [aliases, setAliases] = useState<EmailInboxAlias[]>(cached?.aliases || []);
   const [senders, setSenders] = useState<string[]>(cached?.senders || []);
   const [patterns, setPatterns] = useState<string[]>(cached?.patterns || []);
+  const [needsReplySensitivity, setNeedsReplySensitivity] = useState<NeedsReplySensitivity>(
+    cached?.needsReplySensitivity || 'balanced',
+  );
   const [grabdocsResearch, setGrabdocsResearch] = useState<boolean | null>(
     cached?.grabdocsResearch ?? null,
   );
@@ -90,12 +102,14 @@ export function EmailSetupPane({
       aliases: Array.isArray(a) ? a : [],
       senders: s.allowed_senders || [],
       patterns: s.subject_patterns || [],
+      needsReplySensitivity: (s.needs_reply_sensitivity || 'balanced') as NeedsReplySensitivity,
       grabdocsResearch: (s.grabdocs_research_enabled ?? null) as boolean | null,
     };
     setConns(next.conns);
     setAliases(next.aliases);
     setSenders(next.senders);
     setPatterns(next.patterns);
+    setNeedsReplySensitivity(next.needsReplySensitivity);
     setGrabdocsResearch(next.grabdocsResearch);
     emailSyncCacheSetSetup(next);
     const n = Number(count) || 0;
@@ -171,6 +185,14 @@ export function EmailSetupPane({
     if (!workspaceId) return;
     setGrabdocsResearch(enabled);
     void patchMailboxSettings({ workspace_id: workspaceId, grabdocs_research_enabled: enabled }).catch((e) =>
+      Alert.alert('Settings', emailApiError(e, 'Could not save')),
+    );
+  };
+
+  const patchSensitivity = (level: NeedsReplySensitivity) => {
+    if (!workspaceId) return;
+    setNeedsReplySensitivity(level);
+    void patchMailboxSettings({ workspace_id: workspaceId, needs_reply_sensitivity: level }).catch((e) =>
       Alert.alert('Settings', emailApiError(e, 'Could not save')),
     );
   };
@@ -395,6 +417,34 @@ export function EmailSetupPane({
             emptyLabel="None"
           />
 
+          <View style={[styles.card, { padding: 14, marginTop: 8 }]}>
+            <Text style={[styles.name, { fontSize: 15 }]}>Needs-reply sensitivity</Text>
+            <Text style={[styles.sub, { marginTop: 6, lineHeight: 18 }]}>
+              Controls how broadly GrabDocs identifies emails that may need a reply.
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
+              {SENSITIVITY_LEVELS.map((level) => {
+                const selected = needsReplySensitivity === level;
+                const label = level.charAt(0).toUpperCase() + level.slice(1);
+                return (
+                  <TouchableOpacity
+                    key={level}
+                    style={[styles.chip, selected && styles.chipOn, { marginTop: 0 }]}
+                    onPress={() => patchSensitivity(level)}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: selected ? '600' : '400' }}>
+                      {label}
+                      {level === 'balanced' ? ' (recommended)' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={[styles.sub, { marginTop: 10, fontSize: 11, lineHeight: 15 }]}>
+              {SENSITIVITY_HINT[needsReplySensitivity]}
+            </Text>
+          </View>
+
           <Text style={styles.section}>Reply settings</Text>
           <View style={[styles.card, { padding: 14, marginBottom: 8 }]}>
             {grabdocsResearch == null ? (
@@ -435,6 +485,12 @@ export function EmailSetupPane({
                 </View>
               </TouchableOpacity>
             )}
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: grabdocsResearch == null ? 0 : 14, paddingTop: grabdocsResearch == null ? 0 : 14, borderTopWidth: grabdocsResearch == null ? 0 : StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+              <Ionicons name="checkbox" size={22} color={colors.textSecondary} style={{ marginTop: 1, opacity: 0.5 }} />
+              <Text style={[styles.sub, { flex: 1, fontSize: 12, lineHeight: 16 }]}>
+                Prefer direct To: me (CC-only needs an allowlist match to enter Needs reply) — always on
+              </Text>
+            </View>
           </View>
 
           <Text style={styles.section}>Forwarding</Text>
