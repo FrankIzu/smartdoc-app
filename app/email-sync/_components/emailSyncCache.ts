@@ -26,6 +26,30 @@ let setup: {
 
 let imports: { items: EmailImportEvent[]; cursor: string | null; at: number } | null = null;
 
+/** Set when inbox OAuth finishes so screens reload instead of showing a fresh "not connected" cache. */
+let oauthRefreshPending = false;
+
+export function emailSyncCacheInvalidate() {
+  replies.clear();
+  setup = null;
+  imports = null;
+}
+
+export function emailSyncMarkOAuthCompleted() {
+  oauthRefreshPending = true;
+  emailSyncCacheInvalidate();
+}
+
+export function emailSyncConsumeOAuthRefresh(): boolean {
+  const v = oauthRefreshPending;
+  oauthRefreshPending = false;
+  return v;
+}
+
+export function emailSyncPeekOAuthRefresh(): boolean {
+  return oauthRefreshPending;
+}
+
 export function emailSyncCacheWorkspace() {
   return workspaceId;
 }

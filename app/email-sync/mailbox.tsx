@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Clipboard from 'expo-clipboard';
-import { Redirect, useRouter } from 'expo-router';
+import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -42,7 +42,12 @@ import {
 } from '../../services/emailSyncApi';
 import { CollapsibleChipList } from './_components/CollapsibleChipList';
 import { openEmailInboxOAuth } from './_components/emailOAuth';
-import { emailSyncCacheSetPending, emailSyncCacheSetSetup, emailSyncCacheSetup } from './_components/emailSyncCache';
+import {
+  emailSyncCacheSetPending,
+  emailSyncCacheSetSetup,
+  emailSyncCacheSetup,
+  emailSyncPeekOAuthRefresh,
+} from './_components/emailSyncCache';
 
 const FILE_TYPES = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'xlsx', 'csv'];
 
@@ -146,7 +151,8 @@ export function EmailSetupPane({
 
   useEffect(() => {
     const hit = emailSyncCacheSetup();
-    if (hit && !hit.stale) {
+    const force = emailSyncPeekOAuthRefresh();
+    if (hit && !hit.stale && !force) {
       setLoading(false);
       return;
     }
@@ -165,6 +171,32 @@ export function EmailSetupPane({
     };
   }, [load, workspaceId]);
 
+  const reloadAfterOAuth = useCallback(async () => {
+    for (let i = 0; i < 6; i++) {
+      await load(workspaceId);
+      const c = await listInboxConnections().catch(() => [] as InboxConnection[]);
+      if (c.some((x) => x.is_active !== false)) return;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }, [load, workspaceId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!emailSyncPeekOAuthRefresh()) return;
+      let alive = true;
+      (async () => {
+        try {
+          await reloadAfterOAuth();
+        } catch {
+          /* load errors already handled */
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [reloadAfterOAuth])
+  );
+
   const connect = async (provider: 'gmail' | 'outlook') => {
     if (!workspaceId) return;
     setAddOpen(false);
@@ -173,7 +205,8 @@ export function EmailSetupPane({
     try {
       const r = await openEmailInboxOAuth(provider, workspaceId);
       if (r.result === 'error') Alert.alert('Could not connect', r.reason.replace(/_/g, ' '));
-      await load(workspaceId);
+      if (r.result === 'success') await reloadAfterOAuth();
+      else await load(workspaceId);
       if (r.result === 'success') {
         const settings = await getMailboxSettings(workspaceId).catch(() => ({}));
         if (settings.grabdocs_research_enabled == null) {

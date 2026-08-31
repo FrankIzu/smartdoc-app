@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -41,6 +41,8 @@ import {
     emailSyncCacheSetPending,
     emailSyncCacheSetReplies,
     emailSyncCacheSetWorkspace,
+    emailSyncConsumeOAuthRefresh,
+    emailSyncPeekOAuthRefresh,
 } from './_components/emailSyncCache';
 import { EmailImportsPane } from './imports';
 import { EmailSetupPane } from './mailbox';
@@ -55,7 +57,7 @@ const FILTERS: { id: ThreadAttention; label: string }[] = [
 export default function EmailInboxScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const params = useLocalSearchParams<{ threadId?: string; workspaceId?: string; tab?: string }>();
+  const params = useLocalSearchParams<{ threadId?: string; workspaceId?: string; tab?: string; oauth?: string }>();
   const initialTab: EmailSyncTab =
     params.tab === 'setup' || params.tab === 'imports' ? params.tab : 'replies';
   const [tab, setTab] = useState<EmailSyncTab>(initialTab);
@@ -128,8 +130,9 @@ export default function EmailInboxScreen() {
 
   useEffect(() => {
     if (!workspaceId) return;
+    const force = emailSyncPeekOAuthRefresh() || params.oauth === 'success';
     const hit = emailSyncCacheReplies(filter);
-    if (hit) {
+    if (hit && !force) {
       setThreads(hit.threads);
       setHasMailbox(hit.hasMailbox);
       setLoading(false);
@@ -137,7 +140,7 @@ export default function EmailInboxScreen() {
     }
     let alive = true;
     (async () => {
-      if (!hit) setLoading(true);
+      if (!hit || force) setLoading(true);
       try {
         await load();
       } catch (e) {
@@ -149,7 +152,38 @@ export default function EmailInboxScreen() {
     return () => {
       alive = false;
     };
-  }, [load, workspaceId, filter]);
+  }, [load, workspaceId, filter, params.oauth]);
+
+  const reloadAfterOAuth = useCallback(async () => {
+    if (!workspaceId) return;
+    for (let i = 0; i < 6; i++) {
+      await load();
+      const caps = await mailboxCapabilities(workspaceId).catch(() => null);
+      if (caps?.has_oauth_mailbox) return;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }, [workspaceId, load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const fromDeepLink = params.oauth === 'success';
+      if (!workspaceId || (!emailSyncConsumeOAuthRefresh() && !fromDeepLink)) return;
+      let alive = true;
+      (async () => {
+        try {
+          await reloadAfterOAuth();
+        } catch {
+          /* load errors already handled */
+        }
+        if (alive && fromDeepLink) {
+          router.setParams({ oauth: undefined } as any);
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [workspaceId, params.oauth, reloadAfterOAuth, router])
+  );
 
   useEffect(() => {
     if (!params.threadId || openedRef.current === params.threadId || !workspaceId) return;
@@ -196,7 +230,8 @@ export default function EmailInboxScreen() {
     try {
       const r = await openEmailInboxOAuth(provider, workspaceId);
       if (r.result === 'error') Alert.alert('Could not connect', r.reason.replace(/_/g, ' '));
-      await load();
+      if (r.result === 'success') await reloadAfterOAuth();
+      else await load();
     } catch (e) {
       Alert.alert('Could not connect', emailApiError(e, 'Try again'));
     } finally {
