@@ -30,7 +30,6 @@ import {
     addDraftAttachmentFile,
     addDraftAttachmentFileId,
     analyzeMailboxThread,
-    closeMailboxThread,
     deleteDraftAttachment,
     deleteMailboxDraft,
     dismissMailboxThread,
@@ -886,11 +885,10 @@ export default function EmailThreadScreen() {
           {!dismissed && (
             <FeedbackTouchable
               style={styles.iconBtn}
-              onPress={async () => {
-                await closeMailboxThread(threadId);
-                await goNextPending();
+              onPress={() => {
+                void goNextPending();
               }}
-              accessibilityLabel="Skip"
+              accessibilityLabel="Skip to next thread"
             >
               <Ionicons name="play-skip-forward-outline" size={22} color={colors.text} />
             </FeedbackTouchable>

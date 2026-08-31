@@ -18,7 +18,6 @@ import { GoogleLogo } from '../../components/GoogleLogo';
 import { MicrosoftLogo } from '../../components/MicrosoftLogo';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
-    closeMailboxThread,
     dismissMailboxThread,
     dismissMailboxThreads,
     emailApiError,
@@ -32,6 +31,7 @@ import {
     type ThreadAttention,
 } from '../../services/emailSyncApi';
 import { AttachmentNamesRow } from './_components/AttachmentNamesRow';
+import { confirmCloseMailboxThread } from './_components/confirmCloseThread';
 import { EmailSyncTopTabs, type EmailSyncTab } from './_components/EmailSyncTopTabs';
 import { formatEmailWhen, threadStatusDotColor } from './_components/emailFormat';
 import { openEmailInboxOAuth } from './_components/emailOAuth';
@@ -338,18 +338,13 @@ export default function EmailInboxScreen() {
             : () => (
                 <TouchableOpacity
                   style={[styles.swipe, { backgroundColor: '#F59E0B' }]}
-                  onPress={async () => {
+                  onPress={() => {
                     swipeRefs.current.get(item.id)?.close();
-                    try {
-                      await closeMailboxThread(item.id);
-                      await load();
-                    } catch (e) {
-                      Alert.alert('Inbox', emailApiError(e, 'Skip failed'));
-                    }
+                    confirmCloseMailboxThread(item.id, load);
                   }}
                 >
-                  <Ionicons name="play-skip-forward" size={22} color="#fff" />
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12, marginTop: 4 }}>Skip</Text>
+                  <Ionicons name="archive" size={22} color="#fff" />
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12, marginTop: 4 }}>Close</Text>
                 </TouchableOpacity>
               )
         }
@@ -513,7 +508,7 @@ export default function EmailInboxScreen() {
               </Text>
               <Text style={styles.emptySub}>
                 {filter === 'pending'
-                  ? 'Pull down to sync. Swipe left to dismiss, right to skip. Long-press to multi-select.'
+                  ? 'Pull down to sync. Swipe left to dismiss, right to close. Long-press to multi-select.'
                   : 'Pull down to sync.'}
               </Text>
             </View>

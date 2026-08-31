@@ -24,6 +24,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import {
   createInboxAlias,
+  deleteInboxConnection,
   disconnectInboxConnection,
   emailApiError,
   getInboxRules,
@@ -52,6 +53,32 @@ const SENSITIVITY_HINT: Record<NeedsReplySensitivity, string> = {
   balanced: 'Recommended. Focuses on emails most likely to need a response.',
   aggressive: 'Catches more possible replies, but may include mail that does not require action.',
 };
+
+function platformLabel(platform: string): string {
+  return platform === 'outlook_inbox' ? 'Outlook' : 'Gmail';
+}
+
+function formatLastSynced(iso?: string | null): string {
+  if (!iso) return 'never';
+  const raw = iso.trim();
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const d = new Date(hasZone ? raw : `${raw}Z`);
+  if (Number.isNaN(d.getTime())) return 'never';
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function connectionReadOn(c: InboxConnection): boolean {
+  return c.read_enabled !== false && !c.needs_reconnect;
+}
+
+function connectionSendOn(c: InboxConnection): boolean {
+  return !!c.send_enabled && !c.needs_reconnect_for_send;
+}
 
 export function EmailSetupPane({
   workspaceId,
@@ -261,7 +288,9 @@ export function EmailSetupPane({
         row: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
         name: { fontSize: 16, fontWeight: '600', color: colors.text },
         sub: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
-        pill: { fontSize: 12, fontWeight: '600', color: '#16a34a', marginTop: 4 },
+        statusRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginTop: 6 },
+        statusOn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+        statusOnText: { fontSize: 12, fontWeight: '600', color: '#16a34a' },
         warn: { fontSize: 12, fontWeight: '600', color: '#B45309', marginTop: 4 },
         input: {
           marginHorizontal: 16,
@@ -298,6 +327,28 @@ export function EmailSetupPane({
     [colors, insets.top]
   );
 
+  const hasGmail = conns.some((c) => c.platform === 'gmail_inbox');
+  const hasOutlook = conns.some((c) => c.platform === 'outlook_inbox');
+
+  const addMailboxItems = useMemo((): ActionMenuItem[] => {
+    const items: ActionMenuItem[] = [];
+    if (!hasGmail) {
+      items.push({ id: 'g', label: 'Google', onPress: () => connect('gmail') });
+    }
+    if (!hasOutlook) {
+      items.push({ id: 'm', label: 'Microsoft', onPress: () => connect('outlook') });
+    }
+    return items;
+  }, [hasGmail, hasOutlook]);
+
+  const onAddMailbox = () => {
+    if (addMailboxItems.length === 1) {
+      addMailboxItems[0].onPress?.();
+      return;
+    }
+    setAddOpen(true);
+  };
+
   const menuItems: ActionMenuItem[] = menuConn
     ? [
         {
@@ -308,24 +359,23 @@ export function EmailSetupPane({
         },
         {
           id: 'rules',
-          label: 'Import rules',
+          label: 'Edit rules',
           icon: 'options-outline',
           onPress: () => void openRules(menuConn),
         },
         {
           id: 'sync',
-          label: 'Import attachments now',
+          label: 'Sync now',
           icon: 'cloud-download-outline',
           onPress: async () => {
             await syncInboxConnection(menuConn.id);
-            Alert.alert('Importing', 'New attachments will show up in Documents shortly.');
+            Alert.alert('Syncing', 'New attachments will show up in Documents shortly.');
           },
         },
         {
           id: 'off',
           label: 'Disconnect',
           icon: 'close-circle-outline',
-          destructive: true,
           onPress: () =>
             Alert.alert('Disconnect mailbox?', 'Replies will stop for this account.', [
               { text: 'Cancel', style: 'cancel' },
@@ -338,6 +388,36 @@ export function EmailSetupPane({
                 },
               },
             ]),
+        },
+        {
+          id: 'delete',
+          label: 'Delete',
+          icon: 'trash-outline',
+          destructive: true,
+          onPress: () =>
+            Alert.alert(
+              'Delete account?',
+              'Permanently delete this account from GrabDocs?\n\n' +
+                '• GrabDocs will stop syncing this mailbox\n' +
+                '• Email Replies threads for this account will be removed\n' +
+                '• Files already imported will be kept\n\n' +
+                'This cannot be undone (you can connect the account again later).',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await deleteInboxConnection(menuConn.id);
+                      if (workspaceId) await load(workspaceId);
+                    } catch (e) {
+                      Alert.alert('Mailbox', emailApiError(e, 'Failed to delete account'));
+                    }
+                  },
+                },
+              ],
+            ),
         },
       ]
     : [];
@@ -357,12 +437,23 @@ export function EmailSetupPane({
                   {c.platform === 'outlook_inbox' ? <MicrosoftLogo size={22} /> : <GoogleLogo size={22} />}
                   <View style={{ flex: 1 }}>
                     <Text style={styles.name}>{c.account_name}</Text>
-                    <Text style={styles.sub}>{c.send_enabled ? 'Can send replies' : 'Read only'}</Text>
+                    <Text style={styles.sub}>
+                      {platformLabel(c.platform)} · Last synced {formatLastSynced(c.last_synced_at)}
+                    </Text>
+                    <View style={styles.statusRow}>
+                      {connectionReadOn(c) ? (
+                        <View style={styles.statusOn}>
+                          <Ionicons name="checkmark-circle" size={14} color="#16a34a" />
+                          <Text style={styles.statusOnText}>Read on</Text>
+                        </View>
+                      ) : null}
+                      {connectionSendOn(c) ? (
+                        <Text style={styles.statusOnText}>Send on</Text>
+                      ) : null}
+                    </View>
                     {c.needs_reconnect || c.needs_reconnect_for_send ? (
                       <Text style={styles.warn}>Tap ••• and reconnect</Text>
-                    ) : (
-                      <Text style={styles.pill}>Connected</Text>
-                    )}
+                    ) : null}
                   </View>
                   <TouchableOpacity onPress={() => setMenuConn(c)} hitSlop={12}>
                     <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
@@ -370,12 +461,16 @@ export function EmailSetupPane({
                 </View>
               </View>
             ))}
-            <TouchableOpacity style={styles.row} onPress={() => setAddOpen(true)} disabled={busy}>
-              <View style={{ width: 22, alignItems: 'center' }}>
-                <Ionicons name="add" size={22} color="#007AFF" />
-              </View>
-              <Text style={[styles.name, { color: '#007AFF' }]}>{busy ? 'Connecting…' : 'Add mailbox'}</Text>
-            </TouchableOpacity>
+            {addMailboxItems.length > 0 ? (
+              <TouchableOpacity style={styles.row} onPress={onAddMailbox} disabled={busy}>
+                <View style={{ width: 22, alignItems: 'center' }}>
+                  <Ionicons name="add" size={22} color="#007AFF" />
+                </View>
+                <Text style={[styles.name, { color: '#007AFF' }]}>
+                  {busy ? 'Connecting…' : addMailboxItems.length === 1 ? `Add ${addMailboxItems[0].label}` : 'Add mailbox'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           <Text style={styles.section}>Who to surface</Text>
@@ -485,12 +580,21 @@ export function EmailSetupPane({
                 </View>
               </TouchableOpacity>
             )}
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: grabdocsResearch == null ? 0 : 14, paddingTop: grabdocsResearch == null ? 0 : 14, borderTopWidth: grabdocsResearch == null ? 0 : StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
-              <Ionicons name="checkbox" size={22} color={colors.textSecondary} style={{ marginTop: 1, opacity: 0.5 }} />
-              <Text style={[styles.sub, { flex: 1, fontSize: 12, lineHeight: 16 }]}>
-                Prefer direct To: me (CC-only needs an allowlist match to enter Needs reply) — always on
-              </Text>
-            </View>
+            <Text
+              style={[
+                styles.sub,
+                {
+                  marginTop: grabdocsResearch == null ? 0 : 14,
+                  paddingTop: grabdocsResearch == null ? 0 : 14,
+                  borderTopWidth: grabdocsResearch == null ? 0 : StyleSheet.hairlineWidth,
+                  borderTopColor: colors.border,
+                  fontSize: 11,
+                  lineHeight: 15,
+                },
+              ]}
+            >
+              Only emails sent directly to you are auto-added to Needs reply. CC-only mail needs a sender or subject preset match.
+            </Text>
           </View>
 
           <Text style={styles.section}>Forwarding</Text>
@@ -534,10 +638,7 @@ export function EmailSetupPane({
       <ActionMenuModal
         visible={addOpen}
         title="Add mailbox"
-        items={[
-          { id: 'g', label: 'Google', onPress: () => connect('gmail') },
-          { id: 'm', label: 'Microsoft', onPress: () => connect('outlook') },
-        ]}
+        items={addMailboxItems}
         onClose={() => setAddOpen(false)}
       />
 
@@ -577,7 +678,7 @@ export function EmailSetupPane({
             <FeedbackTouchable onPress={() => setRulesConn(null)} style={{ padding: 10 }}>
               <Ionicons name="close" size={28} color={colors.text} />
             </FeedbackTouchable>
-            <Text style={styles.title}>Import rules</Text>
+            <Text style={styles.title}>Edit rules</Text>
           </View>
           {rulesBusy || !rules ? (
             <ActivityIndicator style={{ marginTop: 32 }} color="#007AFF" />

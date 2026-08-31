@@ -631,8 +631,9 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 1000,
     alignItems: 'flex-end', // Align to the right
-    paddingTop: 0, // Remove all top padding
-    paddingRight: 8, // Add some padding from the right edge
+    marginTop: -4,
+    paddingTop: 0,
+    paddingRight: 8,
   },
   bottomNavContainer: {
     position: 'absolute',

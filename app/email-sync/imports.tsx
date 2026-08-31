@@ -14,7 +14,7 @@ import {
   retryImport,
   type EmailImportEvent,
 } from '../../services/emailSyncApi';
-import { formatEmailWhen, getFileTypeFromFilename, importStatusBadge, senderDisplayName, senderNameAndEmail } from './_components/emailFormat';
+import { formatEmailWhen, getFileTypeFromFilename, importSourceLabel, importStatusBadge, senderDisplayName, senderNameAndEmail } from './_components/emailFormat';
 import { emailSyncCacheImports, emailSyncCacheSetImports, emailSyncCacheSetPending } from './_components/emailSyncCache';
 
 function ImportRow({
@@ -32,6 +32,7 @@ function ImportRow({
   const [menu, setMenu] = useState(false);
   const badge = importStatusBadge(item.status, item.failure_category, colors.isDark);
   const when = formatEmailWhen(item.created_at);
+  const source = importSourceLabel(item.source_type);
   const senderName = senderDisplayName(item.email_sender);
   const senderDetail = senderNameAndEmail(item.email_sender);
   const items = useMemo((): ActionMenuItem[] => {
@@ -67,6 +68,9 @@ function ImportRow({
             <View style={[styles.badge, { backgroundColor: badge.backgroundColor }]}>
               <Text style={[styles.badgeTxt, { color: badge.color }]}>{badge.label}</Text>
             </View>
+            <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={1}>
+              {source}
+            </Text>
             {when ? (
               <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={1}>
                 {when}
@@ -235,7 +239,7 @@ const styles = StyleSheet.create({
   },
   cardBody: { flex: 1, minWidth: 0, gap: 6 },
   title: { fontSize: 15, fontWeight: '600' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, marginTop: 6, flexWrap: 'wrap' },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, flexShrink: 0 },
   badgeTxt: { fontSize: 11, fontWeight: '600' },
   meta: { fontSize: 12, flexShrink: 0 },

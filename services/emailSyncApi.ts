@@ -193,6 +193,10 @@ export async function disconnectInboxConnection(connectionId: number) {
   await client().delete(`${INBOUND}/connections/${connectionId}/disconnect`);
 }
 
+export async function deleteInboxConnection(connectionId: number) {
+  await client().delete(`${INBOUND}/connections/${connectionId}`);
+}
+
 export async function listInboxAliases(workspaceId: number) {
   const { data } = await client().get(`${INBOUND}/aliases`, { params: { workspace_id: workspaceId } });
   return (data?.aliases ?? data ?? []) as EmailInboxAlias[];

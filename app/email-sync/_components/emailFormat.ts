@@ -1,3 +1,11 @@
+export function importSourceLabel(sourceType?: string | null): string {
+  const t = (sourceType || '').trim();
+  if (t === 'inbound_alias') return 'Email forwarding';
+  if (t === 'gmail_inbox') return 'Gmail';
+  if (t === 'outlook_inbox') return 'Microsoft 365';
+  return t || 'Unknown';
+}
+
 export function importStatusBadge(
   status: string,
   failureCategory?: string | null,

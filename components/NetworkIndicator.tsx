@@ -182,11 +182,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end', // Align to the right
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 2,
     backgroundColor: 'transparent', // Remove background completely
     borderRadius: 12,
     marginHorizontal: 8,
-    marginTop: 0, // Remove top margin
+    marginTop: -2,
     marginBottom: 4,
   },
   compactIndicator: {
