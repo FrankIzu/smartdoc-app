@@ -42,6 +42,8 @@ import {
   toLocalDateString,
 } from '../../utils/calendarTime';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+
 type Participant = { email: string; name: string; type: string };
 
 const REMINDER_OPTIONS: { minutes: number; label: string }[] = [
@@ -252,7 +254,7 @@ export default function CalendarCreateScreen() {
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', padding: 12 },
+        header: { flexDirection: 'row', alignItems: 'center', padding: 12 , backgroundColor: colors.headerBackground },
         h1: { fontSize: 20, fontWeight: '700', color: colors.text, flex: 1 },
         body: { padding: 16, paddingBottom: 120 },
         label: { fontWeight: '600', color: colors.text, marginTop: 12 },
@@ -511,11 +513,9 @@ export default function CalendarCreateScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.h1}>New event</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
       <KeyboardAvoidingView

@@ -8,8 +8,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ActionMenuModal, { type ActionMenuItem } from '../../../components/ActionMenuModal';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
@@ -23,6 +22,8 @@ import type { Envelope, EnvelopeDocument, FieldAssignmentInput, WizardField } fr
 import { makeFieldKey } from '../../../utils/fieldKeys';
 import { validateSignerFieldCoverage } from '../../../utils/signatureAssignmentCoverage';
 import { saveDraftStep } from '../../../services/signatureSessionCache';
+
+import AppBackButton from '../../../components/AppBackButton';
 
 export default function AssignFieldsScreen() {
   const { envelopeId } = useLocalSearchParams<{ envelopeId: string }>();
@@ -58,8 +59,7 @@ export default function AssignFieldsScreen() {
               document_id: a.document_id ?? undefined,
               field_key: a.field_key,
               field_type: a.field_type,
-              required: a.required,
-            })),
+              required: a.required })),
           );
         } else {
           const built = await buildDefaultAssignments(res.envelope);
@@ -105,8 +105,7 @@ export default function AssignFieldsScreen() {
         setAssignments((prev) =>
           prev.map((a, i) => (i === assignMenuIndex ? { ...a, recipient_id: s.id } : a)),
         );
-      },
-    }));
+      } }));
   }, [assignMenuIndex, colors.primary, signers]);
 
   const handleNext = async () => {
@@ -119,8 +118,7 @@ export default function AssignFieldsScreen() {
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Continue',
-            onPress: () => router.push(`/signatures/create/review?envelopeId=${envelopeId}&acknowledgeOnly=1` as any),
-          },
+            onPress: () => router.push(`/signatures/create/review?envelopeId=${envelopeId}&acknowledgeOnly=1` as any) },
         ],
       );
       return;
@@ -144,10 +142,8 @@ export default function AssignFieldsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+        <AppBackButton />
         <Text style={[styles.title, { color: colors.text }]}>Assign fields</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
@@ -174,8 +170,7 @@ export default function AssignFieldsScreen() {
                   styles.coverageWarn,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.error ?? '#EF4444',
-                  },
+                    borderColor: colors.error ?? '#EF4444' },
                 ]}
               >
                 <Text style={{ color: colors.error ?? '#EF4444', fontSize: 13, lineHeight: 18 }}>
@@ -217,8 +212,7 @@ export default function AssignFieldsScreen() {
             styles.nextBtn,
             {
               backgroundColor: colors.primary,
-              opacity: canProceed && !saving ? 1 : 0.5,
-            },
+              opacity: canProceed && !saving ? 1 : 0.5 },
           ]}
           disabled={!canProceed || saving}
           loading={saving || loading}
@@ -254,8 +248,7 @@ async function buildDefaultAssignments(envelope: Envelope): Promise<FieldAssignm
         document_id: doc.id,
         field_key: makeFieldKey(f.id, f.rev ?? 1),
         field_type: f.type,
-        required: f.required ?? false,
-      });
+        required: f.required ?? false });
     }
   }
   return out;
@@ -286,22 +279,18 @@ const styles = StyleSheet.create({
   loadingBlock: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 48,
-  },
+    paddingVertical: 48 },
   docBlock: { padding: 12, borderWidth: 1, borderRadius: 8, marginBottom: 8 },
   docName: { fontWeight: '600', marginBottom: 8, flexShrink: 1 },
   coverageWarn: {
     borderWidth: 1,
     borderRadius: 8,
     padding: 12,
-    marginBottom: 16,
-  },
+    marginBottom: 16 },
   fieldRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
-    gap: 8,
-  },
+    gap: 8 },
   nextBtn: { marginTop: 24, padding: 14, borderRadius: 8, alignItems: 'center' },
-  nextText: { color: '#fff', fontWeight: '700' },
-});
+  nextText: { color: '#fff', fontWeight: '700' } });

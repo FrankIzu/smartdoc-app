@@ -8,8 +8,7 @@ import {
   Switch,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import RecipientEditor from '../../../components/signatures/RecipientEditor';
@@ -18,6 +17,8 @@ import { useAuth } from '../../context/auth';
 import { getEnvelope, putRecipients, updateEnvelopeDraft } from '../../../services/envelopeApi';
 import type { RecipientInput } from '../../../types/signature';
 import { saveDraftStep } from '../../../services/signatureSessionCache';
+
+import AppBackButton from '../../../components/AppBackButton';
 
 export default function RecipientsScreen() {
   const { envelopeId } = useLocalSearchParams<{ envelopeId: string }>();
@@ -43,8 +44,7 @@ export default function RecipientsScreen() {
             order_index: r.order_index,
             auth_required: r.auth_required,
             phone_verification_required: r.phone_verification_required,
-            phone_number: r.phone_number ?? undefined,
-          })),
+            phone_number: r.phone_number ?? undefined })),
         );
       }
       setReminderEnabled(res.envelope.reminder_enabled ?? true);
@@ -74,8 +74,7 @@ export default function RecipientsScreen() {
         envelopeId!,
         recipients.filter((r) => r.email.trim()).map((r) => ({
           ...r,
-          phone_number: r.phone_verification_required ? r.phone_number?.trim() : undefined,
-        })),
+          phone_number: r.phone_verification_required ? r.phone_number?.trim() : undefined })),
       );
       await saveDraftStep(user?.id, envelopeId!, 'assign_fields');
       router.push(`/signatures/create/assign-fields?envelopeId=${envelopeId}` as any);
@@ -88,10 +87,8 @@ export default function RecipientsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+        <AppBackButton />
         <Text style={[styles.title, { color: colors.text }]}>Recipients</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
@@ -125,8 +122,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     marginTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
+    borderTopWidth: StyleSheet.hairlineWidth },
   nextBtn: { marginTop: 24, padding: 14, borderRadius: 8, alignItems: 'center' },
-  nextText: { color: '#fff', fontWeight: '700' },
-});
+  nextText: { color: '#fff', fontWeight: '700' } });

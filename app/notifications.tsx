@@ -12,6 +12,8 @@ import {
 import { TapToToggleHeaderView } from './components/TapToToggleHeaderView';
 import { useAuth } from './context/auth';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../components/AppBackButton';
+
 export type { AppNotification };
 
 export default function NotificationsScreen() {
@@ -28,6 +30,7 @@ export default function NotificationsScreen() {
       paddingVertical: 12,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
+      backgroundColor: colors.headerBackground,
     },
     headerTitle: { fontSize: 18, fontWeight: '600' as const, color: colors.text },
     emptyText: { fontSize: 16, color: colors.textSecondary, textAlign: 'center' as const },
@@ -45,11 +48,9 @@ export default function NotificationsScreen() {
         <TapToToggleHeaderView style={[styles.container, { backgroundColor: colors.background }]}>
           <AnimatedHeaderContainer>
             <View style={dynamicStyles.header}>
-              <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
-                <Ionicons name="arrow-back" size={24} color={colors.text} />
-              </TouchableOpacity>
+              <AppBackButton />
               <Text style={dynamicStyles.headerTitle}>Notifications</Text>
-              <View style={{ width: 40 }} />
+              <View style={{ width: APP_BACK_BUTTON_SLOT }} />
             </View>
           </AnimatedHeaderContainer>
           <View style={dynamicStyles.empty}>

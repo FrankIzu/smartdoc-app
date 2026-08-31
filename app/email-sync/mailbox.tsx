@@ -265,7 +265,7 @@ export function EmailSetupPane({
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingBottom: 8 },
+        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingBottom: 8, backgroundColor: colors.headerBackground },
         title: { flex: 1, fontSize: 20, fontWeight: '700', color: colors.text },
         section: {
           fontSize: 13,

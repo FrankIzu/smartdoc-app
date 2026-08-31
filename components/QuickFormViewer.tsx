@@ -51,8 +51,7 @@ export default function QuickFormViewer({
       paddingHorizontal: 16,
       paddingVertical: 12,
       borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
+      borderBottomColor: colors.border, backgroundColor: colors.headerBackground },
     title: {
       flex: 1,
       fontSize: 18,

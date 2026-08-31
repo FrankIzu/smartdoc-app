@@ -8,15 +8,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { UploadOptionsModal } from '../../components/UploadOptionsModal';
 import DocumentSourcePicker, {
   pickDocumentsLikeFilesScreen,
-  pickGalleryImagesLikeFilesScreen,
-} from '../../../components/signatures/DocumentSourcePicker';
+  pickGalleryImagesLikeFilesScreen } from '../../../components/signatures/DocumentSourcePicker';
 import { useEnvelopeDraft } from '../../../hooks/useEnvelopeDraft';
 import { useMinimizableSheet } from '../../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../../hooks/useThemeColors';
@@ -27,6 +25,8 @@ import type { SourceInput, WizardSourceDraft } from '../../../types/signature';
 import { saveDraftStep } from '../../../services/signatureSessionCache';
 import { useFileStore } from '../../../stores/fileStore';
 import { envelopeDocsToWizardSources, wizardSourcesToReplaceDocuments } from '../../../utils/signatureRuntime';
+
+import AppBackButton from '../../../components/AppBackButton';
 
 function newLocalId() {
   return `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -80,8 +80,7 @@ export default function CreateEnvelopeScreen() {
           {
             uri: asset.uri,
             name: asset.name ?? 'Document',
-            mimeType: asset.mimeType ?? null,
-          },
+            mimeType: asset.mimeType ?? null },
           { waitForPages: false },
         );
         const draft: WizardSourceDraft = {
@@ -89,8 +88,7 @@ export default function CreateEnvelopeScreen() {
           source_type: 'fillable',
           fillable_template_id: templateId,
           display_name: displayName,
-          needsPrepare: true,
-        };
+          needsPrepare: true };
         added.push(draft);
         setSources((prev) => {
           const nextSources = [...prev, draft];
@@ -187,15 +185,13 @@ export default function CreateEnvelopeScreen() {
         const res = await createEnvelope({
           sources: apiSources,
           title: trimmedTitle,
-          message: message || undefined,
-        });
+          message: message || undefined });
         envelopeId = res.envelope.public_id || String(res.envelope.id);
       } else {
         const existing = await getEnvelope(envelopeId);
         await updateEnvelopeDraft(envelopeId, {
           title: trimmedTitle,
-          message: message || undefined,
-        });
+          message: message || undefined });
         await replaceDocuments(
           envelopeId,
           wizardSourcesToReplaceDocuments(sources, existing.envelope.documents),
@@ -212,10 +208,8 @@ export default function CreateEnvelopeScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+        <AppBackButton />
         <Text style={[styles.headerTitle, { color: colors.text }]}>Prepare for Signature</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
@@ -276,5 +270,4 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: 8, padding: 12, fontSize: 16 },
   multiline: { minHeight: 80, textAlignVertical: 'top' },
   nextBtn: { marginTop: 24, padding: 14, borderRadius: 8, alignItems: 'center' },
-  nextText: { color: '#fff', fontWeight: '700' },
-});
+  nextText: { color: '#fff', fontWeight: '700' } });

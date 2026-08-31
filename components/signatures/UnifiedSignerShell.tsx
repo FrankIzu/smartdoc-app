@@ -6,8 +6,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import type { PendingSubmission, SessionState } from '../../types/signature';
@@ -19,6 +18,7 @@ import FormFieldRenderer from './FormFieldRenderer';
 import AttachmentDocTab from './AttachmentDocTab';
 import SignatureCaptureModal from './SignatureCaptureModal';
 import type { SignerUIActions } from '../../hooks/useSignerUIState';
+import AppBackButton from '../AppBackButton';
 
 interface Props {
   session: NormalizedSignerSession;
@@ -51,8 +51,7 @@ export default function UnifiedSignerShell({
   onSubmit,
   onDecline,
   onBack,
-  onReloadConflict,
-}: Props) {
+  onReloadConflict }: Props) {
   const colors = useThemeColors();
   const doc = session.documents[ui.activeDocIndex];
   const busy = ['compositing', 'uploading', 'awaiting_server', 'autosaving', 'checking_submission'].includes(state);
@@ -75,15 +74,8 @@ export default function UnifiedSignerShell({
   return (
     <View style={[styles.wrap, { backgroundColor: colors.background }]}>
       {onBack ? (
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={onBack}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Go back"
-          >
-            <Ionicons name="chevron-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+        <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.headerBackground }]}>
+          <AppBackButton onPress={onBack} style={styles.backBtn} />
           <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {session.envelopeTitle}
           </Text>
@@ -233,8 +225,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 4,
-  },
+    gap: 4},
   backBtn: { padding: 4 },
   headerTitle: { flex: 1, fontSize: 16, fontWeight: '600' },
   centered: { alignItems: 'center', justifyContent: 'center' },
@@ -248,5 +239,4 @@ const styles = StyleSheet.create({
   declineBtn: { padding: 12 },
   submitBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
   submitText: { color: '#fff', fontWeight: '700' },
-  stateHint: { fontSize: 12, textAlign: 'center', marginBottom: 4 },
-});
+  stateHint: { fontSize: 12, textAlign: 'center', marginBottom: 4 } });

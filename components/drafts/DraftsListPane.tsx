@@ -42,6 +42,8 @@ import { AnimatedHeaderContainer } from '../../app/components/AnimatedHeaderCont
 import { TapToToggleHeaderView } from '../../app/components/TapToToggleHeaderView';
 import { useAuth } from '../../app/context/auth';
 
+import AppBackButton from '../AppBackButton';
+
 const CHATGD_PLACEHOLDER_FROM_DRAFTS = 'Ask about your notes';
 
 function stripExtension(name?: string): string {
@@ -316,7 +318,7 @@ export default function DraftsListPane({ mode, width, style }: DraftsListPanePro
           alignItems: 'center',
           paddingHorizontal: 8,
           paddingVertical: 10,
-          backgroundColor: colors.card,
+          backgroundColor: colors.headerBackground,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
         },
@@ -450,9 +452,7 @@ export default function DraftsListPane({ mode, width, style }: DraftsListPanePro
         <AnimatedHeaderContainer>
           <View style={dynamicStyles.header}>
             {!isSplitMode && (
-              <TouchableOpacity style={dynamicStyles.backBtn} onPress={() => router.back()}>
-                <Ionicons name="chevron-back" size={30} color={accentColor} />
-              </TouchableOpacity>
+              <AppBackButton />
             )}
             <View style={[dynamicStyles.headerTitleWrap, isSplitMode && { paddingLeft: 12 }]}>
               <Text style={dynamicStyles.headerTitle}>Notes</Text>

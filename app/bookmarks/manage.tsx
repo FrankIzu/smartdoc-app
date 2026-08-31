@@ -14,6 +14,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
@@ -309,6 +310,10 @@ export default function ManageBookmarksScreen() {
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
+      backgroundColor: colors.headerBackground,
+    },
+    content: {
+      flex: 1,
       backgroundColor: colors.background,
     },
     header: {
@@ -317,7 +322,7 @@ export default function ManageBookmarksScreen() {
       justifyContent: 'space-between',
       paddingHorizontal: 16,
       paddingVertical: 12,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -626,15 +631,13 @@ export default function ManageBookmarksScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={dynamicStyles.container}>
+      <SafeAreaView style={dynamicStyles.container} edges={['top']}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.headerTitle}>Bookmarks</Text>
-          <View style={{ width: 24 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
-        <View style={dynamicStyles.loadingContainer}>
+        <View style={[dynamicStyles.loadingContainer, dynamicStyles.content]}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={dynamicStyles.loadingText}>Loading bookmarks...</Text>
         </View>
@@ -643,11 +646,9 @@ export default function ManageBookmarksScreen() {
   }
 
   return (
-    <SafeAreaView style={dynamicStyles.container}>
+    <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#007AFF" />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.headerTitle}>Manage Bookmarks</Text>
         <TouchableOpacity
           style={dynamicStyles.addButton}
@@ -658,6 +659,7 @@ export default function ManageBookmarksScreen() {
       </View>
 
       <FlatList
+        style={dynamicStyles.content}
         data={bookmarks}
         renderItem={renderBookmarkItem}
         keyExtractor={(item) => item.id.toString()}

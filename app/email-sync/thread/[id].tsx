@@ -68,6 +68,8 @@ import {
     type ReplyTone,
 } from '../_components/emailReplyShared';
 
+import AppBackButton from '../../../components/AppBackButton';
+
 function getFileTypeFromFilename(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
   const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif'];
@@ -514,8 +516,8 @@ export default function EmailThreadScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        safe: { flex: 1, backgroundColor: colors.isDark ? colors.background : '#F3F4F6' },
-        header: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 4, paddingBottom: 4, backgroundColor: colors.background },
+        safe: { flex: 1, backgroundColor: colors.headerBackground },
+        header: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 4, paddingBottom: 4, backgroundColor: colors.headerBackground },
         headerBody: { flex: 1, minWidth: 0, marginHorizontal: 4, paddingTop: 8 },
         h1: { fontSize: 17, fontWeight: '700', color: colors.text },
         iconBtn: { padding: 10 },
@@ -862,9 +864,7 @@ export default function EmailThreadScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
         <View style={styles.header}>
-          <FeedbackTouchable onPress={() => router.back()} style={styles.iconBtn}>
-            <Ionicons name="chevron-back" size={28} color={colors.text} />
-          </FeedbackTouchable>
+          <AppBackButton />
           <View style={styles.headerBody}>
             <Text style={styles.h1} numberOfLines={1}>
               {thread?.subject || 'Conversation'}
@@ -896,7 +896,7 @@ export default function EmailThreadScreen() {
         </View>
 
         <ScrollView
-          style={{ flex: 1 }}
+          style={{ flex: 1, backgroundColor: colors.isDark ? colors.background : '#F3F4F6' }}
           contentContainerStyle={{ flexGrow: 1, paddingTop: 8, paddingBottom: 16 }}
           keyboardShouldPersistTaps="handled"
         >

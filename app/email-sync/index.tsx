@@ -44,6 +44,7 @@ import {
 } from './_components/emailSyncCache';
 import { EmailImportsPane } from './imports';
 import { EmailSetupPane } from './mailbox';
+import AppBackButton from '../../components/AppBackButton';
 
 const FILTERS: { id: ThreadAttention; label: string }[] = [
   { id: 'pending', label: 'To reply' },
@@ -215,8 +216,8 @@ export default function EmailInboxScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingBottom: 4 },
+        safe: { flex: 1, backgroundColor: colors.headerBackground },
+        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingBottom: 4, backgroundColor: colors.headerBackground },
         title: { flex: 1, fontSize: 28, fontWeight: '800', color: colors.text, letterSpacing: -0.4 },
         iconBtn: { padding: 10 },
         pills: {
@@ -387,13 +388,13 @@ export default function EmailInboxScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <FeedbackTouchable
-          onPress={() => (selectMode ? exitSelect() : router.back())}
-          accessibilityLabel={selectMode ? 'Cancel' : 'Back'}
-          style={styles.iconBtn}
-        >
-          <Ionicons name={selectMode ? 'close' : 'chevron-back'} size={28} color={colors.text} />
-        </FeedbackTouchable>
+        {selectMode ? (
+          <FeedbackTouchable onPress={exitSelect} accessibilityLabel="Cancel" style={styles.iconBtn}>
+            <Ionicons name="close" size={28} color={colors.text} />
+          </FeedbackTouchable>
+        ) : (
+          <AppBackButton />
+        )}
         <Text style={styles.title}>{selectMode ? `${selected.length} selected` : 'Email Sync'}</Text>
         {selectMode && filter !== 'dismissed' ? (
           <FeedbackTouchable
@@ -418,18 +419,18 @@ export default function EmailInboxScreen() {
       {!selectMode ? <EmailSyncTopTabs active={tab} pendingCount={pending} onChange={selectTab} /> : null}
 
       {workspaceId && (visited.setup || tab === 'setup') ? (
-        <View style={{ flex: 1, display: tab === 'setup' ? 'flex' : 'none' }}>
+        <View style={{ flex: 1, display: tab === 'setup' ? 'flex' : 'none', backgroundColor: colors.background }}>
           <EmailSetupPane workspaceId={workspaceId} onPending={setPending} />
         </View>
       ) : null}
 
       {workspaceId && (visited.imports || tab === 'imports') ? (
-        <View style={{ flex: 1, display: tab === 'imports' ? 'flex' : 'none' }}>
+        <View style={{ flex: 1, display: tab === 'imports' ? 'flex' : 'none', backgroundColor: colors.background }}>
           <EmailImportsPane workspaceId={workspaceId} onPending={setPending} />
         </View>
       ) : null}
 
-      <View style={{ flex: 1, display: tab === 'replies' ? 'flex' : 'none' }}>
+      <View style={{ flex: 1, display: tab === 'replies' ? 'flex' : 'none', backgroundColor: colors.background }}>
       {hasMailbox ? (
         <View style={styles.pills}>
           {FILTERS.map((f) => {

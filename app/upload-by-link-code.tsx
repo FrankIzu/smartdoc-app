@@ -19,6 +19,8 @@ import { API_BASE_URL } from '../constants/Config';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { getUploadLinkErrorMessage, type UploadLinkErrorPayload } from '../utils/uploadLinkErrors';
 
+import AppBackButton from '../components/AppBackButton';
+
 export default function UploadByLinkCodeScreen() {
   const router = useRouter();
   const colors = useThemeColors();
@@ -82,7 +84,7 @@ export default function UploadByLinkCodeScreen() {
       alignItems: 'center',
       paddingHorizontal: 20,
       paddingVertical: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -181,9 +183,7 @@ export default function UploadByLinkCodeScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.headerTitle}>Upload by Link</Text>
       </View>
 

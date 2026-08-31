@@ -51,6 +51,8 @@ import {
 import { useAuth } from '../context/auth';
 import { UploadOptionsModal } from '../components/UploadOptionsModal';
 
+import AppBackButton from '../../components/AppBackButton';
+
 const INTAKE_DETAIL_CACHE_MS = 30_000;
 
 interface FolderOption {
@@ -829,7 +831,7 @@ export default function IntakeDetailScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -1045,9 +1047,7 @@ export default function IntakeDetailScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.headerTitle} numberOfLines={1}>Intake</Text>
           <View style={dynamicStyles.placeholder} />
         </View>
@@ -1075,9 +1075,7 @@ export default function IntakeDetailScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{intake.title}</Text>
         {intake.status !== 'archived' ? (
           <TouchableOpacity onPress={openEdit} disabled={busy} accessibilityLabel="Edit">

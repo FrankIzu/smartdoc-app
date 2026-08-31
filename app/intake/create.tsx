@@ -21,6 +21,8 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { INTAKE_REMINDER_PRESETS, type IntakeTemplate, type ReminderPreset } from '../../types/intake';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface ChecklistItemForm {
   label: string;
   description: string;
@@ -252,7 +254,7 @@ export default function CreateIntakeScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -417,9 +419,7 @@ export default function CreateIntakeScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.title}>New Intake</Text>
         <View style={dynamicStyles.placeholder} />
       </View>

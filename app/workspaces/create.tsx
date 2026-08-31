@@ -20,6 +20,8 @@ import { workspacesListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 export default function CreateWorkspaceScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -64,7 +66,7 @@ export default function CreateWorkspaceScreen() {
       justifyContent: 'space-between',
       paddingHorizontal: 20,
       paddingVertical: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -202,14 +204,7 @@ export default function CreateWorkspaceScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity
-          onPress={handleBack}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={handleBack} />
         <Text style={dynamicStyles.headerTitle} pointerEvents="none">Create Workspace</Text>
         <FeedbackTouchable
           onPress={handleCreate}

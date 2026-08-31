@@ -20,6 +20,8 @@ import { uploadLinksListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 export default function CreateUploadLinkScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -118,7 +120,7 @@ export default function CreateUploadLinkScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -286,17 +288,10 @@ export default function CreateUploadLinkScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity
-          onPress={() => {
+        <AppBackButton onPress={() => {
             Keyboard.dismiss();
             router.back();
-          }}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+          }} />
         <Text style={dynamicStyles.title}>Create File Request</Text>
         <View style={dynamicStyles.placeholder} />
       </View>

@@ -22,6 +22,8 @@ import { ensureFillableTemplateReady } from '../../../services/fillableApi';
 import { formatDateToLocal } from '../../../utils/timeFormatting';
 import { hubFillEditorRoute } from '../../../utils/signatureRouteResolver';
 
+import AppBackButton from '../../../components/AppBackButton';
+
 const SEARCH_DEBOUNCE_MS = 350;
 
 function formatFileSubtitle(file: FillPickFile): string {
@@ -90,8 +92,7 @@ export default function FillDocumentPickScreen() {
           alignItems: 'center',
           paddingHorizontal: 14,
           paddingVertical: 10,
-          gap: 10,
-        },
+          gap: 10, backgroundColor: colors.headerBackground },
         headerTitle: { flex: 1, fontSize: 18, fontWeight: '600', color: colors.text },
         searchWrap: {
           flexDirection: 'row',
@@ -152,9 +153,7 @@ export default function FillDocumentPickScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} disabled={openingId != null}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={() => { if (openingId == null) router.back(); }} />
         <Text style={styles.headerTitle}>Choose document</Text>
       </View>
 

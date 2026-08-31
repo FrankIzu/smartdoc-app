@@ -22,6 +22,8 @@ import { navigateTabsThenDefaultHome, resolveDefaultHomeWebPath } from '../../ut
 import { useAuth } from '../context/auth';
 import deviceSecurityService from '../../services/deviceSecurity';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface OtpVerificationParams {
   username: string;
   method: 'sms' | 'email';
@@ -441,9 +443,7 @@ export default function OtpVerificationScreen() {
     >
       <View style={styles.content}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={Colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
         </View>
 
         <View style={styles.iconContainer}>

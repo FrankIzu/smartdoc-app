@@ -45,6 +45,8 @@ import {
 } from '../../utils/workspaceScreenCache';
 import { useAuth } from '../context/auth';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+
 interface WorkspaceSheetBookmark {
   bookmark_id: number;
   bookmark_name: string;
@@ -799,7 +801,7 @@ export default function WorkspaceDetailsScreen() {
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border, zIndex: 1 },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.headerBackground, borderBottomWidth: 1, borderBottomColor: colors.border, zIndex: 1 },
     headerBackButton: { zIndex: 2, padding: 4, marginLeft: -4 },
     headerTitle: { fontSize: 18, fontWeight: '600', color: colors.text, flex: 1, textAlign: 'center' },
     loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -976,17 +978,9 @@ export default function WorkspaceDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity
-            style={dynamicStyles.headerBackButton}
-            onPress={handleBack}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton onPress={handleBack} />
           <Text style={dynamicStyles.headerTitle} pointerEvents="none">Workspace</Text>
-          <View style={{ width: 24 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={dynamicStyles.loadingContainer}>
           <Text style={{ color: colors.textSecondary }}>Loading workspace...</Text>
@@ -999,17 +993,9 @@ export default function WorkspaceDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity
-            style={dynamicStyles.headerBackButton}
-            onPress={handleBack}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton onPress={handleBack} />
           <Text style={dynamicStyles.headerTitle} pointerEvents="none">Workspace Not Found</Text>
-          <View style={{ width: 24 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
       </SafeAreaView>
     );
@@ -1020,15 +1006,7 @@ export default function WorkspaceDetailsScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity
-          style={dynamicStyles.headerBackButton}
-          onPress={handleBack}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={handleBack} />
         <Text style={dynamicStyles.headerTitle} numberOfLines={1} ellipsizeMode="tail" pointerEvents="none">{workspace.name}</Text>
         {workspace.user_role !== 'owner' && workspace.user_role !== 'admin' && (
           <FeedbackTouchable onPress={handleExitWorkspace} loading={exiting} spinnerColor="#FF3B30">
@@ -1036,7 +1014,7 @@ export default function WorkspaceDetailsScreen() {
           </FeedbackTouchable>
         )}
         {workspace.user_role === 'owner' || workspace.user_role === 'admin' ? (
-          <View style={{ width: 24 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         ) : null}
       </View>
 

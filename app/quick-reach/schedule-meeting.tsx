@@ -19,6 +19,8 @@ import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 
+import AppBackButton from '../../components/AppBackButton';
+
 export default function ScheduleMeetingScreen() {
   const colors = useThemeColors();
   const router = useRouter();
@@ -415,7 +417,7 @@ export default function ScheduleMeetingScreen() {
       alignItems: 'center',
       paddingHorizontal: 20,
       paddingVertical: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -639,9 +641,7 @@ export default function ScheduleMeetingScreen() {
       >
         {/* Header */}
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={dynamicStyles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.headerTitle}>Schedule Meeting</Text>
           <FeedbackTouchable
             style={[dynamicStyles.scheduleButton, loading && dynamicStyles.scheduleButtonDisabled]}

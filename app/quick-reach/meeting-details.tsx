@@ -32,6 +32,8 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import { secureStorage } from '../../utils/storage';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface MeetingAsset {
   id: string;
   meetingId?: string;
@@ -2739,9 +2741,7 @@ export default function MeetingDetailsScreen() {
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       {/* Header */}
       <View style={[dynamicStyles.header, fromAssetsShortcut && dynamicStyles.headerCompact]}>
-        <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={themeColors.tint || '#007AFF'} />
-        </TouchableOpacity>
+        <AppBackButton />
         <View style={dynamicStyles.headerContent}>
           <Text style={dynamicStyles.headerTitle} numberOfLines={1}>
             {meetingTitle || 'Meeting Details'}

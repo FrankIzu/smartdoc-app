@@ -35,6 +35,8 @@ import {
   validateFileAgainstUploadSettings,
 } from '../utils/userPreferences';
 
+import AppBackButton from '../components/AppBackButton';
+
 interface IntakeChecklistItem {
   label: string;
   description: string | null;
@@ -532,7 +534,7 @@ export default function UploadByLinkScreen() {
       alignItems: 'center',
       paddingHorizontal: 20,
       paddingVertical: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -800,9 +802,7 @@ export default function UploadByLinkScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <View style={{ flex: 1, marginLeft: 12 }}>
           <Text style={dynamicStyles.headerTitle}>Upload Files</Text>
           {uploadInfo && (

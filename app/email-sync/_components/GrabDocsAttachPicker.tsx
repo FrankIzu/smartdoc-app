@@ -236,7 +236,7 @@ export function GrabDocsAttachPicker({ visible, workspaceId, onClose, onAddFiles
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background, paddingTop: insets.top },
-        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingBottom: 6 },
+        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingBottom: 6, backgroundColor: colors.headerBackground },
         title: { flex: 1, fontSize: 18, fontWeight: '700', color: colors.text },
         iconBtn: { padding: 10 },
         crumb: {

@@ -32,6 +32,8 @@ import { apiClient } from '../services/api';
 import { sanitizeDisplayFilename } from '../utils/displayFilename';
 import { secureStorage } from '../utils/storage';
 
+import AppBackButton from './AppBackButton';
+
 // Conditionally import react-native-pdf (only works in development builds, not Expo Go)
 let Pdf: any = null;
 const isExpoGo = Constants.appOwnership === 'expo';
@@ -1101,7 +1103,7 @@ export default function DocumentViewer({
       paddingBottom: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
-      backgroundColor: colors.background,
+      backgroundColor: colors.headerBackground,
       zIndex: 1000,
       elevation: 5, // Android shadow
     },
@@ -2930,15 +2932,7 @@ export default function DocumentViewer({
           edges={['left', 'right', 'bottom']}
         >
           <View style={dynamicStyles.header} pointerEvents="box-none">
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-            >
-              <Ionicons name="arrow-back" size={24} color={colors.primary} />
-            </TouchableOpacity>
+            <AppBackButton onPress={onClose} />
             <Text style={dynamicStyles.title} numberOfLines={1} ellipsizeMode="tail">
               {getViewerTitle()}
             </Text>

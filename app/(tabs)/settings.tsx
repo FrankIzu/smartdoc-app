@@ -50,6 +50,8 @@ import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface UserProfile {
   id: number;
   username: string;
@@ -1061,12 +1063,7 @@ export default function SettingsScreen() {
       <TapToToggleHeaderView style={dynamicStyles.container}>
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity 
-            onPress={() => router.back()}
-            style={{ marginRight: 12 }}
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.headerTitle}>Settings</Text>
         </View>
       </AnimatedHeaderContainer>

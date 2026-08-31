@@ -32,6 +32,8 @@ import { useFileStore } from '../../stores/fileStore';
 import { UploadOptionsModal } from '../components/UploadOptionsModal';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 /** Rows shown initially in Recent Receipts / Recent Invoices; full lists stay in state for charts & summaries. */
 const FINANCIALS_LIST_PAGE_SIZE = 10;
 /** When analytics has no receipt/invoice rows, mobile files fallback still pulls a single page (not unbounded). */
@@ -2009,10 +2011,8 @@ export default function AnalyticsDashboard() {
   if (authLoading || loading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color={colors.text} />
-          </TouchableOpacity>
+        <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
+          <AppBackButton />
           <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
           <View style={styles.placeholder} />
         </View>
@@ -2029,10 +2029,8 @@ export default function AnalyticsDashboard() {
   if (!analytics) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color={colors.text} />
-          </TouchableOpacity>
+        <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
+          <AppBackButton />
           <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
           <TouchableOpacity style={styles.headerButton} onPress={() => loadAnalytics()}>
             <Ionicons name="refresh" size={28} color={colors.primary || '#007AFF'} />
@@ -2118,10 +2116,8 @@ export default function AnalyticsDashboard() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={28} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
+        <AppBackButton />
         <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity

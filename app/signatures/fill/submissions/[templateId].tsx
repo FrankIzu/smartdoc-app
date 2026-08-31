@@ -18,6 +18,8 @@ import { listTemplateSubmissions, type FillSubmission } from '../../../../servic
 import { formatEnvelopeListDate } from '../../../../utils/envelopeDisplay';
 import { submissionDisplayTitle } from '../../../../utils/signatureActivity';
 
+import AppBackButton from '../../../../components/AppBackButton';
+
 export default function TemplateSubmissionsScreen() {
   const { templateId } = useLocalSearchParams<{ templateId: string }>();
   const router = useRouter();
@@ -59,8 +61,7 @@ export default function TemplateSubmissionsScreen() {
           alignItems: 'center',
           paddingHorizontal: 14,
           paddingVertical: 12,
-          gap: 12,
-        },
+          gap: 12, backgroundColor: colors.headerBackground },
         headerTitle: { flex: 1, fontSize: 18, fontWeight: '700', color: colors.text },
         row: {
           flexDirection: 'row',
@@ -93,9 +94,7 @@ export default function TemplateSubmissionsScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.headerTitle} numberOfLines={1}>
           {templateTitle}
         </Text>

@@ -18,6 +18,7 @@ import {
   tokenRequestOtp,
   tokenVerifyOtp,
 } from '../../services/envelopeApi';
+import AppBackButton from '../AppBackButton';
 
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN_SEC = 60;
@@ -203,14 +204,7 @@ export default function SignerPhoneVerificationGate({
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {onBack ? (
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={onBack}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={onBack} style={styles.backBtn} />
       ) : null}
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.title, { color: colors.text }]}>Verify your phone</Text>

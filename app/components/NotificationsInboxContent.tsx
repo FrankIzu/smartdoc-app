@@ -459,7 +459,7 @@ export function NotificationsInboxContent({
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
       // Modal sheet wrapper uses `colors.card`; match it so the header is not a different plane than the rest of the popup.
-      backgroundColor: variant === 'modal' ? colors.card : colors.background,
+      backgroundColor: variant === 'modal' ? colors.card : colors.headerBackground,
     },
     headerTitle: {
       fontSize: variant === 'modal' ? 17 : 18,

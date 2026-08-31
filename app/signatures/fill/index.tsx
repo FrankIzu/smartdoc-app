@@ -7,14 +7,15 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { pickDocumentForFill } from '../../../components/signatures/DocumentSourcePicker';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { uploadPdfForSignature } from '../../../services/uploadWithGlobalProgress';
 import { hubFillEditorRoute, hubFillPickRoute } from '../../../utils/signatureRouteResolver';
+
+import AppBackButton from '../../../components/AppBackButton';
 
 export default function FillEntryScreen() {
   const router = useRouter();
@@ -37,10 +38,8 @@ export default function FillEntryScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} disabled={busy}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+        <AppBackButton onPress={() => { if (!busy) router.back(); }} />
         <Text style={[styles.headerTitle, { color: colors.text }]}>Fill a document</Text>
       </View>
 
@@ -88,8 +87,7 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: 'center',
     marginBottom: 24,
-    gap: 8,
-  },
+    gap: 8 },
   heroTitle: { fontSize: 18, fontWeight: '700', marginTop: 4 },
   heroText: { fontSize: 14, lineHeight: 21, textAlign: 'center' },
   primaryBtn: {
@@ -99,8 +97,7 @@ const styles = StyleSheet.create({
     gap: 10,
     padding: 16,
     borderRadius: 10,
-    marginBottom: 12,
-  },
+    marginBottom: 12 },
   primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   secondaryBtn: {
     flexDirection: 'row',
@@ -109,7 +106,5 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 14,
     borderRadius: 10,
-    borderWidth: 1,
-  },
-  secondaryBtnText: { fontWeight: '600', fontSize: 15 },
-});
+    borderWidth: 1 },
+  secondaryBtnText: { fontWeight: '600', fontSize: 15 } });

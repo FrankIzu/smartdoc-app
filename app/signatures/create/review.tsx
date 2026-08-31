@@ -7,8 +7,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import FileNameText from '../../../components/FileNameText';
@@ -21,6 +20,8 @@ import { getEnvelope, sendEnvelope } from '../../../services/envelopeApi';
 import type { Envelope } from '../../../types/signature';
 import { clearDraftStep } from '../../../services/signatureSessionCache';
 import { validateSignerFieldCoverage } from '../../../utils/signatureAssignmentCoverage';
+
+import AppBackButton from '../../../components/AppBackButton';
 
 export default function ReviewSendScreen() {
   const { envelopeId, acknowledgeOnly } = useLocalSearchParams<{
@@ -53,8 +54,7 @@ export default function ReviewSendScreen() {
             {
               text: 'Go back',
               onPress: () =>
-                router.replace(`/signatures/create/assign-fields?envelopeId=${envelopeId}` as any),
-            },
+                router.replace(`/signatures/create/assign-fields?envelopeId=${envelopeId}` as any) },
             { text: 'OK', style: 'cancel' },
           ]);
           return;
@@ -65,8 +65,7 @@ export default function ReviewSendScreen() {
     setSending(true);
     try {
       await sendEnvelope(envelopeId, {
-        acknowledgeOnly: isAcknowledgeOnly,
-      });
+        acknowledgeOnly: isAcknowledgeOnly });
       await clearWizardSources();
       await clearDraftStep(user?.id, envelopeId);
       invalidateEnvelopeListCache();
@@ -82,10 +81,8 @@ export default function ReviewSendScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+        <AppBackButton />
         <Text style={[styles.title, { color: colors.text }]}>Review & send</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
@@ -140,5 +137,4 @@ const styles = StyleSheet.create({
   envTitle: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
   section: { marginBottom: 8, fontWeight: '500' },
   sendBtn: { marginTop: 32, padding: 16, borderRadius: 8, alignItems: 'center' },
-  sendText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-});
+  sendText: { color: '#fff', fontWeight: '700', fontSize: 16 } });

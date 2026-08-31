@@ -14,7 +14,7 @@ export default function DraftsListScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.headerBackground }} edges={['top']}>
       <DraftsListPane mode="phone" />
     </SafeAreaView>
   );

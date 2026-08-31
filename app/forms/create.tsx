@@ -12,6 +12,7 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
@@ -47,8 +48,10 @@ export default function CreateFormScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'recent' | 'templates'>(params.tab === 'recent' ? 'recent' : 'templates');
   const dynamicStyles = useMemo(() => ({
-    page: { backgroundColor: colors.background },
+    page: { backgroundColor: colors.headerBackground },
+    content: { flex: 1, backgroundColor: colors.background },
     card: { backgroundColor: colors.card, borderColor: colors.border },
+    header: { backgroundColor: colors.headerBackground, borderBottomColor: colors.border },
     text: { color: colors.text },
     textSecondary: { color: colors.textSecondary },
   }), [colors]);
@@ -376,15 +379,13 @@ export default function CreateFormScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, dynamicStyles.page]}>
-        <View style={[styles.header, dynamicStyles.card]}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
-          </TouchableOpacity>
+      <SafeAreaView style={[styles.container, dynamicStyles.page]} edges={['top']}>
+        <View style={[styles.header, dynamicStyles.header]}>
+          <AppBackButton />
           <Text style={[styles.headerTitle, dynamicStyles.text]}>Create Form</Text>
-          <View style={{ width: 24 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
-        <View style={styles.loadingContainer}>
+        <View style={[styles.loadingContainer, dynamicStyles.content]}>
           <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
           <Text style={[styles.loadingText, dynamicStyles.textSecondary]}>Loading templates...</Text>
         </View>
@@ -393,15 +394,14 @@ export default function CreateFormScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.container, dynamicStyles.page]}>
-      <View style={[styles.header, dynamicStyles.card]}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
-        </TouchableOpacity>
+    <SafeAreaView style={[styles.container, dynamicStyles.page]} edges={['top']}>
+      <View style={[styles.header, dynamicStyles.header]}>
+        <AppBackButton />
         <Text style={[styles.headerTitle, dynamicStyles.text]}>Create Form</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
+      <View style={dynamicStyles.content}>
       {/* Blank Form Option */}
       <View style={[styles.blankFormSection, dynamicStyles.card]}>
         <Text style={[styles.sectionTitle, dynamicStyles.text]}>Start Fresh</Text>
@@ -480,6 +480,7 @@ export default function CreateFormScreen() {
           </View>
         )}
       </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }

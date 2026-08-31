@@ -8,8 +8,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
@@ -25,18 +24,18 @@ import {
   duplicateEnvelope,
   getEnvelope,
   resendRecipientInvite,
-  voidEnvelope,
-} from '../../services/envelopeApi';
+  voidEnvelope } from '../../services/envelopeApi';
 import type { Envelope } from '../../types/signature';
 import {
   envelopeFinalFileId,
   resolveEnvelopeAuditFileId,
-  resolveEnvelopeCertificateFileId,
-} from '../../utils/envelopeActions';
+  resolveEnvelopeCertificateFileId } from '../../utils/envelopeActions';
 import { envelopeStatusBadge } from '../../utils/envelopeDisplay';
 import { envelopeDisplayId, resolveWizardStepFromEnvelope } from '../../utils/signatureRuntime';
 import { hubSignRoute } from '../../utils/signatureRouteResolver';
 import { loadDraftStep, saveDraftStep } from '../../services/signatureSessionCache';
+
+import AppBackButton from '../../components/AppBackButton';
 
 export default function EnvelopeDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -98,8 +97,7 @@ export default function EnvelopeDetailScreen() {
     }
     setViewerFile({
       id: String(fileId),
-      name: envelope.title || 'Signed document',
-    });
+      name: envelope.title || 'Signed document' });
   };
 
   const openAuditTrailPdf = async () => {
@@ -116,8 +114,7 @@ export default function EnvelopeDetailScreen() {
       }
       setViewerFile({
         id: String(auditFileId),
-        name: `Audit trail — ${envelope.title || 'Envelope'}`,
-      });
+        name: `Audit trail — ${envelope.title || 'Envelope'}` });
     } catch (e: unknown) {
       Alert.alert('Could not open audit trail', e instanceof Error ? e.message : 'Try again.');
     } finally {
@@ -139,8 +136,7 @@ export default function EnvelopeDetailScreen() {
       }
       setViewerFile({
         id: String(certificateFileId),
-        name: `Certificate — ${envelope.title || 'Envelope'}`,
-      });
+        name: `Certificate — ${envelope.title || 'Envelope'}` });
     } catch (e: unknown) {
       Alert.alert('Could not open certificate', e instanceof Error ? e.message : 'Try again.');
     } finally {
@@ -178,8 +174,7 @@ export default function EnvelopeDetailScreen() {
           } finally {
             setDeleting(false);
           }
-        },
-      },
+        } },
     ]);
   };
 
@@ -192,10 +187,8 @@ export default function EnvelopeDetailScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+        <AppBackButton />
         <View style={styles.headerBody}>
           <FileNameText
             name={envelope.title || 'Untitled envelope'}
@@ -326,8 +319,7 @@ export default function EnvelopeDetailScreen() {
                     } finally {
                       setVoiding(false);
                     }
-                  },
-                },
+                  } },
               ])
             }
           >
@@ -355,20 +347,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     padding: 14,
-    gap: 12,
-  },
+    gap: 12},
   headerBody: { flex: 1, gap: 6, minWidth: 0 },
   title: { fontSize: 18, fontWeight: '600' },
   statusBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 6,
-  },
+    borderRadius: 6 },
   statusBadgeText: { fontSize: 11, fontWeight: '600' },
   content: { paddingHorizontal: 14, paddingBottom: 40 },
   message: { marginBottom: 12, lineHeight: 20 },
   btn: { padding: 14, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
   btnText: { color: '#fff', fontWeight: '600' },
-  linkBtn: { paddingVertical: 12 },
-});
+  linkBtn: { paddingVertical: 12 } });

@@ -8,6 +8,8 @@ import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { calendarIcsUrl } from '../../services/calendarApi';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+
 export default function CalendarIcsScreen() {
   const router = useRouter();
   const colors = useThemeColors();
@@ -18,7 +20,7 @@ export default function CalendarIcsScreen() {
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', padding: 12 },
+        header: { flexDirection: 'row', alignItems: 'center', padding: 12 , backgroundColor: colors.headerBackground },
         h1: { fontSize: 20, fontWeight: '700', color: colors.text, flex: 1 },
         body: { flex: 1, padding: 20, alignItems: 'center', justifyContent: 'center' },
         text: { color: colors.text, textAlign: 'center', marginVertical: 16 },
@@ -52,11 +54,9 @@ export default function CalendarIcsScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.h1}>Calendar invite</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
       <View style={styles.body}>
         {opening ? <ActivityIndicator /> : null}

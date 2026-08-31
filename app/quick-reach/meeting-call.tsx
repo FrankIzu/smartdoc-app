@@ -28,6 +28,8 @@ import { formatMeetingTimeToLocal } from '../../utils/timeFormatting';
 import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../constants/reachMeeting';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 type MeetingSource = 'own' | 'invited';
 
 interface Meeting {
@@ -1234,7 +1236,7 @@ export default function MeetingCallScreen() {
       alignItems: 'center',
       paddingHorizontal: 20,
       paddingVertical: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -1838,9 +1840,7 @@ export default function MeetingCallScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color="#007AFF" />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
           <View style={dynamicStyles.headerSpacer} />
         </View>
@@ -1855,9 +1855,7 @@ export default function MeetingCallScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity style={dynamicStyles.backButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={28} color="#007AFF" />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
         <TouchableOpacity
           style={dynamicStyles.refreshButton}

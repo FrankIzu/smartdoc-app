@@ -37,6 +37,8 @@ import {
 } from '../../services/subscriptionApi';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 type Segment = 'usage' | 'billing';
 
 type TransformedUsage = {
@@ -440,6 +442,7 @@ export default function BillingScreen() {
           paddingVertical: 10,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
+          backgroundColor: colors.headerBackground,
         },
         headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
         headerTitle: {
@@ -934,14 +937,7 @@ export default function BillingScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={handleBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={handleBack} />
         <Text style={styles.headerTitle}>Billing & Usage</Text>
         <View style={styles.headerBtn} />
       </View>

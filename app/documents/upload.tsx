@@ -5,11 +5,13 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLimitError } from '../../contexts/LimitErrorContext';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
 export default function UploadScreen() {
   const router = useRouter();
+  const colors = useThemeColors();
   const { showLimitError } = useLimitError();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -164,8 +166,8 @@ export default function UploadScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
         <Pressable
           onPress={handleClose}
           style={styles.closeButton}
@@ -174,7 +176,7 @@ export default function UploadScreen() {
         >
           <MaterialIcons name="close" size={24} color="#007AFF" />
         </Pressable>
-        <Text style={styles.title}>Upload Documents</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Upload Documents</Text>
         <View style={styles.headerSpacer} />
       </View>
 

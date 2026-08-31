@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
@@ -1098,15 +1099,13 @@ export default function FormBuilderScreen() {
 
   if (loadingForm) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
-          </TouchableOpacity>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBackground }]} edges={['top']}>
+        <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
+          <AppBackButton />
           <Text style={[styles.headerTitle, { color: colors.text }]}>Form Builder</Text>
-          <View style={{ width: 40 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
-        <View style={styles.loadingFormContainer}>
+        <View style={[styles.loadingFormContainer, { backgroundColor: colors.background }]}>
           <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
           <Text style={[styles.loadingFormText, { color: colors.textSecondary }]}>Loading form...</Text>
         </View>
@@ -1115,16 +1114,15 @@ export default function FormBuilderScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBackground }]} edges={['top']}>
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.primary || '#007AFF'} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
+        <AppBackButton />
         <Text style={[styles.headerTitle, { color: colors.text }]}>Form Builder</Text>
-        <View style={{ width: 40 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Tab Selector */}
       <View style={[styles.tabContainer, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity
@@ -1216,6 +1214,8 @@ export default function FormBuilderScreen() {
           )}
         </View>
       )}
+
+      </View>
 
       {/* Field Type Selector Modal */}
       <Modal

@@ -22,6 +22,8 @@ import { floatingDialogSurfaceStyle, modalScrimOverlayStyle } from '../../utils/
 import { sanitizeDisplayFilename } from '../../utils/displayFilename';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 type FileInviteRow = {
   share_id: number;
   file_id: number;
@@ -382,7 +384,7 @@ export default function DraftsDeletedAndSharedScreen() {
   const dynamicStyles = useMemo(
     () =>
       StyleSheet.create({
-        container: { flex: 1, backgroundColor: colors.background },
+        container: { flex: 1, backgroundColor: colors.headerBackground },
         header: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -390,7 +392,7 @@ export default function DraftsDeletedAndSharedScreen() {
           paddingVertical: 12,
           borderBottomWidth: 1,
           borderBottomColor: colors.border,
-          backgroundColor: colors.card,
+          backgroundColor: colors.headerBackground,
         },
         backBtn: { padding: 10, marginRight: 6, marginTop: 4 },
         headerTitleWrap: { flex: 1, minWidth: 0 },
@@ -462,14 +464,12 @@ export default function DraftsDeletedAndSharedScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container} edges={['top']}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity style={dynamicStyles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <View style={dynamicStyles.headerTitleWrap}>
             <Text style={dynamicStyles.headerTitle}>Deleted & shared</Text>
           </View>
         </View>
-        <View style={dynamicStyles.empty}>
+        <View style={[dynamicStyles.empty, { backgroundColor: colors.background }]}>
           <Text style={dynamicStyles.emptyText}>Sign in to view deleted notes and invitations.</Text>
         </View>
       </SafeAreaView>
@@ -479,9 +479,7 @@ export default function DraftsDeletedAndSharedScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity style={dynamicStyles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={28} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <View style={dynamicStyles.headerTitleWrap}>
           <Text style={dynamicStyles.headerTitle}>Deleted & shared</Text>
           <Text style={dynamicStyles.headerSubtitle}>
@@ -491,11 +489,11 @@ export default function DraftsDeletedAndSharedScreen() {
       </View>
 
       {loading ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
           <ActivityIndicator size="large" color={colors.primary || '#007AFF'} />
         </View>
       ) : (
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
           <FlatList
             style={{ flex: 1 }}
             data={trashedDrafts}

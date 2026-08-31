@@ -33,6 +33,7 @@ import {
 } from '../../../services/emailSyncApi';
 import { CollapsibleChipList } from '../_components/CollapsibleChipList';
 import { getFileTypeFromFilename } from '../_components/emailFormat';
+import AppBackButton from '../../../components/AppBackButton';
 
 export default function AliasDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -84,8 +85,8 @@ export default function AliasDetailScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', padding: 8 },
+        safe: { flex: 1, backgroundColor: colors.headerBackground },
+        header: { flexDirection: 'row', alignItems: 'center', padding: 8, backgroundColor: colors.headerBackground },
         h1: { flex: 1, fontSize: 18, fontWeight: '700', color: colors.text },
         input: {
           borderWidth: 1,
@@ -113,12 +114,10 @@ export default function AliasDetailScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <FeedbackTouchable onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={28} color={colors.text} />
-        </FeedbackTouchable>
+        <AppBackButton />
         <Text style={styles.h1}>Alias</Text>
       </View>
-      <ScrollView>
+      <ScrollView style={{ backgroundColor: colors.background }}>
         <Text style={{ color: colors.text, paddingHorizontal: 12 }}>{alias.alias_address}</Text>
         <Text style={{ color: colors.textSecondary, paddingHorizontal: 12, marginTop: 8, fontSize: 13 }}>
           Forward from Gmail, Outlook, or Apple Mail to this address. Attachments are imported; this is not used for Replies.

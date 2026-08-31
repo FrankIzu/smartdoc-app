@@ -18,6 +18,8 @@ import { useThemeColors } from '../../../hooks/useThemeColors';
 import { apiService } from '../../../services/api';
 import type { IntakeTemplate, IntakeTemplateItem } from '../../../types/intake';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../../components/AppBackButton';
+
 interface ChecklistItemForm {
   label: string;
   description: string;
@@ -129,7 +131,7 @@ export default function EditIntakeTemplateScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -171,11 +173,9 @@ export default function EditIntakeTemplateScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.title}>Edit template</Text>
-          <View style={{ width: 24 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={dynamicStyles.center}>
           <ActivityIndicator size="large" color="#007AFF" />
@@ -187,9 +187,7 @@ export default function EditIntakeTemplateScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.title}>Edit template</Text>
         <FeedbackTouchable onPress={handleSave} disabled={saving} loading={saving} spinnerColor="#007AFF" replaceWithSpinner={false}>
           <Text style={[dynamicStyles.linkText, saving && { opacity: 0.5 }]}>

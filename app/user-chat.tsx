@@ -43,6 +43,8 @@ import { isValidPhoneNumber } from '../utils/phoneUtils';
 import { showInviteDeliveryToastMobile } from '../utils/inviteDeliveryFeedback';
 import { useAuth } from './context/auth';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../components/AppBackButton';
+
 interface ChatParticipant {
   id: number;
   username: string;
@@ -1487,6 +1489,7 @@ export default function UserChatScreen() {
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       minHeight: 56,
+      backgroundColor: colors.headerBackground,
     },
     headerTitle: {
       fontSize: 20,
@@ -1870,7 +1873,7 @@ export default function UserChatScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container} edges={['top', 'bottom']}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => {
+          <AppBackButton onPress={() => {
             if (selectedChat || isNewChat) {
               // If in a chat, go back to chat list
               setSelectedChat(null);
@@ -1881,9 +1884,7 @@ export default function UserChatScreen() {
               // If on chat list, go back to previous screen
               router.back();
             }
-          }} style={dynamicStyles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          }} />
           {!isNewChat && selectedChat && selectedChat.participants !== undefined ? (
             <TouchableOpacity
               style={{ flex: 1, alignItems: 'center' }}
@@ -1940,7 +1941,7 @@ export default function UserChatScreen() {
               />
             </TouchableOpacity>
           )}
-          {isNewChat && <View style={{ width: 40 }} />}
+          {isNewChat && <View style={{ width: APP_BACK_BUTTON_SLOT }} />}
         </View>
 
         {Platform.OS === 'ios' ? (
@@ -2279,12 +2280,10 @@ export default function UserChatScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => {
+        <AppBackButton onPress={() => {
           // Navigate back to home
           router.back();
-        }} style={dynamicStyles.backButton}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        }} />
         <Text style={dynamicStyles.headerTitle}>Messages</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity 

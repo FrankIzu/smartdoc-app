@@ -13,11 +13,12 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native';
+  View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { getFillDocument, type FillDocumentResponse } from '../../../services/fillApi';
+
+import AppBackButton from '../../../components/AppBackButton';
 
 export default function FillSessionScreen() {
   const router = useRouter();
@@ -78,10 +79,8 @@ export default function FillSessionScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+        <AppBackButton />
         <View style={{ flex: 1 }}>
           <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {doc.template_name}
@@ -114,9 +113,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    gap: 12,
-  },
+    gap: 12},
   headerTitle: { fontSize: 17, fontWeight: '600' },
   pages: { padding: 12, paddingBottom: 24, gap: 16, alignItems: 'center' },
-  pageImage: { width: '100%', aspectRatio: 0.77, backgroundColor: '#fff' },
-});
+  pageImage: { width: '100%', aspectRatio: 0.77, backgroundColor: '#fff' } });

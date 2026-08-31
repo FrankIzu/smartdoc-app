@@ -81,6 +81,8 @@ import { CalendarVisualPane } from './_components/CalendarVisualPane';
 import { ConnectCalendarModal } from './_components/ConnectCalendarModal';
 import { ConnectionChips } from './_components/ConnectionChips';
 
+import AppBackButton from '../../components/AppBackButton';
+
 type EventRow = Record<string, any>;
 
 const CALENDAR_LIST_PAGE = 10;
@@ -779,7 +781,7 @@ export default function CalendarHomeScreen() {
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+        header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 , backgroundColor: colors.headerBackground },
         back: { padding: 8, marginRight: 8 },
         h1: { fontSize: 22, fontWeight: '700', color: colors.text, flex: 1, minWidth: 0 },
         headerRight: {
@@ -1316,9 +1318,7 @@ export default function CalendarHomeScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.back} onPress={() => router.back()} accessibilityLabel="Go back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.h1}>Calendar</Text>
         <View style={styles.headerRight}>
           <TouchableOpacity

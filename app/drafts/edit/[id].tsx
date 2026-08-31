@@ -53,6 +53,8 @@ import { AnimatedHeaderContainer } from '../../components/AnimatedHeaderContaine
 import { TapToToggleHeaderView } from '../../components/TapToToggleHeaderView';
 import { useAuth } from '../../context/auth';
 
+import AppBackButton from '../../../components/AppBackButton';
+
 function stripHtmlToText(html: string): string {
   if (!html) return '';
   return html
@@ -1847,7 +1849,7 @@ export default function DraftEditScreen() {
   );
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.background },
+    container: { flex: 1, backgroundColor: colors.headerBackground },
     header: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1855,7 +1857,7 @@ export default function DraftEditScreen() {
       paddingVertical: 10,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
     },
     backBtn: { paddingHorizontal: 6, paddingVertical: 8 },
     titleWrap: { flex: 1, minWidth: 0, paddingHorizontal: 4 },
@@ -2134,15 +2136,13 @@ export default function DraftEditScreen() {
 
   return (
     <SafeAreaView style={dynamicStyles.container} edges={isSplitMode ? [] : ['top']}>
-      <TapToToggleHeaderView style={{ flex: 1 }}>
+      <TapToToggleHeaderView style={{ flex: 1, backgroundColor: colors.background }}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
         <AnimatedHeaderContainer height={headerBlockHeight}>
           <View onLayout={onHeaderBlockLayout}>
           <View style={dynamicStyles.header}>
             {!isSplitMode && (
-              <TouchableOpacity style={dynamicStyles.backBtn} onPress={handleBack}>
-                <Ionicons name="chevron-back" size={30} color={colors.primary || '#007AFF'} />
-              </TouchableOpacity>
+              <AppBackButton onPress={handleBack} />
             )}
             <View style={[dynamicStyles.titleWrap, isSplitMode && { paddingLeft: 12 }]}>
               <TextInput

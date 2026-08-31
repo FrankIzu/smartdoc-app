@@ -697,7 +697,7 @@ function DashboardScreen() {
     paddingHorizontal: 14,
     paddingTop: 14,
     paddingBottom: 7,
-    backgroundColor: colors.background,
+    backgroundColor: colors.headerBackground,
   },
   headerLeft: {
     flexDirection: 'row',

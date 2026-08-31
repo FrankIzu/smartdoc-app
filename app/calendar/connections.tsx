@@ -24,6 +24,8 @@ import { CalendarOAuthWebView } from './_components/CalendarOAuthWebView';
 import { ConnectCalendarModal } from './_components/ConnectCalendarModal';
 import { ConnectionChips } from './_components/ConnectionChips';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+
 export default function CalendarConnectionsScreen() {
   const router = useRouter();
   const colors = useThemeColors();
@@ -66,7 +68,7 @@ export default function CalendarConnectionsScreen() {
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', padding: 12 },
+        header: { flexDirection: 'row', alignItems: 'center', padding: 12 , backgroundColor: colors.headerBackground },
         h1: { fontSize: 20, fontWeight: '700', color: colors.text, flex: 1 },
         card: {
           margin: 16,
@@ -112,11 +114,9 @@ export default function CalendarConnectionsScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.h1}>Calendar connections</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
       {list.length === 0 || canConnectMore ? (

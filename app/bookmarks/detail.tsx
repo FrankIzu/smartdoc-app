@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
+import AppBackButton from '../../components/AppBackButton';
 import DocumentViewer from '../../components/DocumentViewer';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
@@ -610,6 +611,10 @@ export default function BookmarkDetailScreen() {
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
+      backgroundColor: themeColors.headerBackground || themeColors.card,
+    },
+    content: {
+      flex: 1,
       backgroundColor: themeColors.background,
     },
     loadingContainer: {
@@ -1022,12 +1027,10 @@ export default function BookmarkDetailScreen() {
 
   return (
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
-      <TapToToggleHeaderView style={dynamicStyles.container}>
+      <TapToToggleHeaderView style={dynamicStyles.content}>
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#007AFF" />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
           <View style={dynamicStyles.headerActions}>
             <FeedbackTouchable

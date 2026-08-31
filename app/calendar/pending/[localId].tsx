@@ -25,6 +25,8 @@ import {
 import { isDeviceOfflineForCalendar } from '@/utils/calendarOffline';
 import { calendarDisplayLocation, formatEventWhen } from '../../../utils/calendarTime';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../../components/AppBackButton';
+
 const MAX_ATTENTION_ATTEMPTS = 8;
 
 export default function CalendarPendingEventScreen() {
@@ -45,7 +47,7 @@ export default function CalendarPendingEventScreen() {
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', padding: 12 },
+        header: { flexDirection: 'row', alignItems: 'center', padding: 12 , backgroundColor: colors.headerBackground },
         h1: { fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 },
         body: { padding: 16, paddingBottom: 48 },
         banner: {
@@ -180,9 +182,7 @@ export default function CalendarPendingEventScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
         </View>
         <ActivityIndicator style={{ marginTop: 40 }} />
       </SafeAreaView>
@@ -193,9 +193,7 @@ export default function CalendarPendingEventScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={styles.h1}>Queued event</Text>
         </View>
         <Text style={[styles.meta, { paddingHorizontal: 16 }]}>Not found — it may have already synced.</Text>
@@ -208,13 +206,11 @@ export default function CalendarPendingEventScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.h1} numberOfLines={1}>
           Queued event
         </Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>

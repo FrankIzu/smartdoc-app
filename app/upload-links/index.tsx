@@ -25,6 +25,8 @@ import { screenCache } from '../../utils/screenCache';
 import { buildUploadLinkUrl, getUploadToBaseUrl } from '../../utils/uploadLinkHelpers';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface UploadLink {
   id: number;
   name: string;
@@ -324,7 +326,7 @@ export default function UploadLinksScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       zIndex: 2,
@@ -617,9 +619,7 @@ export default function UploadLinksScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.title}>File Request</Text>
           <View style={dynamicStyles.placeholder} />
         </View>
@@ -634,9 +634,7 @@ export default function UploadLinksScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.title}>File Request</Text>
         <TouchableOpacity onPress={handleCreateLink} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Ionicons name="add" size={24} color="#007AFF" />

@@ -27,6 +27,8 @@ import {
 } from '../../types/intake';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 /** In-memory TTL — soft-refresh still runs on focus. */
 const INTAKES_LIST_CACHE_MS = 30_000;
 /** Disk cache keeps empty/list results for instant paint across cold starts. */
@@ -347,7 +349,7 @@ export default function IntakeListScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -638,9 +640,7 @@ export default function IntakeListScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={dynamicStyles.title}>Intake</Text>
           <TouchableOpacity onPress={() => router.push('/intake/create')}>
             <Ionicons name="add" size={24} color="#007AFF" />
@@ -662,9 +662,7 @@ export default function IntakeListScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={dynamicStyles.title}>Intake</Text>
         <TouchableOpacity onPress={() => router.push('/intake/create')}>
           <Ionicons name="add" size={24} color="#007AFF" />

@@ -19,6 +19,8 @@ import { workspacesListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface Workspace {
   id: number;
   name: string;
@@ -238,7 +240,7 @@ export default function WorkspacesScreen() {
       justifyContent: 'space-between',
       paddingHorizontal: 12,
       paddingVertical: 12,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       zIndex: 2,
@@ -483,15 +485,7 @@ export default function WorkspacesScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity
-            style={dynamicStyles.headerIconButton}
-            onPress={handleBack}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton onPress={handleBack} />
           <Text style={dynamicStyles.headerTitle} numberOfLines={1} pointerEvents="none">Team Workspace</Text>
           <TouchableOpacity
             style={dynamicStyles.headerIconButton}
@@ -514,15 +508,7 @@ export default function WorkspacesScreen() {
   return (
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity
-          style={dynamicStyles.headerIconButton}
-          onPress={handleBack}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={handleBack} />
         <Text style={dynamicStyles.headerTitle} numberOfLines={1} pointerEvents="none">Team Workspace</Text>
         <TouchableOpacity
           style={dynamicStyles.headerIconButton}

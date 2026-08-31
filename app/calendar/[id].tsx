@@ -46,6 +46,8 @@ import { isDeviceOfflineForCalendar } from '../../utils/calendarOffline';
 import { navigateJoinMeeting } from '../../utils/calendarReachJoin';
 import { calendarDisplayLocation, formatUtcIsoForDevice } from '../../utils/calendarTime';
 
+import AppBackButton from '../../components/AppBackButton';
+
 function CalendarResendInviteButton({
   eventId,
   participantId,
@@ -254,7 +256,7 @@ export default function CalendarEventDetailScreen() {
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.background },
-        header: { flexDirection: 'row', alignItems: 'center', padding: 12 },
+        header: { flexDirection: 'row', alignItems: 'center', padding: 12 , backgroundColor: colors.headerBackground },
         h1: {
           fontSize: 20,
           fontWeight: '700',
@@ -496,9 +498,7 @@ export default function CalendarEventDetailScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
         </View>
         <ActivityIndicator style={{ marginTop: 40 }} />
       </SafeAreaView>
@@ -509,9 +509,7 @@ export default function CalendarEventDetailScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
         </View>
         <Text style={[styles.meta, { paddingHorizontal: 16, marginTop: 24 }]}>
           {deviceOffline
@@ -527,9 +525,7 @@ export default function CalendarEventDetailScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.h1} numberOfLines={1}>
           {event.title || 'Event'}
         </Text>

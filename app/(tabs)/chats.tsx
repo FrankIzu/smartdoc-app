@@ -87,6 +87,8 @@ import ProcessingMessageDisplay from '../components/ProcessingMessageDisplay';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 /** Header height must fit icon buttons (padding + 30px icon); 64 clipped hit targets. */
 const CHAT_CONVERSATION_HEADER_HEIGHT = 72;
 const HEADER_ACTION_HIT_SLOP = { top: 12, bottom: 12, left: 10, right: 10 };
@@ -127,15 +129,7 @@ const ChatConversationHeader = React.memo(function ChatConversationHeader({
   return (
     <AnimatedHeaderContainer height={CHAT_CONVERSATION_HEADER_HEIGHT}>
       <View style={headerStyle} collapsable={false}>
-        <GHTouchableOpacity
-          style={backButtonStyle}
-          onPress={onBack}
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-          hitSlop={HEADER_ACTION_HIT_SLOP}
-        >
-          <Ionicons name="arrow-back" size={28} color="#007AFF" />
-        </GHTouchableOpacity>
+        <AppBackButton onPress={onBack} />
 
         <View style={headerInfoStyle} pointerEvents="none">
           <Text style={[titleStyle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">
@@ -8067,14 +8061,7 @@ export default function ChatsScreen() {
       {!isSheet && (
         <AnimatedHeaderContainer>
           <View style={dynamicStyles.header}>
-            <TouchableOpacity
-              style={dynamicStyles.backButton}
-              onPress={() => router.back()}
-              accessibilityLabel="Go back"
-              accessibilityRole="button"
-            >
-              <Ionicons name="arrow-back" size={28} color="#007AFF" />
-            </TouchableOpacity>
+            <AppBackButton />
             <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
             <View style={{ flexDirection: 'row' }}>
               <TouchableOpacity
@@ -8815,6 +8802,7 @@ export default function ChatsScreen() {
       paddingVertical: 8,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
+      backgroundColor: colors.headerBackground,
     },
     headerTitle: {
       fontSize: 20,
@@ -8931,7 +8919,7 @@ export default function ChatsScreen() {
       paddingVertical: 10,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       minHeight: CHAT_CONVERSATION_HEADER_HEIGHT,
       zIndex: 20,
       elevation: 4,

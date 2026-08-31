@@ -61,6 +61,8 @@ import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { UploadOptionsModal } from '../components/UploadOptionsModal';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface Document {
   id: string;
   name: string;
@@ -2400,7 +2402,7 @@ export default function QuickFilesScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
     },
@@ -3296,14 +3298,7 @@ export default function QuickFilesScreen() {
       {/* Header */}
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity
-            style={dynamicStyles.backButton}
-            onPress={handleDocumentsHeaderBack}
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-          >
-              <Ionicons name="arrow-back" size={28} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton onPress={handleDocumentsHeaderBack} />
           <View style={dynamicStyles.headerTitleContainer}>
             <Text style={dynamicStyles.headerTitle}>
               {workspaceId ? 'Workspace Files' : 'Files'}

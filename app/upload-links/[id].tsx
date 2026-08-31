@@ -30,6 +30,8 @@ import { screenCache } from '../../utils/screenCache';
 import { getUploadToBaseUrl } from '../../utils/uploadLinkHelpers';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 interface UploadLink {
   id: number;
   name: string;
@@ -491,7 +493,7 @@ export default function UploadLinkDetailsScreen() {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: 16,
-      backgroundColor: colors.card,
+      backgroundColor: colors.headerBackground,
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       zIndex: 2,
@@ -850,9 +852,7 @@ export default function UploadLinkDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton onPress={handleBack} />
           <Text style={dynamicStyles.title}>File Request</Text>
           <View style={dynamicStyles.placeholder} />
         </View>
@@ -868,9 +868,7 @@ export default function UploadLinkDetailsScreen() {
     return (
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
-          <TouchableOpacity onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton onPress={handleBack} />
           <Text style={dynamicStyles.title}>File Request</Text>
           <View style={dynamicStyles.placeholder} />
         </View>
@@ -888,9 +886,7 @@ export default function UploadLinkDetailsScreen() {
     <>
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
-        <TouchableOpacity onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel="Go back">
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={handleBack} />
         <Text style={dynamicStyles.title}>File Request</Text>
         <FeedbackTouchable onPress={handleDeleteLink} loading={deleting} spinnerColor="#FF3B30" hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Ionicons name="trash" size={24} color="#FF3B30" />

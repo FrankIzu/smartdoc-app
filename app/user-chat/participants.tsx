@@ -17,6 +17,8 @@ import { apiService as api } from '../../services/api';
 import { getReachParticipantDisplayName } from '../../utils/reachDisplayName';
 import { useAuth } from '../context/auth';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+
 interface ChatParticipant {
   id: number;
   username: string;
@@ -279,12 +281,10 @@ export default function ChatParticipantsScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+        <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
+          <AppBackButton />
           <Text style={[styles.headerTitle, { color: colors.text }]}>Participants</Text>
-          <View style={{ width: 40 }} />
+          <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -295,12 +295,10 @@ export default function ChatParticipantsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.headerBackground }]}>
+        <AppBackButton />
         <Text style={[styles.headerTitle, { color: colors.text }]}>Participants</Text>
-        <View style={{ width: 40 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
       {/* Search Bar */}

@@ -43,6 +43,8 @@ import {
   hubTemplateSubmissionsRoute,
 } from '../../utils/signatureRouteResolver';
 
+import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+
 const TABS: { key: EnvelopeTab; label?: string; icon?: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'all', icon: 'home' },
   { key: 'inbox', label: 'Inbox' },
@@ -121,8 +123,7 @@ export default function SignaturesHubScreen() {
           alignItems: 'center',
           justifyContent: 'space-between',
           paddingHorizontal: 14,
-          paddingVertical: 12,
-        },
+          paddingVertical: 12, backgroundColor: colors.headerBackground },
         title: { fontSize: 22, fontWeight: '700', color: colors.text },
         tabsScroll: { marginBottom: 8, maxHeight: 44 },
         tabs: { flexDirection: 'row', paddingHorizontal: 10, alignItems: 'center' },
@@ -381,11 +382,9 @@ export default function SignaturesHubScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton />
         <Text style={styles.title}>Signatures</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
       <ScrollView
         horizontal

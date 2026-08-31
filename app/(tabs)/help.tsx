@@ -21,6 +21,8 @@ import { AnimatedHeaderContainer } from '../components/AnimatedHeaderContainer';
 import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
+import AppBackButton from '../../components/AppBackButton';
+
 const FEEDBACK_CATEGORIES = [
   { value: 'bug', label: 'Bug Report' },
   { value: 'feature', label: 'Feature Request' },
@@ -209,14 +211,9 @@ export default function HelpScreen() {
           paddingVertical: 12,
           borderBottomWidth: 1,
           borderBottomColor: colors.border,
-          backgroundColor: colors.background
+          backgroundColor: colors.headerBackground
         }}>
-          <TouchableOpacity 
-            onPress={() => router.back()}
-            style={{ marginRight: 12 }}
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <AppBackButton />
           <Text style={{
             fontSize: 18,
             fontWeight: '600',

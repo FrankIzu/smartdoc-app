@@ -47,6 +47,7 @@ import {
 } from '../../utils/meetingJoinPresence';
 import { MeetingJoinSound } from '../components/MeetingJoinSound';
 import { useAuth } from '../context/auth';
+import AppBackButton from '../../components/AppBackButton';
 
 const MEETING_NOTIFICATION_ID = 'grabdocs_meeting_minimized';
 
@@ -141,15 +142,12 @@ function resolveMeetingExitPath(returnToParam: unknown): string {
 function PrejoinBackButton({ onPress, topInset }: { onPress: () => void; topInset: number }) {
   return (
     <View style={[styles.prejoinBackContainer, { top: topInset + 8 }]} pointerEvents="box-none">
-      <TouchableOpacity
-        style={styles.prejoinBackButton}
+      <AppBackButton
         onPress={onPress}
-        accessibilityRole="button"
+        color="#fff"
         accessibilityLabel="Back to meetings"
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        <Ionicons name="arrow-back" size={24} color="#fff" />
-      </TouchableOpacity>
+        style={styles.prejoinBackButton}
+      />
     </View>
   );
 }

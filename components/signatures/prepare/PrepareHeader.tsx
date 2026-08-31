@@ -19,6 +19,7 @@ import { TouchableOpacity } from 'react-native-gesture-handler';
 import { FeedbackTouchable } from '../../FeedbackTouchable';
 import type { PrepareEditorActions, PrepareEditorState } from '../../../hooks/usePrepareEditor';
 import { useThemeColors } from '../../../hooks/useThemeColors';
+import AppBackButton from '../../AppBackButton';
 
 interface Props {
   editor: PrepareEditorState & PrepareEditorActions;
@@ -45,16 +46,10 @@ export default function PrepareHeader({
   } = editor;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, borderBottomColor: colors.border ?? '#E5E7EB' }]}>
+    <View style={[styles.container, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border ?? '#E5E7EB' }]}>
       {/* Left: back + undo/redo */}
       <View style={styles.side}>
-        <TouchableOpacity
-          style={styles.iconBtn}
-          onPress={onBack}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </TouchableOpacity>
+        <AppBackButton onPress={onBack} />
 
         <TouchableOpacity
           style={[styles.iconBtn, !canUndo && styles.disabled]}

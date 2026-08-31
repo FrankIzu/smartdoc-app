@@ -56,7 +56,7 @@ export default function DraftsSplitLayout() {
   }
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]} edges={['top']}>
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.headerBackground }]} edges={['top']}>
       <View style={styles.row}>
         <DraftsListPane mode="split" width={sidebarWidth} />
         {canResizeSidebar ? (
