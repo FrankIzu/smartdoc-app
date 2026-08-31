@@ -231,9 +231,15 @@ export async function setDismissedStoreUpdateVersion(version: string): Promise<v
   }
 }
 
-/** True when running in a standalone build where expo-updates is available (not Expo Go). */
+/**
+ * True when expo-updates can run (release binary, not Expo Go / Metro).
+ * Do NOT gate on Constants.appOwnership: bare/store builds from prebuild often
+ * report appOwnership as null, which previously skipped every OTA check.
+ */
 export function isUpdatesSupported(): boolean {
-  return Constants.appOwnership !== 'expo' && Constants.appOwnership != null;
+  if (__DEV__) return false;
+  if (Constants.appOwnership === 'expo' || Constants.appOwnership === 'guest') return false;
+  return Updates.isEnabled;
 }
 
 /**
