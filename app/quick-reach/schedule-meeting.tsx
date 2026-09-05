@@ -20,6 +20,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 export default function ScheduleMeetingScreen() {
   const colors = useThemeColors();
@@ -642,7 +643,7 @@ export default function ScheduleMeetingScreen() {
         {/* Header */}
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.headerTitle}>Schedule Meeting</Text>
+          <AppHeaderTitle>Schedule Meeting</AppHeaderTitle>
           <FeedbackTouchable
             style={[dynamicStyles.scheduleButton, loading && dynamicStyles.scheduleButtonDisabled]}
             onPress={createMeeting}

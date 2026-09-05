@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
@@ -382,7 +383,7 @@ export default function CreateFormScreen() {
       <SafeAreaView style={[styles.container, dynamicStyles.page]} edges={['top']}>
         <View style={[styles.header, dynamicStyles.header]}>
           <AppBackButton />
-          <Text style={[styles.headerTitle, dynamicStyles.text]}>Create Form</Text>
+          <AppHeaderTitle>Create Form</AppHeaderTitle>
           <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={[styles.loadingContainer, dynamicStyles.content]}>
@@ -397,7 +398,7 @@ export default function CreateFormScreen() {
     <SafeAreaView style={[styles.container, dynamicStyles.page]} edges={['top']}>
       <View style={[styles.header, dynamicStyles.header]}>
         <AppBackButton />
-        <Text style={[styles.headerTitle, dynamicStyles.text]}>Create Form</Text>
+        <AppHeaderTitle>Create Form</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
@@ -493,7 +494,8 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
+    gap: 4,
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#fff',

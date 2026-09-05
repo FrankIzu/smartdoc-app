@@ -38,6 +38,7 @@ import {
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 type Segment = 'usage' | 'billing';
 
@@ -438,6 +439,8 @@ export default function BillingScreen() {
         header: {
           flexDirection: 'row',
           alignItems: 'center',
+          justifyContent: 'flex-start',
+          gap: 4,
           paddingHorizontal: 12,
           paddingVertical: 10,
           borderBottomWidth: StyleSheet.hairlineWidth,
@@ -447,7 +450,7 @@ export default function BillingScreen() {
         headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
         headerTitle: {
           flex: 1,
-          textAlign: 'center',
+          textAlign: 'left',
           fontSize: 17,
           fontWeight: '600',
           color: colors.text,
@@ -938,7 +941,7 @@ export default function BillingScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton onPress={handleBack} />
-        <Text style={styles.headerTitle}>Billing & Usage</Text>
+        <AppHeaderTitle>Billing & Usage</AppHeaderTitle>
         <View style={styles.headerBtn} />
       </View>
 

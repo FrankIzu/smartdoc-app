@@ -47,6 +47,7 @@ import {
 import { EmailImportsPane } from './imports';
 import { EmailSetupPane } from './mailbox';
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 const FILTERS: { id: ThreadAttention; label: string }[] = [
   { id: 'pending', label: 'To reply' },
@@ -253,7 +254,6 @@ export default function EmailInboxScreen() {
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: colors.headerBackground },
         header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingBottom: 4, backgroundColor: colors.headerBackground },
-        title: { flex: 1, fontSize: 28, fontWeight: '800', color: colors.text, letterSpacing: -0.4 },
         iconBtn: { padding: 10 },
         pills: {
           flexDirection: 'row',
@@ -430,7 +430,7 @@ export default function EmailInboxScreen() {
         ) : (
           <AppBackButton />
         )}
-        <Text style={styles.title}>{selectMode ? `${selected.length} selected` : 'Email Sync'}</Text>
+        <AppHeaderTitle>{selectMode ? `${selected.length} selected` : 'Email Sync'}</AppHeaderTitle>
         {selectMode && filter !== 'dismissed' ? (
           <FeedbackTouchable
             style={styles.iconBtn}

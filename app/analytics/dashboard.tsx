@@ -33,6 +33,7 @@ import { UploadOptionsModal } from '../components/UploadOptionsModal';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 /** Rows shown initially in Recent Receipts / Recent Invoices; full lists stay in state for charts & summaries. */
 const FINANCIALS_LIST_PAGE_SIZE = 10;
@@ -2013,7 +2014,7 @@ export default function AnalyticsDashboard() {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
           <AppBackButton />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
+          <AppHeaderTitle>Financials</AppHeaderTitle>
           <View style={styles.placeholder} />
         </View>
         <View style={styles.loadingContainer}>
@@ -2031,7 +2032,7 @@ export default function AnalyticsDashboard() {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
           <AppBackButton />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
+          <AppHeaderTitle>Financials</AppHeaderTitle>
           <TouchableOpacity style={styles.headerButton} onPress={() => loadAnalytics()}>
             <Ionicons name="refresh" size={28} color={colors.primary || '#007AFF'} />
           </TouchableOpacity>
@@ -2118,7 +2119,7 @@ export default function AnalyticsDashboard() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
         <AppBackButton />
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Financials</Text>
+        <AppHeaderTitle>Financials</AppHeaderTitle>
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerButton}

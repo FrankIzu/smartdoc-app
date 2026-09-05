@@ -26,6 +26,7 @@ import { isDeviceOfflineForCalendar } from '@/utils/calendarOffline';
 import { calendarDisplayLocation, formatEventWhen } from '../../../utils/calendarTime';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 const MAX_ATTENTION_ATTEMPTS = 8;
 
@@ -194,7 +195,7 @@ export default function CalendarPendingEventScreen() {
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
           <AppBackButton />
-          <Text style={styles.h1}>Queued event</Text>
+          <AppHeaderTitle>Queued event</AppHeaderTitle>
         </View>
         <Text style={[styles.meta, { paddingHorizontal: 16 }]}>Not found — it may have already synced.</Text>
       </SafeAreaView>
@@ -207,9 +208,7 @@ export default function CalendarPendingEventScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1} numberOfLines={1}>
-          Queued event
-        </Text>
+        <AppHeaderTitle>Queued event</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 

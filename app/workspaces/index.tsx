@@ -20,6 +20,7 @@ import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface Workspace {
   id: number;
@@ -237,7 +238,8 @@ export default function WorkspacesScreen() {
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
+      gap: 4,
       paddingHorizontal: 12,
       paddingVertical: 12,
       backgroundColor: colors.headerBackground,
@@ -251,7 +253,7 @@ export default function WorkspacesScreen() {
       fontSize: 18,
       fontWeight: '600',
       color: colors.text,
-      textAlign: 'center',
+      textAlign: 'left',
       marginHorizontal: 4,
     },
     headerIconButton: {
@@ -486,7 +488,7 @@ export default function WorkspacesScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton onPress={handleBack} />
-          <Text style={dynamicStyles.headerTitle} numberOfLines={1} pointerEvents="none">Team Workspace</Text>
+          <AppHeaderTitle pointerEvents="none">Workspaces</AppHeaderTitle>
           <TouchableOpacity
             style={dynamicStyles.headerIconButton}
             onPress={() => router.push('/workspaces/create')}
@@ -509,7 +511,7 @@ export default function WorkspacesScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton onPress={handleBack} />
-        <Text style={dynamicStyles.headerTitle} numberOfLines={1} pointerEvents="none">Team Workspace</Text>
+        <AppHeaderTitle pointerEvents="none">Workspaces</AppHeaderTitle>
         <TouchableOpacity
           style={dynamicStyles.headerIconButton}
           onPress={() => router.push('/workspaces/create')}

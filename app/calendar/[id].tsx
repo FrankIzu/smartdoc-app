@@ -47,6 +47,7 @@ import { navigateJoinMeeting } from '../../utils/calendarReachJoin';
 import { calendarDisplayLocation, formatUtcIsoForDevice } from '../../utils/calendarTime';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 function CalendarResendInviteButton({
   eventId,
@@ -526,9 +527,9 @@ export default function CalendarEventDetailScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1} numberOfLines={1}>
+        <AppHeaderTitle>
           {event.title || 'Event'}
-        </Text>
+        </AppHeaderTitle>
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>

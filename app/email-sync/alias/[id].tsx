@@ -34,6 +34,7 @@ import {
 import { CollapsibleChipList } from '../_components/CollapsibleChipList';
 import { getFileTypeFromFilename } from '../_components/emailFormat';
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 export default function AliasDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -115,7 +116,7 @@ export default function AliasDetailScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1}>Alias</Text>
+        <AppHeaderTitle>Alias</AppHeaderTitle>
       </View>
       <ScrollView style={{ backgroundColor: colors.background }}>
         <Text style={{ color: colors.text, paddingHorizontal: 12 }}>{alias.alias_address}</Text>

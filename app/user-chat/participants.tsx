@@ -18,6 +18,7 @@ import { getReachParticipantDisplayName } from '../../utils/reachDisplayName';
 import { useAuth } from '../context/auth';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface ChatParticipant {
   id: number;
@@ -283,7 +284,7 @@ export default function ChatParticipantsScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
           <AppBackButton />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Participants</Text>
+          <AppHeaderTitle>Participants</AppHeaderTitle>
           <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={styles.loadingContainer}>
@@ -297,7 +298,7 @@ export default function ChatParticipantsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Participants</Text>
+        <AppHeaderTitle>Participants</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 

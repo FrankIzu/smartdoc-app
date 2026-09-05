@@ -8,6 +8,7 @@ import { useThemeColors } from '../../../hooks/useThemeColors';
 import { calendarAssetContent, calendarMeetingAssets } from '../../../services/calendarApi';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 type LazyAssetType = 'transcript' | 'summary' | 'chat';
 type AssetItem = {
@@ -177,9 +178,7 @@ export default function CalendarEventAssetsScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1} numberOfLines={1}>
-          Meeting assets
-        </Text>
+        <AppHeaderTitle>Meeting assets</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 

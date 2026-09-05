@@ -14,6 +14,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppHeaderTitle from './AppHeaderTitle';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -140,7 +141,7 @@ export default function ScannerScreen() {
         >
           <Ionicons name="close" size={26} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Document Scanner</Text>
+        <AppHeaderTitle style={{ color: '#fff' }}>Document Scanner</AppHeaderTitle>
         <TouchableOpacity
           style={styles.headerIconButton}
           onPress={toggleCameraFacing}

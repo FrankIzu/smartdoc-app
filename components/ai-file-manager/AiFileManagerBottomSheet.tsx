@@ -14,6 +14,7 @@ import {
 import { AI_FM_ICON_COLOR } from '../../constants/aiFileManagerHelp';
 import { useAiFileManager } from '../../hooks/useAiFileManager';
 import { useThemeColors } from '../../hooks/useThemeColors';
+import AppHeaderTitle from '../AppHeaderTitle';
 import MinimizableBottomSheet from '../MinimizableBottomSheet';
 import AiFileManagerHelpModal from './AiFileManagerHelpModal';
 import CommandTab from './CommandTab';
@@ -112,7 +113,7 @@ export default function AiFileManagerBottomSheet({
             <View style={styles.headerLeft}>
               <Feather name="cpu" size={20} color={AI_FM_ICON_COLOR} />
               <View style={styles.headerTitles}>
-                <Text style={[styles.title, { color: colors.text }]}>AI File Manager</Text>
+                <AppHeaderTitle fill={false}>AI File Manager</AppHeaderTitle>
                 <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
                   {minimized ? 'Swipe up to continue' : 'Quick file actions · owned files only'}
                 </Text>

@@ -27,6 +27,7 @@ import { useFileStore } from '../../../stores/fileStore';
 import { envelopeDocsToWizardSources, wizardSourcesToReplaceDocuments } from '../../../utils/signatureRuntime';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 function newLocalId() {
   return `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -210,7 +211,7 @@ export default function CreateEnvelopeScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Prepare for Signature</Text>
+        <AppHeaderTitle>Prepare for Signature</AppHeaderTitle>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.label, { color: colors.text }]}>Title</Text>

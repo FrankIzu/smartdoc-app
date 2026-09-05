@@ -18,6 +18,7 @@ import { useAuth } from '../context/auth';
 import { getNotificationScreen, parseNotificationPath, getEmailReplyComposeScreen } from '../services/pushNotifications';
 import { formatUtcIsoForDevice } from '../../utils/calendarTime';
 import { AnimatedHeaderContainer } from './AnimatedHeaderContainer';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 export interface AppNotification {
   id: number;
@@ -538,9 +539,11 @@ export function NotificationsInboxContent({
   const headerRow = (
     <View style={dynamicStyles.header}>
       {headerLeft}
-      <Text style={dynamicStyles.headerTitle} numberOfLines={1}>
-        Notifications
-      </Text>
+      {variant === 'screen' ? (
+        <AppHeaderTitle>Notifications</AppHeaderTitle>
+      ) : (
+        <AppHeaderTitle fill={false} style={{ flex: 1 }}>Notifications</AppHeaderTitle>
+      )}
       {headerActions}
     </View>
   );

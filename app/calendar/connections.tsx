@@ -25,6 +25,7 @@ import { ConnectCalendarModal } from './_components/ConnectCalendarModal';
 import { ConnectionChips } from './_components/ConnectionChips';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 export default function CalendarConnectionsScreen() {
   const router = useRouter();
@@ -115,7 +116,7 @@ export default function CalendarConnectionsScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1}>Calendar connections</Text>
+        <AppHeaderTitle>Calendar connections</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 

@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
 import type { FolderRowModel } from '../../types/folder';
+import AppHeaderTitle from '../AppHeaderTitle';
 import FolderBreadcrumb from './FolderBreadcrumb';
 import FolderListItem from './FolderListItem';
 
@@ -113,9 +114,7 @@ export default function FolderMovePicker({
         <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.closeBtn} accessibilityLabel="Close">
           <Ionicons name="close" size={28} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-          {currentName}
-        </Text>
+        <AppHeaderTitle>{currentName}</AppHeaderTitle>
         <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.cancelBtn}>
           <Text style={{ color: colors.primary, fontSize: 16, fontWeight: '600' }}>Cancel</Text>
         </TouchableOpacity>

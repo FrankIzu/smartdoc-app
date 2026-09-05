@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import FileNameText from './FileNameText';
+import AppHeaderTitle from './AppHeaderTitle';
 import { ExternalFile, externalFileService } from '../services/externalFileServices';
 
 interface ExternalFilePickerProps {
@@ -285,11 +286,11 @@ export function ExternalFilePicker({
               color="#374151"
             />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
+          <AppHeaderTitle>
             {selectedService
               ? externalFileService.getServiceName(selectedService)
               : 'Import from Cloud'}
-          </Text>
+          </AppHeaderTitle>
           <View style={{ width: 24 }} />
         </View>
 

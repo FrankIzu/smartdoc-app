@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 import { useLimitError } from '../../contexts/LimitErrorContext';
 import { extractLimitErrorData, getErrorResponseData } from '../../utils/limitErrorUtils';
 
@@ -172,7 +173,7 @@ export default function ProcessScanScreen() {
         >
           <Ionicons name="close" size={28} color="#fff" />
         </Pressable>
-        <Text style={styles.headerTitle}>Review Scan</Text>
+        <AppHeaderTitle style={{ color: '#fff' }}>Review Scan</AppHeaderTitle>
         <Pressable
           style={[styles.saveBtn, uploading && styles.saveBtnDisabled]}
           onPress={saveDocument}

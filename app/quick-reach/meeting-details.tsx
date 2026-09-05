@@ -33,6 +33,7 @@ import { apiClient } from '../../services/api';
 import { secureStorage } from '../../utils/storage';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface MeetingAsset {
   id: string;
@@ -2743,9 +2744,9 @@ export default function MeetingDetailsScreen() {
       <View style={[dynamicStyles.header, fromAssetsShortcut && dynamicStyles.headerCompact]}>
         <AppBackButton />
         <View style={dynamicStyles.headerContent}>
-          <Text style={dynamicStyles.headerTitle} numberOfLines={1}>
+          <AppHeaderTitle>
             {meetingTitle || 'Meeting Details'}
-          </Text>
+          </AppHeaderTitle>
           {!fromAssetsShortcut ? (
             <Text style={dynamicStyles.headerSubtitle}>Room: {roomCode}</Text>
           ) : null}

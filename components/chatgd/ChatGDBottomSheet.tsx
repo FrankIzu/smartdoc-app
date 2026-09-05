@@ -16,6 +16,7 @@ import {
 } from '../../contexts/ChatGDSheetContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import MinimizableBottomSheet from '../MinimizableBottomSheet';
+import AppHeaderTitle from '../AppHeaderTitle';
 import ChatsScreen from '../../app/(tabs)/chats';
 
 const KEYBOARD_EXTRA_INSET = 0;
@@ -76,7 +77,7 @@ export default function ChatGDBottomSheetHost() {
             <View style={styles.headerLeft}>
               <Ionicons name="chatbubbles" size={20} color="#007AFF" />
               <View style={styles.headerTitles}>
-                <Text style={[styles.title, { color: colors.text }]}>ChatGD</Text>
+                <AppHeaderTitle fill={false}>ChatGD</AppHeaderTitle>
                 <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
                   {minimized ? 'Tap to continue' : 'Ask anything about your files'}
                 </Text>

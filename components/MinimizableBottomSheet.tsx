@@ -20,6 +20,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '../hooks/useThemeColors';
+import AppHeaderTitle from './AppHeaderTitle';
 import {
     persistentBottomNavInset,
     shouldShowPersistentBottomNav,
@@ -228,9 +229,7 @@ export default function MinimizableBottomSheet({
       >
         {title ? (
           <View style={styles.headerTitles}>
-            <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-              {title}
-            </Text>
+            <AppHeaderTitle fill={false}>{title}</AppHeaderTitle>
             {(minimized ? minimizedSubtitle : subtitle) ? (
               <Text style={[styles.subtitle, { color: colors.textSecondary }]} numberOfLines={1}>
                 {minimized ? minimizedSubtitle : subtitle}

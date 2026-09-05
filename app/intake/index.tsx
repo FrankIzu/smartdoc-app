@@ -28,6 +28,7 @@ import {
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 /** In-memory TTL — soft-refresh still runs on focus. */
 const INTAKES_LIST_CACHE_MS = 30_000;
@@ -641,7 +642,7 @@ export default function IntakeListScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.title}>Intake</Text>
+          <AppHeaderTitle>Intake</AppHeaderTitle>
           <TouchableOpacity onPress={() => router.push('/intake/create')}>
             <Ionicons name="add" size={24} color="#007AFF" />
           </TouchableOpacity>
@@ -663,7 +664,7 @@ export default function IntakeListScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.title}>Intake</Text>
+        <AppHeaderTitle>Intake</AppHeaderTitle>
         <TouchableOpacity onPress={() => router.push('/intake/create')}>
           <Ionicons name="add" size={24} color="#007AFF" />
         </TouchableOpacity>

@@ -23,6 +23,7 @@ import { sanitizeDisplayFilename } from '../../utils/displayFilename';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 type FileInviteRow = {
   share_id: number;
@@ -466,7 +467,7 @@ export default function DraftsDeletedAndSharedScreen() {
         <View style={dynamicStyles.header}>
           <AppBackButton />
           <View style={dynamicStyles.headerTitleWrap}>
-            <Text style={dynamicStyles.headerTitle}>Deleted & shared</Text>
+            <AppHeaderTitle fill={false}>Deleted & shared</AppHeaderTitle>
           </View>
         </View>
         <View style={[dynamicStyles.empty, { backgroundColor: colors.background }]}>
@@ -481,7 +482,7 @@ export default function DraftsDeletedAndSharedScreen() {
       <View style={dynamicStyles.header}>
         <AppBackButton />
         <View style={dynamicStyles.headerTitleWrap}>
-          <Text style={dynamicStyles.headerTitle}>Deleted & shared</Text>
+          <AppHeaderTitle fill={false}>Deleted & shared</AppHeaderTitle>
           <Text style={dynamicStyles.headerSubtitle}>
             Notes in your account trash · invitations to co-edit notes
           </Text>

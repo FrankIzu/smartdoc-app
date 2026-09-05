@@ -29,6 +29,7 @@ import { REACH_CURRENT_MEETING_KEY, canonicalizeReachMeetingId } from '../../con
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 type MeetingSource = 'own' | 'invited';
 
@@ -1841,7 +1842,7 @@ export default function MeetingCallScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
+          <AppHeaderTitle>Meeting Call</AppHeaderTitle>
           <View style={dynamicStyles.headerSpacer} />
         </View>
         <View style={dynamicStyles.loadingContainer}>
@@ -1856,7 +1857,7 @@ export default function MeetingCallScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.headerTitle}>Meeting Call</Text>
+        <AppHeaderTitle>Meeting Call</AppHeaderTitle>
         <TouchableOpacity
           style={dynamicStyles.refreshButton}
           onPress={handleRefresh}

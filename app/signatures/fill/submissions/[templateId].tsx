@@ -19,6 +19,7 @@ import { formatEnvelopeListDate } from '../../../../utils/envelopeDisplay';
 import { submissionDisplayTitle } from '../../../../utils/signatureActivity';
 
 import AppBackButton from '../../../../components/AppBackButton';
+import AppHeaderTitle from '../../../../components/AppHeaderTitle';
 
 export default function TemplateSubmissionsScreen() {
   const { templateId } = useLocalSearchParams<{ templateId: string }>();
@@ -95,9 +96,9 @@ export default function TemplateSubmissionsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.headerTitle} numberOfLines={1}>
+        <AppHeaderTitle>
           {templateTitle}
-        </Text>
+        </AppHeaderTitle>
       </View>
 
       {loading && submissions.length === 0 ? (

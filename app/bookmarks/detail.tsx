@@ -17,6 +17,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 import DocumentViewer from '../../components/DocumentViewer';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
@@ -654,7 +655,8 @@ export default function BookmarkDetailScreen() {
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
+      gap: 4,
       paddingHorizontal: 16,
       paddingVertical: 12,
       backgroundColor: themeColors.headerBackground || themeColors.card,
@@ -1031,7 +1033,7 @@ export default function BookmarkDetailScreen() {
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{bookmark.name.length > 30 ? `${bookmark.name.slice(0, 30)}...` : bookmark.name}</Text>
+          <AppHeaderTitle>{bookmark.name}</AppHeaderTitle>
           <View style={dynamicStyles.headerActions}>
             <FeedbackTouchable
               onPress={handleToggleLock}

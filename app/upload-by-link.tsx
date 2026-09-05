@@ -36,6 +36,7 @@ import {
 } from '../utils/userPreferences';
 
 import AppBackButton from '../components/AppBackButton';
+import AppHeaderTitle from '../components/AppHeaderTitle';
 
 interface IntakeChecklistItem {
   label: string;
@@ -804,7 +805,7 @@ export default function UploadByLinkScreen() {
       <View style={dynamicStyles.header}>
         <AppBackButton />
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={dynamicStyles.headerTitle}>Upload Files</Text>
+          <AppHeaderTitle>Upload Files</AppHeaderTitle>
           {uploadInfo && (
             <Text style={dynamicStyles.headerSubtitle}>Upload to: {uploadInfo.name}</Text>
           )}

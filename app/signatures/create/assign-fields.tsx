@@ -24,6 +24,7 @@ import { validateSignerFieldCoverage } from '../../../utils/signatureAssignmentC
 import { saveDraftStep } from '../../../services/signatureSessionCache';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 export default function AssignFieldsScreen() {
   const { envelopeId } = useLocalSearchParams<{ envelopeId: string }>();
@@ -144,7 +145,7 @@ export default function AssignFieldsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
-        <Text style={[styles.title, { color: colors.text }]}>Assign fields</Text>
+        <AppHeaderTitle>Assign fields</AppHeaderTitle>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         {loading ? (

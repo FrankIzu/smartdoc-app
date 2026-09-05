@@ -22,6 +22,7 @@ import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 const FEEDBACK_CATEGORIES = [
   { value: 'bug', label: 'Bug Report' },
@@ -214,14 +215,7 @@ export default function HelpScreen() {
           backgroundColor: colors.headerBackground
         }}>
           <AppBackButton />
-          <Text style={{
-            fontSize: 18,
-            fontWeight: '600',
-            color: colors.text,
-            flex: 1
-          }}>
-            Help & Support
-          </Text>
+          <AppHeaderTitle>Help & Support</AppHeaderTitle>
         </View>
       </AnimatedHeaderContainer>
       <KeyboardAvoidingView

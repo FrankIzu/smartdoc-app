@@ -19,6 +19,7 @@ import { apiService } from '../../../services/api';
 import type { IntakeTemplate, IntakeTemplateItem } from '../../../types/intake';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 interface ChecklistItemForm {
   label: string;
@@ -174,7 +175,7 @@ export default function EditIntakeTemplateScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.title}>Edit template</Text>
+          <AppHeaderTitle>Edit template</AppHeaderTitle>
           <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={dynamicStyles.center}>
@@ -188,7 +189,7 @@ export default function EditIntakeTemplateScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.title}>Edit template</Text>
+        <AppHeaderTitle>Edit template</AppHeaderTitle>
         <FeedbackTouchable onPress={handleSave} disabled={saving} loading={saving} spinnerColor="#007AFF" replaceWithSpinner={false}>
           <Text style={[dynamicStyles.linkText, saving && { opacity: 0.5 }]}>
             {saving ? 'Saving...' : 'Save'}

@@ -21,6 +21,7 @@ import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 export default function CreateUploadLinkScreen() {
   const router = useRouter();
@@ -292,7 +293,7 @@ export default function CreateUploadLinkScreen() {
             Keyboard.dismiss();
             router.back();
           }} />
-        <Text style={dynamicStyles.title}>Create File Request</Text>
+        <AppHeaderTitle>Create File Request</AppHeaderTitle>
         <View style={dynamicStyles.placeholder} />
       </View>
 

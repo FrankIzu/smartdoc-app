@@ -62,6 +62,7 @@ import { UploadOptionsModal } from '../components/UploadOptionsModal';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface Document {
   id: string;
@@ -3219,7 +3220,8 @@ export default function QuickFilesScreen() {
         <TapToToggleHeaderView style={dynamicStyles.container}>
           <AnimatedHeaderContainer>
             <View style={dynamicStyles.header}>
-              <Text style={dynamicStyles.headerTitle}>Files</Text>
+              <AppBackButton onPress={handleDocumentsHeaderBack} />
+              <AppHeaderTitle>Files</AppHeaderTitle>
               <View style={dynamicStyles.headerActions}>
                 {useFolderMode ? (
                   <TouchableOpacity
@@ -3300,9 +3302,9 @@ export default function QuickFilesScreen() {
         <View style={dynamicStyles.header}>
           <AppBackButton onPress={handleDocumentsHeaderBack} />
           <View style={dynamicStyles.headerTitleContainer}>
-            <Text style={dynamicStyles.headerTitle}>
+            <AppHeaderTitle fill={false}>
               {workspaceId ? 'Workspace Files' : 'Files'}
-            </Text>
+            </AppHeaderTitle>
             {isAutoRefreshing && (
               <View style={dynamicStyles.autoRefreshIndicator}>
                 <Ionicons name="sync" size={16} color="#007AFF" />

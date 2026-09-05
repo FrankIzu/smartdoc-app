@@ -26,6 +26,7 @@ import { buildUploadLinkUrl, getUploadToBaseUrl } from '../../utils/uploadLinkHe
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface UploadLink {
   id: number;
@@ -620,7 +621,7 @@ export default function UploadLinksScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.title}>File Request</Text>
+          <AppHeaderTitle>File Request</AppHeaderTitle>
           <View style={dynamicStyles.placeholder} />
         </View>
         <View style={dynamicStyles.centerContainer}>
@@ -635,7 +636,7 @@ export default function UploadLinksScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.title}>File Request</Text>
+        <AppHeaderTitle>File Request</AppHeaderTitle>
         <TouchableOpacity onPress={handleCreateLink} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Ionicons name="add" size={24} color="#007AFF" />
         </TouchableOpacity>

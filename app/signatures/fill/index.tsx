@@ -16,6 +16,7 @@ import { uploadPdfForSignature } from '../../../services/uploadWithGlobalProgres
 import { hubFillEditorRoute, hubFillPickRoute } from '../../../utils/signatureRouteResolver';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 export default function FillEntryScreen() {
   const router = useRouter();
@@ -40,7 +41,7 @@ export default function FillEntryScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton onPress={() => { if (!busy) router.back(); }} />
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Fill a document</Text>
+        <AppHeaderTitle>Fill a document</AppHeaderTitle>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>

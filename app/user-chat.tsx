@@ -44,6 +44,7 @@ import { showInviteDeliveryToastMobile } from '../utils/inviteDeliveryFeedback';
 import { useAuth } from './context/auth';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../components/AppBackButton';
+import AppHeaderTitle from '../components/AppHeaderTitle';
 
 interface ChatParticipant {
   id: number;
@@ -1483,7 +1484,8 @@ export default function UserChatScreen() {
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
+      gap: 4,
       paddingHorizontal: 14,
       paddingVertical: 10,
       borderBottomWidth: 1,
@@ -1898,9 +1900,9 @@ export default function UserChatScreen() {
               }}
               activeOpacity={0.7}
             >
-              <Text style={dynamicStyles.headerTitle}>
+              <AppHeaderTitle fill={false}>
                 {selectedChat?.title || ''}
-              </Text>
+              </AppHeaderTitle>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={dynamicStyles.headerSubtitle}>
                   {selectedChat.participants.length} participant{selectedChat.participants.length !== 1 ? 's' : ''}
@@ -1912,9 +1914,9 @@ export default function UserChatScreen() {
             </TouchableOpacity>
           ) : (
               <View style={{ flex: 1, alignItems: 'center' }}>
-              <Text style={dynamicStyles.headerTitle}>
+              <AppHeaderTitle fill={false}>
                 {isNewChat ? 'New Message' : selectedChat?.display_name || selectedChat?.title || ''}
-              </Text>
+              </AppHeaderTitle>
               {selectedChat?.invite_pending && (
                 <Text style={{ fontSize: 11, color: '#B45309' }}>Invite pending · messaging disabled</Text>
               )}
@@ -2284,7 +2286,7 @@ export default function UserChatScreen() {
           // Navigate back to home
           router.back();
         }} />
-        <Text style={dynamicStyles.headerTitle}>Messages</Text>
+        <AppHeaderTitle>Messages</AppHeaderTitle>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity 
             onPress={() => {

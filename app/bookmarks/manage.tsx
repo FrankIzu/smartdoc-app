@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { useOpenChatGD } from '../../contexts/ChatGDSheetContext';
@@ -319,7 +320,8 @@ export default function ManageBookmarksScreen() {
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
+      gap: 4,
       paddingHorizontal: 16,
       paddingVertical: 12,
       backgroundColor: colors.headerBackground,
@@ -634,7 +636,7 @@ export default function ManageBookmarksScreen() {
       <SafeAreaView style={dynamicStyles.container} edges={['top']}>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.headerTitle}>Bookmarks</Text>
+          <AppHeaderTitle>Bookmarks</AppHeaderTitle>
           <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={[dynamicStyles.loadingContainer, dynamicStyles.content]}>
@@ -649,7 +651,7 @@ export default function ManageBookmarksScreen() {
     <SafeAreaView style={dynamicStyles.container} edges={['top']}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.headerTitle}>Manage Bookmarks</Text>
+        <AppHeaderTitle>Manage Bookmarks</AppHeaderTitle>
         <TouchableOpacity
           style={dynamicStyles.addButton}
           onPress={() => setShowCreateModal(true)}

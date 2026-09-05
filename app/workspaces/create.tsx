@@ -21,6 +21,7 @@ import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 export default function CreateWorkspaceScreen() {
   const router = useRouter();
@@ -63,7 +64,8 @@ export default function CreateWorkspaceScreen() {
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
+      gap: 4,
       paddingHorizontal: 20,
       paddingVertical: 16,
       backgroundColor: colors.headerBackground,
@@ -74,6 +76,7 @@ export default function CreateWorkspaceScreen() {
       fontSize: 18,
       fontWeight: '600',
       color: colors.text,
+      textAlign: 'left',
     },
     saveButton: {
       paddingHorizontal: 16,
@@ -205,7 +208,7 @@ export default function CreateWorkspaceScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton onPress={handleBack} />
-        <Text style={dynamicStyles.headerTitle} pointerEvents="none">Create Workspace</Text>
+        <AppHeaderTitle pointerEvents="none">Create Workspace</AppHeaderTitle>
         <FeedbackTouchable
           onPress={handleCreate}
           disabled={loading || !name.trim() || !slug.trim()}

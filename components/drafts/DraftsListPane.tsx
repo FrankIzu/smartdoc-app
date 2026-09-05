@@ -43,6 +43,7 @@ import { TapToToggleHeaderView } from '../../app/components/TapToToggleHeaderVie
 import { useAuth } from '../../app/context/auth';
 
 import AppBackButton from '../AppBackButton';
+import AppHeaderTitle from '../AppHeaderTitle';
 
 const CHATGD_PLACEHOLDER_FROM_DRAFTS = 'Ask about your notes';
 
@@ -455,7 +456,7 @@ export default function DraftsListPane({ mode, width, style }: DraftsListPanePro
               <AppBackButton />
             )}
             <View style={[dynamicStyles.headerTitleWrap, isSplitMode && { paddingLeft: 12 }]}>
-              <Text style={dynamicStyles.headerTitle}>Notes</Text>
+              <AppHeaderTitle fill={false}>Notes</AppHeaderTitle>
               {drafts.length > 0 && (
                 <Text style={dynamicStyles.headerSubtitle}>
                   {drafts.length} {drafts.length === 1 ? 'note' : 'notes'}

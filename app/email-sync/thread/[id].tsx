@@ -69,6 +69,7 @@ import {
 } from '../_components/emailReplyShared';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 function getFileTypeFromFilename(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
@@ -136,6 +137,8 @@ export default function EmailThreadScreen() {
   const [sendReady, setSendReady] = useState(true);
   const [composing, setComposing] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  /** Keyboard top (screenY) — Android needs a manual lift; iOS uses KeyboardAvoidingView. */
+  const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [undoLeft, setUndoLeft] = useState(0);
   const [body, setBody] = useState('');
@@ -280,17 +283,27 @@ export default function EmailThreadScreen() {
   }, [undoLeft]);
 
   useEffect(() => {
-    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () =>
-      setKeyboardOpen(true)
-    );
-    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () =>
-      setKeyboardOpen(false)
-    );
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardOpen(true);
+      setKeyboardTop(e.endCoordinates.screenY);
+    });
+    const hide = Keyboard.addListener(hideEvent, () => {
+      setKeyboardOpen(false);
+      setKeyboardTop(null);
+    });
     return () => {
       show.remove();
       hide.remove();
     };
   }, []);
+
+  // Edge-to-edge Android often overlays the keyboard instead of resizing; lift the compose panel.
+  const androidKeyboardLift = useMemo(() => {
+    if (Platform.OS !== 'android' || keyboardTop == null) return 0;
+    return Math.max(0, windowHeight - keyboardTop - insets.bottom);
+  }, [keyboardTop, windowHeight, insets.bottom]);
 
   const persistDraft = async () => {
     if (!draft) return;
@@ -866,9 +879,9 @@ export default function EmailThreadScreen() {
         <View style={styles.header}>
           <AppBackButton />
           <View style={styles.headerBody}>
-            <Text style={styles.h1} numberOfLines={1}>
+            <AppHeaderTitle>
               {thread?.subject || 'Conversation'}
-            </Text>
+            </AppHeaderTitle>
             <AttachmentNamesRow attachments={threadAttachments} onOpen={openAttachment} />
           </View>
           <FeedbackTouchable
@@ -985,9 +998,20 @@ export default function EmailThreadScreen() {
 
         {!dismissed ? (
           <ScrollView
-            style={[styles.composePanel, { maxHeight: Math.round(windowHeight * 0.58) }]}
+            style={[
+              styles.composePanel,
+              {
+                maxHeight: Math.round(
+                  androidKeyboardLift > 0
+                    ? Math.min(windowHeight * 0.58, Math.max(180, windowHeight - androidKeyboardLift - 96))
+                    : windowHeight * 0.58
+                ),
+                ...(androidKeyboardLift > 0 ? { marginBottom: androidKeyboardLift } : null),
+              },
+            ]}
             contentContainerStyle={{
-              paddingBottom: Math.max(insets.bottom, keyboardOpen ? 12 : 8),
+              paddingBottom:
+                androidKeyboardLift > 0 ? 12 : Math.max(insets.bottom, keyboardOpen ? 12 : 8),
               gap: 0,
             }}
             keyboardShouldPersistTaps="handled"

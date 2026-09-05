@@ -8,6 +8,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { calendarRsvpFromEmail } from '../../services/calendarApi';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 type EmailRsvpStatus = 'accepted' | 'declined';
 
@@ -63,7 +64,7 @@ export default function CalendarEmailRsvpScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1}>Calendar RSVP</Text>
+        <AppHeaderTitle>Calendar RSVP</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
       <View style={styles.body}>

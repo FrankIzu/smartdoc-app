@@ -13,6 +13,7 @@ import { TapToToggleHeaderView } from './components/TapToToggleHeaderView';
 import { useAuth } from './context/auth';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../components/AppBackButton';
+import AppHeaderTitle from '../components/AppHeaderTitle';
 
 export type { AppNotification };
 
@@ -49,7 +50,7 @@ export default function NotificationsScreen() {
           <AnimatedHeaderContainer>
             <View style={dynamicStyles.header}>
               <AppBackButton />
-              <Text style={dynamicStyles.headerTitle}>Notifications</Text>
+              <AppHeaderTitle>Notifications</AppHeaderTitle>
               <View style={{ width: APP_BACK_BUTTON_SLOT }} />
             </View>
           </AnimatedHeaderContainer>

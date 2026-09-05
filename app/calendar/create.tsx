@@ -43,6 +43,7 @@ import {
 } from '../../utils/calendarTime';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 type Participant = { email: string; name: string; type: string };
 
@@ -514,7 +515,7 @@ export default function CalendarCreateScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1}>New event</Text>
+        <AppHeaderTitle>New event</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 

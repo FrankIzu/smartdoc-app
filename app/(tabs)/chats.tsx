@@ -88,6 +88,7 @@ import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 /** Header height must fit icon buttons (padding + 30px icon); 64 clipped hit targets. */
 const CHAT_CONVERSATION_HEADER_HEIGHT = 72;
@@ -108,7 +109,6 @@ const ChatConversationHeader = React.memo(function ChatConversationHeader({
   headerStyle,
   backButtonStyle,
   headerInfoStyle,
-  titleStyle,
   subtitleStyle,
   actionButtonStyle,
 }: {
@@ -122,7 +122,6 @@ const ChatConversationHeader = React.memo(function ChatConversationHeader({
   headerStyle: object;
   backButtonStyle: object;
   headerInfoStyle: object;
-  titleStyle: object;
   subtitleStyle: object;
   actionButtonStyle: object;
 }) {
@@ -132,9 +131,9 @@ const ChatConversationHeader = React.memo(function ChatConversationHeader({
         <AppBackButton onPress={onBack} />
 
         <View style={headerInfoStyle} pointerEvents="none">
-          <Text style={[titleStyle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">
+          <AppHeaderTitle fill={false}>
             {title}
-          </Text>
+          </AppHeaderTitle>
           <Text style={subtitleStyle}>{subtitle}</Text>
         </View>
 
@@ -8062,7 +8061,7 @@ export default function ChatsScreen() {
         <AnimatedHeaderContainer>
           <View style={dynamicStyles.header}>
             <AppBackButton />
-            <Text style={dynamicStyles.headerTitle}>ChatGD</Text>
+            <AppHeaderTitle>ChatGD</AppHeaderTitle>
             <View style={{ flexDirection: 'row' }}>
               <TouchableOpacity
                 style={dynamicStyles.newChatButton}
@@ -8204,7 +8203,6 @@ export default function ChatsScreen() {
           headerStyle={dynamicStyles.chatHeader}
           backButtonStyle={dynamicStyles.backButton}
           headerInfoStyle={dynamicStyles.chatHeaderInfo}
-          titleStyle={dynamicStyles.chatTitle}
           subtitleStyle={dynamicStyles.chatSubtitle}
           actionButtonStyle={dynamicStyles.searchTypeButton}
         />
@@ -8512,7 +8510,7 @@ export default function ChatsScreen() {
           }}>
             <Text style={{ color: '#007AFF', fontSize: 16 }}>Cancel</Text>
           </TouchableOpacity>
-          <Text style={dynamicStyles.headerTitle}>New Chat</Text>
+          <AppHeaderTitle>New Chat</AppHeaderTitle>
           <TouchableOpacity onPress={createNewChat}>
             <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>Create</Text>
           </TouchableOpacity>

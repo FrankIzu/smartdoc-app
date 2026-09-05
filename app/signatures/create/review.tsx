@@ -22,6 +22,7 @@ import { clearDraftStep } from '../../../services/signatureSessionCache';
 import { validateSignerFieldCoverage } from '../../../utils/signatureAssignmentCoverage';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 export default function ReviewSendScreen() {
   const { envelopeId, acknowledgeOnly } = useLocalSearchParams<{
@@ -83,7 +84,7 @@ export default function ReviewSendScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
-        <Text style={[styles.title, { color: colors.text }]}>Review & send</Text>
+        <AppHeaderTitle>Review & send</AppHeaderTitle>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <FileNameText

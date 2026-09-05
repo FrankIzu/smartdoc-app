@@ -51,6 +51,7 @@ import { TapToToggleHeaderView } from '../components/TapToToggleHeaderView';
 import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface UserProfile {
   id: number;
@@ -1064,7 +1065,7 @@ export default function SettingsScreen() {
       <AnimatedHeaderContainer>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.headerTitle}>Settings</Text>
+          <AppHeaderTitle>Settings</AppHeaderTitle>
         </View>
       </AnimatedHeaderContainer>
 

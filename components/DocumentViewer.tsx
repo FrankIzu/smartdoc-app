@@ -33,6 +33,7 @@ import { sanitizeDisplayFilename } from '../utils/displayFilename';
 import { secureStorage } from '../utils/storage';
 
 import AppBackButton from './AppBackButton';
+import AppHeaderTitle from './AppHeaderTitle';
 
 // Conditionally import react-native-pdf (only works in development builds, not Expo Go)
 let Pdf: any = null;
@@ -2933,9 +2934,9 @@ export default function DocumentViewer({
         >
           <View style={dynamicStyles.header} pointerEvents="box-none">
             <AppBackButton onPress={onClose} />
-            <Text style={dynamicStyles.title} numberOfLines={1} ellipsizeMode="tail">
+            <AppHeaderTitle>
               {getViewerTitle()}
-            </Text>
+            </AppHeaderTitle>
             <View style={styles.placeholder} />
           </View>
           <View

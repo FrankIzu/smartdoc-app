@@ -20,6 +20,7 @@ import { useThemeColors } from '../hooks/useThemeColors';
 import { getUploadLinkErrorMessage, type UploadLinkErrorPayload } from '../utils/uploadLinkErrors';
 
 import AppBackButton from '../components/AppBackButton';
+import AppHeaderTitle from '../components/AppHeaderTitle';
 
 export default function UploadByLinkCodeScreen() {
   const router = useRouter();
@@ -184,7 +185,7 @@ export default function UploadByLinkCodeScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.headerTitle}>Upload by Link</Text>
+        <AppHeaderTitle>Upload by Link</AppHeaderTitle>
       </View>
 
       <KeyboardAvoidingView

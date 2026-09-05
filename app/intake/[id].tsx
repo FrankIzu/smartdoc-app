@@ -52,6 +52,7 @@ import { useAuth } from '../context/auth';
 import { UploadOptionsModal } from '../components/UploadOptionsModal';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 const INTAKE_DETAIL_CACHE_MS = 30_000;
 
@@ -1048,7 +1049,7 @@ export default function IntakeDetailScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton />
-          <Text style={dynamicStyles.headerTitle} numberOfLines={1}>Intake</Text>
+          <AppHeaderTitle>Intake</AppHeaderTitle>
           <View style={dynamicStyles.placeholder} />
         </View>
         <View style={dynamicStyles.centerContainer}>
@@ -1076,7 +1077,7 @@ export default function IntakeDetailScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.headerTitle} numberOfLines={1}>{intake.title}</Text>
+        <AppHeaderTitle>{intake.title}</AppHeaderTitle>
         {intake.status !== 'archived' ? (
           <TouchableOpacity onPress={openEdit} disabled={busy} accessibilityLabel="Edit">
             <Text style={[dynamicStyles.linkText, busy && { opacity: 0.5 }]}>Edit</Text>

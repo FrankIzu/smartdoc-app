@@ -82,6 +82,7 @@ import { ConnectCalendarModal } from './_components/ConnectCalendarModal';
 import { ConnectionChips } from './_components/ConnectionChips';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 type EventRow = Record<string, any>;
 
@@ -1319,7 +1320,7 @@ export default function CalendarHomeScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1}>Calendar</Text>
+        <AppHeaderTitle>Calendar</AppHeaderTitle>
         <View style={styles.headerRight}>
           <TouchableOpacity
             onPress={openCreate}

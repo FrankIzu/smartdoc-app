@@ -46,6 +46,7 @@ import {
 import { useAuth } from '../context/auth';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface WorkspaceSheetBookmark {
   bookmark_id: number;
@@ -801,9 +802,9 @@ export default function WorkspaceDetailsScreen() {
 
   const dynamicStyles = useMemo(() => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.headerBackground, borderBottomWidth: 1, borderBottomColor: colors.border, zIndex: 1 },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 4, paddingHorizontal: 20, paddingVertical: 16, backgroundColor: colors.headerBackground, borderBottomWidth: 1, borderBottomColor: colors.border, zIndex: 1 },
     headerBackButton: { zIndex: 2, padding: 4, marginLeft: -4 },
-    headerTitle: { fontSize: 18, fontWeight: '600', color: colors.text, flex: 1, textAlign: 'center' },
+    headerTitle: { fontSize: 18, fontWeight: '600', color: colors.text, flex: 1, textAlign: 'left' },
     loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     scrollView: { flex: 1 },
     listContainer: { padding: 16 },
@@ -979,7 +980,7 @@ export default function WorkspaceDetailsScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton onPress={handleBack} />
-          <Text style={dynamicStyles.headerTitle} pointerEvents="none">Workspace</Text>
+          <AppHeaderTitle pointerEvents="none">Workspace</AppHeaderTitle>
           <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={dynamicStyles.loadingContainer}>
@@ -994,7 +995,7 @@ export default function WorkspaceDetailsScreen() {
       <SafeAreaView style={dynamicStyles.container}>
         <View style={dynamicStyles.header}>
           <AppBackButton onPress={handleBack} />
-          <Text style={dynamicStyles.headerTitle} pointerEvents="none">Workspace Not Found</Text>
+          <AppHeaderTitle pointerEvents="none">Workspace Not Found</AppHeaderTitle>
           <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
       </SafeAreaView>
@@ -1007,7 +1008,7 @@ export default function WorkspaceDetailsScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton onPress={handleBack} />
-        <Text style={dynamicStyles.headerTitle} numberOfLines={1} ellipsizeMode="tail" pointerEvents="none">{workspace.name}</Text>
+        <AppHeaderTitle pointerEvents="none">{workspace.name}</AppHeaderTitle>
         {workspace.user_role !== 'owner' && workspace.user_role !== 'admin' && (
           <FeedbackTouchable onPress={handleExitWorkspace} loading={exiting} spinnerColor="#FF3B30">
             <Ionicons name="exit-outline" size={24} color="#FF3B30" />

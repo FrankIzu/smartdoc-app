@@ -47,6 +47,7 @@ import {
 import { htmlToPlainText } from '../../../utils/linkifyPlainText';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 type Participant = { email: string; name: string; type: string };
 
@@ -507,7 +508,7 @@ export default function CalendarEditScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1}>Edit event</Text>
+        <AppHeaderTitle>Edit event</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 

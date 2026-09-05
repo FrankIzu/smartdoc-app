@@ -23,6 +23,7 @@ import { formatDateToLocal } from '../../../utils/timeFormatting';
 import { hubFillEditorRoute } from '../../../utils/signatureRouteResolver';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 const SEARCH_DEBOUNCE_MS = 350;
 
@@ -154,7 +155,7 @@ export default function FillDocumentPickScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton onPress={() => { if (openingId == null) router.back(); }} />
-        <Text style={styles.headerTitle}>Choose document</Text>
+        <AppHeaderTitle>Choose document</AppHeaderTitle>
       </View>
 
       <View style={styles.searchWrap}>

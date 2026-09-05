@@ -23,6 +23,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
@@ -1102,7 +1103,7 @@ export default function FormBuilderScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBackground }]} edges={['top']}>
         <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
           <AppBackButton />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Form Builder</Text>
+          <AppHeaderTitle>Form Builder</AppHeaderTitle>
           <View style={{ width: APP_BACK_BUTTON_SLOT }} />
         </View>
         <View style={[styles.loadingFormContainer, { backgroundColor: colors.background }]}>
@@ -1118,7 +1119,7 @@ export default function FormBuilderScreen() {
       {/* Header */}
       <View style={[styles.header, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
         <AppBackButton />
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Form Builder</Text>
+        <AppHeaderTitle>Form Builder</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
 
@@ -1401,7 +1402,8 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
+    gap: 4,
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#fff',

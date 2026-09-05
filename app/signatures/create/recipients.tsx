@@ -19,6 +19,7 @@ import type { RecipientInput } from '../../../types/signature';
 import { saveDraftStep } from '../../../services/signatureSessionCache';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 export default function RecipientsScreen() {
   const { envelopeId } = useLocalSearchParams<{ envelopeId: string }>();
@@ -89,7 +90,7 @@ export default function RecipientsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
-        <Text style={[styles.title, { color: colors.text }]}>Recipients</Text>
+        <AppHeaderTitle>Recipients</AppHeaderTitle>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <RecipientEditor recipients={recipients} onChange={setRecipients} />

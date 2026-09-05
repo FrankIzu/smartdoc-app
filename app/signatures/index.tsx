@@ -44,6 +44,7 @@ import {
 } from '../../utils/signatureRouteResolver';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 const TABS: { key: EnvelopeTab; label?: string; icon?: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'all', icon: 'home' },
@@ -121,7 +122,8 @@ export default function SignaturesHubScreen() {
         header: {
           flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-start',
+          gap: 4,
           paddingHorizontal: 14,
           paddingVertical: 12, backgroundColor: colors.headerBackground },
         title: { fontSize: 22, fontWeight: '700', color: colors.text },
@@ -383,7 +385,7 @@ export default function SignaturesHubScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.title}>Signatures</Text>
+        <AppHeaderTitle>Signatures</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
       <ScrollView

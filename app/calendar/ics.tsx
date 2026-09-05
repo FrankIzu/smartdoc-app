@@ -9,6 +9,7 @@ import { useThemeColors } from '../../hooks/useThemeColors';
 import { calendarIcsUrl } from '../../services/calendarApi';
 
 import AppBackButton, { APP_BACK_BUTTON_SLOT } from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 export default function CalendarIcsScreen() {
   const router = useRouter();
@@ -55,7 +56,7 @@ export default function CalendarIcsScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <AppBackButton />
-        <Text style={styles.h1}>Calendar invite</Text>
+        <AppHeaderTitle>Calendar invite</AppHeaderTitle>
         <View style={{ width: APP_BACK_BUTTON_SLOT }} />
       </View>
       <View style={styles.body}>

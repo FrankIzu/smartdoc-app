@@ -22,6 +22,7 @@ import { apiService } from '../../services/api';
 import { INTAKE_REMINDER_PRESETS, type IntakeTemplate, type ReminderPreset } from '../../types/intake';
 
 import AppBackButton from '../../components/AppBackButton';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 interface ChecklistItemForm {
   label: string;
@@ -420,7 +421,7 @@ export default function CreateIntakeScreen() {
     <SafeAreaView style={dynamicStyles.container}>
       <View style={dynamicStyles.header}>
         <AppBackButton />
-        <Text style={dynamicStyles.title}>New Intake</Text>
+        <AppHeaderTitle>New Intake</AppHeaderTitle>
         <View style={dynamicStyles.placeholder} />
       </View>
 

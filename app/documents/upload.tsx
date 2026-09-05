@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppHeaderTitle from '../../components/AppHeaderTitle';
 import { useLimitError } from '../../contexts/LimitErrorContext';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
@@ -176,7 +177,7 @@ export default function UploadScreen() {
         >
           <MaterialIcons name="close" size={24} color="#007AFF" />
         </Pressable>
-        <Text style={[styles.title, { color: colors.text }]}>Upload Documents</Text>
+        <AppHeaderTitle>Upload Documents</AppHeaderTitle>
         <View style={styles.headerSpacer} />
       </View>
 

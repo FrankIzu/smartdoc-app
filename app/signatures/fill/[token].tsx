@@ -19,6 +19,7 @@ import { useThemeColors } from '../../../hooks/useThemeColors';
 import { getFillDocument, type FillDocumentResponse } from '../../../services/fillApi';
 
 import AppBackButton from '../../../components/AppBackButton';
+import AppHeaderTitle from '../../../components/AppHeaderTitle';
 
 export default function FillSessionScreen() {
   const router = useRouter();
@@ -82,9 +83,9 @@ export default function FillSessionScreen() {
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
         <View style={{ flex: 1 }}>
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          <AppHeaderTitle>
             {doc.template_name}
-          </Text>
+          </AppHeaderTitle>
           <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
             {readOnly ? 'View only' : 'Fill mode'}
           </Text>
