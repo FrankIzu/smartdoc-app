@@ -139,6 +139,7 @@ export default function EmailThreadScreen() {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   /** Keyboard top (screenY) — Android needs a manual lift; iOS uses KeyboardAvoidingView. */
   const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [busy, setBusy] = useState(false);
   const [undoLeft, setUndoLeft] = useState(0);
   const [body, setBody] = useState('');
@@ -288,10 +289,12 @@ export default function EmailThreadScreen() {
     const show = Keyboard.addListener(showEvent, (e) => {
       setKeyboardOpen(true);
       setKeyboardTop(e.endCoordinates.screenY);
+      setKeyboardHeight(e.endCoordinates.height);
     });
     const hide = Keyboard.addListener(hideEvent, () => {
       setKeyboardOpen(false);
       setKeyboardTop(null);
+      setKeyboardHeight(0);
     });
     return () => {
       show.remove();
@@ -300,10 +303,14 @@ export default function EmailThreadScreen() {
   }, []);
 
   // Edge-to-edge Android often overlays the keyboard instead of resizing; lift the compose panel.
+  // Prefer reported keyboard height; fall back to screenY. Do not subtract insets.bottom — that
+  // leaves the Generate row partly under the keyboard.
   const androidKeyboardLift = useMemo(() => {
     if (Platform.OS !== 'android' || keyboardTop == null) return 0;
-    return Math.max(0, windowHeight - keyboardTop - insets.bottom);
-  }, [keyboardTop, windowHeight, insets.bottom]);
+    const fromHeight = keyboardHeight > 0 ? keyboardHeight : 0;
+    const fromScreenY = Math.max(0, windowHeight - keyboardTop);
+    return Math.max(fromHeight, fromScreenY) + 8;
+  }, [keyboardTop, keyboardHeight, windowHeight]);
 
   const persistDraft = async () => {
     if (!draft) return;
