@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
 import AiFileManagerBottomSheet from '../../components/ai-file-manager/AiFileManagerBottomSheet';
+import ClientsButton from '../../components/clients/ClientsButton';
 import DeletedFolderGroups from '../../components/documents/DeletedFolderGroups';
 import DocumentsFolderBar from '../../components/documents/DocumentsFolderBar';
 import DocumentViewer from '../../components/DocumentViewer';
@@ -3646,6 +3647,18 @@ export default function QuickFilesScreen() {
           onPress={handleCloseKebabMenu}
         >
           <View style={dynamicStyles.kebabMenuContainer}>
+            {selectedDocumentForMenu?.id &&
+            !isNaN(Number(selectedDocumentForMenu.id)) &&
+            (selectedDocumentForMenu.file_kind || '').toString().toLowerCase() !== 'form' ? (
+              <View style={[dynamicStyles.kebabMenuItem, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+                <ClientsButton
+                  itemType="file"
+                  itemId={Number(selectedDocumentForMenu.id)}
+                  compact
+                  allowCreate
+                />
+              </View>
+            ) : null}
             <TouchableOpacity
               style={dynamicStyles.kebabMenuItem}
               onPress={handleViewDocument}

@@ -28,6 +28,7 @@ import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import Toast from 'react-native-toast-message';
 import { io, Socket } from 'socket.io-client';
 import ChatConnectivityBanner from '../components/ChatConnectivityBanner';
+import ClientsButton from '../components/clients/ClientsButton';
 import { API_BASE_URL, STORAGE_KEYS } from '../constants/Config';
 import { useLimitError } from '../contexts/LimitErrorContext';
 import { useChatConnectivity } from '../hooks/useChatConnectivity';
@@ -1900,9 +1901,14 @@ export default function UserChatScreen() {
               }}
               activeOpacity={0.7}
             >
-              <AppHeaderTitle fill={false}>
-                {selectedChat?.title || ''}
-              </AppHeaderTitle>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <AppHeaderTitle fill={false}>
+                  {selectedChat?.title || ''}
+                </AppHeaderTitle>
+                {(selectedChat.type === 'user_direct' || selectedChat.type === 'direct') ? (
+                  <ClientsButton itemType="user_chat" itemId={selectedChat.id} compact allowCreate />
+                ) : null}
+              </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={dynamicStyles.headerSubtitle}>
                   {selectedChat.participants.length} participant{selectedChat.participants.length !== 1 ? 's' : ''}
@@ -1914,9 +1920,14 @@ export default function UserChatScreen() {
             </TouchableOpacity>
           ) : (
               <View style={{ flex: 1, alignItems: 'center' }}>
-              <AppHeaderTitle fill={false}>
-                {isNewChat ? 'New Message' : selectedChat?.display_name || selectedChat?.title || ''}
-              </AppHeaderTitle>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <AppHeaderTitle fill={false}>
+                  {isNewChat ? 'New Message' : selectedChat?.display_name || selectedChat?.title || ''}
+                </AppHeaderTitle>
+                {!isNewChat && selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'direct') ? (
+                  <ClientsButton itemType="user_chat" itemId={selectedChat.id} compact allowCreate />
+                ) : null}
+              </View>
               {selectedChat?.invite_pending && (
                 <Text style={{ fontSize: 11, color: '#B45309' }}>Invite pending · messaging disabled</Text>
               )}

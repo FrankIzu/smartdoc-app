@@ -10,21 +10,28 @@ import {
     ScrollView,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     useWindowDimensions,
     View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import ActionMenuModal, { type ActionMenuItem } from '../../components/ActionMenuModal';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
 import { SignatureIcon } from '../../components/SignatureIcon';
 import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
+import {
+  chatGdAskHref,
+  getAttentionQueue,
+  getClientsCount,
+  type AttentionQueueItem,
+} from '../../services/clientsApi';
 import { useProgressStore } from '../../services/progressService';
 import { dashboardScreenKey } from '../../services/userScopedCache';
 import { useFileStore } from '../../stores/fileStore';
 import { expoHrefForWebDefaultHome } from '../../utils/defaultHomePath';
+import { getRecentApps, trackRecentApp } from '../../utils/recentApps';
 import { screenCache } from '../../utils/screenCache';
 import { navigatePrimaryShell } from '../../utils/tabNavigation';
 import { NotificationsInboxContent } from '../components/NotificationsInboxContent';
@@ -102,11 +109,13 @@ function DashboardScreen() {
   const [connectionStatus, setConnectionStatus] = useState<{ success: boolean; message: string } | null>(null);
   const uploadSheet = useMinimizableSheet();
   const notificationsSheet = useMinimizableSheet();
-  const [showQuickActionsMenu, setShowQuickActionsMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadTimeout, setUploadTimeout] = useState<number | null>(null);
   const [isOpeningPicker, setIsOpeningPicker] = useState(false);
   const [reachInMeeting, setReachInMeeting] = useState(false);
+  const [clientsCount, setClientsCount] = useState(0);
+  const [attentionItems, setAttentionItems] = useState<AttentionQueueItem[]>([]);
+  const [recentAppKeys, setRecentAppKeys] = useState<string[]>([]);
 
   const AUTO_REFRESH_INTERVAL = 120000; // Auto-refresh every 2 minutes for dashboard
   const DASHBOARD_CACHE_MS = 60000; // 60 s TTL for dashboard data
@@ -170,6 +179,26 @@ function DashboardScreen() {
     }
   };
 
+  const loadHomeExtras = useCallback(async () => {
+    try {
+      setRecentAppKeys(await getRecentApps());
+    } catch {
+      /* keep prior */
+    }
+    try {
+      const count = await getClientsCount();
+      setClientsCount(count);
+      if (count > 0) {
+        const att = await getAttentionQueue('all', { limit: 8, offset: 0 });
+        setAttentionItems(att.items || []);
+      } else {
+        setAttentionItems([]);
+      }
+    } catch {
+      /* keep prior attention rather than flashing an empty block */
+    }
+  }, []);
+
   const loadDashboardData = useCallback(async (forceRefresh = false) => {
     // console.log('🏠 Starting dashboard data load...');
     
@@ -179,7 +208,8 @@ function DashboardScreen() {
       return;
     }
 
-    // Serve cached data immediately (skip spinner on tab re-focus)
+    // Serve cached stats immediately (skip spinner on tab re-focus).
+    // Attention + recently used still load — they are not in the stats cache.
     if (!forceRefresh) {
       const cacheKey = getDashboardCacheKey();
       const cached = cacheKey
@@ -188,6 +218,7 @@ function DashboardScreen() {
       if (cached) {
         setStats(cached.stats);
         setLoading(false);
+        void loadHomeExtras();
         return;
       }
     }
@@ -235,6 +266,7 @@ function DashboardScreen() {
           unreadNotifications: 0,
           recentAnalytics: 8,
         });
+        void loadHomeExtras();
         return; // Exit early with fallback data
       }
       
@@ -314,6 +346,8 @@ function DashboardScreen() {
       const cacheKey = getDashboardCacheKey();
       if (cacheKey) screenCache.set(cacheKey, { stats: resolvedStats });
     }
+
+    await loadHomeExtras();
       
     } catch (error) {
       // console.error('🏠 Unexpected error in dashboard data loading:', error);
@@ -332,7 +366,7 @@ function DashboardScreen() {
       setLoading(false);
       // console.log('🏠 Dashboard data loading completed');
     }
-  }, [user, isAuthenticated]); // Include auth state in dependencies to reload when auth changes
+  }, [user, isAuthenticated, getDashboardCacheKey, loadHomeExtras]);
 
   const onNotificationsListMutated = useCallback(() => {
     const cacheKey = getDashboardCacheKey();
@@ -526,26 +560,6 @@ function DashboardScreen() {
     router.push('/upload-by-link-code');
   };
 
-  const quickActionItems = useMemo(
-    (): ActionMenuItem[] => [
-      {
-        id: 'upload',
-        label: 'Upload file',
-        icon: 'cloud-upload-outline',
-        iconColor: colors.primary,
-        onPress: () => uploadSheet.open(),
-      },
-      {
-        id: 'scan',
-        label: 'Scan document',
-        icon: 'scan-outline',
-        iconColor: colors.primary,
-        onPress: () => router.push('/scanner'),
-      },
-    ],
-    [colors.primary, router, uploadSheet],
-  );
-
   const handleUploadFromGallery = async () => {
     if (isUploading) {
       // console.log('🖼️ Upload already in progress, ignoring request');
@@ -584,6 +598,7 @@ function DashboardScreen() {
   };
 
   const handleQuickAction = (action: string) => {
+    void trackRecentApp(action).then(() => getRecentApps().then(setRecentAppKeys));
     switch (action) {
       case 'scan':
         navigatePrimaryShell(router, '/(tabs)/documents');
@@ -596,6 +611,12 @@ function DashboardScreen() {
         // Navigate to user chat screen (user-to-user and workspace chats ONLY)
         router.push('/user-chat');
         break;
+      case 'chatgd':
+        router.push(expoHrefForWebDefaultHome('/upload'));
+        break;
+      case 'clients':
+        router.push('/clients' as any);
+        break;
       case 'form':
         router.push('/forms/create');
         break;
@@ -604,7 +625,7 @@ function DashboardScreen() {
         break;
       case 'notifications':
       case 'analytics':
-        navigatePrimaryShell(router, '/(tabs)/settings');
+        router.push('/analytics/dashboard');
         break;
       case 'upload-links':
         router.push('/upload-links');
@@ -637,6 +658,84 @@ function DashboardScreen() {
         break;
     }
   };
+
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }, []);
+
+  const firstName =
+    (user as any)?.firstName ||
+    (user as any)?.first_name ||
+    (typeof (user as any)?.name === 'string' ? String((user as any).name).split(' ')[0] : '') ||
+    'there';
+
+  type HomeAppDef = {
+    key: string;
+    title: string;
+    subtitle?: string;
+    icon: string;
+    iconElement?: React.ReactNode;
+    color: string;
+    action: string;
+    showLive?: boolean;
+  };
+
+  const ALL_APPS: HomeAppDef[] = useMemo(
+    () => [
+      { key: 'upload', title: 'Upload', subtitle: 'Add documents', icon: 'cloud-upload', color: '#34C759', action: 'upload' },
+      { key: 'clients', title: 'My Clients', subtitle: 'Attention & work', icon: 'people', color: '#0D9488', action: 'clients' },
+      { key: 'chatgd', title: 'ChatGD', subtitle: 'Ask GrabDocs', icon: 'chatbubbles', color: '#AF52DE', action: 'chatgd' },
+      { key: 'intake', title: 'Intake', subtitle: 'Document checklists', icon: 'checkbox-outline', color: '#14B8A6', action: 'intake' },
+      { key: 'calendar', title: 'Calendar', icon: 'calendar-outline', color: '#5856D6', action: 'calendar' },
+      { key: 'meeting-call', title: 'Reach', icon: 'call', color: '#007AFF', action: 'meeting-call', showLive: reachInMeeting },
+      {
+        key: 'signatures',
+        title: 'Signatures',
+        icon: 'create',
+        iconElement: <SignatureIcon size={22} color="#fff" />,
+        color: '#0EA5E9',
+        action: 'signatures',
+      },
+      { key: 'upload-links', title: 'File Request', icon: 'link', color: '#8E44AD', action: 'upload-links' },
+      { key: 'form', title: 'Forms', icon: 'clipboard-outline', color: '#34C759', action: 'form' },
+      { key: 'workspaces', title: 'Workspaces', icon: 'people', color: '#5856D6', action: 'workspaces' },
+      { key: 'notes', title: 'Notes', icon: 'create-outline', color: '#5AC8FA', action: 'notes' },
+      { key: 'bookmarks', title: 'Bookmarks', icon: 'bookmark', color: '#FF9500', action: 'bookmarks' },
+      { key: 'chat', title: 'Secure Messaging', icon: 'chatbubbles', color: '#FF2D55', action: 'chat' },
+      { key: 'email-sync', title: 'Email Sync', icon: 'mail-outline', color: '#007AFF', action: 'email-sync' },
+      { key: 'analytics', title: 'Financials', icon: 'analytics', color: '#FF9500', action: 'analytics' },
+    ],
+    [reachInMeeting]
+  );
+
+  const appByKey = useMemo(() => {
+    const m = new Map<string, HomeAppDef>();
+    ALL_APPS.forEach((a) => m.set(a.key, a));
+    return m;
+  }, [ALL_APPS]);
+
+  const recentApps = useMemo(() => {
+    const keys = recentAppKeys.length ? recentAppKeys : ['upload', 'clients', 'chatgd', 'intake'];
+    return keys.map((k) => appByKey.get(k)).filter(Boolean) as HomeAppDef[];
+  }, [recentAppKeys, appByKey]);
+
+  const moreApps = useMemo(() => {
+    const recentSet = new Set(recentApps.map((a) => a.key));
+    const coreKeys = new Set(['upload', 'chatgd', 'analytics', 'email-sync']);
+    return ALL_APPS.filter((a) => !recentSet.has(a.key) && !coreKeys.has(a.key));
+  }, [ALL_APPS, recentApps]);
+
+  const hasPendingAttention = attentionItems.some(
+    (i) =>
+      (i.attention?.open_counts?.waiting_on_client || 0) +
+        (i.attention?.open_counts?.waiting_on_us || 0) >
+        0 ||
+      i.attention?.status === 'needs_attention' ||
+      i.attention?.status === 'waiting'
+  );
 
   const handleNotificationBellPress = useCallback(() => {
     // Defer opening so the same pointer event cannot hit the modal backdrop (web + some native).
@@ -965,16 +1064,99 @@ function DashboardScreen() {
         </View>
 
 
-        {/* Stats Cards */}
+        {/* Greeting + Search/Ask */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, gap: 12 }}>
+          <Text style={{ fontSize: 24, fontWeight: '700', color: colors.text }}>
+            {greeting}, {firstName}
+          </Text>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => router.push(chatGdAskHref() as any)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              backgroundColor: colors.card,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: colors.border,
+              borderRadius: 14,
+              paddingHorizontal: 14,
+              paddingVertical: 14,
+            }}
+          >
+            <Ionicons name="search" size={20} color={colors.textSecondary} />
+            <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 15 }} numberOfLines={1}>
+              Search files, clients, or ask GrabDocs...
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Client attention — only if user has clients */}
+        {clientsCount > 0 ? (
+          <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+            {hasPendingAttention ? (
+              <>
+                <Text style={[dynamicStyles.sectionTitle, { marginBottom: 8 }]}>Needs attention</Text>
+                {attentionItems.slice(0, 5).map((item) => (
+                  <TouchableOpacity
+                    key={item.client.id}
+                    onPress={() => router.push(`/clients/${item.client.id}` as any)}
+                    style={{
+                      backgroundColor: colors.card,
+                      borderRadius: 12,
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: colors.border,
+                      padding: 12,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: '600' }}>{item.client.display_name}</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={2}>
+                      {item.attention?.next_step?.label ||
+                        (item.attention?.status === 'needs_attention'
+                          ? 'Needs attention'
+                          : 'Waiting')}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity onPress={() => router.push('/clients' as any)}>
+                  <Text style={{ color: '#0D9488', fontWeight: '600', marginTop: 4 }}>View all clients</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <View
+                style={{
+                  backgroundColor: 'rgba(13,148,136,0.1)',
+                  borderRadius: 12,
+                  padding: 14,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <Ionicons name="checkmark-circle" size={22} color="#0D9488" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontWeight: '600' }}>No open waits</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Everything looks on track</Text>
+                </View>
+              </View>
+            )}
+          </View>
+        ) : null}
+
+        {/* Quick Actions — 4 core cards */}
         <View style={dynamicStyles.statsContainer}>
+          <Text style={[dynamicStyles.sectionTitle, { marginHorizontal: 16, marginBottom: 4 }]}>
+            Quick actions
+          </Text>
           <View style={dynamicStyles.statsRow}>
             <StatCard
               key="stat-files"
-              title="Files"
-              icon="folder"
-              color="#007AFF"
-              subtitle="View all files"
-              onPress={() => navigatePrimaryShell(router, '/(tabs)/documents')}
+              title="Upload"
+              icon="cloud-upload"
+              color="#34C759"
+              subtitle="Add documents"
+              onPress={() => handleQuickAction('upload')}
             />
             <StatCard
               key="stat-chats"
@@ -982,7 +1164,7 @@ function DashboardScreen() {
               icon="chatbubbles"
               color="#AF52DE"
               subtitle="Ask a question"
-              onPress={() => router.push(expoHrefForWebDefaultHome('/upload'))}
+              onPress={() => handleQuickAction('chatgd')}
             />
           </View>
           <View style={dynamicStyles.statsRow}>
@@ -992,7 +1174,7 @@ function DashboardScreen() {
               icon="analytics"
               color="#FF9500"
               subtitle="Manage expenses"
-              onPress={() => router.push('/analytics/dashboard')}
+              onPress={() => handleQuickAction('analytics')}
             />
             <StatCard
               key="stat-email-replies"
@@ -1005,124 +1187,74 @@ function DashboardScreen() {
           </View>
         </View>
 
-        {/* Quick Actions */}
+        {/* Recently used — horizontal */}
+        <View style={{ paddingTop: 8 }}>
+          <Text style={[dynamicStyles.sectionTitle, { marginHorizontal: 16, marginBottom: 10 }]}>
+            Recently used
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
+          >
+            {recentApps.map((app) => (
+              <TouchableOpacity
+                key={app.key}
+                onPress={() => handleQuickAction(app.action)}
+                style={{
+                  width: 108,
+                  backgroundColor: colors.card,
+                  borderRadius: 14,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: colors.border,
+                  padding: 12,
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <View
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    backgroundColor: app.color,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {app.iconElement ?? <Ionicons name={app.icon as any} size={22} color="#fff" />}
+                  {app.showLive ? <ReachLiveMeetingDot /> : null}
+                </View>
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600', textAlign: 'center' }} numberOfLines={2}>
+                  {app.title}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Apps */}
         <View style={dynamicStyles.section}>
-          <Text style={dynamicStyles.sectionTitle}>Quick Actions</Text>
+          <Text style={dynamicStyles.sectionTitle}>Apps</Text>
           <View style={dynamicStyles.quickActionsContainer}>
-            <QuickActionCard
-              key="action-upload"
-              title="Upload"
-              subtitle="Add any document or receipts to your library"
-              icon="cloud-upload"
-              color="#34C759"
-              onPress={() => handleQuickAction('upload')}
-            />
-            <QuickActionCard
-              key="action-intake"
-              title="Intake"
-              subtitle="Collect client documents with a checklist"
-              icon="checkbox-outline"
-              color="#14B8A6"
-              onPress={() => handleQuickAction('intake')}
-              isNew={true}
-            />
-            <QuickActionCard
-              key="action-calendar"
-              title="Calendar"
-              subtitle="Events, invites, and external calendars"
-              icon="calendar-outline"
-              color="#5856D6"
-              onPress={() => handleQuickAction('calendar')}
-            />
-            <QuickActionCard
-              key="action-meeting-call"
-              title="Reach"
-              subtitle="Join or start a meeting"
-              icon="call"
-              color="#007AFF"
-              onPress={() => handleQuickAction('meeting-call')}
-              showLiveMeetingIndicator={reachInMeeting}
-            />
-            <QuickActionCard
-              key="action-signatures"
-              title="Signatures"
-              subtitle="Send and sign documents"
-              iconElement={<SignatureIcon size={22} color="#fff" />}
-              color="#0EA5E9"
-              onPress={() => handleQuickAction('signatures')}
-              isNew={true}
-            />
-            <QuickActionCard
-              key="action-upload-links"
-              title="File Request"
-              subtitle="Create links to receive files"
-              icon="link"
-              color="#8E44AD"
-              onPress={() => handleQuickAction('upload-links')}
-            />
-            <QuickActionCard
-              key="action-forms"
-              title="Forms"
-              subtitle="Create and manage forms"
-              icon="clipboard-outline"
-              color="#34C759"
-              onPress={() => handleQuickAction('form')}
-            />
-            <QuickActionCard
-              key="action-workspaces"
-              title="Workspaces"
-              subtitle="Collaborate with your team"
-              icon="people"
-              color="#5856D6"
-              onPress={() => handleQuickAction('workspaces')}
-            />
-            <QuickActionCard
-              key="action-notes"
-              title="Notes"
-              subtitle="Create notes"
-              icon="create-outline"
-              color="#5AC8FA"
-              onPress={() => handleQuickAction('notes')}
-            />
-            <QuickActionCard
-              key="action-bookmarks"
-              title="Bookmarks"
-              subtitle="Organize your documents"
-              icon="bookmark"
-              color="#FF9500"
-              onPress={() => handleQuickAction('bookmarks')}
-            />
-            <QuickActionCard
-              key="action-chat"
-              title="Secure Messaging"
-              subtitle="Private encrypted messaging"
-              icon="chatbubbles"
-              color="#FF2D55"
-              onPress={() => handleQuickAction('chat')}
-            />
-            {/* Fillable File hidden from quick actions for now */}
+            {moreApps.map((app) => (
+              <QuickActionCard
+                key={`app-${app.key}`}
+                title={app.title}
+                subtitle={app.subtitle || 'Open'}
+                icon={app.icon}
+                iconElement={app.iconElement}
+                color={app.color}
+                onPress={() => handleQuickAction(app.action)}
+                showLiveMeetingIndicator={app.showLive}
+              />
+            ))}
           </View>
         </View>
 
         {/* Add some padding at the bottom for better scrolling */}
         <View style={{ height: 100 }} />
       </ScrollView>
-
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        style={dynamicStyles.fab}
-        onPress={() => setShowQuickActionsMenu(true)}
-      >
-        <Ionicons name="add" size={26} color="#fff" />
-      </TouchableOpacity>
-
-      <ActionMenuModal
-        visible={showQuickActionsMenu}
-        title="Quick actions"
-        message="Choose an action:"
-        items={quickActionItems}
-        onClose={() => setShowQuickActionsMenu(false)}
-      />
 
       <UploadOptionsModal
         visible={uploadSheet.visible}

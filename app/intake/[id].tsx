@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
+import ClientsButton from '../../components/clients/ClientsButton';
 import DocumentViewer from '../../components/DocumentViewer';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import {
@@ -1101,6 +1102,7 @@ export default function IntakeDetailScreen() {
               <Text style={[dynamicStyles.badgeText, { color: dueColor.text }]}>{INTAKE_DUE_BADGE_LABELS[intake.due_badge]}</Text>
             </View>
           )}
+          <ClientsButton itemType="intake" itemId={intake.id} compact allowCreate />
         </View>
         {intake.client_name && <Text style={dynamicStyles.clientText}>{intake.client_name}</Text>}
 

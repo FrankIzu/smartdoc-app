@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import LinkifiedText from '../../components/LinkifiedText';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
+import ClientsButton from '../../components/clients/ClientsButton';
 import { calendarIsCompanyAdmin, useCalendarProfile } from '../../hooks/useCalendarProfile';
 import { resendCooldownKey, useResendCooldown } from '../../hooks/useResendCooldown';
 import { useThemeColors } from '../../hooks/useThemeColors';
@@ -783,7 +784,12 @@ export default function CalendarEventDetailScreen() {
             <ScrollView style={{ maxHeight: 220, marginTop: 12 }}>
               {notes.map((n) => (
                 <View key={String(n.id)} style={{ marginBottom: 12, padding: 10, backgroundColor: colors.surface, borderRadius: 8 }}>
-                  <Text style={{ fontWeight: '600', color: colors.text }}>{n.title}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <Text style={{ fontWeight: '600', color: colors.text, flex: 1 }}>{n.title}</Text>
+                    {n.id ? (
+                      <ClientsButton itemType="note" itemId={Number(n.id)} compact />
+                    ) : null}
+                  </View>
                   <LinkifiedText
                     style={{ color: colors.textSecondary, marginTop: 4 }}
                     linkColor={colors.primary || '#007AFF'}

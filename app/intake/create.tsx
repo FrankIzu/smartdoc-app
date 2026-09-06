@@ -16,9 +16,11 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
+import ClientsButton from '../../components/clients/ClientsButton';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { getClient, primaryEmail, setItemClients } from '../../services/clientsApi';
 import { INTAKE_REMINDER_PRESETS, type IntakeTemplate, type ReminderPreset } from '../../types/intake';
 
 import AppBackButton from '../../components/AppBackButton';
@@ -49,7 +51,10 @@ function toLocalDateString(d: Date): string {
 
 export default function CreateIntakeScreen() {
   const router = useRouter();
-  const { template: templateParam } = useLocalSearchParams<{ template?: string }>();
+  const { template: templateParam, client_id: clientIdParam } = useLocalSearchParams<{
+    template?: string;
+    client_id?: string;
+  }>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const [submitting, setSubmitting] = useState(false);
@@ -68,6 +73,7 @@ export default function CreateIntakeScreen() {
   const [reminderPreset, setReminderPreset] = useState<ReminderPreset>('standard');
   const [customReminder, setCustomReminder] = useState({ first: 48, repeat: 72, max: 4 });
   const [autoVerify, setAutoVerify] = useState(false);
+  const [selectedClientIds, setSelectedClientIds] = useState<number[]>([]);
 
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -75,6 +81,14 @@ export default function CreateIntakeScreen() {
   const [templateNameForSave, setTemplateNameForSave] = useState('');
   const [templateIndustryForSave, setTemplateIndustryForSave] = useState('');
   const [savingTemplate, setSavingTemplate] = useState(false);
+
+  useEffect(() => {
+    const raw = Array.isArray(clientIdParam) ? clientIdParam[0] : clientIdParam;
+    const id = typeof raw === 'string' && /^\d+$/.test(raw) ? parseInt(raw, 10) : null;
+    if (id != null) {
+      setSelectedClientIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    }
+  }, [clientIdParam]);
 
   useEffect(() => {
     (async () => {
@@ -234,10 +248,32 @@ export default function CreateIntakeScreen() {
         destination_folder_id: destinationFolderId,
         template_id: selectedTemplateId,
         auto_verify_high_confidence: autoVerify,
+        client_ids: selectedClientIds.length ? selectedClientIds : undefined,
         ...reminderFields,
       });
       if (response.success) {
-        router.replace(`/intake/${response.intake.id}`);
+        const intake = (response as any).intake;
+        const intakeId = intake?.id as number | undefined;
+        if (intakeId && selectedClientIds.length > 0) {
+          try {
+            await setItemClients({
+              client_ids: selectedClientIds,
+              item_type: 'intake',
+              item_id: intakeId,
+            });
+            const uploadLinkId = intake?.upload_link_id as number | undefined;
+            if (uploadLinkId) {
+              await setItemClients({
+                client_ids: selectedClientIds,
+                item_type: 'file_upload_link',
+                item_id: uploadLinkId,
+              });
+            }
+          } catch (linkErr) {
+            console.error('Error linking clients to intake:', linkErr);
+          }
+        }
+        router.replace(`/intake/${intakeId}`);
       } else {
         Alert.alert('Error', response.message || 'Failed to create Intake');
       }
@@ -456,7 +492,27 @@ export default function CreateIntakeScreen() {
         <View style={dynamicStyles.section}>
           <Text style={dynamicStyles.sectionTitle}>Intake details</Text>
           <View style={dynamicStyles.inputGroup}>
-            <Text style={dynamicStyles.label}>Title <Text style={dynamicStyles.required}>*</Text></Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={[dynamicStyles.label, { marginBottom: 0 }]}>Title <Text style={dynamicStyles.required}>*</Text></Text>
+              <ClientsButton
+                selectedClientIds={selectedClientIds}
+                onChange={async (ids) => {
+                  setSelectedClientIds(ids);
+                  if (ids[0] && (!clientName.trim() || !clientPrimaryEmail.trim())) {
+                    try {
+                      const c = await getClient(ids[0]);
+                      if (!clientName.trim()) setClientName(c.display_name);
+                      const pe = primaryEmail(c);
+                      if (pe && !clientPrimaryEmail.trim()) setClientPrimaryEmail(pe);
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                }}
+                allowCreate
+                compact
+              />
+            </View>
             <TextInput
               style={dynamicStyles.input}
               value={title}

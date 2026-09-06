@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -13,9 +13,11 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import ClientsButton from '../../components/clients/ClientsButton';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiService } from '../../services/api';
+import { setItemClients } from '../../services/clientsApi';
 import { uploadLinksListScreenKey } from '../../services/userScopedCache';
 import { screenCache } from '../../utils/screenCache';
 import { useAuth } from '../context/auth';
@@ -25,6 +27,7 @@ import AppHeaderTitle from '../../components/AppHeaderTitle';
 
 export default function CreateUploadLinkScreen() {
   const router = useRouter();
+  const { client_id: clientIdParam } = useLocalSearchParams<{ client_id?: string }>();
   const { user } = useAuth();
   const colors = useThemeColors();
   const [name, setName] = useState('');
@@ -34,6 +37,15 @@ export default function CreateUploadLinkScreen() {
   const [hasExpiration, setHasExpiration] = useState(true);
   const [hasUploadLimit, setHasUploadLimit] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [selectedClientIds, setSelectedClientIds] = useState<number[]>([]);
+
+  useEffect(() => {
+    const raw = Array.isArray(clientIdParam) ? clientIdParam[0] : clientIdParam;
+    const id = typeof raw === 'string' && /^\d+$/.test(raw) ? parseInt(raw, 10) : null;
+    if (id != null) {
+      setSelectedClientIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    }
+  }, [clientIdParam]);
 
   const handleCreate = async () => {
     if (!name.trim()) {
@@ -71,6 +83,20 @@ export default function CreateUploadLinkScreen() {
       const response = await apiService.createUploadLink(data);
       
       if (response.success) {
+        const resAny = response as any;
+        const newLink = resAny.upload_link ?? resAny.link;
+        const newLinkId = newLink?.id as number | undefined;
+        if (newLinkId && selectedClientIds.length > 0) {
+          try {
+            await setItemClients({
+              client_ids: selectedClientIds,
+              item_type: 'file_upload_link',
+              item_id: newLinkId,
+            });
+          } catch (linkErr) {
+            console.error('Error linking clients:', linkErr);
+          }
+        }
         const listKey = uploadLinksListScreenKey(user?.id);
         if (listKey) screenCache.invalidate(listKey);
         Alert.alert(
@@ -306,9 +332,17 @@ export default function CreateUploadLinkScreen() {
           <Text style={dynamicStyles.sectionTitle}>Basic Information</Text>
           
           <View style={dynamicStyles.inputGroup}>
-            <Text style={dynamicStyles.label}>
-              Name <Text style={dynamicStyles.required}>*</Text>
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={[dynamicStyles.label, { marginBottom: 0 }]}>
+                Name <Text style={dynamicStyles.required}>*</Text>
+              </Text>
+              <ClientsButton
+                selectedClientIds={selectedClientIds}
+                onChange={setSelectedClientIds}
+                allowCreate
+                compact
+              />
+            </View>
             <TextInput
               style={dynamicStyles.input}
               value={name}

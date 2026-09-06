@@ -22,6 +22,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import AdaptiveListPickerModal from '../../components/AdaptiveListPickerModal';
+import ClientsButton from '../../components/clients/ClientsButton';
 import DocumentViewer from '../../components/DocumentViewer';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import MinimizableBottomSheet from '../../components/MinimizableBottomSheet';
@@ -2921,6 +2922,17 @@ export default function AnalyticsDashboard() {
           bounces={true}
           overScrollMode="always"
         >
+              {getFileId(editItem) != null ? (
+                  <View style={[styles.editFormRow, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                    <Text style={[styles.editFormLabel, themeStyles.editFormLabel, { marginBottom: 0 }]}>Clients</Text>
+                    <ClientsButton
+                      itemType="file"
+                      itemId={getFileId(editItem) as number}
+                      allowCreate
+                      compact
+                    />
+                  </View>
+              ) : null}
               <View style={styles.editFormRow}>
                 <Text style={[styles.editFormLabel, themeStyles.editFormLabel]}>{editType === 'invoice' ? 'Vendor name' : 'Store name'}</Text>
                 <TextInput

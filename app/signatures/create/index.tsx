@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import ClientsButton from '../../../components/clients/ClientsButton';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { UploadOptionsModal } from '../../components/UploadOptionsModal';
 import DocumentSourcePicker, {
@@ -20,6 +21,7 @@ import { useMinimizableSheet } from '../../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../../hooks/useThemeColors';
 import { useAuth } from '../../context/auth';
 import { createEnvelope, getEnvelope, replaceDocuments, updateEnvelopeDraft } from '../../../services/envelopeApi';
+import { setItemClients } from '../../../services/clientsApi';
 import { uploadPdfForSignature } from '../../../services/uploadWithGlobalProgress';
 import type { SourceInput, WizardSourceDraft } from '../../../types/signature';
 import { saveDraftStep } from '../../../services/signatureSessionCache';
@@ -36,7 +38,7 @@ function newLocalId() {
 export default function CreateEnvelopeScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const params = useLocalSearchParams<{ envelopeId?: string }>();
+  const params = useLocalSearchParams<{ envelopeId?: string; client_id?: string }>();
   const { saveWizardSources, loadWizardSources } = useEnvelopeDraft();
   const { user } = useAuth();
   const [sources, setSources] = useState<WizardSourceDraft[]>([]);
@@ -45,6 +47,16 @@ export default function CreateEnvelopeScreen() {
   const [saving, setSaving] = useState(false);
   const uploadSheet = useMinimizableSheet();
   const [uploading, setUploading] = useState(false);
+  const [selectedClientIds, setSelectedClientIds] = useState<number[]>([]);
+  const [envelopeNumericId, setEnvelopeNumericId] = useState<number | undefined>();
+  const linkedClientRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const raw = Array.isArray(params.client_id) ? params.client_id[0] : params.client_id;
+    const clientId = typeof raw === 'string' && /^\d+$/.test(raw) ? parseInt(raw, 10) : null;
+    if (!clientId) return;
+    setSelectedClientIds((prev) => (prev.includes(clientId) ? prev : [...prev, clientId]));
+  }, [params.client_id]);
 
   useEffect(() => {
     void (async () => {
@@ -52,6 +64,7 @@ export default function CreateEnvelopeScreen() {
         const res = await getEnvelope(params.envelopeId);
         setTitle(res.envelope.title ?? '');
         setMessage(res.envelope.message ?? '');
+        setEnvelopeNumericId(res.envelope.id);
         const docs = res.envelope.documents ?? [];
         if (docs.length) {
           const hydrated = envelopeDocsToWizardSources(docs);
@@ -64,6 +77,19 @@ export default function CreateEnvelopeScreen() {
       }
     })();
   }, [params.envelopeId, loadWizardSources, saveWizardSources]);
+
+  useEffect(() => {
+    if (!envelopeNumericId || selectedClientIds.length === 0) return;
+    if (linkedClientRef.current === envelopeNumericId) return;
+    linkedClientRef.current = envelopeNumericId;
+    void setItemClients({
+      client_ids: selectedClientIds,
+      item_type: 'signature_envelope',
+      item_id: envelopeNumericId,
+    }).catch(() => {
+      linkedClientRef.current = null;
+    });
+  }, [envelopeNumericId, selectedClientIds]);
 
   const persistSources = (next: WizardSourceDraft[]) => {
     setSources(next);
@@ -188,8 +214,22 @@ export default function CreateEnvelopeScreen() {
           title: trimmedTitle,
           message: message || undefined });
         envelopeId = res.envelope.public_id || String(res.envelope.id);
+        setEnvelopeNumericId(res.envelope.id);
+        if (selectedClientIds.length > 0) {
+          try {
+            await setItemClients({
+              client_ids: selectedClientIds,
+              item_type: 'signature_envelope',
+              item_id: res.envelope.id,
+            });
+            linkedClientRef.current = res.envelope.id;
+          } catch {
+            /* non-fatal */
+          }
+        }
       } else {
         const existing = await getEnvelope(envelopeId);
+        setEnvelopeNumericId(existing.envelope.id);
         await updateEnvelopeDraft(envelopeId, {
           title: trimmedTitle,
           message: message || undefined });
@@ -214,7 +254,17 @@ export default function CreateEnvelopeScreen() {
         <AppHeaderTitle>Prepare for Signature</AppHeaderTitle>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={[styles.label, { color: colors.text }]}>Title</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, marginBottom: 6 }}>
+          <Text style={[styles.label, { color: colors.text, marginTop: 0, marginBottom: 0 }]}>Title</Text>
+          <ClientsButton
+            selectedClientIds={selectedClientIds}
+            onChange={setSelectedClientIds}
+            itemType={envelopeNumericId ? 'signature_envelope' : undefined}
+            itemId={envelopeNumericId}
+            compact
+            label="Clients"
+          />
+        </View>
         <TextInput
           style={[styles.input, { color: colors.text, borderColor: colors.border }]}
           value={title}

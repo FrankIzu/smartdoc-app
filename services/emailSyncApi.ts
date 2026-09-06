@@ -268,6 +268,20 @@ export async function nextPendingMailboxThread(workspaceId: number, after?: numb
   return (data?.thread ?? null) as EmailThread | null;
 }
 
+export async function composeMailboxEmail(body: {
+  workspace_id: number;
+  to?: string;
+  subject?: string;
+  client_id?: number;
+}): Promise<{
+  thread: EmailThread;
+  draft?: EmailDraft | null;
+  reply_from?: ReplyFromInfo | null;
+}> {
+  const { data } = await client().post(`${MAILBOX}/compose`, body);
+  return data;
+}
+
 export async function getMailboxThread(threadId: number, opts?: { before?: number; limit?: number }) {
   const { data } = await client().get(`${MAILBOX}/threads/${threadId}`, { params: opts });
   return data as {

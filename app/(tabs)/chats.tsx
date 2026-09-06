@@ -89,6 +89,13 @@ import { useAuth } from '../context/auth';
 
 import AppBackButton from '../../components/AppBackButton';
 import AppHeaderTitle from '../../components/AppHeaderTitle';
+import ClientsButton from '../../components/clients/ClientsButton';
+import {
+  getClientsForItem,
+  setItemClients,
+} from '../../services/clientsApi';
+
+const DEFAULT_ASK_CHIPS = ["What's missing?", 'Have they signed?', 'When was last contact?'];
 
 /** Header height must fit icon buttons (padding + 30px icon); 64 clipped hit targets. */
 const CHAT_CONVERSATION_HEADER_HEIGHT = 72;
@@ -564,6 +571,34 @@ export default function ChatsScreen() {
   const [calendarEntryPlaceholder, setCalendarEntryPlaceholder] = useState(false);
   /** Optional composer hint from `?chatPlaceholder=` or `?inputPlaceholder=` (URL-encoded). */
   const [routeInputPlaceholder, setRouteInputPlaceholder] = useState<string | null>(null);
+  /** My Clients scoped Ask — from `?client_id=` / `?client_name=` (captured before params clear). */
+  const [askClient, setAskClient] = useState<{ id: number; name: string } | null>(null);
+  const askClientRef = useRef<{ id: number; name: string } | null>(null);
+  askClientRef.current = askClient;
+  const [askSuggestionChips, setAskSuggestionChips] = useState<string[]>(DEFAULT_ASK_CHIPS);
+  const linkedAskChatRef = useRef<string | null>(null);
+  const linkAskClientToHistoryRef = useRef<(historyId: number) => void>(() => {});
+  linkAskClientToHistoryRef.current = (historyId: number) => {
+    const client = askClientRef.current;
+    if (!client?.id || !historyId || historyId <= 0) return;
+    const key = `${historyId}:${client.id}`;
+    if (linkedAskChatRef.current === key) return;
+    linkedAskChatRef.current = key;
+    void (async () => {
+      try {
+        const existing = await getClientsForItem('chat_history', historyId);
+        const ids = Array.from(new Set([...existing.map((c) => c.id), client.id]));
+        await setItemClients({
+          client_ids: ids,
+          item_type: 'chat_history',
+          item_id: historyId,
+        });
+      } catch {
+        linkedAskChatRef.current = null;
+      }
+    })();
+  };
+
 
   // True when the chat has no messages yet — used to center the input (ChatGPT-style empty state)
   const isEmptyChat = messages.length === 0 && !messagesLoading && !sendingMessage;
@@ -988,6 +1023,23 @@ export default function ChatsScreen() {
     const chatSource = Array.isArray(csRaw) ? csRaw[0] : csRaw;
     if (chatSource === 'calendar') setCalendarEntryPlaceholder(true);
 
+    const cidRaw = params.client_id;
+    const cidStr = Array.isArray(cidRaw) ? cidRaw[0] : cidRaw;
+    const cidNum = cidStr != null ? Number(cidStr) : NaN;
+    if (Number.isFinite(cidNum) && cidNum > 0) {
+      const nameRaw = params.client_name;
+      const nameStr = Array.isArray(nameRaw) ? nameRaw[0] : nameRaw;
+      let name = typeof nameStr === 'string' ? nameStr : `Client #${cidNum}`;
+      try {
+        name = decodeURIComponent(name);
+      } catch {
+        /* keep */
+      }
+      setAskClient({ id: cidNum, name: name.trim() || `Client #${cidNum}` });
+      setAskSuggestionChips(DEFAULT_ASK_CHIPS);
+      linkedAskChatRef.current = null;
+    }
+
     const v = params.openStartNew;
     const openStartNew =
       v === '1' ||
@@ -1001,7 +1053,7 @@ export default function ChatsScreen() {
     loadMessages(-1, true);
     // Do not call router.setParams here — useLayoutEffect runs before the root navigator is ready
     // after auth transitions; deferred clear in useEffect below.
-  }, [params.openStartNew, params.chatSource, params.chatPlaceholder, params.inputPlaceholder]);
+  }, [params.openStartNew, params.chatSource, params.chatPlaceholder, params.inputPlaceholder, params.client_id, params.client_name]);
 
   // Clear openStartNew (and related) query params after mount — safe for Expo Router; avoids "navigate before Root Layout" crash.
   useEffect(() => {
@@ -1020,6 +1072,18 @@ export default function ChatsScreen() {
     }, 0);
     return () => clearTimeout(t);
   }, [params.openStartNew, router]);
+
+  useEffect(() => {
+    const hid =
+      selectedChat?.id != null && Number(selectedChat.id) > 0
+        ? Number(selectedChat.id)
+        : currentChatIdRef.current != null && Number(currentChatIdRef.current) > 0
+          ? Number(currentChatIdRef.current)
+          : null;
+    if (hid && askClient?.id) {
+      linkAskClientToHistoryRef.current(hid);
+    }
+  }, [askClient?.id, selectedChat?.id]);
 
   useEffect(() => {
     if (selectedChat != null && selectedChat.id !== -1) {
@@ -4680,6 +4744,7 @@ export default function ChatsScreen() {
           if (earlyId && earlyId > 0 && earlyId !== currentChatIdRef.current) {
             currentChatIdRef.current = earlyId;
             console.log('🔗 [MOBILE] Early chat_history_id bound from stream:', earlyId);
+            linkAskClientToHistoryRef.current(earlyId);
           }
           break;
         }
@@ -4972,8 +5037,14 @@ export default function ChatsScreen() {
           });
           const returnedChatId = data.chat_history_id ? Number(data.chat_history_id) : null;
           const currentChatId = selectedChatRef.current ? Number(selectedChatRef.current.id) : null;
+          if (askClientRef.current?.id && Array.isArray(data.suggestions) && data.suggestions.length) {
+            setAskSuggestionChips(
+              data.suggestions.filter((s: unknown) => typeof s === 'string' && s.trim()) as string[]
+            );
+          }
           if (returnedChatId && returnedChatId !== -1) {
             currentChatIdRef.current = returnedChatId;
+            linkAskClientToHistoryRef.current(returnedChatId);
             if (returnedChatId !== currentChatId) {
               console.log('🔄 Backend returned new chat_history_id:', returnedChatId, 'updating selectedChat from', currentChatId);
               loadedChatIdRef.current = returnedChatId;
@@ -5385,6 +5456,11 @@ export default function ChatsScreen() {
         } else {
           // New chat (placeholder ID -2) or default assistant (-1) - let backend create history
           console.log('📋 [MOBILE] Not sending chat_history_id - backend will create new chat history');
+        }
+
+        const scopedClient = askClientRef.current;
+        if (scopedClient?.id) {
+          streamFilters.client_id = scopedClient.id;
         }
 
         // FINAL FALLBACK: Ensure bookmark ID is sent when chat is bookmark_focused (backend reads context_bookmark_ids only)
@@ -6655,10 +6731,11 @@ export default function ChatsScreen() {
         return `Ask questions about bookmark "${truncateFilename(n, 34)}"`;
       return 'Ask questions about this bookmark';
     }
+    if (chat.id === -1 && askClient) return `Ask about ${askClient.name}…`;
     if (chat.id === -1 && routeInputPlaceholder) return routeInputPlaceholder;
     if (chat.id === -1 && calendarEntryPlaceholder) return 'Ask about your calendar and events';
     return CHATGD_DEFAULT_INPUT_PLACEHOLDER;
-  }, [selectedChat, calendarEntryPlaceholder, routeInputPlaceholder]);
+  }, [selectedChat, calendarEntryPlaceholder, routeInputPlaceholder, askClient]);
 
   const createQuickChat = (type: 'ai_assistant' | 'user_direct' | 'workspace' | 'document_focused' | 'bookmark_focused') => {
     setShowQuickChatTypes(false);
@@ -8422,6 +8499,85 @@ export default function ChatsScreen() {
           style={dynamicStyles.connectivityBanner}
           textStyle={dynamicStyles.connectivityBannerText}
         />
+
+        {askClient ? (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginHorizontal: 12,
+              marginBottom: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 10,
+              backgroundColor: 'rgba(13, 148, 136, 0.12)',
+              gap: 8,
+            }}
+          >
+            <Ionicons name="people-outline" size={16} color="#0D9488" />
+            <Text style={{ flex: 1, color: colors.text, fontSize: 13 }} numberOfLines={1}>
+              Asking about {askClient.name}
+            </Text>
+            <TouchableOpacity onPress={() => setAskClient(null)} hitSlop={8}>
+              <Ionicons name="close" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {(() => {
+          const hid =
+            selectedChat?.id != null && Number(selectedChat.id) > 0
+              ? Number(selectedChat.id)
+              : currentChatIdRef.current != null && Number(currentChatIdRef.current) > 0
+                ? Number(currentChatIdRef.current)
+                : null;
+          const itemType =
+            selectedChat?.type === 'user_direct'
+              ? 'user_chat'
+              : selectedChat?.type === 'workspace'
+                ? null
+                : hid
+                  ? 'chat_history'
+                  : null;
+          if (!itemType || !hid) return null;
+          return (
+            <View style={{ paddingHorizontal: 12, paddingBottom: 6, alignItems: 'flex-start' }}>
+              <ClientsButton
+                itemType={itemType}
+                itemId={hid}
+                compact
+                allowCreate
+              />
+            </View>
+          );
+        })()}
+
+        {askClient && askSuggestionChips.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 8, gap: 8 }}
+          >
+            {askSuggestionChips.map((chip) => (
+              <TouchableOpacity
+                key={chip}
+                onPress={() => setNewMessage(chip)}
+                disabled={sendingMessage || connectivitySendDisabled}
+                style={{
+                  borderRadius: 16,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: '#0D9488',
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  backgroundColor: colors.card,
+                }}
+              >
+                <Text style={{ color: '#0D9488', fontSize: 12, fontWeight: '600' }}>{chip}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        ) : null}
 
         {/* ── INPUT BAR ── always rendered; styles differ in empty vs conversation state */}
         <View 

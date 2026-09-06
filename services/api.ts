@@ -3073,6 +3073,13 @@ class ApiService {
           payload.chat_history_id = toNum(filters.chat_history_id);
         }
 
+        if (filters.client_id != null && filters.client_id !== '') {
+          const cid = toNum(filters.client_id);
+          if (cid != null && Number.isFinite(cid) && cid > 0) {
+            payload.client_id = cid;
+          }
+        }
+
         // Same as web — retry replaces that assistant bubble (do not combine with additional_response)
         if (filters.retry === true && filters.retry_replace_message_id != null) {
           payload.retry = true;
@@ -5490,6 +5497,7 @@ class ApiService {
     reminder_first_after_hours?: number;
     reminder_repeat_every_hours?: number;
     reminder_max_count?: number;
+    client_ids?: number[];
   }): Promise<ApiResponse> {
     try {
       const response = await this.client.post(MOBILE_ENDPOINTS.WEB_INTAKES, data);

@@ -23,6 +23,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { WebView } from 'react-native-webview';
 import ActionMenuModal, { type ActionMenuItem } from '../../../components/ActionMenuModal';
 import AdaptiveListPickerModal from '../../../components/AdaptiveListPickerModal';
+import ClientsButton from '../../../components/clients/ClientsButton';
+import ClientContextStrip from '../../../components/clients/ClientContextStrip';
 import DocumentViewer from '../../../components/DocumentViewer';
 import { FeedbackTouchable } from '../../../components/FeedbackTouchable';
 import { useThemeColors } from '../../../hooks/useThemeColors';
@@ -54,6 +56,7 @@ import {
     type ThreadAnalysis,
     type ThreadAttention,
 } from '../../../services/emailSyncApi';
+import { getClientsForItem, setItemClients } from '../../../services/clientsApi';
 import { AttachmentNamesRow, type AttachPreview } from '../_components/AttachmentNamesRow';
 import { EmailHtmlBody } from '../_components/EmailHtmlBody';
 import { GrabDocsAttachPicker } from '../_components/GrabDocsAttachPicker';
@@ -105,11 +108,13 @@ function splitAddrs(s: string): string[] {
 }
 
 export default function EmailThreadScreen() {
-  const { id, workspaceId, filter, compose } = useLocalSearchParams<{
+  const { id, workspaceId, filter, compose, client_id: clientIdParam, to: toParam } = useLocalSearchParams<{
     id: string;
     workspaceId?: string;
     filter?: string;
     compose?: string;
+    client_id?: string;
+    to?: string;
   }>();
   const threadId = Number(id);
   const wantCompose = compose === '1' || compose === 'true';
@@ -195,6 +200,26 @@ export default function EmailThreadScreen() {
       if (researchStageTimerRef.current) clearTimeout(researchStageTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!Number.isFinite(threadId) || threadId <= 0) return;
+    const raw = Array.isArray(clientIdParam) ? clientIdParam[0] : clientIdParam;
+    const clientId = typeof raw === 'string' && /^\d+$/.test(raw) ? parseInt(raw, 10) : NaN;
+    if (!clientId || !Number.isFinite(clientId)) return;
+    void (async () => {
+      try {
+        const existing = await getClientsForItem('email_thread', threadId);
+        if (existing.some((c) => c.id === clientId)) return;
+        await setItemClients({
+          client_ids: [...existing.map((c) => c.id), clientId],
+          item_type: 'email_thread',
+          item_id: threadId,
+        });
+      } catch {
+        /* non-fatal */
+      }
+    })();
+  }, [clientIdParam, threadId]);
 
   useEffect(() => {
     if (replyFrom?.forward_without_send_as) setHeadersOpen(true);
@@ -469,6 +494,13 @@ export default function EmailThreadScreen() {
     }
     if (draft) setComposing(true);
   }, [wantCompose, loading, draft, dismissed]);
+
+  useEffect(() => {
+    const raw = Array.isArray(toParam) ? toParam[0] : toParam;
+    if (typeof raw === 'string' && raw.trim() && !to) {
+      setTo(raw.trim());
+    }
+  }, [toParam, to]);
 
   const goNextPending = async () => {
     if (!ws) {
@@ -886,9 +918,14 @@ export default function EmailThreadScreen() {
         <View style={styles.header}>
           <AppBackButton />
           <View style={styles.headerBody}>
-            <AppHeaderTitle>
-              {thread?.subject || 'Conversation'}
-            </AppHeaderTitle>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <AppHeaderTitle fill={false} size={18} style={{ flexShrink: 1 }}>
+                {thread?.subject || 'Conversation'}
+              </AppHeaderTitle>
+              {Number.isFinite(threadId) && threadId > 0 ? (
+                <ClientsButton itemType="email_thread" itemId={threadId} compact allowCreate />
+              ) : null}
+            </View>
             <AttachmentNamesRow attachments={threadAttachments} onOpen={openAttachment} />
           </View>
           <FeedbackTouchable
@@ -914,6 +951,12 @@ export default function EmailThreadScreen() {
             </FeedbackTouchable>
           )}
         </View>
+
+        {Number.isFinite(threadId) && threadId > 0 ? (
+          <View style={{ paddingHorizontal: 12, paddingTop: 4 }}>
+            <ClientContextStrip itemType="email_thread" itemId={threadId} />
+          </View>
+        ) : null}
 
         <ScrollView
           style={{ flex: 1, backgroundColor: colors.isDark ? colors.background : '#F3F4F6' }}

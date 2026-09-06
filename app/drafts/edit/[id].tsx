@@ -44,6 +44,7 @@ import {
   modalScrimOverlayStyle,
 } from '../../../utils/dialogSurfaceStyles';
 import { sanitizeDisplayFilename } from '../../../utils/displayFilename';
+import ClientsButton from '../../../components/clients/ClientsButton';
 import { draftsCache, isNetworkError } from '../../../utils/draftsCache';
 import { syncSingleLocalDraft } from '../../../utils/draftsOfflineSync';
 import { saveLastOpenedDraft } from '../../../utils/lastOpenedDraft';
@@ -2170,6 +2171,11 @@ export default function DraftEditScreen() {
                 <ActivityIndicator size="small" color={colors.textSecondary} style={{ marginRight: 4, padding: 10 }} />
               ) : saveStatus === 'saved' ? (
                 <Ionicons name="checkmark-circle" size={30} color="#34C759" style={{ marginRight: 2, padding: 8 }} />
+              ) : null}
+              {draftId && !isNaN(draftId) && !draftsCache.isLocalDraftId(draftId) ? (
+                <View style={{ marginRight: 8, justifyContent: 'center' }}>
+                  <ClientsButton itemType="file" itemId={draftId} compact />
+                </View>
               ) : null}
               {isSplitMode && (
                 <TouchableOpacity

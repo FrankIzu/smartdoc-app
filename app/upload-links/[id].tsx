@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import ClientsButton from '../../components/clients/ClientsButton';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
 import { FRONTEND_URL } from '../../constants/Config';
@@ -913,6 +914,12 @@ export default function UploadLinkDetailsScreen() {
             <View style={dynamicStyles.linkCard}>
               <View style={dynamicStyles.linkHeader}>
                 <Text style={dynamicStyles.linkName} numberOfLines={1} ellipsizeMode="tail">{uploadLink.name}</Text>
+                <ClientsButton
+                  itemType="file_upload_link"
+                  itemId={uploadLink.id}
+                  compact
+                  allowCreate
+                />
                 <TouchableOpacity onPress={openRenameModal} style={dynamicStyles.renameButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="pencil" size={20} color={colors.textSecondary} />
                 </TouchableOpacity>

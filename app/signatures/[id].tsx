@@ -11,6 +11,7 @@ import {
   View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DocumentViewer from '../../components/DocumentViewer';
+import ClientsButton from '../../components/clients/ClientsButton';
 import { FeedbackTouchable } from '../../components/FeedbackTouchable';
 import FileNameText from '../../components/FileNameText';
 import { SIGNATURE_HEADER_TITLE_MAX } from '../../utils/displayFilename';
@@ -190,12 +191,20 @@ export default function EnvelopeDetailScreen() {
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
         <View style={styles.headerBody}>
-          <FileNameText
-            name={envelope.title || 'Untitled envelope'}
-            style={[styles.title, { color: colors.text }]}
-            sanitize={false}
-            maxLength={SIGNATURE_HEADER_TITLE_MAX}
-          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <FileNameText
+              name={envelope.title || 'Untitled envelope'}
+              style={[styles.title, { color: colors.text, flexShrink: 1 }]}
+              sanitize={false}
+              maxLength={SIGNATURE_HEADER_TITLE_MAX}
+            />
+            <ClientsButton
+              itemType="signature_envelope"
+              itemId={envelope.id}
+              compact
+              allowCreate
+            />
+          </View>
           <View style={[styles.statusBadge, { backgroundColor: statusBadge.backgroundColor }]}>
             <Text style={[styles.statusBadgeText, { color: statusBadge.color }]}>
               {statusBadge.label}

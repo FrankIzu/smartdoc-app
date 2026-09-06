@@ -18,6 +18,7 @@ import { GoogleLogo } from '../../components/GoogleLogo';
 import { MicrosoftLogo } from '../../components/MicrosoftLogo';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import {
+    composeMailboxEmail,
     dismissMailboxThread,
     dismissMailboxThreads,
     emailApiError,
@@ -58,7 +59,16 @@ const FILTERS: { id: ThreadAttention; label: string }[] = [
 export default function EmailInboxScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const params = useLocalSearchParams<{ threadId?: string; workspaceId?: string; tab?: string; oauth?: string }>();
+  const params = useLocalSearchParams<{
+    threadId?: string;
+    workspaceId?: string;
+    tab?: string;
+    oauth?: string;
+    compose?: string;
+    client_id?: string;
+    to?: string;
+    subject?: string;
+  }>();
   const initialTab: EmailSyncTab =
     params.tab === 'setup' || params.tab === 'imports' ? params.tab : 'replies';
   const [tab, setTab] = useState<EmailSyncTab>(initialTab);
@@ -83,6 +93,7 @@ export default function EmailInboxScreen() {
   const [selected, setSelected] = useState<number[]>([]);
   const [selectMode, setSelectMode] = useState(false);
   const openedRef = useRef<string | null>(null);
+  const composeBootRef = useRef(false);
   const swipeRefs = useRef<Map<number, Swipeable>>(new Map());
 
   const selectTab = (next: EmailSyncTab) => {
@@ -199,6 +210,50 @@ export default function EmailInboxScreen() {
       },
     } as any);
   }, [params.threadId, workspaceId, filter, router]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const flag = Array.isArray(params.compose) ? params.compose[0] : params.compose;
+    if (flag !== '1' && flag !== 'true') return;
+    if (composeBootRef.current) return;
+    composeBootRef.current = true;
+    const toRaw = Array.isArray(params.to) ? params.to[0] : params.to;
+    const subjectRaw = Array.isArray(params.subject) ? params.subject[0] : params.subject;
+    const clientRaw = Array.isArray(params.client_id) ? params.client_id[0] : params.client_id;
+    const clientId = clientRaw && /^\d+$/.test(clientRaw) ? Number(clientRaw) : undefined;
+    void (async () => {
+      try {
+        const res = await composeMailboxEmail({
+          workspace_id: workspaceId,
+          to: typeof toRaw === 'string' && toRaw.trim() ? toRaw.trim() : undefined,
+          subject: typeof subjectRaw === 'string' && subjectRaw.trim() ? subjectRaw.trim() : undefined,
+          client_id: clientId && Number.isFinite(clientId) ? clientId : undefined,
+        });
+        const threadId = res.thread?.id;
+        if (!threadId) throw new Error('No thread');
+        router.push({
+          pathname: '/email-sync/thread/[id]',
+          params: {
+            id: String(threadId),
+            workspaceId: String(workspaceId),
+            filter,
+            compose: '1',
+            ...(clientId ? { client_id: String(clientId) } : {}),
+            ...(typeof toRaw === 'string' && toRaw.trim() ? { to: toRaw.trim() } : {}),
+          },
+        } as any);
+        router.setParams({
+          compose: undefined,
+          client_id: undefined,
+          to: undefined,
+          subject: undefined,
+        } as any);
+      } catch (e) {
+        composeBootRef.current = false;
+        Alert.alert('Email', emailApiError(e, 'Could not start a new email'));
+      }
+    })();
+  }, [workspaceId, params.compose, params.to, params.client_id, params.subject, filter, router]);
 
   useEffect(() => {
     if (!workspaceId) return;

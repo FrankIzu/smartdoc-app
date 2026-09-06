@@ -34,6 +34,7 @@ import { secureStorage } from '../utils/storage';
 
 import AppBackButton from './AppBackButton';
 import AppHeaderTitle from './AppHeaderTitle';
+import ClientsButton from './clients/ClientsButton';
 
 // Conditionally import react-native-pdf (only works in development builds, not Expo Go)
 let Pdf: any = null;
@@ -2937,7 +2938,16 @@ export default function DocumentViewer({
             <AppHeaderTitle>
               {getViewerTitle()}
             </AppHeaderTitle>
-            <View style={styles.placeholder} />
+            {Number.isFinite(parseInt(String(fileId), 10)) ? (
+              <ClientsButton
+                itemType="file"
+                itemId={parseInt(String(fileId), 10)}
+                compact
+                allowCreate
+              />
+            ) : (
+              <View style={styles.placeholder} />
+            )}
           </View>
           <View
             style={[
