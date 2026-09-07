@@ -1502,7 +1502,7 @@ export default function UserChatScreen() {
     headerSubtitle: {
       fontSize: 12,
       color: colors.textSecondary,
-      marginTop: 2,
+      marginTop: 0,
     },
     backButton: {
       padding: 8,
@@ -1890,7 +1890,7 @@ export default function UserChatScreen() {
           }} />
           {!isNewChat && selectedChat && selectedChat.participants !== undefined ? (
             <TouchableOpacity
-              style={{ flex: 1, alignItems: 'center' }}
+              style={{ flex: 1, minWidth: 0, justifyItems: 'flex-start', justifyContent: 'center' }}
               onPress={() => {
                 router.push({
                   pathname: '/user-chat/participants',
@@ -1901,15 +1901,13 @@ export default function UserChatScreen() {
               }}
               activeOpacity={0.7}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                <AppHeaderTitle fill={false}>
-                  {selectedChat?.title || ''}
-                </AppHeaderTitle>
+              <AppHeaderTitle fill={false}>
+                {selectedChat?.title || ''}
+              </AppHeaderTitle>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', gap: 8, marginTop: 2 }}>
                 {(selectedChat.type === 'user_direct' || selectedChat.type === 'direct') ? (
                   <ClientsButton itemType="user_chat" itemId={selectedChat.id} compact allowCreate />
                 ) : null}
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={dynamicStyles.headerSubtitle}>
                   {selectedChat.participants.length} participant{selectedChat.participants.length !== 1 ? 's' : ''}
                 </Text>
@@ -1919,20 +1917,20 @@ export default function UserChatScreen() {
               </View>
             </TouchableOpacity>
           ) : (
-              <View style={{ flex: 1, alignItems: 'center' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                <AppHeaderTitle fill={false}>
-                  {isNewChat ? 'New Message' : selectedChat?.display_name || selectedChat?.title || ''}
-                </AppHeaderTitle>
-                {!isNewChat && selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'direct') ? (
+              <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-start', justifyContent: 'center' }}>
+              <AppHeaderTitle fill={false}>
+                {isNewChat ? 'New Message' : selectedChat?.display_name || selectedChat?.title || ''}
+              </AppHeaderTitle>
+              {!isNewChat && selectedChat && (selectedChat.type === 'user_direct' || selectedChat.type === 'direct') ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
                   <ClientsButton itemType="user_chat" itemId={selectedChat.id} compact allowCreate />
-                ) : null}
-              </View>
+                </View>
+              ) : null}
               {selectedChat?.invite_pending && (
-                <Text style={{ fontSize: 11, color: '#B45309' }}>Invite pending · messaging disabled</Text>
+                <Text style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>Invite pending · messaging disabled</Text>
               )}
               {isNewChat && selectedRecipient && (
-                <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
                   {selectedRecipient.type === 'user' ? selectedRecipient.data.username : selectedRecipient.data.name}
                 </Text>
               )}

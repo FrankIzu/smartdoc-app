@@ -177,7 +177,12 @@ export default function AdaptiveListPickerModal({
           color: colors.text,
           marginRight: 12,
         },
-        closeBtn: { padding: 2 },
+        closeBtn: { padding: 4 },
+        footerSlot: {
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+          paddingBottom: centered ? 8 : 0,
+        },
       }),
     [centered, colors, insets.bottom, windowHeight],
   );
@@ -213,7 +218,7 @@ export default function AdaptiveListPickerModal({
             <ScrollView bounces={itemCount > centerMaxItems} keyboardShouldPersistTaps="handled">
               {children}
             </ScrollView>
-            {footer}
+            {footer ? <View style={styles.footerSlot}>{footer}</View> : null}
           </Animated.View>
         </View>
       </View>

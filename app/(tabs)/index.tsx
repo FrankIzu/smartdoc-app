@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { SpaceGrotesk_500Medium, useFonts } from '@expo-google-fonts/space-grotesk';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,7 +23,6 @@ import { useMinimizableSheet } from '../../hooks/useMinimizableSheet';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { apiClient } from '../../services/api';
 import {
-  chatGdAskHref,
   getAttentionQueue,
   getClientsCount,
   type AttentionQueueItem,
@@ -93,6 +93,7 @@ function DashboardScreen() {
   const { user, signOut } = useAuth();
   const { uploadFromGallery, uploadFromDocuments } = useFileStore();
   const colors = useThemeColors();
+  const [fontsLoaded] = useFonts({ SpaceGrotesk_500Medium });
   const isAuthenticated = !!user;
   const [stats, setStats] = useState({
     totalDocuments: 0,
@@ -823,13 +824,13 @@ function DashboardScreen() {
   statsRow: {
     flexDirection: 'row',
     marginBottom: 8,
+    gap: 8,
   },
   statCard: {
     flex: 1,
       backgroundColor: colors.card,
     borderRadius: 9,
     padding: 14,
-    marginHorizontal: 4,
     borderLeftWidth: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -1064,31 +1065,19 @@ function DashboardScreen() {
         </View>
 
 
-        {/* Greeting + Search/Ask */}
+        {/* Greeting (search/ask entry hidden for now) */}
         <View style={{ paddingHorizontal: 16, paddingTop: 8, gap: 12 }}>
-          <Text style={{ fontSize: 24, fontWeight: '700', color: colors.text }}>
-            {greeting}, {firstName}
-          </Text>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => router.push(chatGdAskHref() as any)}
+          <Text
             style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              backgroundColor: colors.card,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: colors.border,
-              borderRadius: 14,
-              paddingHorizontal: 14,
-              paddingVertical: 14,
+              fontFamily: fontsLoaded ? 'SpaceGrotesk_500Medium' : undefined,
+              fontSize: 21,
+              fontWeight: fontsLoaded ? undefined : '500',
+              lineHeight: 28,
+              color: colors.text,
             }}
           >
-            <Ionicons name="search" size={20} color={colors.textSecondary} />
-            <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 15 }} numberOfLines={1}>
-              Search files, clients, or ask GrabDocs...
-            </Text>
-          </TouchableOpacity>
+            {greeting}, {firstName}
+          </Text>
         </View>
 
         {/* Client attention — only if user has clients */}
@@ -1145,8 +1134,8 @@ function DashboardScreen() {
         ) : null}
 
         {/* Quick Actions — 4 core cards */}
-        <View style={dynamicStyles.statsContainer}>
-          <Text style={[dynamicStyles.sectionTitle, { marginHorizontal: 16, marginBottom: 4 }]}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+          <Text style={[dynamicStyles.sectionTitle, { marginBottom: 8 }]}>
             Quick actions
           </Text>
           <View style={dynamicStyles.statsRow}>
@@ -1167,7 +1156,7 @@ function DashboardScreen() {
               onPress={() => handleQuickAction('chatgd')}
             />
           </View>
-          <View style={dynamicStyles.statsRow}>
+          <View style={[dynamicStyles.statsRow, { marginBottom: 0 }]}>
             <StatCard
               key="stat-analytics"
               title="Financials"

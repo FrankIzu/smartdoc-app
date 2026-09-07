@@ -918,15 +918,17 @@ export default function EmailThreadScreen() {
         <View style={styles.header}>
           <AppBackButton />
           <View style={styles.headerBody}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <AppHeaderTitle fill={false} size={18} style={{ flexShrink: 1 }}>
-                {thread?.subject || 'Conversation'}
-              </AppHeaderTitle>
+            <AppHeaderTitle fill={false} size={18} style={{ flexShrink: 1 }}>
+              {thread?.subject || 'Conversation'}
+            </AppHeaderTitle>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, minWidth: 0 }}>
               {Number.isFinite(threadId) && threadId > 0 ? (
                 <ClientsButton itemType="email_thread" itemId={threadId} compact allowCreate />
               ) : null}
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <AttachmentNamesRow attachments={threadAttachments} onOpen={openAttachment} />
+              </View>
             </View>
-            <AttachmentNamesRow attachments={threadAttachments} onOpen={openAttachment} />
           </View>
           <FeedbackTouchable
             style={styles.iconBtn}

@@ -159,6 +159,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexShrink: 0,
   },
   full: {
     flexDirection: 'row',
@@ -171,9 +172,9 @@ const styles = StyleSheet.create({
   compactLabel: { fontSize: 12, fontWeight: '500' },
   fullLabel: { fontSize: 14, fontWeight: '500' },
   badge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: '#0D9488',
     alignItems: 'center',
     justifyContent: 'center',

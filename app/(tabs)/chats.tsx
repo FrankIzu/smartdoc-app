@@ -59,6 +59,7 @@ import type { ChatHistory } from '../../types';
 import { parseGrabDocsFileViewUrl } from '../../utils/chatFileLinks';
 import { isSermonFile } from '../../utils/isSermonFile';
 import { localizeUtcDatesInAssistantText } from '../../utils/chatUtcDisplay';
+import { truncateAskClientName, truncateChatHeaderTitle } from '../../utils/chatTitleDisplay';
 import { removeFileExtension } from '../../utils/fileUtils';
 import {
   CHAT_COMPOSER_MAX_HEIGHT,
@@ -96,6 +97,33 @@ import {
 } from '../../services/clientsApi';
 
 const DEFAULT_ASK_CHIPS = ["What's missing?", 'Have they signed?', 'When was last contact?'];
+
+function normalizeAskChip(text: string): string {
+  return text.trim().toLowerCase().replace(/[?.!]+$/g, '');
+}
+
+/** Drop chips that duplicate the latest user ask (and empty strings). */
+function filterAskSuggestionChips(
+  chips: string[],
+  recentUserTexts: Array<string | null | undefined> = [],
+): string[] {
+  const asked = new Set(
+    recentUserTexts
+      .map((t) => (typeof t === 'string' ? normalizeAskChip(t) : ''))
+      .filter(Boolean),
+  );
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of chips) {
+    const chip = typeof raw === 'string' ? raw.trim() : '';
+    if (!chip) continue;
+    const key = normalizeAskChip(chip);
+    if (!key || asked.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(chip);
+  }
+  return out;
+}
 
 /** Header height must fit icon buttons (padding + 30px icon); 64 clipped hit targets. */
 const CHAT_CONVERSATION_HEADER_HEIGHT = 72;
@@ -139,7 +167,7 @@ const ChatConversationHeader = React.memo(function ChatConversationHeader({
 
         <View style={headerInfoStyle} pointerEvents="none">
           <AppHeaderTitle fill={false}>
-            {title}
+            {truncateChatHeaderTitle(title)}
           </AppHeaderTitle>
           <Text style={subtitleStyle}>{subtitle}</Text>
         </View>
@@ -576,6 +604,17 @@ export default function ChatsScreen() {
   const askClientRef = useRef<{ id: number; name: string } | null>(null);
   askClientRef.current = askClient;
   const [askSuggestionChips, setAskSuggestionChips] = useState<string[]>(DEFAULT_ASK_CHIPS);
+  /** Latest user ask text while client-scoped — used to drop duplicate suggestion chips. */
+  const lastAskUserMessageRef = useRef<string | null>(null);
+  const visibleAskSuggestionChips = useMemo(() => {
+    if (!askClient) return [] as string[];
+    const recent = messages
+      .filter((m) => m.is_own_message)
+      .slice(-5)
+      .map((m) => m.content);
+    if (lastAskUserMessageRef.current) recent.push(lastAskUserMessageRef.current);
+    return filterAskSuggestionChips(askSuggestionChips, recent);
+  }, [askClient, askSuggestionChips, messages]);
   const linkedAskChatRef = useRef<string | null>(null);
   const linkAskClientToHistoryRef = useRef<(historyId: number) => void>(() => {});
   linkAskClientToHistoryRef.current = (historyId: number) => {
@@ -1037,6 +1076,7 @@ export default function ChatsScreen() {
       }
       setAskClient({ id: cidNum, name: name.trim() || `Client #${cidNum}` });
       setAskSuggestionChips(DEFAULT_ASK_CHIPS);
+      lastAskUserMessageRef.current = null;
       linkedAskChatRef.current = null;
     }
 
@@ -5037,9 +5077,17 @@ export default function ChatsScreen() {
           });
           const returnedChatId = data.chat_history_id ? Number(data.chat_history_id) : null;
           const currentChatId = selectedChatRef.current ? Number(selectedChatRef.current.id) : null;
-          if (askClientRef.current?.id && Array.isArray(data.suggestions) && data.suggestions.length) {
+          if (askClientRef.current?.id && Array.isArray(data.suggestions)) {
+            const recentUser = [lastAskUserMessageRef.current];
+            const incoming = data.suggestions.filter(
+              (s: unknown) => typeof s === 'string' && s.trim(),
+            ) as string[];
+            const next = filterAskSuggestionChips(
+              incoming.length ? incoming : DEFAULT_ASK_CHIPS,
+              recentUser,
+            );
             setAskSuggestionChips(
-              data.suggestions.filter((s: unknown) => typeof s === 'string' && s.trim()) as string[]
+              next.length ? next : filterAskSuggestionChips(DEFAULT_ASK_CHIPS, recentUser),
             );
           }
           if (returnedChatId && returnedChatId !== -1) {
@@ -5249,6 +5297,10 @@ export default function ChatsScreen() {
       };
       
       setNewMessage('');
+      if (askClient) {
+        lastAskUserMessageRef.current = messageText;
+        setAskSuggestionChips((prev) => filterAskSuggestionChips(prev, [messageText]));
+      }
 
       // CRITICAL: Stop any existing streaming and clear state completely
       if (streamingIntervalRef.current) {
@@ -6731,7 +6783,7 @@ export default function ChatsScreen() {
         return `Ask questions about bookmark "${truncateFilename(n, 34)}"`;
       return 'Ask questions about this bookmark';
     }
-    if (chat.id === -1 && askClient) return `Ask about ${askClient.name}…`;
+    if (chat.id === -1 && askClient) return `Ask about ${truncateAskClientName(askClient.name)}…`;
     if (chat.id === -1 && routeInputPlaceholder) return routeInputPlaceholder;
     if (chat.id === -1 && calendarEntryPlaceholder) return 'Ask about your calendar and events';
     return CHATGD_DEFAULT_INPUT_PLACEHOLDER;
@@ -7418,8 +7470,8 @@ export default function ChatsScreen() {
 
     const { name: iconName, color } = getChatIcon();
 
-    // Ensure all text values are properly stringified
-    const safeTitle = String(item.title || 'Untitled Chat');
+    // Ensure all text values are properly stringified; cap list titles for mobile density
+    const safeTitle = truncateChatHeaderTitle(item.title || 'Untitled Chat');
     const safeLastMessage = String(item.last_message || 'No messages');
     const safeUpdatedAt = String(item.updated_at || new Date().toISOString());
     const safeUnreadCount = Number(item.unread_count || 0);
@@ -8065,7 +8117,7 @@ export default function ChatsScreen() {
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         <Text style={{ fontSize: 15, fontWeight: '500', color: colors.text, flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
-                          {String(item.title || 'Untitled Chat')}
+                          {truncateChatHeaderTitle(item.title || 'Untitled Chat')}
                         </Text>
                         {favoriteChatIds.has(item.id) && (
                           <Ionicons name="star" size={14} color="#FFD700" style={{ marginLeft: 4 }} />
@@ -8516,7 +8568,7 @@ export default function ChatsScreen() {
           >
             <Ionicons name="people-outline" size={16} color="#0D9488" />
             <Text style={{ flex: 1, color: colors.text, fontSize: 13 }} numberOfLines={1}>
-              Asking about {askClient.name}
+              Asking about {truncateAskClientName(askClient.name)}
             </Text>
             <TouchableOpacity onPress={() => setAskClient(null)} hitSlop={8}>
               <Ionicons name="close" size={18} color={colors.textSecondary} />
@@ -8552,14 +8604,23 @@ export default function ChatsScreen() {
           );
         })()}
 
-        {askClient && askSuggestionChips.length > 0 ? (
+        {askClient && visibleAskSuggestionChips.length > 0 ? (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 8, gap: 8 }}
+            // Keep chip row intrinsic height — otherwise it stretches between the
+            // message list and composer into tall empty bordered cards.
+            style={{ flexGrow: 0, flexShrink: 0 }}
+            contentContainerStyle={{
+              paddingHorizontal: 12,
+              paddingBottom: 8,
+              gap: 8,
+              alignItems: 'center',
+              flexGrow: 0,
+            }}
           >
-            {askSuggestionChips.map((chip) => (
+            {visibleAskSuggestionChips.map((chip) => (
               <TouchableOpacity
                 key={chip}
                 onPress={() => setNewMessage(chip)}
@@ -8571,9 +8632,16 @@ export default function ChatsScreen() {
                   paddingHorizontal: 12,
                   paddingVertical: 6,
                   backgroundColor: colors.card,
+                  alignSelf: 'center',
+                  flexShrink: 0,
                 }}
               >
-                <Text style={{ color: '#0D9488', fontSize: 12, fontWeight: '600' }}>{chip}</Text>
+                <Text
+                  style={{ color: '#0D9488', fontSize: 12, fontWeight: '600' }}
+                  numberOfLines={1}
+                >
+                  {chip}
+                </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>

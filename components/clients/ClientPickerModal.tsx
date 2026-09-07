@@ -244,100 +244,107 @@ export default function ClientPickerModal({
         </View>
       }
     >
-      <View style={[styles.searchWrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Ionicons name="search" size={18} color={colors.textSecondary} />
-        <TextInput
-          style={[styles.searchInput, { color: colors.text }]}
-          placeholder="Search clients…"
-          placeholderTextColor={colors.textSecondary}
-          value={q}
-          onChangeText={setQ}
-          autoCorrect={false}
-        />
-      </View>
-
-      {showCreate ? (
-        <View style={[styles.createBox, { borderColor: colors.border }]}>
-          <Text style={[styles.createTitle, { color: colors.text }]}>Create client</Text>
+      <View style={styles.body}>
+        <View style={[styles.searchWrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Ionicons name="search" size={18} color={colors.textSecondary} />
           <TextInput
-            style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.card }]}
-            placeholder="Display name"
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder="Search clients…"
             placeholderTextColor={colors.textSecondary}
-            value={createName}
-            onChangeText={setCreateName}
+            value={q}
+            onChangeText={setQ}
+            autoCorrect={false}
           />
-          <TextInput
-            style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.card }]}
-            placeholder="Email (required)"
-            placeholderTextColor={colors.textSecondary}
-            value={createEmail}
-            onChangeText={setCreateEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-          {isCompanyUser ? (
-            <View style={styles.visRow}>
-              {(['company', 'private'] as ClientVisibility[]).map((v) => (
-                <TouchableOpacity
-                  key={v}
-                  onPress={() => setCreateVisibility(v)}
-                  style={[
-                    styles.visChip,
-                    {
-                      backgroundColor: createVisibility === v ? '#0D9488' : colors.card,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                >
-                  <Text style={{ color: createVisibility === v ? '#fff' : colors.text, fontSize: 13 }}>
-                    {v === 'company' ? 'Company' : 'Private'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : null}
-          <View style={styles.createActions}>
-            <TouchableOpacity onPress={() => setShowCreate(false)}>
-              <Text style={{ color: colors.textSecondary }}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => void handleCreate()} disabled={creating}>
-              <Text style={{ color: '#0D9488', fontWeight: '600' }}>
-                {creating ? 'Creating…' : 'Create'}
-              </Text>
-            </TouchableOpacity>
-          </View>
         </View>
-      ) : null}
 
-      {loading ? (
-        <ActivityIndicator style={{ marginVertical: 24 }} color="#0D9488" />
-      ) : (
-        <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
-          {!searching && recent.length > 0 ? (
-            <>
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Recent</Text>
-              {recent.map(renderRow)}
-            </>
-          ) : null}
-          {otherClients.length > 0 || searching ? (
-            <>
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                {searching ? 'Results' : 'All clients'}
-              </Text>
-              {otherClients.length === 0 ? (
-                <Text style={[styles.empty, { color: colors.textSecondary }]}>No clients found.</Text>
-              ) : (
-                otherClients.map(renderRow)
-              )}
-            </>
-          ) : null}
-        </ScrollView>
-      )}
+        {showCreate ? (
+          <View style={[styles.createBox, { borderColor: colors.border }]}>
+            <Text style={[styles.createTitle, { color: colors.text }]}>Create client</Text>
+            <TextInput
+              style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.card }]}
+              placeholder="Display name"
+              placeholderTextColor={colors.textSecondary}
+              value={createName}
+              onChangeText={setCreateName}
+            />
+            <TextInput
+              style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.card }]}
+              placeholder="Email (required)"
+              placeholderTextColor={colors.textSecondary}
+              value={createEmail}
+              onChangeText={setCreateEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            {isCompanyUser ? (
+              <View style={styles.visRow}>
+                {(['company', 'private'] as ClientVisibility[]).map((v) => (
+                  <TouchableOpacity
+                    key={v}
+                    onPress={() => setCreateVisibility(v)}
+                    style={[
+                      styles.visChip,
+                      {
+                        backgroundColor: createVisibility === v ? '#0D9488' : colors.card,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: createVisibility === v ? '#fff' : colors.text, fontSize: 13 }}>
+                      {v === 'company' ? 'Company' : 'Private'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+            <View style={styles.createActions}>
+              <TouchableOpacity onPress={() => setShowCreate(false)}>
+                <Text style={{ color: colors.textSecondary }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => void handleCreate()} disabled={creating}>
+                <Text style={{ color: '#0D9488', fontWeight: '600' }}>
+                  {creating ? 'Creating…' : 'Create'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
+        {loading ? (
+          <ActivityIndicator style={{ marginVertical: 24 }} color="#0D9488" />
+        ) : (
+          <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
+            {!searching && recent.length > 0 ? (
+              <>
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Recent</Text>
+                {recent.map(renderRow)}
+              </>
+            ) : null}
+            {otherClients.length > 0 || searching ? (
+              <>
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                  {searching ? 'Results' : 'All clients'}
+                </Text>
+                {otherClients.length === 0 ? (
+                  <Text style={[styles.empty, { color: colors.textSecondary }]}>No clients found.</Text>
+                ) : (
+                  otherClients.map(renderRow)
+                )}
+              </>
+            ) : null}
+          </ScrollView>
+        )}
+      </View>
     </AdaptiveListPickerModal>
   );
 }
 
 const styles = StyleSheet.create({
+  body: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -346,15 +353,15 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    marginBottom: 12,
+    marginBottom: 4,
   },
   searchInput: { flex: 1, fontSize: 15, paddingVertical: 4 },
   sectionLabel: {
     fontSize: 12,
     fontWeight: '600',
     textTransform: 'uppercase',
-    marginTop: 8,
-    marginBottom: 4,
+    marginTop: 12,
+    marginBottom: 6,
   },
   row: {
     flexDirection: 'row',
@@ -371,9 +378,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+    gap: 12,
   },
-  createLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  createLink: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 },
   createLinkText: { color: '#0D9488', fontWeight: '600', fontSize: 14 },
   doneBtn: {
     backgroundColor: '#0D9488',
@@ -389,6 +399,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 12,
     marginBottom: 12,
+    marginTop: 8,
     gap: 8,
   },
   createTitle: { fontWeight: '600', fontSize: 15, marginBottom: 4 },

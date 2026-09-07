@@ -191,24 +191,24 @@ export default function EnvelopeDetailScreen() {
       <View style={[styles.header, { backgroundColor: colors.headerBackground }]}>
         <AppBackButton />
         <View style={styles.headerBody}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <FileNameText
-              name={envelope.title || 'Untitled envelope'}
-              style={[styles.title, { color: colors.text, flexShrink: 1 }]}
-              sanitize={false}
-              maxLength={SIGNATURE_HEADER_TITLE_MAX}
-            />
+          <FileNameText
+            name={envelope.title || 'Untitled envelope'}
+            style={[styles.title, { color: colors.text, flexShrink: 1 }]}
+            sanitize={false}
+            maxLength={SIGNATURE_HEADER_TITLE_MAX}
+          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
             <ClientsButton
               itemType="signature_envelope"
               itemId={envelope.id}
               compact
               allowCreate
             />
-          </View>
-          <View style={[styles.statusBadge, { backgroundColor: statusBadge.backgroundColor }]}>
-            <Text style={[styles.statusBadgeText, { color: statusBadge.color }]}>
-              {statusBadge.label}
-            </Text>
+            <View style={[styles.statusBadge, { backgroundColor: statusBadge.backgroundColor }]}>
+              <Text style={[styles.statusBadgeText, { color: statusBadge.color }]}>
+                {statusBadge.label}
+              </Text>
+            </View>
           </View>
         </View>
       </View>

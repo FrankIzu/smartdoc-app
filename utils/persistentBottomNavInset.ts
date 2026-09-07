@@ -14,7 +14,7 @@ export function shouldShowPersistentBottomNav(pathname: string | null | undefine
   if (p.startsWith('/calendar/')) return false;
 
   // Expo Router may include or omit the "(tabs)" group in usePathname().
-  if (p === '/' || p === '/(tabs)' || p === '/(tabs)/' || p === '/(tabs)/index') {
+  if (p === '/' || p === '/index' || p === '/(tabs)' || p === '/(tabs)/' || p === '/(tabs)/index') {
     return true;
   }
 
